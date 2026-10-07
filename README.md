@@ -95,8 +95,9 @@ already playing (loops, music) too.
 - **Some visuals:** refraction is approximated, and only for particle effects (heat haze,
   shockwave rings); shield domes still use stand-ins; cloak and phase shift use stand-in visuals; some particle features are missing; lighting, fog and
   materials are approximations, not the game's shaders.
-- **Movement details** that the game's engine code (not its data files) controls: wall-run
-  curving and slipping, some slide behaviour, and the fine "feel" are approximated.
+- **Movement details** that the game's engine code (not its data files) controls: the formulas
+  behind the movement keys (we follow the game's own descriptions of them), wall-run curving and
+  the fine "feel" are approximated.
 - **AI:** enemy Titans and grunts are basic. There is no campaign, story or mission scripting.
 - **No multiplayer** of any kind.
 - **Platforms:** only tested on Linux.
@@ -282,21 +283,62 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
 - **Pilot movement:**
   - All values come from `pilot_solo.set`: walk 162.5, sprint 243, jump 60, double jump and
     wall-running values.
+  - What the movement keys mean comes from their help strings in the game's `client.dll` (the
+    engine describes each player setting and convar). Where the text says what a key does, the
+    sim does that; the exact formulas behind the text are engine code, so the shapes below are
+    our reading of it.
   - Slides use the engine's player-settings defaults where `pilot_solo.set`/`pilot_base.set`
-    don't set them: `slideSpeedBoost` 150 (we had 100), `slideRequiredStartSpeed` 200 (had 150),
-    `slideSpeedBoostCap` 400 (the boost never takes you past it), `slideStopSpeed` 125 and a
-    `slideJumpHeight` of 50 out of a slide; `slidedecel` 50 and `slidevelocitydecay` 0.7 come
-    from `pilot_base.set`, and the boost recovers after `slide_boost_cooldown` 2 s. Sliding
-    sideways tilts the view up to `slide_viewTiltSide` 15 degrees at 400 u/s of sideways speed
-    (`slide_viewTiltIncreaseSpeed` 5 / `DecreaseSpeed` 2.5; the sign is a guess). Not modelled:
-    `slideAccel`, `slideWantToStopDecel`/`slideMaxStopSpeed`, `slideMaxJumpSpeed` and
-    `slide_max_angle_dot` (their exact use is engine code).
+    don't set them: `slideSpeedBoost` 150, `slideRequiredStartSpeed` 200, `slideSpeedBoostCap`
+    400 (the boost never takes you past it), `slideStopSpeed` 125 and a `slideJumpHeight` of 50
+    out of a slide. While sliding, speed drops by `slidedecel` 50 per second ("fixed velocity
+    lost per second") and keeps `slidevelocitydecay` 0.7 of itself per second ("percentage of
+    velocity retained per second"), both from `pilot_base.set`; movement input steers with
+    `slideAccel` 50. Letting go of crouch above `slideMaxStopSpeed` 350 ("slide may not end while
+    above this speed") keeps the slide going at `slideWantToStopDecel` 400 until it can end.
+    Jumping out of a slide cuts speed to `slideMaxJumpSpeed` 350. A slide gets the boost only if
+    the last one started at least `slide_boost_cooldown` 2 s ago ("Min time between slides
+    before getting another boost"). A sprint only becomes a slide when moving within
+    `slide_max_angle_dot` 0.6 of the view's forward. Sliding up a step costs
+    `slide_step_velocity_reduction` 10 per unit of step height (telling a step from a ramp by a
+    flat top is ours). Sliding sideways tilts the view up to `slide_viewTiltSide` 15 degrees at
+    400 u/s of sideways speed (`slide_viewTiltIncreaseSpeed` 5 / `DecreaseSpeed` 2.5; the sign is
+    a guess).
+  - Jumps: a jump within `skip_time` 0.1 s of landing is a "skip": `skip_jump_height_fraction`
+    0.75 of the height, keeping the landing speed less `skip_speed_reduce` 12, which doesn't cut
+    below `skip_speed_retain` 450 (restoring the landing speed through those ground ticks is our
+    reading). `jump_graceperiod` 0.2 s after walking off a ledge still gives a normal jump. A
+    double jump while already rising fast still adds `superjump_min_height_fraction` 0.25 of its
+    height. Not modelled: `jump_keyboardgrace*` (redirecting a jump with keys just after it).
+  - Wall-running is ground movement on the wall's plane, as the keys' text describes:
+    `wallrunFriction` 4 ("Base friction applied while wall running", applied Source-style to the
+    speed along and up the wall, so entry speed above `wallrunMaxSpeedHorizontal` bleeds off),
+    acceleration along the wall from forward input, and up it from `wallrun_upwardAutoPush` 0.65
+    ("automatic up-the-wall input applied when the player pushes forward along the wall"; we
+    scale it by `wallrunMaxSpeedVertical`), against gravity that "starts at 0 and ramps up to
+    full" over `wallrun_gravityRampUpTime` 1 s. Starting a run adds `wallrun_upWallBoost` 250
+    upward (capped at `wallrunMaxSpeedVertical`). At `wallrun_slipstarttime` 1.5 s the run slips:
+    it loses `wallrun_slipslowdown` 50% of its velocity, gets a `wallrun_slipvel` 70 push down,
+    and turns "completely gravity based" over `wallrun_slipduration` 1 s; with no input at all at
+    least `wallrun_noInputSlipFrac` 0.7 of the slip applies. Falling off (time limit, crouch, the
+    wall ending, or pushing away from it for `wallrun_pushAwayFallOffTime` 0.05 s) adds
+    `wallrun_fallAwaySpeed` 70 away from the wall; what counts as pushing away (input more than
+    30 degrees off the wall) is a guess. Walls can be caught from any angle
+    (`wallrun_minAngle_air` 180). After jumping off a wall, the same wall (normals within
+    `wallrun_sameWallDot` 0.9) can be run again only no higher than where you left it
+    (`wallrun_sameWallHeight` 0, `wallrun_sameWallDist` 100 / `wallrun_sameWallSlope` 0); after
+    falling off one, it stays blocked until you touch the ground (ours). Not modelled: wall-run
+    curving (`wallrun_rotateMaxRate`, `wallrun_angleChangeMinCos`), the wall-jump repel
+    (`wallrun_repel*`), `wallrun_avoid_wall_top_decel`, wall-hang slipping
+    (`wallrun_hangslip*`, `wallrun_hangStopTime`) and `player_extraairaccelleration`.
   - Air control is Source-style (engine defaults `airSpeed 60`, `airAcceleration 500`). Automantle
     takes `automantle_duration_*` 1.11/1.0/0.5/0.35 s depending on how far the eye is above the
     ledge (`automantle_height_below/level/above` -10/10/30).
-  - Sprint speed comes in as `pilot_base.set` times it: after `sprintStartDelay` (0.2 s) over
-    `sprintStartDuration` (0.8 s), or `sprintStartFastDuration` (0.2 s) when sprint is pressed
-    already faster than a walk, and goes over `sprintEndDuration` (0.15 s).
+  - Sprint speed follows the ground acceleration. `sprintStartDelay` (0.2 s),
+    `sprintStartDuration` (0.8 s), `sprintStartFastDuration` (0.2 s, "after landing from a
+    sprinting jump") and `sprintEndDuration` (0.15 s) time the sprint view offset
+    (`sprintViewOffset` -6), as their help strings say, not the speed; the smoothstep curve over
+    those times is a guess. Looking down slides the view forward by up to `pitchOffsetScale` 9.2
+    (sin of the pitch, a guess).
   - Aiming down sights scales walking (and BT's) speed by the gun's `ads_move_speed_scale`,
     in proportion to how far the zoom has gone.
   - Camera feel from the set file: smoothed step-ups, a landing dip between

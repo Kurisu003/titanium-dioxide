@@ -432,7 +432,7 @@ pub fn control_transitions(
         Control::Pilot => {
             let to_bt = titan.state.pos - pilot.state.pos;
             if std::env::var_os("TF_TRACE_POS").is_some() {
-                log::info!("trace pilot {:?} vel {:?} yaw {:.2} bt {:?}", pilot.state.pos, pilot.state.vel, pilot.state.yaw, titan.state.pos);
+                log::info!("trace pilot {:?} vel {:?} yaw {:.2} bt {:?} mode {:?}", pilot.state.pos, pilot.state.vel, pilot.state.yaw, titan.state.pos, pilot.state.mode);
             }
             let near = to_bt.truncate().length() < EMBARK_RANGE && to_bt.z.abs() < 300.0;
             if interact && !(near && !tf.busy() && bt_health.dead_for.is_none()) {
@@ -842,9 +842,12 @@ pub fn pilot_camera(
             };
             f.eye_z = Some(eye_z);
             // Sprinting lowers the view (sprintViewOffset) and leans into turns (sprinttiltMaxRoll).
+            // The sim times the offset (sprintStartDelay / StartDuration / StartFastDuration /
+            // EndDuration); the smoothstep curve over those times is a guess.
             let sprinting = s.sprinting && grounded;
             let blend = |cur: f32, want: f32, rate: f32| cur + (want - cur) * (1.0 - (-dt * rate).exp());
-            f.sprint = blend(f.sprint, if sprinting { 1.0 } else { 0.0 }, 6.0);
+            let k = s.sprint_frac.clamp(0.0, 1.0);
+            f.sprint = k * k * (3.0 - 2.0 * k);
             let turn = ((s.yaw - f.prev_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI) / dt.max(1e-3);
             f.prev_yaw = s.yaw;
             // Sprint lean (client.dll m_sprintTiltFrac/Vel): the turn rate over sprinttilt_turnrange
@@ -896,7 +899,10 @@ pub fn pilot_camera(
             if let Projection::Perspective(pp) = projection.as_mut() {
                 pp.fov *= 1.0 + 0.1 * f.slide_fov;
             }
-            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z - 6.0 * f.sprint + f.dip);
+            // Looking down slides the view forward (pitchOffsetScale; the sin(pitch) curve is a
+            // guess, matching BT's).
+            let ahead = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0) * pilot_settings.0.pitch_offset_scale * s.pitch.max(0.0).sin();
+            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z + pilot_settings.0.sprint_view_offset * f.sprint + f.dip) + ahead;
             *vm_eye = VmEye { offset: eye - pilot_eye, roll: f.roll };
             let (py, pp) = (punch.yaw.to_radians(), punch.pitch.to_radians() - f.dip * 0.004);
             (eye, view_quat(s.yaw + py, s.pitch + pp) * Quat::from_rotation_x(f.roll + punch.roll.to_radians()))
