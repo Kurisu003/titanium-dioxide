@@ -243,7 +243,7 @@ We work through these one at a time, and the next one starts only after the user
 2. ~~Tone's Particle Wall curves the wrong way (19)~~ (fixed in 01b4830)
 3. ~~Tone's Sonar Pulse shows the Electric Smoke icon (24)~~ (fixed: icons from the scripts' hud_icon, kept at their own aspect)
 4. ~~Titan weapons lose their crosshair when zoomed (12)~~ (fixed: only Pilot guns fade theirs)
-5. Titan projectile models point the wrong way (29)
+5. ~~Titan projectile models point the wrong way (29)~~ (fixed: models placed by their bone pose, nose along +X)
 6. Northstar's railgun zooms out when aiming (28)
 7. Ion's tripwire beams are misaligned (27)
 8. Tone's lock-on marks on enemy Titans (25)

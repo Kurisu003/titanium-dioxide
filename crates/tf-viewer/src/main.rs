@@ -87,6 +87,32 @@ struct Args {
     titan: usize,
 }
 
+/// TF_TIMESCALE=x runs the game at x times real speed (testing: slow motion for screenshots;
+/// scripts and `--shots` stay on the wall clock).
+fn time_scale(mut time: ResMut<Time<Virtual>>) {
+    if let Some(x) = std::env::var("TF_TIMESCALE").ok().and_then(|v| v.parse::<f32>().ok()).filter(|x| *x > 0.0) {
+        time.set_relative_speed(x);
+        log::info!("time scale {x}");
+    }
+}
+
+/// The `timescale=x` script verb: game time runs at x times real speed while it's active
+/// (slow motion from a chosen moment, so loading and weapon swaps aren't slowed too).
+fn script_time_scale(script: Res<player::Script>, loaded_at: Option<Res<ui::LoadedAt>>, mut time: ResMut<Time<Virtual>>, mut base: Local<Option<f32>>) {
+    let base = *base.get_or_insert(time.relative_speed());
+    let t = loaded_at.map(|l| l.secs()).unwrap_or(0.0);
+    let x = script
+        .entries
+        .iter()
+        .filter(|(a, b, _)| script.enabled && t >= *a && t <= b.max(*a))
+        .find_map(|(_, _, act)| act.strip_prefix("timescale=").and_then(|v| v.parse::<f32>().ok()))
+        .filter(|x| *x > 0.0)
+        .unwrap_or(base);
+    if (time.relative_speed() - x).abs() > 1e-6 {
+        time.set_relative_speed(x);
+    }
+}
+
 fn parse_vec(s: &str) -> Option<Vec3> {
     let v: Vec<f32> = s.split_whitespace().filter_map(|x| x.parse().ok()).collect();
     (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
@@ -280,7 +306,8 @@ fn main() {
         .init_resource::<autotitan::AutoTitan>()
         .init_resource::<fparms::FpSeq>()
         .init_resource::<hud::HudHidden>()
-        .add_systems(Startup, (weapons::setup_fx, ui::load_ui_assets, ui::spawn_loading_screen).chain())
+        .add_systems(Startup, (time_scale, weapons::setup_fx, ui::load_ui_assets, ui::spawn_loading_screen).chain())
+        .add_systems(First, script_time_scale)
         .add_systems(Update, (setup, hud::spawn_hud, pilotability::spawn_pilot_slots, pilotability::setup_pilot_kit, pilotbody::spawn_pilot_body, rodeo::spawn_battery_hud, fparms::spawn_arms).chain().run_if(ui::loading).before(ui::loading_tick))
         // While warming up too: the reflection cubemap it copies changes the viewmodels' pipelines.
         .add_systems(Update, vmcam::follow_camera.run_if(ui::world_ready.and(not(ui::loaded))))

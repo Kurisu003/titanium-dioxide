@@ -286,7 +286,7 @@ pub struct PilotWeapon {
     /// Rounds in the burst being fired (the script's burst, or one per smart lock).
     burst_size: u32,
     /// The script's `projectilemodel`, for smart missiles.
-    projectile: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>,
+    projectile: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>,
     /// Sway pivots (`sway_rotate_attach`, `_zoomed`): the attachment's bone and its offset.
     pub pivots: [(String, Vec3); 2],
     /// The ADS scope's body part and the bone code puts at the eye (`def_c_scope_ads`).
@@ -499,8 +499,8 @@ pub fn build_loadout(
         // Smart launchers fire the script's projectile model.
         let mut projectile = Vec::new();
         if def.smart.as_ref().is_some_and(|s| s.missile) && !def.projectile_model.is_empty() {
-            match crate::world::build_static_model(&gd, &def.projectile_model, &mut cache, &mut meshes, &mut images, &mut materials) {
-                Ok((parts, _)) => projectile = parts,
+            match crate::world::build_posed_model(&gd, &def.projectile_model, &mut cache, &mut meshes, &mut images, &mut materials) {
+                Ok(parts) => projectile = parts,
                 Err(e) => log::warn!("projectile {}: {e:#}", def.projectile_model),
             }
         }
@@ -704,6 +704,14 @@ pub fn spawn_bolt(commands: &mut Commands, fx: &FxAssets, pos: Vec3, vel: Vec3, 
 #[derive(Component)]
 pub struct ProjectileModel(pub &'static str);
 
+/// A projectile model part's transform under its bolt, whose +Y (Bevy) runs along the flight:
+/// the part's model-space placement, model space (game axes, nose along +X as Source models
+/// point) turned into Bevy's Y-up metre space, and its +X onto the bolt's +Y.
+fn projectile_local(place: Transform) -> Transform {
+    let to_bolt = Transform::from_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
+    to_bolt.mul_transform(place)
+}
+
 /// Give new projectiles their model, built once per model path.
 #[allow(clippy::type_complexity)]
 pub fn attach_projectile_models(
@@ -713,22 +721,19 @@ pub fn attach_projectile_models(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut built: Local<std::collections::HashMap<&'static str, Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>>,
+    mut built: Local<std::collections::HashMap<&'static str, Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>>>,
     new: Query<(Entity, &ProjectileModel), Added<ProjectileModel>>,
 ) {
     for (id, m) in &new {
-        let parts = built.entry(m.0).or_insert_with(|| match crate::world::build_static_model(&gd, m.0, &mut cache, &mut meshes, &mut images, &mut materials) {
-            Ok((parts, _)) => parts,
+        let parts = built.entry(m.0).or_insert_with(|| match crate::world::build_posed_model(&gd, m.0, &mut cache, &mut meshes, &mut images, &mut materials) {
+            Ok(parts) => parts,
             Err(e) => {
                 log::warn!("projectile {}: {e:#}", m.0);
                 Vec::new()
             }
         });
-        // As the smart missile's: the model in game axes (nose along +Z) turned into Bevy's
-        // Y-up, metre space.
-        let local = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
-        for (mesh, mat) in parts.iter() {
-            commands.entity(id).with_child((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), local));
+        for (mesh, mat, place) in parts.iter() {
+            commands.entity(id).with_child((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), projectile_local(*place)));
         }
     }
 }
@@ -736,7 +741,7 @@ pub fn attach_projectile_models(
 /// Launch a smart missile (the Archer's rocket): the script's projectile model with a smoke
 /// trail, homing on `target` when it has one (`SmartAmmo_FireWeapon_HomingMissile`; missiles
 /// live 10 s).
-fn spawn_smart_missile(commands: &mut Commands, pos: Vec3, vel: Vec3, def: &WeaponDef, target: Option<Entity>, homing: f32, model: &[(Handle<Mesh>, Handle<StandardMaterial>)]) {
+fn spawn_smart_missile(commands: &mut Commands, pos: Vec3, vel: Vec3, def: &WeaponDef, target: Option<Entity>, homing: f32, model: &[(Handle<Mesh>, Handle<StandardMaterial>, Transform)]) {
     let mut bolt = PilotBolt::new(pos, vel, 0.0, def, false);
     bolt.life = 10.0;
     bolt.homing = target.map(|t| (t, homing));
@@ -748,10 +753,8 @@ fn spawn_smart_missile(commands: &mut Commands, pos: Vec3, vel: Vec3, def: &Weap
             bolt,
         ))
         .id();
-    // The model is in game axes (nose along +Z): turn it into Bevy's Y-up, metre space.
-    let local = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
-    for (mesh, mat) in model {
-        let part = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), local)).id();
+    for (mesh, mat, place) in model {
+        let part = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), projectile_local(*place))).id();
         commands.entity(id).add_child(part);
     }
 }

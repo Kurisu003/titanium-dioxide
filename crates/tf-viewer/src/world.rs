@@ -306,6 +306,46 @@ pub fn build_static_model(
     Ok((out, tris))
 }
 
+/// As `build_static_model`, with each part's model-space transform: its bone where the model's
+/// first animation frame puts it. A part's mesh is stored around its bone, which can lie along
+/// another axis than the model (the rocket projectiles' meshes run along Z, the models along X).
+pub fn build_posed_model(
+    gd: &GameData,
+    path: &str,
+    cache: &mut Cache,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+) -> anyhow::Result<Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>> {
+    let model = Model::parse(gd.read_file(path)?)?;
+    let pose = tf_assets::mdl::screen_cull::pose(&model, 0).ok();
+    let mut out = Vec::new();
+    for md in model.meshes(&[])? {
+        let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+        let mat_name = model.textures.get(tex).cloned().unwrap_or_default();
+        let mat = convert::material(gd, cache, images, materials, &mat_name, false);
+        // Bone pose x pose_to_bone, as screen_cull::skin places a vertex.
+        let bone = md.joints.first().map(|j| j[0] as usize);
+        let place = match (bone, pose.as_ref()) {
+            (Some(b), Some(pose)) if b < pose.len() && b < model.bones.len() => {
+                let ([qx, qy, qz, qw], p) = pose[b];
+                let t = &model.bones[b].pose_to_bone;
+                let inv = Mat4::from_cols(
+                    Vec4::new(t[0][0], t[1][0], t[2][0], 0.0),
+                    Vec4::new(t[0][1], t[1][1], t[2][1], 0.0),
+                    Vec4::new(t[0][2], t[1][2], t[2][2], 0.0),
+                    Vec4::new(t[0][3], t[1][3], t[2][3], 1.0),
+                );
+                Transform::from_matrix(Mat4::from_rotation_translation(Quat::from_xyzw(qx, qy, qz, qw), Vec3::from(p)) * inv)
+            }
+            _ => Transform::IDENTITY,
+        };
+        let mesh = meshes.add(convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, None));
+        out.push((mesh, mat, place));
+    }
+    Ok(out)
+}
+
 /// Static props (game lump `sprp`). Each distinct model is converted once and instanced.
 pub fn spawn_static_props(
     commands: &mut Commands,
