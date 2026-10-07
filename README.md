@@ -291,8 +291,9 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   - Aiming down sights scales walking (and BT's) speed by the gun's `ads_move_speed_scale`,
     in proportion to how far the zoom has gone.
   - Camera feel from the set file: smoothed step-ups, a landing dip between
-    `viewkickFallDistMin` and `viewkickFallDistMax`, the sprint view offset and lean, head bob,
-    and slide FOV.
+    `viewkickFallDistMin` and `viewkickFallDistMax`, the sprint view offset and lean,
+    and slide FOV. There is no camera head bob (the game's settings have none; walking bobs
+    only the viewmodel, from the weapon's `bob_*` keys).
   - Movement sounds: footsteps, jump jets, landings, wall-runs, slides and mantles.
   - The jump jets' body tails (`Jumpjet_Jump_Body_1P`, `Jumpjet_Jet_Body_1P` for a double jump and `Jumpjet_Wallrun_Body_1P`) play once from the jump or wall-run start and are cut off on landing or leaving the wall. Their records don't loop and have no end sound, so cutting them at the end of the jump is our reading of how the engine uses them.
   - Ziplines (Rise, Relic and several campaign maps): each `move_rope` with `Zipline` 1 in
@@ -404,7 +405,7 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   `near_clip_plane` as well as `near`, so both are set. While zoomed, world effects at the
   muzzle (tracers, flashes) are not yet moved to where the gun appears. The Pilot's viewmodels
   sit at the view origin, as the engine draws them: they ride with the sprint lowering (6
-  units), head bob, landing dip, step smoothing, shake and view roll. Before, they stayed at
+  units), landing dip, step smoothing, shake and view roll. Before, they stayed at
   the simulated eye, so while sprinting the camera was inside the chest and the arms model's
   torso (a full body) filled the view.
 - **Fire rate ramp:** `fire_rate_max` with `_time_speedup` and `_time_cooldown` (the Devotion

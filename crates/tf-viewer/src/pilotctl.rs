@@ -856,14 +856,8 @@ pub fn pilot_camera(
             f.tilt_vel += (want_vel - f.tilt_vel).clamp(-35.0 * dt, 35.0 * dt);
             f.tilt_frac = (f.tilt_frac + f.tilt_vel * dt).clamp(-1.0, 1.0);
             let tilt = f.tilt_frac * 2f32.to_radians() * f.sprint;
-            // Head bob with the stride.
-            let speed = s.horizontal_speed();
-            if grounded && speed > 20.0 {
-                f.bob_phase += speed * dt / 64.0 * std::f32::consts::TAU;
-            }
-            let bob_amp = if grounded { (speed / 243.0).min(1.0) * (0.5 + 0.7 * f.sprint) } else { 0.0 };
-            f.bob = blend(f.bob, bob_amp, 10.0);
-            let bob = f.bob_phase.sin().abs() * f.bob;
+            // No head bob: the game's settings have none for the camera (only the weapons'
+            // `bob_*` keys, which move the viewmodel).
             // Wall-running tilts the head away from the wall (feet on it): a wall on the left rolls
             // the view clockwise. client.dll convars: wallrun_maxViewTilt 15 degrees,
             // wallrun_viewTiltSpeed 6, and wallrun_viewTiltPredictTime 0.25 s - the tilt starts
@@ -902,7 +896,7 @@ pub fn pilot_camera(
             if let Projection::Perspective(pp) = projection.as_mut() {
                 pp.fov *= 1.0 + 0.1 * f.slide_fov;
             }
-            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z - 6.0 * f.sprint + f.dip - bob);
+            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z - 6.0 * f.sprint + f.dip);
             *vm_eye = VmEye { offset: eye - pilot_eye, roll: f.roll };
             let (py, pp) = (punch.yaw.to_radians(), punch.pitch.to_radians() - f.dip * 0.004);
             (eye, view_quat(s.yaw + py, s.pitch + pp) * Quat::from_rotation_x(f.roll + punch.roll.to_radians()))
@@ -945,7 +939,7 @@ fn from_bevy(v: Vec3) -> Vec3 {
 }
 
 
-/// How far the Pilot's view sits from the simulated eye (sprint lowering, head bob, landing
+/// How far the Pilot's view sits from the simulated eye (sprint lowering, landing
 /// dip, step smoothing, shake) and its roll, so first-person models ride with the view as the
 /// game draws them from the view origin. Set by `pilot_camera` (read by the viewmodels on the
 /// next frame; the offset changes smoothly). Game space.
@@ -981,8 +975,6 @@ pub struct CamFeel {
     wall_roll: f32,
     tilt_frac: f32,
     tilt_vel: f32,
-    bob: f32,
-    bob_phase: f32,
     slide_fov: f32,
     slide_roll: f32,
 }

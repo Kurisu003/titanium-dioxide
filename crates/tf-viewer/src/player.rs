@@ -729,6 +729,7 @@ pub fn update_camera(
     let s = &t.state;
     let p = &settings.0;
     let dash_roll = tilt.step(s, time.delta_secs());
+    let (sprint_lower, sprint_roll) = tilt.sprint_step(s, time.delta_secs());
     let (yaw, pitch) = (s.yaw + punch.yaw.to_radians(), s.pitch + punch.pitch.to_radians());
     let dir = Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin());
     // ADS zoom: the game's FOVs are horizontal at 4:3 (75 hip); convert the ratio to our
@@ -749,6 +750,7 @@ pub fn update_camera(
     // walk cycle, once per footstep, scaled by how much BT is moving.
     let moving = (t.blend_speed / p.speed).clamp(0.0, 1.5);
     let jolt = Vec3::Z * (-5.0 * moving * (t.move_cycle * std::f32::consts::TAU * 2.0).sin().abs());
+    let jolt = jolt + Vec3::Z * sprint_lower;
     let eye = bv(s.eye(p)) + jolt;
     if let Some((c, c_actor)) = t.cockpit {
         if let Ok(mut v) = vis.get_mut(c) {
@@ -804,7 +806,7 @@ pub fn update_camera(
     };
     *cam = Transform::from_translation(to_bevy(pos)).looking_to(to_bevy(dir).normalize(), Vec3::Y);
     // Recoil roll (positive rolls the view right): about the view axis.
-    cam.rotate_local_z(-punch.roll.to_radians() - if cockpit { dash_roll } else { 0.0 });
+    cam.rotate_local_z(-punch.roll.to_radians() - if cockpit { dash_roll + sprint_roll } else { 0.0 });
     log::trace!("titan pos {:?} yaw {:.1} cam {:?} dir {:?}", s.pos, s.yaw.to_degrees(), pos, dir);
 }
 
@@ -816,12 +818,21 @@ pub fn update_camera(
 const DODGE_VIEW_TILT_MAX: f32 = 10.0;
 const DODGE_COCKPIT_TILT_MAX: f32 = 4.0;
 
+/// BT's sprint view (titan_base.set sprintViewOffset -25, titan_buddy.set sprinttiltMaxRoll 3),
+/// with the Pilot's easing (pilotctl.rs) and the same client.dll sprinttilt_* lean.
+const TITAN_SPRINT_VIEW_OFFSET: f32 = -25.0;
+const TITAN_SPRINT_TILT_MAX_ROLL: f32 = 3.0;
+
 #[derive(Default)]
 pub struct DashTilt {
     dashes: u32,
     side: f32,
     since: f32,
     frac: f32,
+    sprint: f32,
+    tilt_frac: f32,
+    tilt_vel: f32,
+    prev_yaw: f32,
 }
 
 impl DashTilt {
@@ -838,6 +849,19 @@ impl DashTilt {
         let (want, rate) = if self.since < 0.7 { (self.side, 5.0) } else { (0.0, 2.5) };
         self.frac += (want - self.frac) * (1.0 - (-dt * rate).exp());
         self.frac * DODGE_VIEW_TILT_MAX.to_radians()
+    }
+
+    /// Sprint lowering (game units, negative is down) and lean (radians, positive to the right).
+    fn sprint_step(&mut self, s: &tf_sim::titan::TitanState, dt: f32) -> (f32, f32) {
+        let want = if s.sprinting { 1.0 } else { 0.0 };
+        self.sprint += (want - self.sprint) * (1.0 - (-dt * 6.0).exp());
+        let turn = ((s.yaw - self.prev_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI) / dt.max(1e-3);
+        self.prev_yaw = s.yaw;
+        let target = (-turn.to_degrees() / 120.0).clamp(-1.0, 1.0) * want;
+        let want_vel = ((target - self.tilt_frac) * 12.0).clamp(-2.0, 2.0);
+        self.tilt_vel += (want_vel - self.tilt_vel).clamp(-35.0 * dt, 35.0 * dt);
+        self.tilt_frac = (self.tilt_frac + self.tilt_vel * dt).clamp(-1.0, 1.0);
+        (TITAN_SPRINT_VIEW_OFFSET * self.sprint, self.tilt_frac * TITAN_SPRINT_TILT_MAX_ROLL.to_radians() * self.sprint)
     }
 }
 
