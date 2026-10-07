@@ -1117,8 +1117,6 @@ pub fn update_pilot_bolts(
     }
 }
 
-/// How far ahead of the eye an ADS scope's bone sits: the length of its tube.
-const SCOPE_TUBE_DEPTH: f32 = 3.0;
 
 /// `TF_VM_NO=walk,idle,jump,land,raise` turns viewmodel layers off (for comparisons).
 fn vm_off(layer: &str) -> bool {
@@ -1356,17 +1354,10 @@ pub fn pilot_viewmodel(
     actor.additive = additive;
     actor.root_offsets.clear();
     let offset = actor.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
-    // Scopes: the engine puts the ADS scope (a dark tube with the reticle and a glowing
-    // ring, on a root bone animated relative to the model origin) in front of the eye; it
-    // shows from zoom_scope_frac_start, and from zoom_scope_frac_end it is all that is drawn
-    // (the scope model would block the view). The tube ends at its bone (z -3..0) and the eye
-    // goes at its rear opening. Guesses at the engine's rules, from the keys' names and the
-    // tube's shape.
-    if let Some((part, bone)) = ads_scope {
-        let depth = std::env::var("TF_SCOPE_DEPTH").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(SCOPE_TUBE_DEPTH);
-        if let Some(t) = actor.bone_model_transform("def_c_scope_ads") {
-            actor.root_offsets.push((bone, offset + Vec3::X * depth - t.translation));
-        }
+    // Scopes: the ADS scope (a dark tube with the reticle and glowing emitters) sits where the
+    // ADS animation puts its bone; it shows from zoom_scope_frac_start, and from
+    // zoom_scope_frac_end it is all that is drawn (the rest of the gun would block the view).
+    if let Some((part, _)) = ads_scope {
         let (show_scope, only_scope) = (ads >= scope_frac.0, ads >= scope_frac.1);
         for (parent, p, mut v) in &mut part_meshes {
             if parent.parent() != vm {

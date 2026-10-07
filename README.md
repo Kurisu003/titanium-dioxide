@@ -458,10 +458,11 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   `TF_NO_WEAPON_SCREENS=1` turns them off.
 - **Scopes:** snipers with `bodygroup_ads_scope_name/set` show that part (a funnel with the
   reticle and a glowing ring) in front of the eye from `zoom_scope_frac_start`, and only it
-  from `zoom_scope_frac_end`, when the scope model would block the view. The engine places
-  its root bone `def_c_scope_ads` in code; here the eye sits at the funnel's wide end, 3
-  units behind the bone (`TF_SCOPE_DEPTH` to try others). Both rules are guesses from the key
-  names and the mesh. Unlit translucent shaders (reticles) are drawn blended and unlit.
+  from `zoom_scope_frac_end`, when the scope model would block the view. The scope sits where
+  the gun's ADS animation puts its bone `def_c_scope_ads` (the Kraber's and Longbow's sight
+  picture then fills the screen height, with the emitter bars at its sides and the reticle
+  lines across it). Showing it from those zoom fractions is our reading of the key names.
+  Unlit translucent shaders (reticles) are drawn blended and unlit.
 
 ### Look and front end
 

@@ -1,5 +1,6 @@
 //! Cut named images out of an rpak's UI atlases as raw RGBA: `uimgdump <ui.rpak> <outdir> <rui path>...`
-//! (writes `<last path part>_<w>x<h>.rgba`). For looking at assets only, never commit.
+//! (writes `<last path part>_<w>x<h>.rgba`), or every atlas whole with `ALL` as the path.
+//! For looking at assets only, never commit.
 use tf_assets::texture::{self, TexFormat};
 fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().collect();
@@ -24,6 +25,16 @@ fn main() -> anyhow::Result<()> {
             _ => false,
         };
         if !ok {
+            continue;
+        }
+        if a.get(3).map(String::as_str) == Some("ALL") {
+            let mut out = Vec::with_capacity(w * h * 4);
+            for p in &px {
+                let b = p.to_le_bytes();
+                out.extend_from_slice(&[b[2], b[1], b[0], b[3]]);
+            }
+            std::fs::write(format!("{}/atlas_{:016x}_{w}x{h}.rgba", a[2], atlas.texture), out)?;
+            eprintln!("atlas {:016x}: {w}x{h}, {} images", atlas.texture, atlas.images.len());
             continue;
         }
         for img in &atlas.images {
