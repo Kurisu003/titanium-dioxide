@@ -160,6 +160,18 @@ pub fn decode_bc1(data: &[u8], w: usize, h: usize) -> Vec<[u8; 3]> {
     out
 }
 
+/// Decode the top level of a BC3 or BC7 image to RGBA, or None for other formats.
+pub fn decode_rgba(format: TexFormat, data: &[u8], w: usize, h: usize) -> Option<Vec<[u8; 4]>> {
+    let mut px = vec![0u32; w * h];
+    let ok = match format {
+        TexFormat::Bc3 | TexFormat::Bc3Srgb => texture2ddecoder::decode_bc3(data, w, h, &mut px).is_ok(),
+        TexFormat::Bc7 | TexFormat::Bc7Srgb => texture2ddecoder::decode_bc7(data, w, h, &mut px).is_ok(),
+        _ => false,
+    };
+    // texture2ddecoder packs BGRA into a u32.
+    ok.then(|| px.iter().map(|p| { let b = p.to_le_bytes(); [b[2], b[1], b[0], b[3]] }).collect())
+}
+
 /// Decode the top level of a BC4 image to one byte per texel.
 pub fn decode_bc4(data: &[u8], w: usize, h: usize) -> Vec<u8> {
     let mut out = vec![0u8; w * h];

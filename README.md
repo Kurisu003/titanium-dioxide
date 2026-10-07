@@ -1170,11 +1170,13 @@ the free camera at a position in game units; `--no-props` skips static props.
 
 - Fog/godray cards and scrolling/fading effect surfaces have a shader path (`uber.rs`: the
   shader set name's features `Unlit/Add/Trans/Vcolt/Vcola/Adf/Aef/Uv1at` and the material's CPU
-  constants: UV transforms, tints, distance/edge fades), but it is off by default:
-  `TF_UBER=1` turns it on. It now costs about 5% of the frame rate (fragments the distance or
-  edge fade hides are dropped before any texture read, and unlit surfaces skip lighting), but
-  Forwardbase Kodai's haze cards wash the middle distance out in a flat tan, much stronger than
-  the game's. `TF_NO_VSYNC=1` runs uncapped for frame-rate measurements
+  constants: UV transforms, tints, distance/edge fades). It costs about 5% of the frame rate
+  (98.6 against 93.5 fps on Forwardbase Kodai: fragments the distance or edge fade hides are
+  dropped before any texture read, and unlit surfaces skip lighting); `TF_NO_UBER=1` turns it
+  off, which also leaves out the atmosphere cards and godrays and lights BT's cockpit console
+  (an unlit material in the game) like the world. Opacity masks are merged into the colour's
+  alpha on the CPU at up to 256 texels, BC7 colour maps included (Kodai's dust clouds are a
+  white BC7 colour with a BC4 mask). `TF_NO_VSYNC=1` runs uncapped for frame-rate measurements
   (`RUST_LOG=tf_viewer=info` logs `perf:` lines). `matcpu` and `shdsls` examples dump the
   constants and shader set names.
   Effect models always use it when their additive material scrolls or edge-fades: the Thermal

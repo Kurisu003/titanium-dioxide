@@ -86,12 +86,16 @@ pub struct UberInfo {
 /// The effect features of a material, or None for an ordinary surface (drawn with the plain
 /// StandardMaterial path).
 pub fn info(gd: &GameData, name: &str) -> Option<UberInfo> {
-    // Off by default: it cost ~40% of the frame rate on 2026-10-05 (98 -> 60 fps on
-    // mp_forwardbase_kodai); TF_UBER=1 turns the effect path on.
-    if std::env::var_os("TF_UBER").is_none() {
+    if !enabled() {
         return None;
     }
     info_always(gd, name)
+}
+
+/// The effect path for world surfaces is on unless TF_NO_UBER is set (it costs about 5% of the
+/// frame rate on mp_forwardbase_kodai).
+pub fn enabled() -> bool {
+    std::env::var_os("TF_NO_UBER").is_none()
 }
 
 /// `info` without the world-surface switch (for the few effect models, which are cheap).

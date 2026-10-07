@@ -82,7 +82,7 @@ pub fn spawn_world(
         let td = &texdata[sort.texture_data as usize];
         let lname = td.name.to_ascii_lowercase();
         // Tool brushes are not drawn. (Fog and godray cards are, with their own shader: uber.rs.)
-        if lname.starts_with("tools") || (lname.starts_with("world\\atmosphere") && std::env::var_os("TF_UBER").is_none()) {
+        if lname.starts_with("tools") || (lname.starts_with("world\\atmosphere") && !crate::uber::enabled()) {
             continue;
         }
         // TF_HIDE=substr: debug toggle that leaves out world materials whose name contains it.
@@ -341,9 +341,9 @@ pub fn spawn_static_props(
             anyhow::bail!("hidden (TF_HIDE)");
         }
         // Godray models are soft additive light-shaft volumes; uber.rs draws them with their
-        // shader's fades. without TF_UBER they are left out (as ordinary translucent meshes they become
+        // shader's fades. with TF_NO_UBER they are left out (as ordinary translucent meshes they become
         // hard walls of haze).
-        if name.to_ascii_lowercase().contains("godray") && std::env::var_os("TF_UBER").is_none() {
+        if name.to_ascii_lowercase().contains("godray") && !crate::uber::enabled() {
             anyhow::bail!("godray volume (not drawn)");
         }
         static_model_data(gd, name)

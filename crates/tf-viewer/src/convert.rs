@@ -108,7 +108,9 @@ fn small_texture(gd: &GameData, pak_hint: usize, guid: u64) -> Option<(usize, us
     let px = match tex.info.format {
         TexFormat::Bc4 => texture::decode_bc4(&tex.data, w, h).into_iter().map(|g| [g; 3]).collect(),
         TexFormat::Bc1 | TexFormat::Bc1Srgb => texture::decode_bc1(&tex.data, w, h),
-        _ => return None,
+        // (BC7: the Kodai cloud cards' colour; without it their opacity mask was dropped and
+        // they drew solid.)
+        f => texture::decode_rgba(f, &tex.data, w, h)?.into_iter().map(|p| [p[0], p[1], p[2]]).collect(),
     };
     Some((w, h, px))
 }
