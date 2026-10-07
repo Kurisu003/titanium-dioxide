@@ -104,6 +104,15 @@ measurement; **C** = visuals and rendering.
 - *Research:* R2, diffing the viewkick keys of the sidearms against the rifles to find what's different and unused. R3/R4 60 fps clips of a few shots (view kick vs. gun kick).
 - *Fix and verify:* R5 strips of a 3-shot burst.
 
+**23. BT slides too much when you hold forward and turn by looking around** (B, high, added after the first fix)
+- *Likely cause:* in `tf-sim/src/titan.rs` (~254), BT's velocity moves toward the wanted velocity at one fixed rate for the whole vector. When you turn, the wanted velocity points somewhere new but has the same length, so the code takes the "slowing down" branch:
+  - while sprinting it uses `sprint_decel` (400 u/s²), so a 90° turn at sprint speed takes over a second and BT drifts sideways;
+  - while walking it uses `decel` (1500).
+  Source-style movement handles this differently: friction removes speed in every direction, and acceleration only adds speed along the wish direction, so turning feels much tighter. Respawn's titan movement (the `.set` acceleration and deceleration keys) is engine code we can't read directly.
+- *Research:* R2, checking which titan `.set` keys exist (acceleration, deceleration, and whether there's a turn or friction key) and what they're called. R1 for engine titan-movement ConVars. R3 clips of a titan sprinting and turning (strafing arcs, how fast the path bends). Also measure with the recorder: hold W, turn the mouse at a steady rate, and log the angle between where BT faces and where he's moving.
+- *Fix:* split the velocity into the part along the wish direction and the sideways part. The sideways part is removed at the deceleration rate (or faster, if the reference shows that), and only the forward part uses acceleration. Then tune to the measurement.
+- *Verify:* recorder run of sprint-and-turn, comparing the facing-vs-movement angle over time with the reference.
+
 ### Weapons, HUD, sights
 
 **11. HUD countdowns don't behave like TF2** (C, medium)
@@ -191,27 +200,28 @@ measurement; **C** = visuals and rendering.
 
 We work through these one at a time, and the next one starts only after the user has tested and approved the current one.
 
-1. Re-entering the Titan gives forward momentum (item 5)
+1. ~~Re-entering the Titan gives forward momentum (item 5)~~ (fixed in 76b3aa5: a leftover dash press from jumping into BT)
 2. Tone's Particle Wall curves the wrong way (19)
 3. Titan weapons lose their crosshair when zoomed (12)
 4. Legion right-click artifact on the weapon (13)
 5. On-foot muzzle flash stays behind in the world (14)
 6. Thunderbolt scope depends on looking up or down (15)
 7. Titan HUD moves far too much (1)
-8. Titan dash feels weird (4)
-9. Everything moves too much and is too shaky (2)
-10. HUD countdowns don't behave like TF2 (11)
-11. Mozambique and sidearm recoil (10)
-12. ADS animation is weird (3)
-13. Holo Pilot moves weirdly (20)
-14. Wallrun start is unreliable (6)
-15. Archer has no proper sight (16)
-16. Sliding doesn't feel like TF2 (7)
-17. Grappling hook doesn't feel right (9)
-18. Floor drawn over explosions and shields (18)
-19. Smoke and see-through effects look wrong (17)
-20. Falling through buildings (8)
-21. Lighting (21, parked until the user asks)
+8. BT slides too much when turning while holding forward (23)
+9. Titan dash feels weird (4)
+10. Everything moves too much and is too shaky (2)
+11. HUD countdowns don't behave like TF2 (11)
+12. Mozambique and sidearm recoil (10)
+13. ADS animation is weird (3)
+14. Holo Pilot moves weirdly (20)
+15. Wallrun start is unreliable (6)
+16. Archer has no proper sight (16)
+17. Sliding doesn't feel like TF2 (7)
+18. Grappling hook doesn't feel right (9)
+19. Floor drawn over explosions and shields (18)
+20. Smoke and see-through effects look wrong (17)
+21. Falling through buildings (8)
+22. Lighting (21, parked until the user asks)
 
 ## Order of work (original grouping)
 
