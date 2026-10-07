@@ -753,6 +753,8 @@ pub struct KitState {
     queue_timer: f32,
     pod_right: bool,
     core_was_active: bool,
+    /// The Laser Core's beam and end-glow systems while it fires.
+    laser_fx: Option<(Entity, Entity)>,
     core_tick: f32,
     /// Tone's lock stacks: (enemy, stacks, seconds since the last hit).
     pub locks: Vec<(Entity, u32, f32)>,
@@ -794,6 +796,7 @@ impl Default for KitState {
             queue_timer: 0.0,
             pod_right: false,
             core_was_active: false,
+            laser_fx: None,
             core_tick: 0.0,
             locks: Vec::new(),
             rng: 0x2545_F491_4F6C_DD1D,
@@ -1137,9 +1140,18 @@ pub fn kit_input(
                         hurt(&mut e, n.laser_titan, n.laser_pilot, &mut core);
                     }
                 }
-                let (a, b) = (to_bevy(eye + right * 40.0 - Vec3::Z * 30.0), to_bevy(eye + dir * t));
-                emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.5, color: Vec3::new(8.0, 1.5, 1.0) });
-                emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.5, energy: true });
+                // From the laser pod's muzzle_flash at the end of its draw (atpov_titan_bt_laser_pod:
+                // 62.5 ahead, 17.3 left and 11.8 above the camera bone): the script's
+                // P_wpn_hand_laser_beam, and its exp_laser_lite impact table.
+                let (a, b) = (to_bevy(eye + dir * 62.5 - right * 17.3 + Vec3::Z * 11.8), to_bevy(eye + dir * t));
+                if std::env::var_os("TF_OLD_FX").is_none() {
+                    crate::pfx::emit_beam(&mut commands, "P_wpn_hand_laser_beam", a, b);
+                    let surface = if who.is_some() { crate::particles::Surface::Titan } else { crate::particles::Surface::World };
+                    emit(&mut commands, Effect::Hit { at: b, normal: (a - b).normalize_or(Vec3::Y), table: "exp_laser_lite", surface, victim: false, scale: 2.5 });
+                } else {
+                    emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.5, color: Vec3::new(8.0, 1.5, 1.0) });
+                    emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.5, energy: true });
+                }
                 true
             }
             OrdKind::LaserShot => false,
@@ -1468,6 +1480,12 @@ pub fn kit_input(
         }
     }
     st.core_was_active = core_on;
+    if !(core_on && core.kind == CoreKind::Laser) {
+        if let Some((beam, glow)) = st.laser_fx.take() {
+            commands.entity(beam).despawn();
+            commands.entity(glow).despawn();
+        }
+    }
     st.melee_damage = if active.def == DefKind::SwordBlock { n.sword_damage + if sword_core { n.sword_core_bonus } else { 0.0 } } else { 500.0 };
     if core_on && !frozen {
         match core.kind {
@@ -1493,8 +1511,21 @@ pub fn kit_input(
                 // From the chest: the Laser Core viewmodel's muzzle_flash (atpov_laser_cannon:
                 // 32 ahead of and 44 below the camera bone; its arms hang out of view).
                 let (a, b) = (to_bevy(eye + dir * 32.0 - Vec3::Z * 44.0), to_bevy(eye + dir * t));
-                emit(&mut commands, Effect::Tracer { from: a, to: b, width: 1.2, color: Vec3::new(2.0, 4.0, 8.0) });
-                emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.0, energy: true });
+                if std::env::var_os("TF_OLD_FX").is_none() {
+                    // The script's sustained laser: P_wpn_lasercannon_FP from the muzzle to the
+                    // hit point, P_lasercannon_endglow on the hit point, both kept running.
+                    let (beam, glow) = *st.laser_fx.get_or_insert_with(|| {
+                        (
+                            commands.spawn((Transform::from_translation(a), crate::pfx::PfxTrail::new("P_wpn_lasercannon_FP"), crate::pfx::PfxBeamEnd(b))).id(),
+                            commands.spawn((Transform::from_translation(b), crate::pfx::PfxTrail::new("P_lasercannon_endglow"))).id(),
+                        )
+                    });
+                    commands.entity(beam).insert((Transform::from_translation(a).looking_at(b, Vec3::Y), crate::pfx::PfxBeamEnd(b)));
+                    commands.entity(glow).insert(Transform::from_translation(b));
+                } else {
+                    emit(&mut commands, Effect::Tracer { from: a, to: b, width: 1.2, color: Vec3::new(2.0, 4.0, 8.0) });
+                    emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.0, energy: true });
+                }
                 st.core_tick -= dt;
                 if st.core_tick <= 0.0 {
                     st.core_tick += SERVER_FRAME;

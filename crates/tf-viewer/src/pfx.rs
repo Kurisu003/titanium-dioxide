@@ -555,6 +555,11 @@ pub struct PfxTrail {
     pub oriented: bool,
 }
 
+/// With a [`PfxTrail`]: control point 1 (Bevy space), for a beam kept running between two
+/// moving points (the Laser Core). CP0 faces it.
+#[derive(Component, Clone, Copy)]
+pub struct PfxBeamEnd(pub Vec3);
+
 impl PfxTrail {
     pub fn new(name: &str) -> Self {
         Self { name: name.to_string(), effect: None, last: None, oriented: false }
@@ -2933,7 +2938,7 @@ pub fn update_pfx(
     world: Option<Res<crate::player::Collision>>,
     requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>)>,
     impacts: Query<(Entity, &ImpactRequest)>,
-    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail)>,
+    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>),
     mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>),
@@ -3016,23 +3021,31 @@ pub fn update_pfx(
     }
     // Trails follow their entities.
     let mut alive_trails = Vec::new();
-    for (ent, gt, mut tr) in &mut trails {
+    for (ent, gt, mut tr, end) in &mut trails {
         let at = to_game(gt.translation());
         let dir = tr.last.map(|l| at - l).filter(|d| d.length() > 1e-3).unwrap_or(Vec3::X);
         tr.last = Some(at);
-        let cp = if tr.oriented {
+        let end = end.map(|e| to_game(e.0));
+        let cp = if let Some(e) = end {
+            Cp::facing(at, (e - at).normalize_or(Vec3::X))
+        } else if tr.oriented {
             let (fwd, up) = (dir_to_game(gt.forward().as_vec3()), dir_to_game(gt.up().as_vec3()));
             Cp { pos: at, fwd, left: up.cross(fwd), up }
         } else {
             Cp::facing(at, dir)
         };
+        let cp1 = end.map(|e| Cp { pos: e, ..cp });
         if tr.effect.is_none() && ready {
-            tr.effect = pfx.spawn(&tr.name.clone(), &[cp], None, Some(ent));
+            let cps: Vec<Cp> = std::iter::once(cp).chain(cp1).collect();
+            tr.effect = pfx.spawn(&tr.name.clone(), &cps, None, Some(ent));
         }
         if let Some(id) = tr.effect {
             alive_trails.push(id);
             if let Some(fx) = pfx.effects.iter_mut().find(|f| f.id == id) {
                 fx.cps[0] = cp;
+                if let Some(c) = cp1 {
+                    fx.cps[1] = c;
+                }
             }
         }
     }

@@ -814,7 +814,12 @@ where the script has them):
 - **Ion** runs on a shared 1000-point energy pool that refills at 100/s after 0.2 s. Laser Shot
   costs 500 and deals 1500 to Titans. The Vortex drains 120 energy per second while held
   (`shared_energy_charge_cost` 2, taken as per 60 Hz frame). Laser Core is a 6.5 s beam that
-  deals 200 per server frame.
+  deals 200 per server frame. Both draw the scripts' systems: Laser Shot's
+  `P_wpn_hand_laser_beam` from the laser pod's muzzle (where its viewmodel holds it at the end
+  of the draw) with the `exp_laser_lite` impact table, and Laser Core's sustained
+  `P_wpn_lasercannon_FP` from the chest to the hit point with `P_lasercannon_endglow` there,
+  kept running for the whole core (a trail system with a second control point,
+  `pfx::PfxBeamEnd`).
 - **Waves**: Firewall, Arc Wave and Flame Core follow `WeaponAttackWave`. Each wave lays one
   segment every `wave_step_dist` per server frame, up to `wave_max_count` segments, and stops
   at walls and drops. Each wave hits each enemy once. Values per wave:
