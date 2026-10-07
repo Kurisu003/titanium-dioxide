@@ -827,9 +827,14 @@ where the script has them):
   The sword hits for 625, and for 625 + 1400 during Sword Core (20 s).
 - **Tracker Rockets**: need a full lock. Each 40mm hit adds a lock stack (3 = full; stacks fade
   after 10 s). Firing launches 6 homing rockets of 350.
-- Shield looks: the Vortex and Thermal Shield domes are refraction materials in the game; a disc
+- Shield looks: the Vortex dome is the effect's own model (`fx\vortex_shield_hld.mdl`, an
+  additive caustic material with an edge fade), which our uber path barely draws, so a disc
   stands in, nearly clear in the middle with a faint hex lattice and a bright rim, slowly
-  turning and breathing (drawn farther out from the cockpit so its rim rings the view). The
+  turning and breathing. In the cockpit it sits where the game puts it: on the vortex blocker
+  viewmodel's `vortex_center` tag at the end of its draw (105 units ahead, 24 left, 20 down,
+  tilted like the hand), sized to the dome model (60 units across). The blocker viewmodel
+  itself isn't loaded, so BT's left arm doesn't rise. The Thermal Shield is a refraction
+  material in the game; a disc stands in for it too. The
   Particle Wall's shells build their pattern in the shader from scaled, scrolled UV layers; a
   tiled hex lattice stands in for it.
 - **Particle Wall**: 1750 health for 8 s. **Gun Shield**: 2500 health for 6 s. Both stop enemy
@@ -1202,9 +1207,10 @@ the free camera at a position in game units; `--no-props` skips static props.
   is hidden while an execution plays.
 - Enemy Titans use their main weapon, their MP ordnance and (except Northstar) their
   defensive, but no cores. Defensives play the game's effects, BT's included
-  (`wpn_vortex_shield_charging`, `P_wpn_HeatShield`, `P_titan_gun_shield_3P` with the hex shield
+  (`wpn_vortex_chargingCP_titan`, the system the Vortex script plays, `P_wpn_HeatShield`, `P_titan_gun_shield_3P` with the hex shield
   model; in the cockpit BT's own use the `_FP` systems the game plays on the viewmodel, placed
-  at the shield point rather than on a viewmodel attachment, so Scorch's fan is a
+  at the shield point rather than on a viewmodel attachment (the Vortex at the blocker's
+  `vortex_center` pose, baked from its draw sequence), so Scorch's fan is a
   screen-filling tint there) plus a translucent disc where the game draws a refracting vortex
   dome; a round the vortex catches hangs in it as `wpn_vortex_projectile_rifle`. Particle
   Walls (BT's too) use the Titan shield wall models from `P_drone_shield_wall_XO`, stood

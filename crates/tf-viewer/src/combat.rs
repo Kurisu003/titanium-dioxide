@@ -322,6 +322,24 @@ pub fn player_combat(
     }
     // The shield disc itself. The game plays a separate `_FP` system for the owner's view.
     let fp = *mode == CameraMode::Cockpit;
+    let game_fx = std::env::var_os("TF_OLD_FX").is_none();
+    // Where the shield's effect sits. The game plays the Vortex's on the blocker viewmodel's
+    // `vortex_center` (atpov_vortexblocker.mdl, held at the end of its draw_seq: 105 forward,
+    // 24 left, 20.5 down from the camera bone, its X axis turned slightly right and up), and
+    // the effect's dome model (fx\vortex_shield_hld, 60 units across) sits 10 units out along
+    // that axis. Elsewhere (third person, the heat shield, TF_OLD_FX's disc) it stays on the
+    // view line.
+    let shield_tf = |fp: bool, heat: bool| {
+        if fp && game_fx && !heat {
+            let r = Quat::from_rotation_z(s.yaw) * Quat::from_rotation_y(s.pitch);
+            let at = eye + r * Vec3::new(105.1, 24.0, -20.5);
+            let (fwd, up) = (r * Vec3::new(0.936, -0.302, 0.18), r * Vec3::new(-0.323, -0.942, 0.1));
+            Transform::from_translation(to_bevy(at)).looking_to(to_bevy(fwd).normalize(), to_bevy(up).normalize())
+        } else {
+            let dist = if fp { VORTEX_DIST_FP } else { VORTEX_DIST };
+            Transform::from_translation(to_bevy(eye + view * dist)).looking_to(to_bevy(view).normalize(), Vec3::Y)
+        }
+    };
     if let (true, Some(e)) = (vortex.active, vortex.shield) {
         if vortex.shield_fp != fp {
             commands.entity(e).despawn();
@@ -332,27 +350,32 @@ pub fn player_combat(
         (true, None) => {
             let heat = vortex.mode == VortexMode::Heat;
             let (mesh, mat) = if heat { fx.heat_disc.clone() } else { fx.vortex_disc.clone() };
-            // The game's shield effect rides the same entity (the dome itself is a refraction
-            // material in the game; the disc stands in for it).
-            let dist = if fp { VORTEX_DIST_FP } else { VORTEX_DIST };
-            let at = Transform::from_translation(to_bevy(eye + view * dist)).looking_to(to_bevy(view).normalize(), Vec3::Y);
-            let root = commands.spawn((at, Visibility::default())).id();
-            let game_fx = std::env::var_os("TF_OLD_FX").is_none();
+            let root = commands.spawn((shield_tf(fp, heat), Visibility::default())).id();
             if game_fx {
+                // mp_titanweapon_vortex_shield.nut's fxChargingFPControlPoint /
+                // fxChargingControlPoint (the dome model, its glow and trails).
                 let name = match (heat, fp) {
                     (true, true) => "P_wpn_HeatShield_FP",
                     (true, false) => "P_wpn_HeatShield",
-                    (false, true) => "wpn_vortex_shield_charging_FP",
-                    (false, false) => "wpn_vortex_shield_charging",
+                    (false, true) => "wpn_vortex_chargingCP_titan_FP",
+                    (false, false) => "wpn_vortex_chargingCP_titan",
                 };
                 commands.entity(root).insert(crate::pfx::PfxTrail::oriented(name));
             }
             vortex.shield_fp = fp;
-            // The vortex dome is a refraction material (pinched_ring_distort) that we cannot
-            // draw, so the disc stands in for it; the heat shield's flame fan is a drawn model.
+            // The effect's dome model (fx\vortex_shield_hld: an additive caustic pattern drawn
+            // through scrolled, distorted UV layers and emissive edge fades) barely shows through
+            // our effect shader, so the disc still stands in for it: in the cockpit where the
+            // dome sits (10 units out along the tag's axis) at the model's own size, 60 units
+            // across (its particle radius 3 is not applied: a guess). The heat shield's flame fan
+            // is a drawn model.
             if !(game_fx && heat) {
+                // (The size rides on a holder: the shimmer animates the disc's own scale.)
+                let local = if fp && game_fx { Transform::from_translation(Vec3::NEG_Z * 10.0 * crate::player::UNIT).with_scale(Vec3::splat(30.0 / VORTEX_RADIUS)) } else { Transform::IDENTITY };
+                let holder = commands.spawn((local, Visibility::default())).id();
+                commands.entity(root).add_child(holder);
                 let disc = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, crate::weapons::ShieldShimmer)).id();
-                commands.entity(root).add_child(disc);
+                commands.entity(holder).add_child(disc);
             }
             vortex.shield = Some(root);
         }
@@ -364,9 +387,8 @@ pub fn player_combat(
     }
     if let Some(e) = vortex.shield {
         if let Ok(mut tf) = shields.get_mut(e) {
-            let c = to_bevy(eye + view * if vortex.shield_fp { VORTEX_DIST_FP } else { VORTEX_DIST });
             // Forward = outward, the way enemy shields orient their effects (the disc is double-sided).
-            *tf = Transform::from_translation(c).looking_to(to_bevy(view).normalize(), Vec3::Y);
+            *tf = shield_tf(vortex.shield_fp, vortex.mode == VortexMode::Heat);
         }
     }
 
