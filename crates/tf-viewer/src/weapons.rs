@@ -553,6 +553,8 @@ pub struct Weapon {
     spin_fx: Option<Entity>,
     /// A Power Shot is pending: zoomed in by force, no ordinary rounds.
     alt_shot: bool,
+    /// Zoomed in by force (SetForcedADS: the Gun Shield, while it stands).
+    pub forced_ads: bool,
     pub charge: Charge,
     /// How far the fire rate has ramped toward `fire_rate_max`.
     pub rate_ramp: f32,
@@ -631,6 +633,7 @@ impl Weapon {
             trigger_held: false,
             spin_fx: None,
             alt_shot: false,
+            forced_ads: false,
             charge: Charge::default(),
             hits: 0,
             rng: 0x9E37_79B9_7F4A_7C15,
@@ -793,6 +796,9 @@ pub struct GunMuzzle {
     pub cockpit: bool,
     /// The `fx_barrel` attachment's frame, likewise (Power Shot's charge effect).
     pub barrel: Option<(Vec3, Quat)>,
+    /// The Predator viewmodel's `gun_shield_fp` attachment (on `def_c_base`, 16.2 up and 119.4
+    /// along the barrel), where the Gun Shield's first-person effect stands.
+    pub shield_fp: Option<Vec3>,
 }
 
 fn muzzle_world(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, actor: Option<Entity>) -> Option<Vec3> {
@@ -845,6 +851,7 @@ pub fn weapon_fire(
     let joint_frame = |name: &str| gun_actor.and_then(|a| actors.get(a).ok()?.joint(name)).and_then(|j| globals.get(j).ok()).map(|g| (g.translation(), g.rotation()));
     gun_muzzle.frame = joint_frame("muzzle_flash");
     gun_muzzle.barrel = joint_frame("fx_barrel");
+    gun_muzzle.shield_fp = w.viewmodel.and_then(|v| actors.get(v.1).ok()?.joint("def_c_base")).and_then(|j| globals.get(j).ok()).map(|g| g.transform_point(Vec3::new(0.0, 16.2, 119.4)));
     // The left hand is busy during Vortex and punches, Sword Block holds the sword up; dead
     // Titans don't shoot.
     let busy = vortex.is_some_and(|v| v.active) || melee.is_some_and(|m| m.t.is_some()) || health.is_some_and(|h| h.dead_for.is_some()) || kit.is_some_and(|k| k.blocking);
@@ -857,7 +864,7 @@ pub fn weapon_fire(
     let fire = (input.fire && piloted) || auto_fire;
     let (vyaw, vpitch) = if piloted { (input.yaw, input.pitch) } else { (s.yaw, s.pitch) };
 
-    let ads_target = if (input.ads || w.alt_shot || (w.def.attack_presses_ads && fire)) && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
+    let ads_target = if (input.ads || w.alt_shot || w.forced_ads || (w.def.attack_presses_ads && fire)) && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
     // zoom_time_in going in, zoom_time_out coming back out.
     let rate = dt / if ads_target >= w.ads { w.def.zoom_time } else { w.def.zoom_time_out }.max(0.05);
     w.ads = if ads_target > w.ads { (w.ads + rate).min(ads_target) } else { (w.ads - rate).max(ads_target) };
@@ -903,7 +910,11 @@ pub fn weapon_fire(
         match (spinning, w.spin_fx) {
             (true, None) => {
                 audio::event(&mut commands, "weapon_predator_windup_1p");
-                w.spin_fx = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if cockpit { "P_predator_barrel_blur_FP" } else { "P_predator_barrel_blur" }))).id());
+                let e = commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if cockpit { "P_predator_barrel_blur_FP" } else { "P_predator_barrel_blur" }))).id();
+                if cockpit {
+                    commands.entity(e).insert(crate::pfx::PfxVmSpace);
+                }
+                w.spin_fx = Some(e);
             }
             (false, Some(e)) => {
                 audio::event(&mut commands, "weapon_predator_winddown_1p");

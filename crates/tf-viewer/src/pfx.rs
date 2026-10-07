@@ -577,6 +577,12 @@ pub struct PfxTrail {
     pub oriented: bool,
 }
 
+/// With a [`PfxTrail`]: its entity is placed on a viewmodel (an `_FP` system kept running on
+/// the gun: the Gun Shield, the Predator's barrel spin), so its control points go where the
+/// viewmodel lens shows that point, as for first-person [`PfxRequest`]s.
+#[derive(Component)]
+pub struct PfxVmSpace;
+
 /// With a [`PfxTrail`]: control point 1 (Bevy space), for a beam kept running between two
 /// moving points (the Laser Core). CP0 faces it.
 #[derive(Component, Clone, Copy)]
@@ -2979,7 +2985,7 @@ pub fn update_pfx(
     world: Option<Res<crate::player::Collision>>,
     requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>, Has<PfxScreen>)>,
     impacts: Query<(Entity, &ImpactRequest)>,
-    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>)>,
+    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>),
     mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>),
@@ -3067,8 +3073,11 @@ pub fn update_pfx(
     }
     // Trails follow their entities.
     let mut alive_trails = Vec::new();
-    for (ent, gt, mut tr, end, screen) in &mut trails {
-        let at = to_game(gt.translation());
+    for (ent, gt, mut tr, end, screen, vm_space) in &mut trails {
+        let at = match (vm_space, fp_lens) {
+            (true, Some((cam, w, v))) => to_game(crate::vmcam::fx_to_world(gt.translation(), &cam, w, v)),
+            _ => to_game(gt.translation()),
+        };
         let dir = tr.last.map(|l| at - l).filter(|d| d.length() > 1e-3).unwrap_or(Vec3::X);
         tr.last = Some(at);
         let end = end.map(|e| to_game(e.0));

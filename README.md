@@ -899,6 +899,11 @@ where the script has them):
   leaving its build-up.
 - **Particle Wall**: 1750 health for 8 s. **Gun Shield**: 2500 health for 6 s. Both stop enemy
   rounds from the front (`targets::update_bolts` tests against `titankit::BoltShields`).
+  While the Gun Shield stands the gun is zoomed in by force (`GunShieldThink`'s SetForcedADS,
+  so the Predator is down and spun up), and in the cockpit its effect stands at the
+  viewmodel's `gun_shield_fp` attachment. Effects kept running on the viewmodel
+  (`pfx::PfxVmSpace`: the shield, the barrel spin and glow) go where the viewmodel lens shows
+  that point, as the one-shot `_FP` systems do.
 - **Cluster Missile**: flies at 3500 u/s for 150 heavy splash, followed by 20 bursts over 5 s
   within 250 units. **Tether Trap**: two tethers per use (SP), thrown at 1000 u/s up 0.3 and right ±0.2
   of the view (the game's `caber_shot_thrown_xl` model, tumbling); they bounce off walls, plant

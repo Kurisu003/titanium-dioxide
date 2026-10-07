@@ -1297,6 +1297,9 @@ pub fn kit_input(
                 weapon.play_charge();
                 if st.power_fx.is_none() && std::env::var_os("TF_OLD_FX").is_none() {
                     st.power_fx = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if gun_muzzle.cockpit { "P_predator_barrel_blur_glow_FP" } else { "P_predator_barrel_blur_glow" }))).id());
+                    if gun_muzzle.cockpit {
+                        commands.entity(st.power_fx.unwrap()).insert(crate::pfx::PfxVmSpace);
+                    }
                 }
             }
             if let (Some(e), Some((p, r))) = (st.power_fx, gun_muzzle.barrel) {
@@ -1426,6 +1429,8 @@ pub fn kit_input(
     if st.gun_shield_hp <= 0.0 {
         st.gun_shield = 0.0;
     }
+    // GunShieldThink: the gun is zoomed in by force while the shield stands.
+    weapon.forced_ads = st.gun_shield > 0.0;
 
     // --- Utility (E): the antirodeo slot ---
     let un = n.util.get(UTILITY.iter().find(|u| u.1 == active.util).map(|u| u.0).unwrap_or("")).copied().unwrap_or(UtilNumbers { cooldown: 20.0, charges: 1, duration: 0.0 });
@@ -1704,7 +1709,7 @@ pub fn kit_world(
     mut traps: Query<(Entity, &mut TetherTrap)>,
     mut titans: Query<(&PlayerTitan, &mut KitState, &mut TitanCore)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
-    (mut tick, mut hit_groups, gas, vortex, mut tethers, tether_assets, (control, difficulty, mut pilots, mut player, mut mods, mut enemy_walls, mode)): (
+    (mut tick, mut hit_groups, gas, vortex, mut tethers, tether_assets, (control, difficulty, mut pilots, mut player, mut mods, mut enemy_walls, mode, gun_muzzle)): (
         Local<f32>,
         Local<HashMap<u32, Vec<Entity>>>,
         Query<(Entity, &SlowTrap)>,
@@ -1719,6 +1724,7 @@ pub fn kit_world(
             ResMut<TitanMoveMods>,
             ResMut<EnemyWalls>,
             Res<CameraMode>,
+            Res<crate::weapons::GunMuzzle>,
         ),
     ),
 ) {
@@ -2101,6 +2107,9 @@ pub fn kit_world(
                     // The game's hex gun shield (P_titan_gun_shield_FP in the cockpit; the 3P
                     // system is the same models with a different trail).
                     commands.entity(e).insert(crate::pfx::PfxTrail::oriented(if fp { "P_titan_gun_shield_FP" } else { "P_titan_gun_shield_3P" }));
+                    if fp {
+                        commands.entity(e).insert(crate::pfx::PfxVmSpace);
+                    }
                 }
                 st.gun_vis = Some(e);
                 st.gun_vis_fp = fp;
@@ -2109,8 +2118,11 @@ pub fn kit_world(
         };
         // The 3P hex models hang 80 below their control point (see defense_fx_spot in
         // targets.rs); the FP system is built around the muzzle itself.
-        let fx_center = if std::env::var_os("TF_OLD_FX").is_some() || fp { center } else { center + Vec3::Z * 80.0 };
-        commands.entity(e).insert(Transform::from_translation(to_bevy(fx_center)).looking_to(to_bevy(view).normalize(), Vec3::Y));
+        // In the cockpit it stands at the viewmodel's gun_shield_fp (FX_TITAN_GUN_SHIELD_VM).
+        let old_fx = std::env::var_os("TF_OLD_FX").is_some();
+        let fx_center = if old_fx || fp { to_bevy(center) } else { to_bevy(center + Vec3::Z * 80.0) };
+        let fx_center = gun_muzzle.shield_fp.filter(|_| fp && !old_fx && gun_muzzle.cockpit).unwrap_or(fx_center);
+        commands.entity(e).insert(Transform::from_translation(fx_center).looking_to(to_bevy(view).normalize(), Vec3::Y));
     } else if let Some(e) = st.gun_vis.take() {
         commands.entity(e).despawn();
     }
