@@ -77,7 +77,9 @@ pub fn follow_camera(
     }
 }
 
-/// Move first-person meshes to their layer as they appear.
+/// Move first-person meshes to their layer as they appear. They are always in front of the
+/// camera, so they skip frustum culling: that also lets the loading screen's warm-up compile
+/// their pipelines while they sit at the origin, out of view.
 pub fn tag_meshes(
     mut commands: Commands,
     roots: Query<Entity, With<Viewmodel>>,
@@ -87,7 +89,7 @@ pub fn tag_meshes(
     for root in &roots {
         for e in children.iter_descendants(root) {
             if untagged.contains(e) {
-                commands.entity(e).insert((RenderLayers::layer(VM_LAYER), NotShadowCaster));
+                commands.entity(e).insert((RenderLayers::layer(VM_LAYER), NotShadowCaster, bevy::camera::visibility::NoFrustumCulling));
             }
         }
     }

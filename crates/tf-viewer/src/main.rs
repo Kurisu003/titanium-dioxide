@@ -272,6 +272,8 @@ fn main() {
         .init_resource::<hud::HudHidden>()
         .add_systems(Startup, (weapons::setup_fx, ui::load_ui_assets, ui::spawn_loading_screen).chain())
         .add_systems(Update, (setup, hud::spawn_hud, pilotability::spawn_pilot_slots, pilotability::setup_pilot_kit, pilotbody::spawn_pilot_body, rodeo::spawn_battery_hud, fparms::spawn_arms).chain().run_if(ui::loading).before(ui::loading_tick))
+        // While warming up too: the reflection cubemap it copies changes the viewmodels' pipelines.
+        .add_systems(Update, vmcam::follow_camera.run_if(ui::world_ready.and(not(ui::loaded))))
         .add_systems(Update, (ui::loading_tick, ui::scale_ui, screenshots, env::nearest_reflection, uber::swap_materials, vmcam::tag_meshes))
         .add_systems(Update, (ui::sync_menu, ui::menu_input, ui::menu_visuals, ui::mission_images, ui::apply_quality, pilotweapon::build_loadout, pilotweapon::ordnance_viewmodel, weapons::switch_titan_weapon, titankit::apply_kit, weapons::prepare_weapon_models, pilotability::preload_grenade_models).chain().run_if(ui::world_ready).before(player::gather_input))
         .add_systems(Update, ruiscreen::weapon_screens.run_if(ui::loaded).after(pilotweapon::pilot_weapon_fire))

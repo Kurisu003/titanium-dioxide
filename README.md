@@ -751,6 +751,13 @@ Kodai is playable about 10 s after launch (6–15 s on other maps). That comes f
   models being shared between chassis.
 - Sounds decoding on every core.
 
+The loading screen then stays up while the world warms up behind it (`ui::loading_tick`): every
+first-person model is shown (they skip frustum culling, so they count from wherever they sit),
+the viewmodel camera already has the reflection cubemap, and the screen waits until no render
+pipeline has been compiling for 4 frames (at most 600 frames). Without this the map drew in
+pieces and the cockpit appeared about 0.2 s into play. The Titan gun's model info (sway pivots,
+muzzle attachments) is also read under the loading screen instead of on the first frame.
+
 ### Rendering cost
 
 Static props use the model's own LODs (VTX switch points and VVD fixups, up to three per model,
