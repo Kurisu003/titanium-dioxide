@@ -22,7 +22,7 @@ pub struct UberParams {
     pub uv_t: Vec4,
     /// Distance fade scale and bias, edge fade exponent and inner.
     pub fade: Vec4,
-    /// Edge fade outer, flags, opacity, unused.
+    /// Edge fade outer, flags, opacity, 1 if blended (fully faded fragments are dropped).
     pub fade2: Vec4,
     /// Albedo tint.
     pub tint: Vec4,
@@ -188,7 +188,7 @@ pub fn material(base: &StandardMaterial, info: &UberInfo, uber: &mut Assets<Uber
         uv: Vec4::new(uv[0], uv[1], uv[2], uv[3]),
         uv_t: Vec4::new(uv[4], uv[5], if info.scroll { 1.0 } else { 0.0 }, 1.0 / crate::player::UNIT),
         fade: Vec4::new(p.distance_fade[0], p.distance_fade[1], p.edge_fade[0], p.edge_fade[1]),
-        fade2: Vec4::new(p.edge_fade[2], info.flags as f32, p.opacity.clamp(0.0, 1.0), 0.0),
+        fade2: Vec4::new(p.edge_fade[2], info.flags as f32, p.opacity.clamp(0.0, 1.0), if matches!(base.alpha_mode, AlphaMode::Add | AlphaMode::Blend | AlphaMode::Premultiplied) { 1.0 } else { 0.0 }),
         tint: Vec4::new(p.albedo_tint[0], p.albedo_tint[1], p.albedo_tint[2], 1.0),
         uv2: Vec4::new(1.0, 0.0, 0.0, 1.0),
         uv2_t: Vec4::ZERO,

@@ -201,6 +201,8 @@ fn main() {
                     primary_window: Some(Window {
                         title: "Titanfall-rs".into(),
                         resolution: (1600u32, 900u32).into(),
+                        // TF_NO_VSYNC=1 runs uncapped, for frame-rate measurements.
+                        present_mode: if std::env::var_os("TF_NO_VSYNC").is_some() { bevy::window::PresentMode::AutoNoVsync } else { default() },
                         ..default()
                     }),
                     ..default()
