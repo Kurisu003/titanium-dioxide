@@ -551,6 +551,8 @@ pub struct Weapon {
     trigger_held: bool,
     /// The Predator Cannon's barrel spin effect while it winds up (zoomed in).
     spin_fx: Option<Entity>,
+    /// A Power Shot is pending: zoomed in by force, no ordinary rounds.
+    alt_shot: bool,
     pub charge: Charge,
     /// How far the fire rate has ramped toward `fire_rate_max`.
     pub rate_ramp: f32,
@@ -576,6 +578,10 @@ enum VmSeq {
     MeleeDash,
     /// Legion's Ammo Swap (`ammo_swap_seq`).
     AmmoSwap,
+    /// Power Shot charging (`charge_seq`, held at its end until the shot).
+    Charge,
+    /// The Power Shot itself (`power_shot_fire_seq`).
+    AltFire,
 }
 
 impl Weapon {
@@ -593,6 +599,22 @@ impl Weapon {
         self.vm_seq = VmSeq::AmmoSwap;
         self.vm_time = 0.0;
     }
+    /// Power Shot: hold the gun zoomed in (SetForcedADS) and keep its rounds for the shot.
+    pub fn set_alt_shot(&mut self, on: bool) {
+        self.alt_shot = on;
+    }
+    /// Power Shot's charge (`charge_seq`) on the viewmodel.
+    pub fn play_charge(&mut self) {
+        if self.vm_seq != VmSeq::Charge {
+            self.vm_seq = VmSeq::Charge;
+            self.vm_time = 0.0;
+        }
+    }
+    /// Power Shot's shot (`power_shot_fire_seq`) on the viewmodel.
+    pub fn play_alt_fire(&mut self) {
+        self.vm_seq = VmSeq::AltFire;
+        self.vm_time = 0.0;
+    }
     pub fn new(def: WeaponDef, viewmodel: Option<(Entity, Entity)>, world_gun: Option<Entity>) -> Self {
         Self {
             ammo: def.clip,
@@ -608,6 +630,7 @@ impl Weapon {
             arsenal: 0,
             trigger_held: false,
             spin_fx: None,
+            alt_shot: false,
             charge: Charge::default(),
             hits: 0,
             rng: 0x9E37_79B9_7F4A_7C15,
@@ -768,6 +791,8 @@ pub struct GunMuzzle {
     pub frame: Option<(Vec3, Quat)>,
     /// The frame is the viewmodel's.
     pub cockpit: bool,
+    /// The `fx_barrel` attachment's frame, likewise (Power Shot's charge effect).
+    pub barrel: Option<(Vec3, Quat)>,
 }
 
 fn muzzle_world(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, actor: Option<Entity>) -> Option<Vec3> {
@@ -816,10 +841,10 @@ pub fn weapon_fire(
     }
     let Ok((titan, mut w, mut core, vortex, melee, health, kit)) = titans.single_mut() else { return };
     gun_muzzle.cockpit = *mode == CameraMode::Cockpit && piloted;
-    gun_muzzle.frame = (if gun_muzzle.cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun })
-        .and_then(|a| actors.get(a).ok()?.joint("muzzle_flash"))
-        .and_then(|j| globals.get(j).ok())
-        .map(|g| (g.translation(), g.rotation()));
+    let gun_actor = if gun_muzzle.cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun };
+    let joint_frame = |name: &str| gun_actor.and_then(|a| actors.get(a).ok()?.joint(name)).and_then(|j| globals.get(j).ok()).map(|g| (g.translation(), g.rotation()));
+    gun_muzzle.frame = joint_frame("muzzle_flash");
+    gun_muzzle.barrel = joint_frame("fx_barrel");
     // The left hand is busy during Vortex and punches, Sword Block holds the sword up; dead
     // Titans don't shoot.
     let busy = vortex.is_some_and(|v| v.active) || melee.is_some_and(|m| m.t.is_some()) || health.is_some_and(|h| h.dead_for.is_some()) || kit.is_some_and(|k| k.blocking);
@@ -832,7 +857,7 @@ pub fn weapon_fire(
     let fire = (input.fire && piloted) || auto_fire;
     let (vyaw, vpitch) = if piloted { (input.yaw, input.pitch) } else { (s.yaw, s.pitch) };
 
-    let ads_target = if (input.ads || (w.def.attack_presses_ads && fire)) && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
+    let ads_target = if (input.ads || w.alt_shot || (w.def.attack_presses_ads && fire)) && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
     // zoom_time_in going in, zoom_time_out coming back out.
     let rate = dt / if ads_target >= w.ads { w.def.zoom_time } else { w.def.zoom_time_out }.max(0.05);
     w.ads = if ads_target > w.ads { (w.ads + rate).min(ads_target) } else { (w.ads - rate).max(ads_target) };
@@ -912,7 +937,7 @@ pub fn weapon_fire(
     }
     // attack_button_presses_ads (the Predator Cannon): the trigger zooms in, and the gun fires
     // once fully zoomed (its zoom_time_in, 1.5 s, is the barrels' wind-up).
-    if w.def.attack_presses_ads && w.ads < 0.999 {
+    if (w.def.attack_presses_ads && w.ads < 0.999) || w.alt_shot {
         return;
     }
     // Semi-automatic weapons fire once per pull (Burst Core is always automatic).
@@ -1204,6 +1229,9 @@ pub fn weapon_viewmodel(
         VmSeq::MeleeDash => t >= dur(a, clip(a, "melee_dash_seq").or(clip(a, "melee_seq"))).min(crate::combat::MELEE_ANIM + 0.2),
         VmSeq::SprintRaise => t >= dur(a, clip(a, "sprintraise_seq")) || s.sprinting,
         VmSeq::AmmoSwap => t >= dur(a, clip(a, "ammo_swap_seq")),
+        // Held until titankit fires the shot.
+        VmSeq::Charge => false,
+        VmSeq::AltFire => t >= dur(a, clip(a, "power_shot_fire_seq")),
         _ => true,
     };
     // Coming out of a sprint plays the raise before idling.
@@ -1255,6 +1283,8 @@ pub fn weapon_viewmodel(
                 VmSeq::MeleeDash => "melee_seq",
                 VmSeq::SprintRaise => "sprintraise_seq",
                 VmSeq::AmmoSwap => "ammo_swap_seq",
+                VmSeq::Charge => "charge_seq",
+                VmSeq::AltFire => "power_shot_fire_seq",
                 _ => "sprint_seq",
             };
             if let Some(c) = clip(&actor, name) {
@@ -1349,7 +1379,7 @@ pub fn switch_titan_weapon(
     let vm_body = body_of(&def.viewmodel);
     let spec = ActorSpec {
         path: &def.viewmodel,
-        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq"],
+        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
         grids: &["idle_seq", "attack_seq"],
         body: &vm_body,
     };

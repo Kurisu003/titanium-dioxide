@@ -82,6 +82,8 @@ const LASER_TRIP_DAMAGE_HEAVY: f32 = 1500.0;
 const LASER_TRIP_DEPLOY_POWER: f32 = 900.0;
 const LASER_TRIP_DEPLOY_SIDE_POWER: f32 = 1200.0;
 const LASER_TRIP_MAX: usize = 9;
+/// The Power Shot mods' charge_time (mp_titanweapon_predator_cannon.txt).
+const POWER_SHOT_CHARGE: f32 = 0.75;
 /// LASER_TRIP_INNER_RADIUS / LASER_TRIP_OUTER_RADIUS: a pylon's blast.
 const LASER_TRIP_RADIUS: f32 = 400.0;
 /// The beam's box: 8 either side of the line between the pylons (LaserPylonSetThink).
@@ -773,6 +775,10 @@ pub struct KitState {
     prev_ord: bool,
     /// Time left until a pressed ordnance fires (its deploy).
     pub ord_pending: Option<f32>,
+    /// Power Shot armed: seconds charged so far (the charge runs once the gun is zoomed in).
+    pub power: Option<f32>,
+    /// Power Shot's charge effect on the barrel.
+    power_fx: Option<Entity>,
     prev_def: bool,
     /// Rockets waiting to launch: target and how they fly, at `queue_rate` per second.
     queue: Vec<(Option<Entity>, MissileSpec)>,
@@ -818,6 +824,8 @@ impl Default for KitState {
             melee_range: 280.0,
             prev_ord: false,
             ord_pending: None,
+            power: None,
+            power_fx: None,
             prev_def: false,
             queue: Vec::new(),
             queue_rate: 12.0,
@@ -1252,72 +1260,18 @@ pub fn kit_input(
                 }
             }
             OrdKind::PowerShot => {
-                st.ord_cd_max = n.power_cd;
-                st.ord_cd = n.power_cd;
-                let (t, who) = trace(&world, &enemies, eye, dir, 12000.0, 30.0);
-                let at = eye + dir * t;
-                if weapon.long_range() {
-                    // LongRangePowerShot: one straight round (200 / 2000 to Titans) with a
-                    // 150-unit explosion (200 / 1800 heavy) where it lands.
-                    if let Some(id) = who {
-                        if let Ok((_, mut e)) = enemies.get_mut(id) {
-                            hurt(&mut e, n.power_titan, n.power_pilot, &mut core);
-                        }
-                    }
-                    splash(&mut enemies, at, n.power_inner, n.power_radius, POWER_SHOT_SPLASH_HEAVY, n.power_pilot, &mut core);
+                // OnWeaponPrimaryAttack_power_shot: not while reloading or empty. The gun is zoomed
+                // in by force (SetForcedADS) and its next round is the Power Shot, charged for the
+                // mod's charge_time (charge_require_input 0, charge_end_forces_fire); see below.
+                if weapon.reloading() || weapon.ammo == 0 || st.power.is_some() {
+                    false
                 } else {
-                    // CloseRangePowerShot: a 16 degree blast - everything in the cone with a
-                    // clear line takes 200 (50 by 1600, from 800) / 2000 to Titans.
-                    let half = (POWER_SHOT_CLOSE_SPREAD * 0.5f32).to_radians().cos();
-                    for (_, mut e) in enemies.iter_mut() {
-                        if !e.alive() {
-                            continue;
-                        }
-                        let to = e.pos + Vec3::Z * e.height * 0.5 - eye;
-                        let d = to.length();
-                        if d > POWER_SHOT_CLOSE_FAR || to.normalize_or_zero().dot(dir) < half {
-                            continue;
-                        }
-                        if world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(to.normalize_or_zero().to_array()), d - e.radius).is_some() {
-                            continue;
-                        }
-                        let k = ((d - POWER_SHOT_CLOSE_NEAR) / (POWER_SHOT_CLOSE_FAR - POWER_SHOT_CLOSE_NEAR)).clamp(0.0, 1.0);
-                        hurt(&mut e, n.power_titan, n.power_pilot + (POWER_SHOT_CLOSE_FAR_PILOT - n.power_pilot) * k, &mut core);
-                    }
+                    st.ord_cd_max = n.power_cd;
+                    st.ord_cd = n.power_cd;
+                    st.power = Some(0.0);
+                    weapon.set_alt_shot(true);
+                    true
                 }
-                let b = to_bevy(at);
-                match gun_muzzle.frame.filter(|_| std::env::var_os("TF_OLD_FX").is_none()) {
-                    // The Power Shot mods' effects (mp_titanweapon_predator_cannon.txt): their
-                    // muzzle flash, P_weapon_tracers_predator, and their impact table.
-                    Some((a, rot)) => {
-                        let long = weapon.long_range();
-                        let flash = match (gun_muzzle.cockpit, long) {
-                            (true, false) => "P_muzzleflash_predator_PS_FP",
-                            (true, true) => "P_muzzleflash_predator_PS_FP_ALT",
-                            (false, false) => "P_muzzleflash_predator_PS",
-                            (false, true) => "P_muzzleflash_predator_PS_ALT",
-                        };
-                        if gun_muzzle.cockpit {
-                            crate::pfx::emit_named_vm_frame(&mut commands, flash, a, rot);
-                        } else {
-                            crate::pfx::emit_named_frame(&mut commands, flash, a, rot);
-                        }
-                        crate::pfx::emit_beam(&mut commands, "P_weapon_tracers_predator", a, b);
-                        let surface = match who.and_then(|id| enemies.get(id).ok()) {
-                            Some((_, e)) if e.infantry => crate::particles::Surface::Flesh,
-                            Some(_) => crate::particles::Surface::Titan,
-                            None => crate::particles::Surface::World,
-                        };
-                        emit(&mut commands, Effect::Hit { at: b, normal: (a - b).normalize_or(Vec3::Y), table: if long { "predator_bullet_ps_alt" } else { "predator_bullet_ps" }, surface, victim: false, scale: 2.5 });
-                    }
-                    None => {
-                        let a = to_bevy(eye + right * 50.0 - Vec3::Z * 40.0);
-                        emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.7, color: Vec3::new(6.0, 4.0, 1.5) });
-                        emit(&mut commands, Effect::Explosion { at: b, scale: 1.4 });
-                        crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
-                    }
-                }
-                true
             }
         };
         if fired {
@@ -1325,6 +1279,101 @@ pub fn kit_input(
                 crate::audio::event(&mut commands, &spec.ord_sound);
             }
             log::info!("ordnance: {:?}", active.ord);
+        }
+    }
+
+    // --- Power Shot: zoomed in by force, then the charge (charge_seq, the mod's charge_effect
+    // P_predator_barrel_blur_glow_FP on fx_barrel), then the shot (power_shot_fire_seq) ---
+    if let Some(mut t) = st.power {
+        if frozen {
+            st.power = None;
+            weapon.set_alt_shot(false);
+            if let Some(e) = st.power_fx.take() {
+                commands.entity(e).despawn();
+            }
+        } else {
+            if weapon.ads >= 0.999 {
+                t += dt;
+                weapon.play_charge();
+                if st.power_fx.is_none() && std::env::var_os("TF_OLD_FX").is_none() {
+                    st.power_fx = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if gun_muzzle.cockpit { "P_predator_barrel_blur_glow_FP" } else { "P_predator_barrel_blur_glow" }))).id());
+                }
+            }
+            if let (Some(e), Some((p, r))) = (st.power_fx, gun_muzzle.barrel) {
+                commands.entity(e).insert(Transform::from_translation(p).looking_to(r * Vec3::X, r * Vec3::Z));
+            }
+            st.power = Some(t);
+            if t >= POWER_SHOT_CHARGE {
+                st.power = None;
+                weapon.set_alt_shot(false);
+                weapon.play_alt_fire();
+                if let Some(e) = st.power_fx.take() {
+                    commands.entity(e).despawn();
+                }
+                    let (t, who) = trace(&world, &enemies, eye, dir, 12000.0, 30.0);
+                    let at = eye + dir * t;
+                    if weapon.long_range() {
+                        // LongRangePowerShot: one straight round (200 / 2000 to Titans) with a
+                        // 150-unit explosion (200 / 1800 heavy) where it lands.
+                        if let Some(id) = who {
+                            if let Ok((_, mut e)) = enemies.get_mut(id) {
+                                hurt(&mut e, n.power_titan, n.power_pilot, &mut core);
+                            }
+                        }
+                        splash(&mut enemies, at, n.power_inner, n.power_radius, POWER_SHOT_SPLASH_HEAVY, n.power_pilot, &mut core);
+                    } else {
+                        // CloseRangePowerShot: a 16 degree blast - everything in the cone with a
+                        // clear line takes 200 (50 by 1600, from 800) / 2000 to Titans.
+                        let half = (POWER_SHOT_CLOSE_SPREAD * 0.5f32).to_radians().cos();
+                        for (_, mut e) in enemies.iter_mut() {
+                            if !e.alive() {
+                                continue;
+                            }
+                            let to = e.pos + Vec3::Z * e.height * 0.5 - eye;
+                            let d = to.length();
+                            if d > POWER_SHOT_CLOSE_FAR || to.normalize_or_zero().dot(dir) < half {
+                                continue;
+                            }
+                            if world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(to.normalize_or_zero().to_array()), d - e.radius).is_some() {
+                                continue;
+                            }
+                            let k = ((d - POWER_SHOT_CLOSE_NEAR) / (POWER_SHOT_CLOSE_FAR - POWER_SHOT_CLOSE_NEAR)).clamp(0.0, 1.0);
+                            hurt(&mut e, n.power_titan, n.power_pilot + (POWER_SHOT_CLOSE_FAR_PILOT - n.power_pilot) * k, &mut core);
+                        }
+                    }
+                    let b = to_bevy(at);
+                    match gun_muzzle.frame.filter(|_| std::env::var_os("TF_OLD_FX").is_none()) {
+                        // The Power Shot mods' effects (mp_titanweapon_predator_cannon.txt): their
+                        // muzzle flash, P_weapon_tracers_predator, and their impact table.
+                        Some((a, rot)) => {
+                            let long = weapon.long_range();
+                            let flash = match (gun_muzzle.cockpit, long) {
+                                (true, false) => "P_muzzleflash_predator_PS_FP",
+                                (true, true) => "P_muzzleflash_predator_PS_FP_ALT",
+                                (false, false) => "P_muzzleflash_predator_PS",
+                                (false, true) => "P_muzzleflash_predator_PS_ALT",
+                            };
+                            if gun_muzzle.cockpit {
+                                crate::pfx::emit_named_vm_frame(&mut commands, flash, a, rot);
+                            } else {
+                                crate::pfx::emit_named_frame(&mut commands, flash, a, rot);
+                            }
+                            crate::pfx::emit_beam(&mut commands, "P_weapon_tracers_predator", a, b);
+                            let surface = match who.and_then(|id| enemies.get(id).ok()) {
+                                Some((_, e)) if e.infantry => crate::particles::Surface::Flesh,
+                                Some(_) => crate::particles::Surface::Titan,
+                                None => crate::particles::Surface::World,
+                            };
+                            emit(&mut commands, Effect::Hit { at: b, normal: (a - b).normalize_or(Vec3::Y), table: if long { "predator_bullet_ps_alt" } else { "predator_bullet_ps" }, surface, victim: false, scale: 2.5 });
+                        }
+                        None => {
+                            let a = to_bevy(eye + right * 50.0 - Vec3::Z * 40.0);
+                            emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.7, color: Vec3::new(6.0, 4.0, 1.5) });
+                            emit(&mut commands, Effect::Explosion { at: b, scale: 1.4 });
+                            crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
+                        }
+                    }
+            }
         }
     }
 

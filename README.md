@@ -905,7 +905,11 @@ where the script has them):
   on floors (`Wpn_TetherTrap_Land`), arm after 1.5 s, live 60 s, at most 4 out, and the first
   enemy Titan in line of sight within 450 units is pinned; one that is struck directly is
   tethered on the spot.
-- **Power Shot**: 2000 to Titans; in close-range ammo it's a 16 degree blast (`CloseRangePowerShot`:
+- **Power Shot**: as `OnWeaponPrimaryAttack_power_shot` sets it up (not while reloading or
+  empty): the Predator is zoomed in by force, then charges for the mod's `charge_time` 0.75 s
+  (`charge_seq`, `P_predator_barrel_blur_glow_FP` on `fx_barrel`) and fires
+  (`power_shot_fire_seq`); ordinary rounds wait meanwhile. Whether the charge waits for the
+  zoom (as here) or runs alongside it is engine-side. 2000 to Titans; in close-range ammo it's a 16 degree blast (`CloseRangePowerShot`:
   200 to Pilots falling to 50 from 800 to 1600 units), in long-range ammo a single straight
   round with a 150-unit explosion (`LongRangePowerShot`: 1800 heavy splash). Its effects are
   the mods': `P_muzzleflash_predator_PS(_FP)(_ALT)` at the gun's muzzle (weapons::GunMuzzle),
