@@ -525,13 +525,30 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     view leans into sprinting turns by up to `sprinttiltMaxRoll` 3 degrees with the Pilot's
     `sprinttilt_*` steering. The smoothstep curve over those times is a guess.
   - Looking down slides the view forward up to `pitchOffsetScale` 40 units; following the sine
-    of the pitch is a guess. The cockpit moves with the view.
+    of the pitch is a guess. The cockpit and BT's gun move with the view (the gun used to stay
+    at the eye, so it slid back when looking down and rose while sprinting).
+  - Crouching (hold crouch) uses the crouch stance: `speed` 150, `acceleration` 200,
+    `deceleration` 500, the 140-unit hull (BT stays down where there's no room to stand) and
+    `viewheight` 125. The eye eases down over 0.4 s and up over 0.2 s (Source's duck times;
+    a guess for Titans) on Source's spline, the gun drops by `viewmodelDuckOffset` (-4) with
+    it, footsteps come every 500 ms (`footstepInterval` of the crouch stance), and
+    `sound_standToCrouch` / `sound_crouchToStand` play. In third person BT blends into the MP
+    crouch set (`CQB_CrouchIdle_MP`, `Walk_Crouch_forward_MP` / `_backward_MP`, aiming with
+    `MP_crouch_Aim_all`) as the eye goes down.
+  - Dashes play `sound_dodge_1p` (`tone_dash_1p` in titan_buddy.set) in the cockpit and the
+    `dodgeImpactTable` (`titan_dodge`) where the dash leaves the ground (once at the start: a
+    guess); the cockpit shifts toward the dash by up to `dodge_cockpitOffsetMax` 3 units as far
+    as the dash tilt has gone (the direction is a guess). Each footstep plays the
+    `footstepImpactTable` (`titan_footstep`) dust under alternate feet, 45 units either side
+    of the middle (a guess; the foot bones aren't used).
   - Landing kicks the view down by up to `viewkickFallDistMaxScale` 6 degrees between falls of
     `viewkickFallDistMin` 10 and `viewkickFallDistMax` 120 units (compared as impact speeds),
     springing back on BT's `viewPunchSpring` (springs.txt `punch_titan_atlas`, 65 / 15). The
-    pitch-down direction and the linear scaling are guesses. A fall past `hardFallDist` 40 is a
-    heavy landing: `sound_groundImpact` (`Titan.GroundImpact`) and the `titan_landing` impact
-    table's dust. Playing the dust only on heavy landings is a guess.
+    pitch-down direction and the linear scaling are guesses. Landings past the minimum play the
+    footstep family's land sound (`buddy_land_default`); a fall past `hardFallDist` 40 is a heavy
+    landing: `buddy_heavyland_generic` and the `titan_landing` impact table's dust.
+    `sound_groundImpact` names `Titan.GroundImpact`, which isn't in the sound banks. Which
+    events the engine picks and playing the dust only on heavy landings are guesses.
 - **Viewmodels** (`vmcam.rs`): guns, the Pilot's first-person arms and BT's cockpit are drawn
   by their own camera on top of the world at the player settings' `viewmodelfov` (70 for
   Pilots, 75 in a Titan), so they keep their size while the world zooms in ADS and never clip

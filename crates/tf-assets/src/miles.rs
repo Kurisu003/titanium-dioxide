@@ -164,6 +164,13 @@ impl MilesBank {
         self.events.len()
     }
 
+    /// Every event name (lowercase), sorted.
+    pub fn event_names(&self) -> Vec<&str> {
+        let mut v: Vec<&str> = self.events.keys().map(|k| k.as_str()).collect();
+        v.sort_unstable();
+        v
+    }
+
     /// Sources whose names start with `prefix` (lowercase).
     pub fn with_prefix(&self, prefix: &str) -> Vec<usize> {
         let p = prefix.to_ascii_lowercase();

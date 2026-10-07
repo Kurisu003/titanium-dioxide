@@ -477,6 +477,11 @@ fn titan_params(gd: &GameData, path: &str) -> TitanParams {
         height: hull_max[2],
         eye_height: s.vec3("stand.viewheight").map(|v| v[2]).unwrap_or(d.eye_height),
         gravity: d.gravity,
+        crouch_speed: s.f32("crouch.speed", d.crouch_speed),
+        crouch_accel: s.f32("crouch.acceleration", d.crouch_accel),
+        crouch_decel: s.f32("crouch.deceleration", d.crouch_decel),
+        crouch_height: s.vec3("crouch.hull_max").map(|v| v[2]).unwrap_or(d.crouch_height),
+        crouch_eye_height: s.vec3("crouch.viewheight").map(|v| v[2]).unwrap_or(d.crouch_eye_height),
     }
 }
 
@@ -523,6 +528,7 @@ fn setup(
         let feel = player::TitanFeel::from_settings(&buddy);
         log::info!("BT feel: {feel:?}");
         commands.insert_resource(feel);
+        commands.init_resource::<player::TitanView>();
         let mut kits: Vec<targets::EnemyKit> = (0..targets::ENEMY_CLASSES.len()).map(|i| targets::EnemyKit::class(i, &mut read)).collect();
         kits.push(targets::EnemyKit::infantry(&mut read));
         commands.insert_resource(executions::PilotMeleeDef::load(&mut read));
@@ -633,8 +639,10 @@ fn setup(
                 "at_MP_eject_stand_start",
                 "at_hotdrop_drop_2knee_turbo",
                 "at_hotdrop_quickstand",
+                "?CQB_CrouchIdle_MP",
             ],
-            grids: &["combat_aim_stand", "combat_aim_run"],
+            // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
+            grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],
             body: &[],
         },
         &mut cache,

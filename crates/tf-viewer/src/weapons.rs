@@ -1129,6 +1129,7 @@ pub fn weapon_viewmodel(
     mut titans: Query<(&PlayerTitan, &mut Weapon, Option<&crate::combat::Melee>)>,
     mut actors: Query<&mut Actor>,
     mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
+    (feel, view): (Option<Res<crate::player::TitanFeel>>, Option<Res<crate::player::TitanView>>),
 ) {
     let Ok((titan, mut w, melee)) = titans.single_mut() else { return };
     let Some((anchor, vm)) = w.viewmodel else { return };
@@ -1252,7 +1253,10 @@ pub fn weapon_viewmodel(
         let pitch = s.pitch + punch.pitch.to_radians();
         let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(punch.roll.to_radians());
         tf.rotation = rot * rs;
-        tf.translation = Vec3::from(s.eye(&settings.0).to_array()) - rot * offset + rot * (pivot + off.trans + punch.vm_shake - rs * pivot);
+        // The viewmodel rides on the view like the cockpit: the sprint view offset (last frame's,
+        // from the camera), the look-down slide (pitchOffsetScale) and viewmodelDuckOffset.
+        let view_off = feel.as_deref().map_or(Vec3::ZERO, |f| f.pitch_ahead(s) + Vec3::Z * (view.as_deref().map_or(0.0, |v| v.sprint_lower) + f.duck_offset(s)));
+        tf.translation = Vec3::from(s.eye(&settings.0).to_array()) + view_off - rot * offset + rot * (pivot + off.trans + punch.vm_shake - rs * pivot);
     }
 }
 

@@ -31,6 +31,13 @@ pub struct TitanParams {
     pub height: f32,
     pub eye_height: f32,
     pub gravity: f32,
+    /// The crouch stance (titan_buddy.set "crouch": speed 150, acceleration 200, deceleration
+    /// 500; titan_base.set: viewheight 125, hull_max z 140).
+    pub crouch_speed: f32,
+    pub crouch_accel: f32,
+    pub crouch_decel: f32,
+    pub crouch_height: f32,
+    pub crouch_eye_height: f32,
 }
 
 impl Default for TitanParams {
@@ -60,6 +67,11 @@ impl Default for TitanParams {
             height: 235.0,
             eye_height: 185.0,
             gravity: 750.0,
+            crouch_speed: 150.0,
+            crouch_accel: 200.0,
+            crouch_decel: 500.0,
+            crouch_height: 140.0,
+            crouch_eye_height: 125.0,
         }
     }
 }
@@ -79,6 +91,8 @@ pub struct TitanInput {
     pub speed_scale: f32,
     /// Hover flight: (vertical velocity to hold, horizontal speed limit); no gravity while set.
     pub fly: Option<(f32, f32)>,
+    /// Crouch held (or toggled on).
+    pub crouch: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +115,10 @@ pub struct TitanState {
     /// the landing viewkick and heavy-landing effects.
     pub landings: u32,
     pub land_speed: f32,
+    /// In the crouch stance (its hull, speeds and eye height), and how far the eye has moved
+    /// down to the crouch view height (0 standing .. 1 crouched).
+    pub crouched: bool,
+    pub duck: f32,
 }
 
 impl TitanState {
@@ -119,11 +137,22 @@ impl TitanState {
             dashes: 0,
             landings: 0,
             land_speed: 0.0,
+            crouched: false,
+            duck: 0.0,
         }
     }
 
+    /// The eye: the stand view height, eased toward the crouch one by `duck` (Source's
+    /// SimpleSpline, 3t^2 - 2t^3).
     pub fn eye(&self, p: &TitanParams) -> Vec3 {
-        self.pos + Vec3::Z * p.eye_height
+        let d = self.duck.clamp(0.0, 1.0);
+        let d = d * d * (3.0 - 2.0 * d);
+        self.pos + Vec3::Z * (p.eye_height + (p.crouch_eye_height - p.eye_height) * d)
+    }
+
+    /// The hull height of the current stance.
+    pub fn height(&self, p: &TitanParams) -> f32 {
+        if self.crouched { p.crouch_height } else { p.height }
     }
 
     pub fn horizontal_speed(&self) -> f32 {
@@ -141,10 +170,33 @@ fn approach(cur: Vec2, target: Vec2, rate: f32) -> Vec2 {
     }
 }
 
+/// Seconds the eye takes to move down into the crouch view height and back up. The settings
+/// have no key for it; these are Source's gamemovement constants (TIME_TO_DUCK_MSECS 400,
+/// TIME_TO_UNDUCK_MSECS 200), a guess for Respawn's engine.
+pub const DUCK_TIME: f32 = 0.4;
+pub const UNDUCK_TIME: f32 = 0.2;
+
+/// Whether the standing hull fits at `s.pos` (standing up from a crouch under a low ceiling).
+fn stand_room(s: &TitanState, p: &TitanParams, world: &CollisionWorld) -> bool {
+    let r = p.radius;
+    let lo = (p.crouch_height - r).max(p.step_height + r);
+    let hi = (p.height - r).max(lo);
+    [lo, (lo + hi) * 0.5, hi].iter().all(|&z| world.push_sphere(s.pos + Vec3::Z * z, r * 0.9, 0.7).0 == Vec3::ZERO)
+        && world.raycast(s.pos + Vec3::Z * p.crouch_height, Vec3::Z, p.height - p.crouch_height).is_none()
+}
+
 /// Advance one tick.
 pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &CollisionWorld, dt: f32) {
     s.yaw = input.yaw;
     s.pitch = input.pitch;
+    // Stance: crouch at once; stand only where the standing hull fits. The eye follows over
+    // DUCK_TIME / UNDUCK_TIME.
+    if input.crouch && input.fly.is_none() {
+        s.crouched = true;
+    } else if s.crouched && stand_room(s, p, world) {
+        s.crouched = false;
+    }
+    s.duck = if s.crouched { (s.duck + dt / DUCK_TIME).min(1.0) } else { (s.duck - dt / UNDUCK_TIME).max(0.0) };
     let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
     let right = Vec2::new(s.yaw.sin(), -s.yaw.cos());
     let mut wish = fwd * input.forward * if input.forward < 0.0 { p.back_scale } else { 1.0 }
@@ -153,8 +205,8 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
         wish = wish.normalize();
     }
 
-    // Sprinting needs mostly-forward input and ground contact to start.
-    s.sprinting = input.sprint && input.forward > 0.5 && (s.on_ground || s.sprinting);
+    // Sprinting needs mostly-forward input and ground contact to start, and the stand stance.
+    s.sprinting = input.sprint && !s.crouched && input.forward > 0.5 && (s.on_ground || s.sprinting);
     let scale = if input.speed_scale > 0.0 { input.speed_scale } else { 1.0 };
 
     // Dash power.
@@ -192,6 +244,13 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
         if hvel.length() > limit {
             hvel = hvel.normalize() * limit;
         }
+    } else if s.on_ground && s.crouched {
+        // The crouch stance's own speed, acceleration and deceleration (no low-speed boost:
+        // lowSpeed is set only in the stand block). Faster than crouch speed (crouching out of
+        // a sprint or a dash) slows at the crouch deceleration.
+        let target = wish * p.crouch_speed * scale;
+        let rate = if target.length() > hvel.length() { p.crouch_accel } else { p.crouch_decel };
+        hvel = approach(hvel, target, rate * dt);
     } else if s.on_ground {
         let target_speed = if s.sprinting { p.sprint_speed } else { p.speed } * scale;
         let target = wish * target_speed;
@@ -240,7 +299,7 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
     // Body spheres start above the step height, so low obstacles are stepped onto.
     let r = p.radius;
     let lo = p.step_height + r;
-    let hi = (p.height - r).max(lo);
+    let hi = (s.height(p) - r).max(lo);
     for z in [lo, (lo + hi) * 0.5, hi] {
         let (push, normals) = world.push_sphere(s.pos + Vec3::Z * z, r, 0.7);
         if push != Vec3::ZERO {

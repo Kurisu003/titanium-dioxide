@@ -60,10 +60,26 @@ pub struct TitanFeel {
     /// cockpit_stepJolt_origin / _angles: "Cockpit jolt per footstep."
     pub step_jolt_origin: Vec3,
     pub step_jolt_angles: Vec3,
-    /// The stand stance's footstepInterval / footstepIntervalSprint (ms) and footstepMinSpeed.
+    /// The stand stance's footstepInterval / footstepIntervalSprint (ms) and footstepMinSpeed,
+    /// and the crouch stance's footstepInterval.
     pub footstep_interval: f32,
     pub footstep_interval_sprint: f32,
     pub footstep_min_speed: f32,
+    pub footstep_interval_crouch: f32,
+    /// viewmodelDuckOffset: "Distance to translate the player's viewmodel up as they duck."
+    pub viewmodel_duck_offset: f32,
+    /// sound_standToCrouch / sound_crouchToStand: "Sound when crouching."
+    pub sound_crouch: String,
+    pub sound_stand: String,
+    /// sound_dodge_1p: the dash sound in first person.
+    pub sound_dodge: String,
+    /// footstep_type: the footstep sound family (`<type>_<jog|sprint|crouch|land|heavyland>_<surface>`
+    /// events) and the footstep / dodge impact tables (footstepImpactTable, dodgeImpactTable).
+    pub footstep_type: String,
+    pub footstep_impact_table: &'static str,
+    pub dodge_impact_table: &'static str,
+    /// dodge_cockpitOffsetMax: "Cockpit translation while dodging" (client convar).
+    pub dodge_cockpit_offset_max: f32,
     /// hardFallDist: "Approximate distance the player must fall to trigger a 'heavy landing'
     /// sound"; viewkickFallDistMin/Max: "the range for figuring viewkick from a fall", up to
     /// viewkickFallDistMaxScale, "Max viewkick from a fall". All are "converted into and
@@ -93,6 +109,15 @@ impl Default for TitanFeel {
             footstep_interval: 700.0,
             footstep_interval_sprint: 415.0,
             footstep_min_speed: 0.0,
+            footstep_interval_crouch: 500.0,
+            viewmodel_duck_offset: -4.0,
+            sound_crouch: "ion_crouchdown_1p".to_string(),
+            sound_stand: "ion_crouchstand_1p".to_string(),
+            sound_dodge: "tone_dash_1p".to_string(),
+            footstep_type: "buddy".to_string(),
+            footstep_impact_table: "titan_footstep",
+            dodge_impact_table: "titan_dodge",
+            dodge_cockpit_offset_max: 3.0,
             hard_fall_dist: 40.0,
             viewkick_fall_min: 10.0,
             viewkick_fall_max: 120.0,
@@ -119,6 +144,15 @@ impl TitanFeel {
             footstep_interval: s.f32("stand.footstepInterval", d.footstep_interval),
             footstep_interval_sprint: s.f32("stand.footstepIntervalSprint", d.footstep_interval_sprint),
             footstep_min_speed: s.f32("stand.footstepMinSpeed", d.footstep_min_speed),
+            footstep_interval_crouch: s.f32("crouch.footstepInterval", d.footstep_interval_crouch),
+            viewmodel_duck_offset: s.f32("global.viewmodelDuckOffset", d.viewmodel_duck_offset),
+            sound_crouch: s.get("global.sound_standToCrouch").map(|v| v.trim().to_string()).unwrap_or(d.sound_crouch),
+            sound_stand: s.get("global.sound_crouchToStand").map(|v| v.trim().to_string()).unwrap_or(d.sound_stand),
+            sound_dodge: s.get("global.sound_dodge_1p").map(|v| v.trim().to_string()).unwrap_or(d.sound_dodge),
+            footstep_type: s.get("global.footstep_type").map(|v| v.trim().to_ascii_lowercase()).unwrap_or(d.footstep_type),
+            footstep_impact_table: s.get("global.footstepImpactTable").map(|v| crate::weapons::intern(v.trim())).unwrap_or(d.footstep_impact_table),
+            dodge_impact_table: s.get("global.dodgeImpactTable").map(|v| crate::weapons::intern(v.trim())).unwrap_or(d.dodge_impact_table),
+            dodge_cockpit_offset_max: d.dodge_cockpit_offset_max,
             hard_fall_dist: s.f32("global.hardFallDist", d.hard_fall_dist),
             viewkick_fall_min: s.f32("global.viewkickFallDistMin", d.viewkick_fall_min),
             viewkick_fall_max: s.f32("global.viewkickFallDistMax", d.viewkick_fall_max),
@@ -131,6 +165,26 @@ impl TitanFeel {
     fn fall_speed(dist: f32, gravity: f32) -> f32 {
         (2.0 * gravity * dist.max(0.0)).sqrt()
     }
+
+    /// Looking down slides the view forward (pitchOffsetScale, 40 units looking straight down;
+    /// following the sine of the pitch is a guess).
+    pub fn pitch_ahead(&self, s: &TitanState) -> Vec3 {
+        Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0) * self.pitch_offset_scale * s.pitch.max(0.0).sin()
+    }
+
+    /// The viewmodel's crouch offset (viewmodelDuckOffset, -4: down) eased in with the eye.
+    pub fn duck_offset(&self, s: &TitanState) -> f32 {
+        let d = s.duck.clamp(0.0, 1.0);
+        self.viewmodel_duck_offset * d * d * (3.0 - 2.0 * d)
+    }
+}
+
+/// The parts of BT's first-person view the camera works out over time and the viewmodel
+/// shares (it is placed earlier in the frame, so it uses the last frame's): the sprint view
+/// offset (game units, negative is down).
+#[derive(Resource, Default, Clone, Copy)]
+pub struct TitanView {
+    pub sprint_lower: f32,
 }
 
 /// The free camera's `--cam` / `--look` start (Bevy space), re-applied by the script's `free`.
@@ -675,6 +729,7 @@ pub fn simulate(
                 dash: input.dash && !frozen && piloted && mods.fly.is_none(),
                 speed_scale: mods.speed_scale,
                 fly: if frozen { None } else { mods.fly },
+                crouch: input.crouch && !frozen && piloted,
             },
         };
         // Fixed 120 Hz substeps keep movement independent of frame rate.
@@ -683,22 +738,43 @@ pub fn simulate(
             titan.state.vel = SVec3::new(v.x, v.y, v.z);
             titan.state.on_ground = false;
         }
-        let (dashes, landings) = (titan.state.dashes, titan.state.landings);
+        let (dashes, landings, crouched) = (titan.state.dashes, titan.state.landings, titan.state.crouched);
         for i in 0..n {
             let mut step_input = ti;
             step_input.dash = ti.dash && i == 0;
             titan::step(&mut titan.state, &step_input, &params, &world.0, dt / n as f32);
         }
-        if titan.state.dashes != dashes {
-            crate::audio::cue(&mut commands, crate::audio::Cue::BtDash, None);
+        let s = &titan.state;
+        let feet = to_bevy(bv(s.pos));
+        if s.dashes != dashes {
+            // sound_dodge_1p (titan_buddy.set: tone_dash_1p), and the dodgeImpactTable
+            // (titan_dodge: xo_dodge_trail_*) where the dash leaves the ground. Playing the
+            // table once at the start is a guess.
+            if piloted {
+                crate::audio::event(&mut commands, &feel.sound_dodge);
+            } else {
+                crate::audio::cue(&mut commands, crate::audio::Cue::BtDash, Some(s.pos));
+            }
+            crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: feet, normal: Vec3::Y, table: feel.dodge_impact_table, surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
         }
-        // A fall past hardFallDist (40 units, as an impact speed) is a heavy landing: BT's
-        // sound_groundImpact and his landingImpactTable (titan_landing) dust. Playing the impact
-        // table only on heavy landings (not after every dash hop) is a guess.
-        if titan.state.landings != landings && titan.state.land_speed >= TitanFeel::fall_speed(feel.hard_fall_dist, params.gravity) {
-            crate::audio::event(&mut commands, "Titan.GroundImpact");
-            crate::particles::emit(&mut commands, crate::particles::Effect::DustRing { at: to_bevy(bv(titan.state.pos)), radius: 120.0 * UNIT });
-            log::debug!("BT heavy landing at {:.0} u/s", titan.state.land_speed);
+        if piloted && s.crouched != crouched {
+            crate::audio::event(&mut commands, if s.crouched { &feel.sound_crouch } else { &feel.sound_stand });
+        }
+        // Landings play the footstep family's land sound (buddy_land_default) once the fall is
+        // past viewkickFallDistMin; a fall past hardFallDist (40 units, as an impact speed) is a
+        // heavy landing: buddy_heavyland_generic (the cockpit rattle) on top, and the
+        // landingImpactTable (titan_landing) dust. sound_groundImpact (Titan.GroundImpact) isn't
+        // in the sound banks. Which events the engine picks (no surface lookup: "default", and
+        // "generic" where the bank has no heavyland_default) and the thresholds are guesses.
+        if s.landings != landings && piloted && s.land_speed >= TitanFeel::fall_speed(feel.viewkick_fall_min, params.gravity) {
+            crate::audio::event(&mut commands, &format!("{}_land_default", feel.footstep_type));
+        }
+        if s.landings != landings && s.land_speed >= TitanFeel::fall_speed(feel.hard_fall_dist, params.gravity) {
+            if piloted {
+                crate::audio::event(&mut commands, &format!("{}_heavyland_generic", feel.footstep_type));
+            }
+            crate::particles::emit(&mut commands, crate::particles::Effect::DustRing { at: feet, radius: 120.0 * UNIT });
+            log::debug!("BT heavy landing at {:.0} u/s", s.land_speed);
         }
         if piloted {
             input.dash = false;
@@ -757,6 +833,19 @@ pub fn drive_animation(
         w.iter_mut().for_each(|x| *x /= sum);
         let moving = (t.blend_speed / 60.0).clamp(0.0, 1.0);
         let sprint_w = t.sprint_blend * w[0];
+        // Crouched (the crouch stance), the MP crouch set blends in as the eye goes down:
+        // `CQB_CrouchIdle_MP` and the crouch walks (forward / backward grids over move_yaw; the
+        // side clips are told apart by their own root motion, +y being left).
+        let crouch_idle = actor.clip("cqb_crouchidle_mp");
+        let grid_clips = |name: &str| actor.grids.get(name).map(|g| g.clips.clone()).unwrap_or_default();
+        let (cf, cb) = (grid_clips("Walk_Crouch_forward_MP"), grid_clips("Walk_Crouch_backward_MP"));
+        let lateral = |c: usize| actor.clips[c].movement.last().zip(actor.clips[c].movement.first()).map_or(0.0, |(b, a)| b[1] - a[1]);
+        let (c_fwd, c_back) = (cf.get(1).copied(), cb.get(1).copied());
+        let c_left = cf.iter().copied().filter(|&c| Some(c) != c_fwd).max_by(|&a, &b| lateral(a).total_cmp(&lateral(b)));
+        let c_right = cf.iter().copied().filter(|&c| Some(c) != c_fwd).min_by(|&a, &b| lateral(a).total_cmp(&lateral(b)));
+        let crouch_ids = [c_fwd, c_back, c_left, c_right];
+        let duck = if crouch_idle.is_some() && c_fwd.is_some() { s.duck.clamp(0.0, 1.0) } else { 0.0 };
+        let crouch_w = duck * duck * (3.0 - 2.0 * duck);
 
         // Advance a shared, normalized cycle so the blended walk cycles stay in step.
         let mut stride = 0.0;
@@ -770,6 +859,10 @@ pub fn drive_animation(
             let clip = &actor.clips[c];
             stride = stride * (1.0 - sprint_w) + sprint_w * clip.ground_speed * clip.duration;
         }
+        if crouch_w > 0.0 {
+            let crouch_stride: f32 = crouch_ids.iter().zip(w).filter_map(|(id, wi)| id.map(|c| wi * actor.clips[c].ground_speed * actor.clips[c].duration)).sum();
+            stride = stride * (1.0 - crouch_w) + crouch_w * crouch_stride;
+        }
         if stride > 1.0 {
             t.move_cycle = (t.move_cycle + t.blend_speed * dt / stride).rem_euclid(1.0);
         }
@@ -779,9 +872,15 @@ pub fn drive_animation(
         // As in Source's UpdateStepSound, the first step comes as soon as BT moves.
         t.step_time = (t.step_time - dt * 1000.0).max(0.0);
         if s.on_ground && speed > feel.footstep_min_speed.max(1.0) && t.step_time <= 0.0 {
-            t.step_time = if s.sprinting { feel.footstep_interval_sprint } else { feel.footstep_interval };
+            // Crouched, the crouch stance's footstepInterval (500 ms).
+            t.step_time = if s.crouched { feel.footstep_interval_crouch } else if s.sprinting { feel.footstep_interval_sprint } else { feel.footstep_interval };
             t.steps += 1;
             crate::audio::cue(&mut commands, crate::audio::Cue::BtStep, None);
+            // footstepImpactTable (titan_footstep): the step's dust, under alternate feet (45
+            // units either side of the middle, a guess; the foot bones aren't used).
+            let side = if t.steps % 2 == 0 { 45.0 } else { -45.0 };
+            let foot = bv(s.pos) + Vec3::new(s.yaw.sin(), -s.yaw.cos(), 0.0) * side;
+            crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: to_bevy(foot), normal: Vec3::Y, table: feel.footstep_impact_table, surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
         }
         if let Some(c) = idle {
             t.idle_cycle = (t.idle_cycle + dt / actor.clips[c].duration).rem_euclid(1.0);
@@ -799,6 +898,20 @@ pub fn drive_animation(
         if let Some(c) = sprint {
             layers.push(Layer { clip: c, cycle: t.move_cycle, weight: moving * sprint_w });
         }
+        if crouch_w > 0.0 {
+            for l in &mut layers {
+                l.weight *= 1.0 - crouch_w;
+            }
+            if let Some(c) = crouch_idle {
+                let cycle = (t.idle_cycle * actor.clips[idle.unwrap_or(c)].duration / actor.clips[c].duration.max(1e-3)).rem_euclid(1.0);
+                layers.push(Layer { clip: c, cycle, weight: crouch_w * (1.0 - moving) });
+            }
+            for (id, wi) in crouch_ids.iter().zip(w) {
+                if let Some(c) = id {
+                    layers.push(Layer { clip: *c, cycle: t.move_cycle, weight: crouch_w * moving * wi });
+                }
+            }
+        }
         // A punch plays over everything else.
         if let (Some(mt), Some(c)) = (melee.and_then(|m| m.t), actor.clip("at_player_melee_punch_01")) {
             let k = (mt / 0.1).min(1.0) * ((crate::combat::MELEE_ANIM - mt) / 0.15).clamp(0.0, 1.0);
@@ -811,7 +924,7 @@ pub fn drive_animation(
 
         // The aim matrix folds the shoulder pods and points the gun arm at the view pitch.
         // Source pitch is positive looking down; aim_pitch is positive aiming up.
-        let grid = if moving > 0.5 { "combat_aim_run" } else { "combat_aim_stand" };
+        let grid = if crouch_w > 0.5 && actor.grids.contains_key("MP_crouch_Aim_all") { "MP_crouch_Aim_all" } else if moving > 0.5 { "combat_aim_run" } else { "combat_aim_stand" };
         let no_aim = std::env::var_os("TF_NO_AIM").is_some();
         actor.aim = (!no_aim).then(|| Aim { grid: grid.to_string(), yaw: 0.0, pitch: -s.pitch.to_degrees(), weight: 1.0 - t.sprint_blend });
     }
@@ -834,7 +947,7 @@ pub fn update_camera(
     mut cockpit_tf: Query<&mut Transform, (Without<MainCamera>, Without<PlayerTitan>, Without<Camera>)>,
     (time, mut chase, mut sway, mut tilt): (Res<Time>, Local<f32>, Local<crate::vmmotion::CockpitSway>, Local<DashTilt>),
     (damage_from, mut last_hp): (Res<crate::hud::DamageFrom>, Local<Option<f32>>),
-    (feel, springs, mut fall): (Res<TitanFeel>, Res<crate::vmmotion::WeaponSprings>, Local<FallKick>),
+    (feel, springs, mut fall, mut view): (Res<TitanFeel>, Res<crate::vmmotion::WeaponSprings>, Local<FallKick>, ResMut<TitanView>),
 ) {
     if *mode == CameraMode::Free || *control != crate::pilotctl::Control::Titan {
         *last_hp = None;
@@ -846,6 +959,7 @@ pub fn update_camera(
     let p = &settings.0;
     let dash_roll = tilt.step(s, time.delta_secs());
     let (sprint_lower, sprint_roll) = tilt.sprint_step(s, &feel, time.delta_secs());
+    view.sprint_lower = sprint_lower;
     let spring = springs.0.get(&feel.punch_spring).map(|(hip, _)| (hip.k.x, hip.c.x)).unwrap_or((65.0, 15.0));
     let fall_pitch = fall.step(s, &feel, p.gravity, spring, time.delta_secs());
     let (yaw, pitch) = (s.yaw + punch.yaw.to_radians(), s.pitch + (punch.pitch + fall_pitch).to_radians());
@@ -867,8 +981,7 @@ pub fn update_camera(
     // Sprinting lowers the view; looking down slides it forward (pitchOffsetScale, 40 units
     // looking straight down; following the sine of the pitch is a guess). The cockpit rides on
     // the view, so it moves with both.
-    let ahead = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0) * feel.pitch_offset_scale * s.pitch.max(0.0).sin();
-    let eye = bv(s.eye(p)) + Vec3::Z * sprint_lower + ahead;
+    let eye = bv(s.eye(p)) + Vec3::Z * sprint_lower + feel.pitch_ahead(s);
     if let Some((c, c_actor)) = t.cockpit {
         if let Ok(mut v) = vis.get_mut(c) {
             *v = if cockpit { Visibility::Inherited } else { Visibility::Hidden };
@@ -905,7 +1018,11 @@ pub fn update_camera(
             let rot = Quat::from_rotation_z(s.yaw) * Quat::from_rotation_y(s.pitch);
             let rs = crate::vmmotion::angles_quat(sway.angles) * Quat::from_rotation_x(dash_roll * DODGE_COCKPIT_TILT_MAX / DODGE_VIEW_TILT_MAX);
             ctf.rotation = rot * rs;
-            ctf.translation = eye - rot * rs * offset + rot * sway.origin;
+            // dodge_cockpitOffsetMax (3, "Cockpit translation while dodging"): the cockpit shifts
+            // toward the dash as far as the tilt has gone (BT moves before the pilot's head; the
+            // direction is a guess).
+            let dodge = Vec3::new(0.0, -tilt.frac * feel.dodge_cockpit_offset_max, 0.0);
+            ctf.translation = eye - rot * rs * offset + rot * (sway.origin + dodge);
         }
     }
     let pos = if cockpit {

@@ -86,6 +86,40 @@ mod tests {
         assert!(s.on_ground);
     }
 
+    #[test]
+    fn crouch_stance() {
+        let mut w = world();
+        // A 200-unit-high roof over x 1500..2500 (the wall at x = 1000 is behind BT).
+        quad(&mut w, Vec3::new(1500.0, -2000.0, 200.0), Vec3::new(1500.0, -1000.0, 200.0), Vec3::new(2500.0, -1000.0, 200.0), Vec3::new(2500.0, -2000.0, 200.0));
+        let p = TitanParams::default();
+        let mut s = TitanState::new(Vec3::new(0.0, -1500.0, 0.0), 0.0);
+        run(&mut s, TitanInput::default(), &w, 0.2);
+        let stand_eye = s.eye(&p).z;
+        assert!((stand_eye - 185.0).abs() < 0.01);
+        // Crouching: the eye eases down to 125 over 0.4 s, the speed is the crouch stance's, no
+        // sprint.
+        let crouch = TitanInput { forward: 1.0, crouch: true, sprint: true, ..Default::default() };
+        run(&mut s, crouch, &w, 0.2);
+        let mid = s.eye(&p).z;
+        assert!(s.crouched && mid < 185.0 && mid > 125.0, "eye half way down: {mid}");
+        run(&mut s, crouch, &w, 1.5);
+        assert!((s.eye(&p).z - 125.0).abs() < 0.01, "crouch eye {}", s.eye(&p).z);
+        assert!(!s.sprinting);
+        assert!((s.horizontal_speed() - 150.0).abs() < 1.0, "crouch speed {}", s.horizontal_speed());
+        // Walk crouched under the roof, let go of crouch: no room to stand.
+        let mut s = TitanState::new(Vec3::new(2000.0, -1500.0, 0.0), 0.0);
+        s.crouched = true;
+        s.duck = 1.0;
+        run(&mut s, TitanInput::default(), &w, 0.5);
+        assert!(s.crouched, "stays crouched under the roof");
+        // Out in the open it stands up, the eye rising over 0.2 s.
+        let mut s = TitanState::new(Vec3::new(0.0, -1500.0, 0.0), 0.0);
+        s.crouched = true;
+        s.duck = 1.0;
+        run(&mut s, TitanInput::default(), &w, 0.25);
+        assert!(!s.crouched && (s.eye(&p).z - 185.0).abs() < 0.01, "stood up: eye {}", s.eye(&p).z);
+    }
+
     mod pilot_tests {
         use super::quad;
         use crate::collision::CollisionWorld;
