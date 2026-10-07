@@ -669,16 +669,67 @@ pub struct ActiveKit {
     pub core: CoreKind,
 }
 
-/// A disc that stops enemy bolts (Particle Wall, Gun Shield); targets::update_bolts tests
-/// against these and reports the damage each one soaks up.
+/// A shield that stops bolts arriving against its front (Particle Wall, Gun Shield);
+/// targets::update_bolts tests against these and reports the damage each one soaks up.
 #[derive(Clone, Copy, Debug)]
 pub struct BoltShield {
+    /// The disc's centre, or the bottom of the arc's axis.
     pub center: Vec3,
     /// Facing direction (bolts arriving against it are stopped).
     pub normal: Vec3,
     pub radius: f32,
     owner: Option<Entity>,
+    /// A Particle Wall: instead of a disc, the outside of a vertical cylinder of `radius`
+    /// around `center`, `height` tall and `cos_half_fov` wide about `normal`
+    /// (CreateShieldWithSettings: SF_ABSORB_CYLINDER, radius, height, bullet_fov).
+    arc: Option<(f32, f32)>,
 }
+
+impl BoltShield {
+    fn disc(center: Vec3, normal: Vec3, radius: f32, owner: Option<Entity>) -> Self {
+        Self { center, normal, radius, owner, arc: None }
+    }
+
+    /// A Particle Wall around `origin` facing `normal` (SHIELD_WALL_RADIUS 180, height
+    /// radius * 2, SHIELD_WALL_FOV 120).
+    fn wall(origin: Vec3, normal: Vec3, owner: Option<Entity>) -> Self {
+        let n = Vec3::new(normal.x, normal.y, 0.0).normalize_or(Vec3::X);
+        Self { center: origin, normal: n, radius: SHIELD_WALL_RADIUS, owner, arc: Some(((SHIELD_WALL_FOV * 0.5).to_radians().cos(), SHIELD_WALL_RADIUS * 2.0)) }
+    }
+
+    /// Where the segment `from + dir * t, t < max` meets the shield from its front.
+    fn hit_t(&self, from: Vec3, dir: Vec3, max: f32) -> Option<f32> {
+        let t = match self.arc {
+            None => {
+                let denom = dir.dot(self.normal);
+                if denom >= -1e-4 {
+                    return None;
+                }
+                let t = (self.center - from).dot(self.normal) / denom;
+                ((from + dir * t).distance(self.center) < self.radius).then_some(t)?
+            }
+            Some((cos_half, height)) => {
+                // Entering the cylinder from outside, within the arc and its height.
+                let (p, d) = ((from - self.center).truncate(), dir.truncate());
+                let (a, b, c) = (d.length_squared(), p.dot(d), p.length_squared() - self.radius * self.radius);
+                let disc = b * b - a * c;
+                if a < 1e-8 || c <= 0.0 || disc < 0.0 {
+                    return None;
+                }
+                let t = (-b - disc.sqrt()) / a;
+                let h = from + dir * t;
+                let radial = (h - self.center).truncate().normalize_or_zero();
+                let inside = radial.dot(self.normal.truncate()) >= cos_half && h.z >= self.center.z && h.z <= self.center.z + height;
+                inside.then_some(t)?
+            }
+        };
+        (t > 0.0 && t < max).then_some(t)
+    }
+}
+
+/// CreateParticleWallForOwnerFromDirection / CreateShieldWithSettings (_particle_wall.gnut).
+const SHIELD_WALL_RADIUS: f32 = 180.0;
+const SHIELD_WALL_FOV: f32 = 120.0;
 
 #[derive(Resource, Default)]
 pub struct BoltShields {
@@ -692,12 +743,7 @@ impl BoltShields {
     pub fn hit(&self, from: Vec3, dir: Vec3, max: f32) -> Option<(usize, f32)> {
         let mut best: Option<(usize, f32)> = None;
         for (i, s) in self.shields.iter().enumerate() {
-            let denom = dir.dot(s.normal);
-            if denom >= -1e-4 {
-                continue;
-            }
-            let t = (s.center - from).dot(s.normal) / denom;
-            if t > 0.0 && t < max && best.is_none_or(|b| t < b.1) && (from + dir * t).distance(s.center) < s.radius {
+            if let Some(t) = s.hit_t(from, dir, max).filter(|&t| best.is_none_or(|b| t < b.1)) {
                 best = Some((i, t));
             }
         }
@@ -974,9 +1020,11 @@ const CLUSTER_BURST_OFFSET: f32 = 0.2;
 /// mp_titanweapon_dumbfire_rockets' projectile_explosion_delay.
 const CLUSTER_EXPLOSION_DELAY: f32 = 0.5;
 
+/// A Particle Wall: the shield arc and P_xo_shield_wall around `origin` (the owner's feet
+/// less 64; an NPC's goes 100 ahead first), facing `normal`.
 #[derive(Component)]
 pub struct ParticleWall {
-    center: Vec3,
+    origin: Vec3,
     normal: Vec3,
     life: f32,
     hp: f32,
@@ -986,8 +1034,8 @@ pub struct ParticleWall {
 
 impl ParticleWall {
     /// An enemy Titan's wall (SHIELD_WALL_HEALTH 1750, SP_PARTICLE_WALL_DURATION 8).
-    pub fn enemy(center: Vec3, normal: Vec3) -> Self {
-        Self { center, normal, life: 8.0, hp: 1750.0, enemy: true }
+    pub fn enemy(feet: Vec3, normal: Vec3) -> Self {
+        Self { origin: feet + normal * 100.0 - Vec3::Z * 64.0, normal, life: 8.0, hp: 1750.0, enemy: true }
     }
 }
 
@@ -1004,12 +1052,7 @@ impl EnemyWalls {
     pub fn hit(&self, from: Vec3, dir: Vec3, max: f32) -> Option<(Entity, f32)> {
         let mut best: Option<(Entity, f32)> = None;
         for w in &self.walls {
-            let denom = dir.dot(w.normal);
-            if denom >= -1e-4 {
-                continue;
-            }
-            let t = (w.center - from).dot(w.normal) / denom;
-            if t > 0.0 && t < max && best.is_none_or(|b| t < b.1) && (from + dir * t).distance(w.center) < w.radius {
+            if let Some(t) = w.hit_t(from, dir, max).filter(|&t| best.is_none_or(|b| t < b.1)) {
                 best = w.owner.map(|e| (e, t));
             }
         }
@@ -1427,8 +1470,11 @@ pub fn kit_input(
             DefKind::ParticleWall => {
                 st.def_cd_max = n.wall_cd;
                 st.def_cd = n.wall_cd;
-                let center = Vec3::from(s.pos.to_array()) + fwd * 200.0 + Vec3::Z * 130.0;
-                commands.spawn((Transform::from_translation(to_bevy(center)), Visibility::default(), ParticleWall { center, normal: fwd, life: n.wall_life, hp: n.wall_hp, enemy: false }));
+                // Around BT, facing the view's heading (GetParticleWallAttackAnglesFromOwner).
+                let origin = Vec3::from(s.pos.to_array()) - Vec3::Z * 64.0;
+                let normal = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
+                log::debug!("particle wall up at {origin:.0} facing {normal:.2}");
+                commands.spawn((Transform::from_translation(to_bevy(origin)), Visibility::default(), ParticleWall { origin, normal, life: n.wall_life, hp: n.wall_hp, enemy: false }));
                 true
             }
             DefKind::Tether => {
@@ -2166,38 +2212,29 @@ pub fn kit_world(
     for (id, mut w, mut tf, children) in &mut walls {
         w.life -= dt;
         if w.life <= 0.0 || w.hp <= 0.0 {
+            log::debug!("particle wall down ({})", if w.hp <= 0.0 { "broken" } else { "expired" });
             commands.entity(id).despawn();
             continue;
         }
         if children.is_none_or(|c| c.is_empty()) {
             if std::env::var_os("TF_OLD_FX").is_none() {
-                // The Titan shield wall models (P_drone_shield_wall_XO: xo_shield_wall*.mdl, the
-                // Particle Wall's own effect is server script). The system turns its models
-                // pitch 90 / roll 180 so their tall axis runs along the control point's -X and
-                // they face its -Z: a control point looking down with its up along -normal
-                // stands them upright facing the normal. The models sit 82..190 ahead of the
-                // point and 0..390 above it, so it goes 135 behind the centre at ground level.
-                let nb = to_bevy(w.normal).normalize();
-                let parent_rot = Transform::IDENTITY.looking_to(-nb, Vec3::Y).rotation;
-                let (back, up) = (Vec3::Y, -nb);
-                let right = up.cross(back).normalize();
-                let want = Quat::from_mat3(&Mat3::from_cols(right, up, back));
-                let world_off = (-nb * 135.0 - Vec3::Y * 130.0) * crate::player::UNIT;
-                let local = Transform { translation: parent_rot.inverse() * world_off, rotation: parent_rot.inverse() * want, scale: Vec3::ONE };
-                let fx = commands.spawn((local, Visibility::default(), crate::pfx::PfxTrail::oriented("P_drone_shield_wall_XO"))).id();
+                // SHIELD_WALL_FX at the wall's origin with its angles (control point 0 facing
+                // the normal), looping until the wall goes.
+                let fx = commands.spawn((Transform::IDENTITY, Visibility::default(), crate::pfx::PfxTrail::oriented("P_xo_shield_wall"))).id();
                 commands.entity(id).add_child(fx);
             } else {
                 // A wide, tall pane facing where BT looked.
                 let (m, mat) = disc(&mut meshes, &mut materials, 1.0, Color::srgba(0.3, 0.7, 1.0, 0.2), LinearRgba::rgb(0.4, 1.2, 2.4));
-                let pane = commands.spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::from_scale(Vec3::new(230.0, 150.0, 1.0)))).id();
+                let pane = commands.spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::from_xyz(0.0, 194.0 * crate::player::UNIT, -SHIELD_WALL_RADIUS * crate::player::UNIT).with_scale(Vec3::new(156.0, 180.0, 1.0)))).id();
                 commands.entity(id).add_child(pane);
             }
         }
-        *tf = Transform::from_translation(to_bevy(w.center)).looking_to(-to_bevy(w.normal).normalize(), Vec3::Y);
+        // Control point 0 takes the entity's rotation, forward (Bevy -Z) along the normal.
+        *tf = Transform::from_translation(to_bevy(w.origin)).looking_to(to_bevy(w.normal).normalize(), Vec3::Y);
         if w.enemy {
-            enemy_walls.walls.push(BoltShield { center: w.center, normal: w.normal, radius: 230.0, owner: Some(id) });
+            enemy_walls.walls.push(BoltShield::wall(w.origin, w.normal, Some(id)));
         } else {
-            shields.shields.push(BoltShield { center: w.center, normal: w.normal, radius: 230.0, owner: Some(id) });
+            shields.shields.push(BoltShield::wall(w.origin, w.normal, Some(id)));
         }
     }
 
@@ -2209,7 +2246,7 @@ pub fn kit_world(
         // TITAN_GUN_SHIELD_RADIUS around the Predator's muzzle, out in front of BT's right hand.
         let side = Vec3::new(s.yaw.sin(), -s.yaw.cos(), 0.0);
         let center = eye + view * 220.0 + side * 45.0 - Vec3::Z * 45.0;
-        shields.shields.push(BoltShield { center, normal: view, radius: 105.0, owner: None });
+        shields.shields.push(BoltShield::disc(center, view, 105.0, None));
         // The game plays P_titan_gun_shield_FP on the owner's viewmodel and the 3P system on
         // everyone else's screen; swap when the camera changes.
         let fp = *mode == CameraMode::Cockpit;
@@ -2679,5 +2716,27 @@ pub fn utility_world(
                 e.damage(dmg, false);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn particle_wall_arc_stops_shots_from_the_front_only() {
+        // A wall around the origin facing +X: 180 out, 120 degrees wide, 360 tall.
+        let w = BoltShield::wall(Vec3::ZERO, Vec3::X, None);
+        // Straight at the Titan from ahead: stops on the arc, 180 out.
+        let t = w.hit_t(Vec3::new(1000.0, 0.0, 100.0), -Vec3::X, 2000.0).unwrap();
+        assert!((t - 820.0).abs() < 0.5, "{t}");
+        // 50 degrees off the facing is still on the arc; 70 is past its edge.
+        let at = |deg: f32| Vec3::new(deg.to_radians().cos(), deg.to_radians().sin(), 0.0) * 1000.0 + Vec3::Z * 100.0;
+        assert!(w.hit_t(at(50.0), -at(50.0).with_z(0.0).normalize(), 2000.0).is_some());
+        assert!(w.hit_t(at(70.0), -at(70.0).with_z(0.0).normalize(), 2000.0).is_none());
+        // From behind, over the top, or out from inside: no hit.
+        assert!(w.hit_t(Vec3::new(-1000.0, 0.0, 100.0), Vec3::X, 2000.0).is_none());
+        assert!(w.hit_t(Vec3::new(1000.0, 0.0, 400.0), -Vec3::X, 2000.0).is_none());
+        assert!(w.hit_t(Vec3::new(0.0, 0.0, 100.0), Vec3::X, 2000.0).is_none());
     }
 }

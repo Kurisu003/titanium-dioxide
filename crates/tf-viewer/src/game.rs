@@ -133,8 +133,9 @@ pub fn director(
                 }
             } else {
                 game.timer -= dt;
-                // TF_NO_ENEMIES=1: an empty map for testing movement, weapons and animations.
-                if std::env::var_os("TF_NO_ENEMIES").is_some() {
+                // TF_NO_ENEMIES=1: an empty map for testing movement, weapons and animations (0 or unset:
+                // the waves).
+                if std::env::var("TF_NO_ENEMIES").is_ok_and(|v| v != "0") {
                     game.timer = game.timer.max(1.0);
                 }
                 if game.timer <= 0.0 {

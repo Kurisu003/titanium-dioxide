@@ -898,7 +898,12 @@ where the script has them):
   the abilities' state: a held flag, a cooldown jumping up, a utility charge spent, the core
   leaving its build-up.
 - **Particle Wall**: 1750 health for 8 s. **Gun Shield**: 2500 health for 6 s. Both stop enemy
-  rounds from the front (`targets::update_bolts` tests against `titankit::BoltShields`).
+  rounds from the front (`targets::update_bolts` tests against `titankit::BoltShields`). The
+  Particle Wall is the shape `CreateShieldWithSettings` gives its vortex sphere: the outside of
+  a cylinder 180 out from the Titan's feet (less 64), 360 tall and 120 degrees wide about the
+  view's heading. `P_xo_shield_wall` stands at the same spot with the same angles (the
+  server-side `_particle_wall.gnut` isn't shipped; its code is from the Northstar project's
+  copy).
   While the Gun Shield stands the gun is zoomed in by force (`GunShieldThink`'s SetForcedADS,
   so the Predator is down and spun up), and in the cockpit its effect stands at the
   viewmodel's `gun_shield_fp` attachment. Effects kept running on the viewmodel
@@ -1130,7 +1135,7 @@ playlist, `[$sp]`) variants:
     Sword Block (3 s, 2 s) takes 0.3 x damage from a 150 degree front; Legion's Gun Shield
     (6 s, 8 s) soaks 2500 from the front. Melee and executions pass through. A Titan holding
     the Vortex or Thermal Shield doesn't fire. Tone drops her Particle Wall (1750 health,
-    8 s, 14 s cooldown) 200 ahead: BT's and the Pilot's shots, bolts and missiles stop on it
+    8 s, 14 s cooldown) around herself, 100 ahead as an NPC's is: BT's and the Pilot's shots, bolts and missiles stop on it
     and wear it down while her rounds pass through. Northstar has none (her defensive is the
     Tether Trap, used as her ordnance here).
 - **Enemy Ions** fire the Splitter Rifle (`mp_titanweapon_particle_accelerator`):
@@ -1298,9 +1303,8 @@ the free camera at a position in game units; `--no-props` skips static props.
   `vortex_center` pose, baked from its draw sequence), so Scorch's fan is a
   screen-filling tint there) plus a translucent disc where the game draws a refracting vortex
   dome; a round the vortex catches hangs in it as `wpn_vortex_projectile_rifle`. Particle
-  Walls (BT's too) use the Titan shield wall models from `P_drone_shield_wall_XO`, stood
-  upright by hand since the wall's own effect is server script. `TF_OLD_FX=1` keeps the glow
-  and pane stand-ins.
+  Walls (BT's too) are the game's `P_xo_shield_wall`. `TF_OLD_FX=1` keeps the glow and pane
+  stand-ins.
   Grunts have no cover use, grenades or squad behaviour (they hold their spot and shoot, and
   only move to close in or flank), and Titans can't step on them. On campaign maps enemy Titans
   close in along the game's Titan navmesh (`maps/navmesh/<map>_large.nm`, `tf_assets::navmesh`,

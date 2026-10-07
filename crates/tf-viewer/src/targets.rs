@@ -1008,10 +1008,11 @@ pub fn update_enemies(
                         DefenseKind::Block | DefenseKind::ParticleWall => (Vec3::ZERO, 0.0),
                     };
                     if d.kind == DefenseKind::ParticleWall {
-                        // Dropped 200 ahead (like BT's) and left there; the cooldown starts now.
+                        // Around the Titan, 100 ahead (an NPC's wall), and left there; the
+                        // cooldown starts now.
                         let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-                        let center = e.pos + facing * 200.0 + Vec3::Z * 130.0;
-                        commands.spawn((Transform::from_translation(to_bevy(center)), Visibility::default(), crate::titankit::ParticleWall::enemy(center, facing)));
+                        let wall = crate::titankit::ParticleWall::enemy(e.pos, facing);
+                        commands.spawn((Transform::from_translation(to_bevy(e.pos)), Visibility::default(), wall));
                         e.defense_left = 0.0;
                         e.defense_cd = d.cooldown;
                     }
@@ -1277,6 +1278,7 @@ pub fn update_bolts(
         }
         commands.entity(id).despawn();
         if let Struck::Shield(i) = struck {
+            log::debug!("shield {i} stopped a round at {at:.0}");
             walls.absorbed.push((i, falloff(b.travelled, w.npc_damage_near, w.npc_damage_far)));
             crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: to_bevy(at), normal: -to_bevy(dir).normalize_or(Vec3::Y), table: w.impact_table, surface: crate::particles::Surface::Shield, victim: false, scale: 1.0 });
             continue;
@@ -1310,6 +1312,7 @@ pub fn update_bolts(
                 }
                 let dmg = dmg * scale;
                 let hit = bt_health.damage_from(dmg, w.stops_regen, at - b.vel.normalize_or_zero() * 3000.0);
+                log::debug!("BT hit by a round for {dmg:.0} at {at:.0} from {:.0}", at - b.vel.normalize_or_zero() * b.travelled);
                 if bt_health.block < 1.0 && hit.dealt < dmg * 0.99 {
                     log::debug!("sword block: {dmg:.0} -> {:.0}", hit.dealt);
                 }
