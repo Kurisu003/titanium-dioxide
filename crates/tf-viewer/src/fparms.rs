@@ -71,6 +71,9 @@ impl FpSeq {
     }
 }
 
+/// The mantle clips, by how far the eye is above the ledge: below, level, above, high above.
+pub const MANTLE_CLIPS: [&str; 4] = ["ptpov_WallMantle_Below", "ptpov_WallMantle_Level", "ptpov_WallMantle_Above", "ptpov_WallMantle_HighAbove"];
+
 /// Every clip the arms may play.
 fn sequences() -> Vec<String> {
     let mut v = Vec::new();
@@ -100,6 +103,11 @@ fn sequences() -> Vec<String> {
         "atpov_cockpit_eject",
     ] {
         v.push(s.into());
+    }
+    // Mantles (pov_pete_core, an include of the arms; pilotweapon.rs plays them).
+    for h in MANTLE_CLIPS {
+        v.push(h.to_string());
+        v.push(format!("{h}_Crouch"));
     }
     v
 }
@@ -139,12 +147,18 @@ pub fn fp_seq_update(
     mut seq: ResMut<FpSeq>,
     arms: Option<Res<FpArms>>,
     rodeo: Res<crate::rodeo::Rodeo>,
+    pilots: Query<&crate::pilotctl::PlayerPilot>,
     mut actors: Query<&mut Actor>,
     mut tfs: Query<(&mut Transform, &mut Visibility)>,
 ) {
     let Some(arms) = arms else { return };
     if rodeo.riding() {
         // rodeo.rs drives the arms.
+        return;
+    }
+    if seq.active.is_none() && pilots.single().is_ok_and(|p| matches!(p.state.mode, tf_sim::pilot::PilotMove::Mantle { .. })) {
+        // pilotweapon.rs plays the mantle on the arms.
+        seq.cam = None;
         return;
     }
     let Some(a) = seq.active.as_mut() else {

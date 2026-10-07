@@ -358,7 +358,12 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     (`wallrun_hangslip*`, `wallrun_hangStopTime`) and `player_extraairaccelleration`.
   - Air control is Source-style (engine defaults `airSpeed 60`, `airAcceleration 500`). Automantle
     takes `automantle_duration_*` 1.11/1.0/0.5/0.35 s depending on how far the eye is above the
-    ledge (`automantle_height_below/level/above` -10/10/30).
+    ledge (`automantle_height_below/level/above` -10/10/30). In first person the gun goes away
+    and the arms play the matching `ptpov_WallMantle_Below/Level/Above/HighAbove` (or its
+    `_Crouch` form; `pov_pete_core.mdl`, included by the arms) stretched over that time, with
+    their camera bone on the eye; the gun then comes back with its raise (`ACT_VM_RAISE`). The
+    view follows our mantle path (up, then over the edge), not the clip's camera, and hiding the
+    gun at once (no lowering) is a guess.
   - Sprint speed follows the ground acceleration. `sprintStartDelay` (0.2 s),
     `sprintStartDuration` (0.8 s), `sprintStartFastDuration` (0.2 s, "after landing from a
     sprinting jump") and `sprintEndDuration` (0.15 s) time the sprint view offset

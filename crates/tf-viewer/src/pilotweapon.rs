@@ -395,11 +395,15 @@ struct VmLayers {
     mods: VmMods,
     prev_mods: VmMods,
     mods_t: f32,
+    /// Seconds since a mantle ended (the gun comes back up with its raise), and whether one
+    /// was playing last frame.
+    mantle_end_t: f32,
+    was_mantle: bool,
 }
 
 impl Default for PilotLoadout {
     fn default() -> Self {
-        Self { guns: Vec::new(), active: 0, switching: None, deploy_t: 9.0, choice: None, vm_cycle: 0.0, sprint_blend: 0.0, raise_t: 9.0, vm_layers: VmLayers { jump_t: 9.0, land_t: 9.0, sprint_end_t: 9.0, ..Default::default() }, vm_motion: Default::default(), melee_vm: None, ord_vm: None, tac_vm: None }
+        Self { guns: Vec::new(), active: 0, switching: None, deploy_t: 9.0, choice: None, vm_cycle: 0.0, sprint_blend: 0.0, raise_t: 9.0, vm_layers: VmLayers { jump_t: 9.0, land_t: 9.0, sprint_end_t: 9.0, mantle_end_t: 9.0, ..Default::default() }, vm_motion: Default::default(), melee_vm: None, ord_vm: None, tac_vm: None }
     }
 }
 
@@ -1269,6 +1273,7 @@ pub fn pilot_viewmodel(
     mut tfs: Query<(&mut Transform, &mut Visibility), (Without<MainCamera>, Without<crate::actor::BodyPartMesh>)>,
     mut part_meshes: Query<(&ChildOf, &crate::actor::BodyPartMesh, &mut Visibility)>,
     mut place: ResMut<VmPlacements>,
+    (arms, settings): (Option<Res<crate::fparms::FpArms>>, Res<PilotSettings>),
 ) {
     place.0.clear();
     let Ok((pilot, mut lo)) = pilots.single_mut() else { return };
@@ -1298,6 +1303,8 @@ pub fn pilot_viewmodel(
     }
     // A throw replaces the gun with the grenade in hand: pull out, hold, toss.
     let throwing = throw.phase.filter(|(p, _)| *p != crate::pilotability::ThrowPhase::Raise);
+    // Mantling puts the gun away while the arms climb (below).
+    let mantling = matches!(pilot.state.mode, PilotMove::Mantle { .. });
     for (which, slot) in [(false, lo.ord_vm), (true, lo.tac_vm)] {
         let Some((idx, anchor, vm)) = slot else { continue };
         let mine = throwing.is_some() && throw.tactical == which;
@@ -1331,7 +1338,7 @@ pub fn pilot_viewmodel(
     for (i, g) in lo.guns.iter().enumerate() {
         if let Some((anchor, vm)) = g.viewmodel {
             if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-                *v = if show && i == active && swinging.is_none() && throwing.is_none() { Visibility::Inherited } else { Visibility::Hidden };
+                *v = if show && i == active && swinging.is_none() && throwing.is_none() && !mantling { Visibility::Inherited } else { Visibility::Hidden };
             }
             // Only the gun in your hands plays its animation sounds.
             if let Ok(mut a) = actors.get_mut(vm) {
@@ -1344,6 +1351,31 @@ pub fn pilot_viewmodel(
     }
     let dt = time.delta_secs();
     let s = pilot.state.clone();
+    // A mantle plays the arms' `ptpov_WallMantle_*` (pov_pete_core): the variant by how far the
+    // eye is above the ledge, as automantle_height_below/level/above (-10/10/30) pick them, its
+    // `_Crouch` form when crouched, stretched over the mantle's automantle_duration_* (e.g. the
+    // 1.07 s level clip over 1.0 s). The arms sit with their camera bone on the eye, like a
+    // viewmodel; the view follows the mantle's own path, not the clip's camera.
+    if let (PilotMove::Mantle { from, to, time: mt }, Some(arms)) = (s.mode, arms.as_deref()) {
+        let above = from.z + settings.0.eye_height - to.z;
+        let i = if above < -10.0 { 0 } else if above < 10.0 { 1 } else if above < 30.0 { 2 } else { 3 };
+        let name = crate::fparms::MANTLE_CLIPS[i];
+        if let Ok(mut a) = actors.get_mut(arms.actor) {
+            let crouch = format!("{name}_Crouch");
+            if let Some(c) = s.crouched.then(|| a.clip(&crouch)).flatten().or_else(|| a.clip(name)) {
+                a.autoplay = false;
+                a.aim = None;
+                a.layers = vec![Layer { clip: c, cycle: (mt / tf_sim::pilot::mantle_time(above)).min(0.999), weight: 1.0 }];
+                a.additive.clear();
+                a.grid_layers.clear();
+                let offset = a.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+                place.0.push((arms.anchor, Transform::from_translation(-offset)));
+                if let Ok((_, mut v)) = tfs.get_mut(arms.anchor) {
+                    *v = Visibility::Inherited;
+                }
+            }
+        }
+    }
     let sprint = s.sprinting && s.mode == PilotMove::Ground;
     let on_ground = s.on_ground();
     // Layer clocks: leaving the ground (or a double jump) starts the jump transition, touching
@@ -1362,6 +1394,11 @@ pub fn pilot_viewmodel(
     if vl.was_sprint && !sprint {
         vl.sprint_end_t = 0.0;
     }
+    vl.mantle_end_t += dt;
+    if vl.was_mantle && !mantling {
+        vl.mantle_end_t = 0.0;
+    }
+    vl.was_mantle = mantling;
     vl.jumps = s.jumps;
     vl.was_ground = on_ground;
     vl.was_sprint = sprint;
@@ -1478,6 +1515,10 @@ pub fn pilot_viewmodel(
     } else if let Some((c, t)) = s.zipline.and_then(|r| Some((clip(&actor, "ptpov_zipline_start")?, r.mount))).filter(|&(c, t)| t < actor.clips[c].duration) {
         // Grabbing a zipline: `ptpov_zipline_start` (ACT_VM_ZIPLINE_MOUNT).
         layers.push(Layer { clip: c, cycle: once(&actor, c, t), weight: 1.0 });
+    } else if let Some(p) = Some(pick(&actor, "ACT_VM_RAISE", "raise_seq")).filter(|p| p[0].0.is_some_and(|c| vl.mantle_end_t < actor.clips[c].duration)) {
+        // Back up after a mantle (ACT_VM_RAISE at its own pace).
+        let t = vl.mantle_end_t;
+        push(&actor, &mut layers, p, &|a, c| once(a, c, t), 1.0);
     } else if raising.is_some() {
         let t = vl.sprint_end_t;
         push(&actor, &mut layers, raise_pick, &|a, c| once(a, c, t), 1.0);
