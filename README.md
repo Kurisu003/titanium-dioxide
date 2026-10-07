@@ -272,8 +272,12 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   - Pick the loadout in the menu, or use `--loadout mp_weapon_hemlok,mp_weapon_wingman,mp_weapon_defender`.
 - **BT's loadouts:** pick one in the Loadout menu (or `--titan 0..7`), or in the Titan keys 1-8 switch between Expedition (XO-16), Scorch (Thermite
   Launcher), Ion (Splitter Rifle), Northstar (Plasma Railgun), Ronin (Leadwall), Tone (40mm),
-  Legion (Predator Cannon, with spin-up) and Brute (Quad Rocket).
+  Legion (Predator Cannon) and Brute (Quad Rocket).
   - Each uses its script's numbers and its `.nut` projectile speed and bolt pattern.
+  - The Predator Cannon is `attack_button_presses_ads`: the trigger zooms in, which is its
+    wind-up (`zoom_time_in` 1.5 s, the length of its `ads_in_seq`, which swings the gun down
+    from its raised carry pose; the script spins the barrels, `P_predator_barrel_blur_FP` on
+    `fx_barrel`, from the start of the zoom), and it fires once fully zoomed.
   - Each has its own viewmodel and in-hand model.
   - The Plasma Railgun charges while you aim down sights (`charge_time` 2.25 s over 5
     `charge_levels`, draining in 0.5 s), ticking at each level. A shot does 250 plus 300 per
@@ -903,7 +907,9 @@ where the script has them):
   tethered on the spot.
 - **Power Shot**: 2000 to Titans; in close-range ammo it's a 16 degree blast (`CloseRangePowerShot`:
   200 to Pilots falling to 50 from 800 to 1600 units), in long-range ammo a single straight
-  round with a 150-unit explosion (`LongRangePowerShot`: 1800 heavy splash). **Smart Core**: for 12 s, every Predator round locks onto the
+  round with a 150-unit explosion (`LongRangePowerShot`: 1800 heavy splash). Its effects are
+  the mods': `P_muzzleflash_predator_PS(_FP)(_ALT)` at the gun's muzzle (weapons::GunMuzzle),
+  `P_weapon_tracers_predator` and the `predator_bullet_ps(_alt)` impact table. **Smart Core**: for 12 s, every Predator round locks onto the
   target nearest the crosshair.
 - **Salvo Core**: 20 homing rockets at 12/s, 120 each. **Flight Core**: 6 s of rockets at 12/s
   (200 direct, 200 splash).

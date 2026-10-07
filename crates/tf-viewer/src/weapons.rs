@@ -496,21 +496,19 @@ pub struct TitanGun {
     pub gravity: f32,
     /// Bolt offsets (up, right) and their scale.
     pub pellets: Option<(&'static [[f32; 2]], f32)>,
-    /// Seconds of barrel spin before firing (Predator Cannon).
-    pub spinup: f32,
 }
 
 const LEADWALL_BOLTS: [[f32; 2]; 8] = [[0.2, 0.8], [0.2, -0.8], [-0.2, 0.65], [-0.2, -0.65], [0.2, 0.2], [0.2, -0.2], [-0.2, 0.2], [-0.2, -0.2]];
 
 pub const TITAN_ARSENAL: &[TitanGun] = &[
-    TitanGun { id: "mp_titanweapon_xo16_shorty", kit: "EXPEDITION", first: &["wpn_xo16_1p_wpnfire_firstshot_core"], shot: &["wpn_xo16_1p_wpnfire_secondshot_core"], tail: &["wpn_xo16_1p_wpnfire_tail_core"], projectile: None, gravity: 0.0, pellets: None, spinup: 0.0 },
-    TitanGun { id: "mp_titanweapon_meteor", kit: "SCORCH", first: &[], shot: &["wpn_meteor_1p_shot_lr"], tail: &[], projectile: Some(2200.0), gravity: 0.3, pellets: None, spinup: 0.0 },
-    TitanGun { id: "mp_titanweapon_particle_accelerator", kit: "ION", first: &[], shot: &["wpn_particleaccel_1p_firstshot_lr"], tail: &[], projectile: Some(8000.0), gravity: 0.0, pellets: None, spinup: 0.0 },
-    TitanGun { id: "mp_titanweapon_sniper", kit: "NORTHSTAR", first: &[], shot: &["wpn_titansniper_1p_wpnfire_level2_6ch"], tail: &["wpn_titansniper_1p_wpnfire_uber_tail"], projectile: Some(10000.0), gravity: 0.0, pellets: None, spinup: 0.0 },
-    TitanGun { id: "mp_titanweapon_leadwall", kit: "RONIN", first: &[], shot: &["wpn_leadwall_1p_shot_lr"], tail: &[], projectile: Some(4000.0), gravity: 0.0, pellets: Some((&LEADWALL_BOLTS, 0.05 * 1.45)), spinup: 0.0 },
-    TitanGun { id: "mp_titanweapon_sticky_40mm", kit: "TONE", first: &[], shot: &["wpn_40mm_1p_wpnfire_reduced"], tail: &["wpn_40mm_1p_wpnfire_tail"], projectile: Some(6000.0), gravity: 0.1, pellets: None, spinup: 0.0 },
-    TitanGun { id: "mp_titanweapon_predator_cannon", kit: "LEGION", first: &["wpn_xo16_1p_wpnfire_firstshot_core"], shot: &["wpn_xo16_1p_wpnfire_secondshot_core"], tail: &["wpn_predator_1p_barrelspin_end"], projectile: None, gravity: 0.0, pellets: None, spinup: 0.45 },
-    TitanGun { id: "mp_titanweapon_rocketeer_rocketstream", kit: "BRUTE", first: &[], shot: &["wpn_trl_1p_fire_shot_lr"], tail: &["wpn_trl_1p_fire_rocket_tail"], projectile: Some(2500.0), gravity: 0.0, pellets: None, spinup: 0.0 },
+    TitanGun { id: "mp_titanweapon_xo16_shorty", kit: "EXPEDITION", first: &["wpn_xo16_1p_wpnfire_firstshot_core"], shot: &["wpn_xo16_1p_wpnfire_secondshot_core"], tail: &["wpn_xo16_1p_wpnfire_tail_core"], projectile: None, gravity: 0.0, pellets: None },
+    TitanGun { id: "mp_titanweapon_meteor", kit: "SCORCH", first: &[], shot: &["wpn_meteor_1p_shot_lr"], tail: &[], projectile: Some(2200.0), gravity: 0.3, pellets: None },
+    TitanGun { id: "mp_titanweapon_particle_accelerator", kit: "ION", first: &[], shot: &["wpn_particleaccel_1p_firstshot_lr"], tail: &[], projectile: Some(8000.0), gravity: 0.0, pellets: None },
+    TitanGun { id: "mp_titanweapon_sniper", kit: "NORTHSTAR", first: &[], shot: &["wpn_titansniper_1p_wpnfire_level2_6ch"], tail: &["wpn_titansniper_1p_wpnfire_uber_tail"], projectile: Some(10000.0), gravity: 0.0, pellets: None },
+    TitanGun { id: "mp_titanweapon_leadwall", kit: "RONIN", first: &[], shot: &["wpn_leadwall_1p_shot_lr"], tail: &[], projectile: Some(4000.0), gravity: 0.0, pellets: Some((&LEADWALL_BOLTS, 0.05 * 1.45)) },
+    TitanGun { id: "mp_titanweapon_sticky_40mm", kit: "TONE", first: &[], shot: &["wpn_40mm_1p_wpnfire_reduced"], tail: &["wpn_40mm_1p_wpnfire_tail"], projectile: Some(6000.0), gravity: 0.1, pellets: None },
+    TitanGun { id: "mp_titanweapon_predator_cannon", kit: "LEGION", first: &["wpn_xo16_1p_wpnfire_firstshot_core"], shot: &["wpn_xo16_1p_wpnfire_secondshot_core"], tail: &["wpn_predator_1p_barrelspin_end"], projectile: None, gravity: 0.0, pellets: None },
+    TitanGun { id: "mp_titanweapon_rocketeer_rocketstream", kit: "BRUTE", first: &[], shot: &["wpn_trl_1p_fire_shot_lr"], tail: &["wpn_trl_1p_fire_rocket_tail"], projectile: Some(2500.0), gravity: 0.0, pellets: None },
 ];
 
 /// Smart Core's lock-on cone (half angle, degrees).
@@ -551,7 +549,8 @@ pub struct Weapon {
     /// Index into TITAN_ARSENAL.
     pub arsenal: usize,
     trigger_held: bool,
-    spin: f32,
+    /// The Predator Cannon's barrel spin effect while it winds up (zoomed in).
+    spin_fx: Option<Entity>,
     pub charge: Charge,
     /// How far the fire rate has ramped toward `fire_rate_max`.
     pub rate_ramp: f32,
@@ -608,7 +607,7 @@ impl Weapon {
             firing_audio: false,
             arsenal: 0,
             trigger_held: false,
-            spin: 0.0,
+            spin_fx: None,
             charge: Charge::default(),
             hits: 0,
             rng: 0x9E37_79B9_7F4A_7C15,
@@ -760,6 +759,17 @@ fn titan_shot_fx(commands: &mut Commands, w: &Weapon, cockpit: bool, actors: &Qu
     true
 }
 
+/// The Titan's main gun muzzle as of the last frame, for what the gun fires besides its rounds
+/// (Power Shot).
+#[derive(Resource, Default, Clone, Copy)]
+pub struct GunMuzzle {
+    /// The `muzzle_flash` joint's frame (Bevy space; its rotation maps the game frame, as
+    /// joint globals give it), on the viewmodel in the cockpit or on the world gun.
+    pub frame: Option<(Vec3, Quat)>,
+    /// The frame is the viewmodel's.
+    pub cockpit: bool,
+}
+
 fn muzzle_world(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, actor: Option<Entity>) -> Option<Vec3> {
     let a = actors.get(actor?).ok()?;
     globals.get(a.joint("muzzle_flash")?).ok().map(|g| g.translation())
@@ -776,7 +786,7 @@ pub fn weapon_fire(
     settings: Res<TitanSettings>,
     fx: Res<FxAssets>,
     mut punch_res: ResMut<ViewPunch>,
-    (auto, control, mut scratch, mut enemy_walls, springs, pfx): (Res<crate::autotitan::AutoTitan>, Res<crate::pilotctl::Control>, Local<ViewPunch>, ResMut<crate::titankit::EnemyWalls>, Res<crate::vmmotion::WeaponSprings>, Option<Res<crate::pfx::Pfx>>),
+    (auto, control, mut scratch, mut enemy_walls, springs, pfx, mut gun_muzzle): (Res<crate::autotitan::AutoTitan>, Res<crate::pilotctl::Control>, Local<ViewPunch>, ResMut<crate::titankit::EnemyWalls>, Res<crate::vmmotion::WeaponSprings>, Option<Res<crate::pfx::Pfx>>, ResMut<GunMuzzle>),
     mut titans: Query<(
         &PlayerTitan,
         &mut Weapon,
@@ -805,6 +815,11 @@ pub fn weapon_fire(
         punch.step(dt, Some(&w.def.kick));
     }
     let Ok((titan, mut w, mut core, vortex, melee, health, kit)) = titans.single_mut() else { return };
+    gun_muzzle.cockpit = *mode == CameraMode::Cockpit && piloted;
+    gun_muzzle.frame = (if gun_muzzle.cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun })
+        .and_then(|a| actors.get(a).ok()?.joint("muzzle_flash"))
+        .and_then(|j| globals.get(j).ok())
+        .map(|g| (g.translation(), g.rotation()));
     // The left hand is busy during Vortex and punches, Sword Block holds the sword up; dead
     // Titans don't shoot.
     let busy = vortex.is_some_and(|v| v.active) || melee.is_some_and(|m| m.t.is_some()) || health.is_some_and(|h| h.dead_for.is_some()) || kit.is_some_and(|k| k.blocking);
@@ -817,7 +832,7 @@ pub fn weapon_fire(
     let fire = (input.fire && piloted) || auto_fire;
     let (vyaw, vpitch) = if piloted { (input.yaw, input.pitch) } else { (s.yaw, s.pitch) };
 
-    let ads_target = if input.ads && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
+    let ads_target = if (input.ads || (w.def.attack_presses_ads && fire)) && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
     // zoom_time_in going in, zoom_time_out coming back out.
     let rate = dt / if ads_target >= w.ads { w.def.zoom_time } else { w.def.zoom_time_out }.max(0.05);
     w.ads = if ads_target > w.ads { (w.ads + rate).min(ads_target) } else { (w.ads - rate).max(ads_target) };
@@ -853,8 +868,29 @@ pub fn weapon_fire(
     let gun = &TITAN_ARSENAL[w.arsenal.min(TITAN_ARSENAL.len() - 1)];
     let pulled = fire && !w.trigger_held;
     w.trigger_held = fire;
-    // The Predator Cannon's barrels spin up while the trigger is held.
-    w.spin = if fire && !frozen { (w.spin + dt).min(gun.spinup) } else { 0.0 };
+    // mp_titanweapon_predator_cannon.nut: zooming in (the trigger zooms too) spins the barrels,
+    // P_predator_barrel_blur_FP on fx_barrel with the wind-up; zooming out winds them down.
+    if w.def.name == "mp_titanweapon_predator_cannon" {
+        let spinning = ads_target > 0.0 && game_fx;
+        let cockpit = *mode == CameraMode::Cockpit && piloted;
+        let actor = if cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun };
+        let frame = actor.and_then(|a| crate::pilotweapon::vm_attachment(&actors, &globals, a, &("fx_barrel".to_string(), Transform::IDENTITY)));
+        match (spinning, w.spin_fx) {
+            (true, None) => {
+                audio::event(&mut commands, "weapon_predator_windup_1p");
+                w.spin_fx = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if cockpit { "P_predator_barrel_blur_FP" } else { "P_predator_barrel_blur" }))).id());
+            }
+            (false, Some(e)) => {
+                audio::event(&mut commands, "weapon_predator_winddown_1p");
+                commands.entity(e).despawn();
+                w.spin_fx = None;
+            }
+            _ => {}
+        }
+        if let (Some(e), Some((p, r))) = (w.spin_fx, frame) {
+            commands.entity(e).insert(Transform::from_translation(p).looking_to(r * Vec3::X, r * Vec3::Z));
+        }
+    }
     // Charge weapons (the Plasma Railgun charges while aiming down sights; charge_time 2.25 s
     // over 5 levels, draining in charge_cooldown_time). Each level ticks.
     let cdef = w.def.charge.clone();
@@ -874,7 +910,9 @@ pub fn weapon_fire(
     if !fire || frozen || (w.reloading() && !burst) || (w.ammo == 0 && !burst) || s.sprinting || w.vm_seq == VmSeq::Draw {
         return;
     }
-    if w.spin < gun.spinup {
+    // attack_button_presses_ads (the Predator Cannon): the trigger zooms in, and the gun fires
+    // once fully zoomed (its zoom_time_in, 1.5 s, is the barrels' wind-up).
+    if w.def.attack_presses_ads && w.ads < 0.999 {
         return;
     }
     // Semi-automatic weapons fire once per pull (Burst Core is always automatic).

@@ -271,6 +271,7 @@ fn main() {
         .init_resource::<offhandvm::Offhands>()
         .init_resource::<titankit::BoltShields>()
         .init_resource::<titankit::EnemyWalls>()
+        .init_resource::<weapons::GunMuzzle>()
         .init_resource::<titankit::TitanBoltHits>()
         .init_resource::<titankit::KitView>()
         .init_resource::<titankit::TitanMoveMods>()

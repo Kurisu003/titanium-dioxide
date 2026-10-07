@@ -1108,7 +1108,7 @@ pub fn kit_input(
     mut titans: Query<(&PlayerTitan, &mut KitState, &mut TitanCore, &mut TitanHealth, &Vortex, &mut crate::weapons::Weapon)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
     (mut mods, mut status): (ResMut<TitanMoveMods>, ResMut<crate::pilotability::PilotStatus>),
-    (mut vis, tether_assets): (Query<&mut Visibility>, Option<Res<TetherAssets>>),
+    (mut vis, tether_assets, gun_muzzle): (Query<&mut Visibility>, Option<Res<TetherAssets>>, Res<crate::weapons::GunMuzzle>),
 ) {
     let Some(defs) = defs else { return };
     let n = &defs.n;
@@ -1285,10 +1285,38 @@ pub fn kit_input(
                         hurt(&mut e, n.power_titan, n.power_pilot + (POWER_SHOT_CLOSE_FAR_PILOT - n.power_pilot) * k, &mut core);
                     }
                 }
-                let (a, b) = (to_bevy(eye + right * 50.0 - Vec3::Z * 40.0), to_bevy(at));
-                emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.7, color: Vec3::new(6.0, 4.0, 1.5) });
-                emit(&mut commands, Effect::Explosion { at: b, scale: 1.4 });
-                crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
+                let b = to_bevy(at);
+                match gun_muzzle.frame.filter(|_| std::env::var_os("TF_OLD_FX").is_none()) {
+                    // The Power Shot mods' effects (mp_titanweapon_predator_cannon.txt): their
+                    // muzzle flash, P_weapon_tracers_predator, and their impact table.
+                    Some((a, rot)) => {
+                        let long = weapon.long_range();
+                        let flash = match (gun_muzzle.cockpit, long) {
+                            (true, false) => "P_muzzleflash_predator_PS_FP",
+                            (true, true) => "P_muzzleflash_predator_PS_FP_ALT",
+                            (false, false) => "P_muzzleflash_predator_PS",
+                            (false, true) => "P_muzzleflash_predator_PS_ALT",
+                        };
+                        if gun_muzzle.cockpit {
+                            crate::pfx::emit_named_vm_frame(&mut commands, flash, a, rot);
+                        } else {
+                            crate::pfx::emit_named_frame(&mut commands, flash, a, rot);
+                        }
+                        crate::pfx::emit_beam(&mut commands, "P_weapon_tracers_predator", a, b);
+                        let surface = match who.and_then(|id| enemies.get(id).ok()) {
+                            Some((_, e)) if e.infantry => crate::particles::Surface::Flesh,
+                            Some(_) => crate::particles::Surface::Titan,
+                            None => crate::particles::Surface::World,
+                        };
+                        emit(&mut commands, Effect::Hit { at: b, normal: (a - b).normalize_or(Vec3::Y), table: if long { "predator_bullet_ps_alt" } else { "predator_bullet_ps" }, surface, victim: false, scale: 2.5 });
+                    }
+                    None => {
+                        let a = to_bevy(eye + right * 50.0 - Vec3::Z * 40.0);
+                        emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.7, color: Vec3::new(6.0, 4.0, 1.5) });
+                        emit(&mut commands, Effect::Explosion { at: b, scale: 1.4 });
+                        crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
+                    }
+                }
                 true
             }
         };
