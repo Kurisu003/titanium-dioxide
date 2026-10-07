@@ -82,6 +82,13 @@ const LASER_TRIP_DAMAGE_HEAVY: f32 = 1500.0;
 const LASER_TRIP_DEPLOY_POWER: f32 = 900.0;
 const LASER_TRIP_DEPLOY_SIDE_POWER: f32 = 1200.0;
 const LASER_TRIP_MAX: usize = 9;
+/// LASER_TRIP_INNER_RADIUS / LASER_TRIP_OUTER_RADIUS: a pylon's blast.
+const LASER_TRIP_RADIUS: f32 = 400.0;
+/// The beam's box: 8 either side of the line between the pylons (LaserPylonSetThink).
+const LASER_TRIP_BEAM_HALF: f32 = 8.0;
+/// The pylon rises 45 units as it builds; its "center" attachment (the beam's ends) is taken
+/// as 40 above that.
+const LASER_TRIP_CENTER: f32 = 85.0;
 /// Deployables fall under the projectile gravity (750 u/s² at scale 1).
 const DEPLOYABLE_GRAVITY: f32 = 750.0;
 /// Tether Trap (mp_titanability_tether_trap.nut / mp_weapon_tether.nut): in SP each use
@@ -187,9 +194,8 @@ pub struct LaserPylon {
     build: f32,
     life: f32,
     group: u32,
-    /// Enemies zapped recently (entity, seconds ago).
-    zapped: Vec<(Entity, f32)>,
-    beam_t: f32,
+    /// Its beam to the next pylon of the group has been put up.
+    beam: bool,
 }
 
 /// Fly a thrown deployable until it lands (returns true once on the ground).
@@ -1404,7 +1410,7 @@ pub fn kit_input(
                 d.z = d.z.min(-0.2);
                 for (k, power) in [(d - right, LASER_TRIP_DEPLOY_SIDE_POWER), (d, LASER_TRIP_DEPLOY_POWER), (d + right, LASER_TRIP_DEPLOY_SIDE_POWER)] {
                     let p = eye + Vec3::Z * -15.0 + right * 25.0;
-                    commands.spawn((Transform::from_translation(to_bevy(p)), Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false), LaserPylon { pos: p, vel: k.normalize_or(dir) * power, landed: false, build: LASER_TRIP_BUILD_TIME, life: LASER_TRIP_LIFETIME, group, zapped: Vec::new(), beam_t: 0.0 }));
+                    commands.spawn((Transform::from_translation(to_bevy(p)), Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false), LaserPylon { pos: p, vel: k.normalize_or(dir) * power, landed: false, build: LASER_TRIP_BUILD_TIME, life: LASER_TRIP_LIFETIME, group, beam: false }));
                 }
                 true
             }
@@ -2372,36 +2378,40 @@ pub fn utility_world(
         }
         tf.translation = to_bevy(t.pos);
     }
-    // Laser Tripwire: pylons land and arm; beams between a group's armed pylons zap crossers.
+    // Laser Tripwire (mp_titanability_laser_trip.nut): pylons land, rise and arm; each armed
+    // pylon beams to the next of its group (P_wpn_lasertrip_beam). An enemy touching a beam
+    // destroys a pylon, and a destroyed pylon takes its whole group with it (OnThreadEnd destroys
+    // the projectile group); so does running out of time. Every pylon destroyed blows up:
+    // P_impact_exp_XLG_metal and 200 (1500 to heavy armour) within 400.
+    let old_fx = std::env::var_os("TF_OLD_FX").is_some();
     let mut armed: Vec<(u32, Vec3, Entity)> = Vec::new();
+    let mut blow: Vec<u32> = Vec::new();
     for (id, mut p, mut tf) in &mut pylons {
         if !p.landed {
             let (mut pos, mut v) = (p.pos, p.vel);
             p.landed = fly_deployable(&world, &mut pos, &mut v, dt);
             p.pos = pos;
             p.vel = v;
+            if p.landed && !old_fx {
+                // PlayLoopFXOnEntity( LASER_TRIP_FX_ALL, pylon ).
+                commands.entity(id).with_child((Transform::default(), crate::pfx::PfxTrail::oriented("P_wpn_lasertrip_base")));
+            }
         } else if p.build > 0.0 {
             p.build -= dt;
         } else {
             p.life -= dt;
             armed.push((p.group, p.pos, id));
         }
-        for z in &mut p.zapped {
-            z.1 += dt;
-        }
-        p.zapped.retain(|z| z.1 < 1.0);
-        if p.life <= 0.0 {
-            commands.entity(id).despawn();
+        if p.life <= 0.0 && !blow.contains(&p.group) {
+            blow.push(p.group);
         }
         tf.translation = to_bevy(p.pos);
     }
     // Keep at most LASER_TRIP_MAX pylons: the oldest group goes first.
     if pylons.iter().count() > LASER_TRIP_MAX {
         let oldest = pylons.iter().map(|(_, p, _)| p.group).min().unwrap_or(0);
-        for (id, p, _) in &pylons {
-            if p.group == oldest {
-                commands.entity(id).despawn();
-            }
+        if !blow.contains(&oldest) {
+            blow.push(oldest);
         }
     }
     armed.sort_by_key(|a| a.0);
@@ -2410,32 +2420,50 @@ pub fn utility_world(
         if ga != gb {
             continue;
         }
-        let (a, b) = (a + Vec3::Z * 40.0, b + Vec3::Z * 40.0);
-        let Ok((_, mut pa, _)) = pylons.get_mut(ea) else { continue };
-        pa.beam_t += dt;
-        if pa.beam_t >= 0.12 {
-            pa.beam_t = 0.0;
+        let (a, b) = (a + Vec3::Z * LASER_TRIP_CENTER, b + Vec3::Z * LASER_TRIP_CENTER);
+        if old_fx {
             emit(&mut commands, Effect::Tracer { from: to_bevy(a), to: to_bevy(b), width: 0.08, color: Vec3::new(1.0, 2.5, 6.0) });
+        } else if let Ok((_, mut pa, _)) = pylons.get_mut(ea) {
+            if !pa.beam {
+                pa.beam = true;
+                let local = to_bevy(a) - to_bevy(pa.pos);
+                commands.entity(ea).with_child((Transform::from_translation(local), crate::pfx::PfxTrail::new("P_wpn_lasertrip_beam"), crate::pfx::PfxBeamEnd(to_bevy(b))));
+            }
         }
         let seg = b - a;
         let len = seg.length().max(1e-3);
         let sd = seg / len;
-        for (eid, mut e) in enemies.iter_mut() {
-            if !e.alive() || pa.zapped.iter().any(|z| z.0 == eid) {
+        for (_, e) in enemies.iter() {
+            if !e.alive() {
                 continue;
             }
-            // Distance from the enemy's centre line to the beam segment.
+            // The enemy's bounds (a cylinder here) against the beam's box.
             let c = e.pos + Vec3::Z * e.height * 0.5;
             let t = (c - a).dot(sd).clamp(0.0, len);
             let q = a + sd * t;
             let horiz = (c - q).truncate().length();
-            if horiz < e.radius + 20.0 && (q.z - e.pos.z) > -20.0 && (q.z - e.pos.z) < e.height + 20.0 {
+            if horiz < e.radius + LASER_TRIP_BEAM_HALF && q.z > e.pos.z - LASER_TRIP_BEAM_HALF && q.z < e.pos.z + e.height + LASER_TRIP_BEAM_HALF {
+                log::info!("laser tripwire tripped by {}", if e.infantry { "a grunt" } else { "a titan" });
+                if !blow.contains(&ga) {
+                    blow.push(ga);
+                }
+                break;
+            }
+        }
+    }
+    let blasts: Vec<(Entity, Vec3)> = pylons.iter().filter(|(_, p, _)| blow.contains(&p.group)).map(|(id, p, _)| (id, p.pos)).collect();
+    for (id, at) in blasts {
+        commands.entity(id).despawn();
+        if old_fx {
+            emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 1.0 });
+        } else {
+            crate::pfx::emit_named_cp(&mut commands, "P_impact_exp_XLG_metal", Cp::facing(at, Vec3::Z));
+        }
+        crate::audio::event_at(&mut commands, "Wpn_LaserTripMine_MineDestroyed", at);
+        for (_, mut e) in enemies.iter_mut() {
+            if e.alive() && (e.pos + Vec3::Z * e.height * 0.5).distance(at) - e.radius < LASER_TRIP_RADIUS {
                 let dmg = if e.infantry { LASER_TRIP_DAMAGE } else { LASER_TRIP_DAMAGE_HEAVY };
                 e.damage(dmg, false);
-                pa.zapped.push((eid, 0.0));
-                emit(&mut commands, Effect::Impact { at: to_bevy(q), normal: Vec3::Y, scale: 3.0, energy: true });
-                crate::audio::event_at(&mut commands, "Explo_ProximityEMP_Impact_3P", q);
-                log::info!("laser tripwire zapped {} for {dmg:.0}", if e.infantry { "grunt" } else { "titan" });
             }
         }
     }

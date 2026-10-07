@@ -929,8 +929,11 @@ where the script has them):
     `P_meteor_trap_burn` runs from its end back to the trap (`FlameOn`). The lines' pitch is dropped
     (they follow the ground anyway); explosive barrels aren't a thing here.
   - Laser Tripwire (10 s): three pylons (900 u/s straight, 1200 to the sides) arm after 1 s and
-    for 12 s beam between neighbours; crossing a beam deals 200 (1500 to Titans) once a second.
-    At most 9 pylons stand; the oldest group goes.
+    for 12 s beam between neighbours (`P_wpn_lasertrip_beam`, `P_wpn_lasertrip_base` on each). An
+    enemy touching a beam (8 units either side) destroys the group, as does running out of time
+    or a tenth pylon going up (at most 9 stand, the oldest group goes); every pylon destroyed
+    blows up for 200 (1500 to heavy armour) within 400 with `P_impact_exp_XLG_metal`. The beam
+    height (85 above the landing spot: the 45-unit rise plus a guessed attachment) is a guess.
   - Ammo Swap (2 s): `ToggleAmmoMods` - the Predator Cannon swaps its `LongRangeAmmo` mod in
     or out (ADS spread 0.4, falloff 3000-3250 and zoom 40 against 3.4, 1200-1800) with a full
     clip; the viewmodel plays `ammo_swap_seq`. The crosshair style and cockpit tint don't change.
