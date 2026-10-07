@@ -492,7 +492,7 @@ pub fn spawn_battery_hud(mut commands: Commands, ui: Res<UiAssets>) {
     let frame = commands
         .spawn((Node { width: vh(7.0), height: vh(7.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.55)), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4))))
         .id();
-    let icon = commands.spawn((Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, ui.image("rui/menu/boosts/boost_icon_battery").unwrap_or_default())).id();
+    let icon = commands.spawn((Node::default(), ui.image("rui/menu/boosts/boost_icon_battery").unwrap_or_default(), crate::hud::FitIcon)).id();
     commands.entity(frame).add_child(icon);
     let label = commands.spawn((Text::new("BATTERY"), TextFont { font: ui.font.clone(), ..default() }, TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55)), crate::ui::VhText(1.0))).id();
     commands.entity(root).add_children(&[frame, label]);

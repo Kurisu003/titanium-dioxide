@@ -1195,7 +1195,7 @@ pub fn spawn_pilot_slots(mut commands: Commands, ui: Res<UiAssets>, status: Res<
             .spawn((Node { width: vh(7.0), height: vh(7.0), border: UiRect::all(Val::Px(1.0)), overflow: Overflow::clip(), ..default() }, BorderColor::all(dim), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4))))
             .id();
         let ic = commands
-            .spawn((Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, ui.image(icon).unwrap_or_default(), PilotSlotIcon(i)))
+            .spawn((Node::default(), ui.image(icon).unwrap_or_default(), PilotSlotIcon(i), crate::hud::FitIcon))
             .id();
         let shade = commands
             .spawn((Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), height: Val::Percent(0.0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)), PilotSlotShade(i)))

@@ -166,6 +166,26 @@ fn text(commands: &mut Commands, s: &str, font: &Handle<Font>, size: f32, color:
     commands.spawn((Text::new(s), TextFont { font: font.clone(), font_size: 16.0, ..default() }, TextColor(color), VhText(size))).id()
 }
 
+/// An icon drawn at its own aspect ratio (UI atlas images aren't square), as large as fits
+/// its parent and centred in it; see `fit_icons`.
+#[derive(Component)]
+pub struct FitIcon;
+
+/// Size and centre each [`FitIcon`] for its image whenever the image changes.
+pub fn fit_icons(images: Res<Assets<Image>>, mut icons: Query<(&ImageNode, &mut Node), (With<FitIcon>, Or<(Changed<ImageNode>, Added<FitIcon>)>)>) {
+    for (img, mut node) in &mut icons {
+        let size = img.rect.map(|r| r.size()).or_else(|| images.get(&img.image).map(|i| i.size_f32()));
+        let Some(size) = size.filter(|s| s.x > 0.0 && s.y > 0.0) else { continue };
+        let aspect = size.x / size.y;
+        let (w, h) = if aspect >= 1.0 { (100.0, 100.0 / aspect) } else { (100.0 * aspect, 100.0) };
+        node.position_type = PositionType::Absolute;
+        node.width = percent(w);
+        node.height = percent(h);
+        node.left = percent((100.0 - w) * 0.5);
+        node.top = percent((100.0 - h) * 0.5);
+    }
+}
+
 fn image(commands: &mut Commands, ui: &UiAssets, path: &str, node: Node, color: Color) -> Entity {
     match ui.image(path) {
         Some(mut img) => {
@@ -309,13 +329,15 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
     commands.entity(health).add_children(&[name_row, shield_frame, segs, doom, pips]);
     // Core meter.
     let core = commands.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.3), ..default() }).id();
-    let core_icon = image(&mut commands, &ui, "rui/hud/titan_core", Node { width: vh(6.5), height: vh(6.5), ..default() }, DIM);
-    commands.entity(core_icon).insert(CoreIcon);
+    let core_box = commands.spawn(Node { width: vh(6.5), height: vh(6.5), ..default() }).id();
+    let core_icon = image(&mut commands, &ui, "rui/hud/titan_core", Node::default(), DIM);
+    commands.entity(core_icon).insert((CoreIcon, FitIcon));
+    commands.entity(core_box).add_child(core_icon);
     let core_text = text(&mut commands, "0%", &ui.bold_font, 1.6, WHITE);
     commands.entity(core_text).insert(CoreText);
     let core_label = text(&mut commands, "BURST CORE", &ui.font, 1.2, DIM);
     commands.entity(core_label).insert(CoreLabel);
-    commands.entity(core).add_children(&[core_icon, core_text, core_label]);
+    commands.entity(core).add_children(&[core_box, core_text, core_label]);
     commands.entity(bottom).add_children(&[health, core]);
 
     // --- Bottom centre on foot: the Pilot's health, in the same frame as BT's ---
@@ -360,8 +382,8 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         let frame = commands
             .spawn((Node { width: vh(7.0), height: vh(7.0), border: UiRect::all(px(1)), overflow: Overflow::clip(), ..default() }, BorderColor::all(DIM), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4))))
             .id();
-        let ic = image(&mut commands, &ui, icon, Node { width: percent(100), height: percent(100), ..default() }, WHITE);
-        commands.entity(ic).insert(SlotIcon(slot));
+        let ic = image(&mut commands, &ui, icon, Node::default(), WHITE);
+        commands.entity(ic).insert((SlotIcon(slot), FitIcon));
         let shade = commands
             .spawn((Node { position_type: PositionType::Absolute, left: px(0), right: px(0), bottom: px(0), height: percent(0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)), CooldownShade(slot)))
             .id();

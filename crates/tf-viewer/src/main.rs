@@ -325,7 +325,7 @@ fn main() {
                     weapons::update_fx,
                     targets::update_health_bars,
                     titankit::kit_view,
-                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash),
+                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash, hud::fit_icons),
                     (hud::update_hud_state, hud::hud_boot, (hud::health_hex, hud::stim_fx), player::cockpit_damage_light).chain(),
                     hud::hit_feedback,
                     hud::update_damage_arcs,

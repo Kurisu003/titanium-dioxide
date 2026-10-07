@@ -268,7 +268,7 @@ pub enum CoreKind {
     Smart,
 }
 
-/// (weapon script, kind, HUD icon, label if the localisation has none)
+/// (weapon script, kind, icon and label if the script or localisation has none)
 const ORDNANCE: &[(&str, OrdKind, &str, &str)] = &[
     ("mp_titanweapon_shoulder_rockets", OrdKind::Missiles, "rui/titan_loadout/ordnance/multilock_rockets_menu", "MULTI-TARGET MISSILES"),
     ("mp_titanweapon_laser_lite", OrdKind::LaserShot, "rui/titan_loadout/ordnance/laser_shot_menu", "LASER SHOT"),
@@ -291,7 +291,7 @@ const DEFENSIVE: &[(&str, DefKind, &str, &str)] = &[
 
 const UTILITY: &[(&str, UtilKind, &str, &str)] = &[
     ("mp_titanability_smoke", UtilKind::Smoke, "rui/titan_loadout/tactical/titan_tactical_electric_smoke_menu", "ELECTRIC SMOKE"),
-    ("mp_titanability_sonar_pulse", UtilKind::SonarPulse, "rui/titan_loadout/tactical/titan_tactical_sonar_pulse_menu", "SONAR PULSE"),
+    ("mp_titanability_sonar_pulse", UtilKind::SonarPulse, "rui/titan_loadout/tactical/titan_tactical_radar_pulse_menu", "SONAR PULSE"),
     ("mp_titanability_slow_trap", UtilKind::SlowTrap, "rui/titan_loadout/tactical/titan_tactical_slow_trap_menu", "SLOW TRAP"),
     ("mp_titanability_laser_trip", UtilKind::LaserTrip, "rui/titan_loadout/tactical/titan_tactical_laser_tripwire_menu", "LASER TRIPWIRE"),
     ("mp_titanability_phase_dash", UtilKind::PhaseDash, "rui/titan_loadout/tactical/titan_tactical_phase_dash_menu", "PHASE DASH"),
@@ -339,9 +339,9 @@ pub struct KitSpec {
     pub def: DefKind,
     pub util: UtilKind,
     pub core: CoreKind,
-    pub ord_icon: &'static str,
-    pub def_icon: &'static str,
-    pub util_icon: &'static str,
+    pub ord_icon: String,
+    pub def_icon: String,
+    pub util_icon: String,
     pub util_label: String,
     pub util_sound: String,
     pub core_icon: String,
@@ -600,12 +600,13 @@ impl KitDefs {
         let table = gd.paks.iter().find_map(|p| tf_assets::datatable::DataTable::load(p, "datatable/titan_properties.rpak"));
         let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
         let n = KitNumbers::load(&mut read);
-        // A weapon script's localised name, 1P fire sound and deploy time.
-        let mut info = |id: &str| -> (Option<String>, String, f32) {
-            let Some(s) = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read) else { return (None, String::new(), 0.0) };
+        // A weapon script's localised name, 1P fire sound, deploy time and HUD icon.
+        let mut info = |id: &str| -> (Option<String>, String, f32, Option<String>) {
+            let Some(s) = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read) else { return (None, String::new(), 0.0, None) };
             let name = s.get(".printname").map(|k| k.trim_start_matches('#').to_string()).and_then(|k| strings.and_then(|t| t.0.get(&k)).map(|v| v.to_uppercase()));
             let deploy = s.get(".deploy_time").and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
-            (name, s.get(".fire_sound_1_player_1p").unwrap_or_default().to_string(), deploy)
+            let icon = s.get(".hud_icon").map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+            (name, s.get(".fire_sound_1_player_1p").unwrap_or_default().to_string(), deploy, icon)
         };
         let mut kits = Vec::new();
         for gun in TITAN_ARSENAL {
@@ -620,21 +621,22 @@ impl KitDefs {
                 (f.1.to_string(), f.2.to_string(), f.3.to_string(), f.4.to_string(), String::new())
             });
             let u = UTILITY.iter().find(|x| x.0 == util_id).copied().unwrap_or(UTILITY[0]);
-            let (util_name, util_sound, _) = info(u.0);
+            let (util_name, util_sound, _, util_icon) = info(u.0);
             let o = ORDNANCE.iter().find(|x| x.0 == ord_id).copied().unwrap_or(ORDNANCE[0]);
             let d = DEFENSIVE.iter().find(|x| x.0 == def_id).copied().unwrap_or(DEFENSIVE[0]);
             let c = CORES.iter().find(|x| x.0 == core_id).copied().unwrap_or(CORES[0]);
-            let (ord_name, ord_sound, ord_deploy) = info(o.0);
-            let (def_name, def_sound, _) = info(d.0);
-            let (core_name, _, _) = info(c.0);
+            let (ord_name, ord_sound, ord_deploy, ord_icon) = info(o.0);
+            let (def_name, def_sound, _, def_icon) = info(d.0);
+            let (core_name, _, _, _) = info(c.0);
             kits.push(KitSpec {
                 ord: o.1,
                 def: d.1,
                 util: u.1,
                 core: c.1,
-                ord_icon: o.2,
-                def_icon: d.2,
-                util_icon: u.2,
+                // The scripts' hud_icon (the slot art); the table's menu art if a script has none.
+                ord_icon: ord_icon.unwrap_or_else(|| o.2.to_string()),
+                def_icon: def_icon.unwrap_or_else(|| d.2.to_string()),
+                util_icon: util_icon.unwrap_or_else(|| u.2.to_string()),
                 util_label: util_name.unwrap_or_else(|| u.3.to_string()),
                 util_sound,
                 core_icon: if core_icon.is_empty() { c.2.to_string() } else { core_icon },
@@ -2476,19 +2478,23 @@ pub fn kit_view(
     *shown = Some(active.index);
     for (slot, mut img) in &mut icons {
         let path = match slot.0 {
-            crate::hud::Slot::Ordnance => spec.ord_icon,
-            crate::hud::Slot::Defensive => spec.def_icon,
-            crate::hud::Slot::Utility => spec.util_icon,
+            crate::hud::Slot::Ordnance => &spec.ord_icon,
+            crate::hud::Slot::Defensive => &spec.def_icon,
+            crate::hud::Slot::Utility => &spec.util_icon,
         };
-        if let Some(i) = ui.image(path) {
-            *img = i;
+        match ui.image(path) {
+            Some(i) => *img = i,
+            None => log::warn!("HUD icon {path} is not in the UI atlas"),
         }
     }
     if let Ok(mut img) = core_icon.single_mut() {
-        if let Some(i) = ui.image(&spec.core_icon) {
-            let color = img.color;
-            *img = i;
-            img.color = color;
+        match ui.image(&spec.core_icon) {
+            Some(i) => {
+                let color = img.color;
+                *img = i;
+                img.color = color;
+            }
+            None => log::warn!("HUD icon {} is not in the UI atlas", spec.core_icon),
         }
     }
     for (slot, core, mut t) in &mut labels {

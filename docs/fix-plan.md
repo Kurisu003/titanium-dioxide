@@ -143,6 +143,22 @@ measurement; **C** = visuals and rendering.
 - *Research:* R3/R4, recording the HUD right after using each ability and listing every difference from ours (`hud.rs`).
 - *Open question for the user:* which countdown felt most wrong? Default if no answer: go through all of them against footage.
 
+**26. Scorch's main gun can't light his gas canisters** (B, medium, added later)
+- *What the game does:* Scorch's Incendiary Trap (`mp_titanability_slow_trap`) puts down a canister of gas, and hitting it with thermite (his T-203 shots, Firewall, Flame Core, the Thermal Shield) sets it alight.
+- *Ours:* the canister only ignites on its own trigger, not from his shots.
+- *Research:* the scripts for both the canister and the thermite launcher: how the trap's `OnDamaged` or the meteor's collision callback detects thermite damage and starts the burn (`mp_titanability_slow_trap.nut`, `mp_titanweapon_meteor.nut`).
+- *Fix:* follow that path. Thermite projectiles or damage that touch the canister, or its gas, ignite it.
+
+**27. Ion's Laser Tripwire beams are misaligned** (A, high, added later)
+- *Likely cause:* the beams are drawn from a guessed height (`LASER_TRIP_CENTER` 85, noted as a guess in the f808eac/7b2cee0 work), not from the pylon model's attachments. The pylons themselves are still glow stand-ins, not the `titan_trip_wire` model.
+- *Research:* the pylon model (`models/weapons/titan_trip_wire/titan_trip_wire.mdl`) and its beam attachment, plus how the script places the beam effect between pylons (`mp_titanability_laser_trip.nut`).
+- *Fix:* draw the pylon model and run the beams between its attachment points.
+
+**28. Northstar's Plasma Railgun zooms out when aiming down sights** (A, high, added later)
+- *Likely cause:* the zoom applied while aiming, or the viewmodel lens during the zoom, is backwards for this gun. The railgun's `zoom_fov` may be read as a scale (or the other way round), or its `ads_fov_zoomfrac` keys mishandled.
+- *Research:* compare the railgun's `zoom_fov` and `ads_*` keys with other Titan guns, and check what our camera FOV does during its ADS (log it).
+- *Fix and verify:* FOV log and screenshots while zooming in.
+
 **12. Titan weapons lose their crosshair when zoomed** (A, high, quick)
 - *Likely cause:* `crosshair.rs` (~142) fades every crosshair out by `adsFrac`. That is right for Pilot guns with sights, but Titan weapons in TF2 keep the crosshair while zoomed.
 - *Research:* R3, to confirm which crosshairs stay and whether they shrink or tighten with zoom (they get `player_zoomFrac` as an argument).
@@ -219,28 +235,31 @@ We work through these one at a time, and the next one starts only after the user
 
 1. ~~Re-entering the Titan gives forward momentum (item 5)~~ (fixed in 76b3aa5: a leftover dash press from jumping into BT)
 2. ~~Tone's Particle Wall curves the wrong way (19)~~ (fixed in 01b4830)
-3. Tone's Sonar Pulse shows the Electric Smoke icon (24)
+3. ~~Tone's Sonar Pulse shows the Electric Smoke icon (24)~~ (fixed: icons from the scripts' hud_icon, kept at their own aspect)
 4. Titan weapons lose their crosshair when zoomed (12)
-5. Tone's lock-on marks on enemy Titans (25)
-6. Legion right-click artifact on the weapon (13)
-7. On-foot muzzle flash stays behind in the world (14)
-8. Thunderbolt scope depends on looking up or down (15)
-9. Titan HUD moves far too much (1)
-10. BT slides too much when turning while holding forward (23)
-11. Titan dash feels weird (4)
-12. Everything moves too much and is too shaky (2)
-13. HUD countdowns don't behave like TF2 (11)
-14. Mozambique and sidearm recoil (10)
-15. ADS animation is weird (3)
-16. Holo Pilot moves weirdly (20)
-17. Wallrun start is unreliable (6)
-18. Archer has no proper sight (16)
-19. Sliding doesn't feel like TF2 (7)
-20. Grappling hook doesn't feel right (9)
-21. Floor drawn over explosions and shields (18)
-22. Smoke and see-through effects look wrong (17)
-23. Falling through buildings (8)
-24. Lighting (21, parked until the user asks)
+5. Northstar's railgun zooms out when aiming (28)
+6. Ion's tripwire beams are misaligned (27)
+7. Tone's lock-on marks on enemy Titans (25)
+8. Legion right-click artifact on the weapon (13)
+9. On-foot muzzle flash stays behind in the world (14)
+10. Thunderbolt scope depends on looking up or down (15)
+11. Scorch's gun can't light his gas canisters (26)
+12. Titan HUD moves far too much (1)
+13. BT slides too much when turning while holding forward (23)
+14. Titan dash feels weird (4)
+15. Everything moves too much and is too shaky (2)
+16. HUD countdowns don't behave like TF2 (11)
+17. Mozambique and sidearm recoil (10)
+18. ADS animation is weird (3)
+19. Holo Pilot moves weirdly (20)
+20. Wallrun start is unreliable (6)
+21. Archer has no proper sight (16)
+22. Sliding doesn't feel like TF2 (7)
+23. Grappling hook doesn't feel right (9)
+24. Floor drawn over explosions and shields (18)
+25. Smoke and see-through effects look wrong (17)
+26. Falling through buildings (8)
+27. Lighting (21, parked until the user asks)
 
 ## Order of work (original grouping)
 
