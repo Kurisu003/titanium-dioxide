@@ -1260,6 +1260,134 @@ pub fn weapon_viewmodel(
     }
 }
 
+/// BT's left arm for the Vortex and Thermal Shields: the shield's own viewmodel
+/// (`atpov_vortexblocker.mdl`, Scorch's `atpov_vortexblocker_scorch.mdl`) with BT's arms
+/// bone-merged onto it, drawn beside the gun's. Its animations move only the left arm (the right
+/// rests 127 units off to the side, out of view), as `offhand_keep_primary_in_hand` has the gun's
+/// viewmodel keep the right hand. Raising plays draw_seq over the script's deploy_time; while
+/// held, the end of the draw with the charge_seq delta (`play_offhand_charging_anim`); on
+/// release the attack_seq delta, which pushes the palm out and drops the arm out of view.
+#[derive(Resource)]
+pub struct ShieldArms {
+    vortex: Option<(Entity, Entity)>,
+    heat: Option<(Entity, Entity)>,
+    phase: ShieldArmPhase,
+    t: f32,
+    /// The raised shield is the Thermal Shield.
+    is_heat: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ShieldArmPhase {
+    Hidden,
+    Draw,
+    Hold,
+    Release,
+    Holster,
+}
+
+impl ShieldArms {
+    pub fn new(vortex: Option<(Entity, Entity)>, heat: Option<(Entity, Entity)>) -> Self {
+        Self { vortex, heat, phase: ShieldArmPhase::Hidden, t: 0.0, is_heat: false }
+    }
+}
+
+/// Animate and place the shield viewmodel (see `ShieldArms`), on the gun viewmodel's eye frame
+/// so it shares the gun's sway.
+pub fn shield_arms(
+    time: Res<Time>,
+    mode: Res<CameraMode>,
+    control: Res<crate::pilotctl::Control>,
+    arms: Option<ResMut<ShieldArms>>,
+    titans: Query<(&Weapon, &crate::combat::Vortex), With<PlayerTitan>>,
+    mut actors: Query<&mut Actor>,
+    mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
+) {
+    use ShieldArmPhase::*;
+    let Some(mut arms) = arms else { return };
+    let Ok((w, vortex)) = titans.single() else { return };
+    let heat = vortex.mode == crate::combat::VortexMode::Heat;
+    match (vortex.active, arms.phase) {
+        (true, Hidden | Release | Holster) => {
+            arms.phase = Draw;
+            arms.t = 0.0;
+            arms.is_heat = heat;
+        }
+        (false, Draw | Hold) => {
+            arms.phase = Release;
+            arms.t = 0.0;
+        }
+        _ => {}
+    }
+    let dt = time.delta_secs();
+    arms.t += dt;
+    // deploy_time and holster_time from mp_titanweapon_vortex_shield / heat_shield.
+    let (deploy, holster) = if arms.is_heat { (0.2, 0.2) } else { (0.1, 0.3) };
+    let (active, other) = if arms.is_heat { (arms.heat, arms.vortex) } else { (arms.vortex, arms.heat) };
+    if let Some((anchor, _)) = other {
+        if let Ok((_, mut vis)) = tfs.get_mut(anchor) {
+            *vis = Visibility::Hidden;
+        }
+    }
+    let Some((anchor, vm)) = active else { return };
+    // The gun viewmodel's eye frame: its anchor plus its camera bone.
+    let eye_frame = w.viewmodel.and_then(|(xa, xv)| {
+        let off = actors.get(xv).ok()?.bone_model_transform("jx_c_camera")?.translation;
+        let tf = tfs.get(xa).ok()?.0;
+        Some((tf.translation + tf.rotation * off, tf.rotation))
+    });
+    let Ok(mut actor) = actors.get_mut(vm) else { return };
+    actor.autoplay = false;
+    // combat.rs cues the start sound already (the draw's own event is the same sound).
+    actor.event_sounds = false;
+    let grid0 = |a: &Actor, name: &str| a.grids.get(name).and_then(|g| g.clips.first().copied());
+    let dur = |a: &Actor, c: Option<usize>| c.map(|c| a.clips[c].duration).unwrap_or(0.0);
+    let t = arms.t;
+    let (draw, holster_c, charge, attack) = (actor.clip("draw_seq"), actor.clip("holster_seq"), grid0(&actor, "charge_seq"), grid0(&actor, "attack_seq"));
+    match arms.phase {
+        Draw if t >= deploy => arms.phase = Hold,
+        // The attack (0.83 s: a push, then the arm drops out of view) ends with the arm gone;
+        // the holster is only for a model without one.
+        Release if attack.is_some() && t >= dur(&actor, attack) => arms.phase = Hidden,
+        Release if attack.is_none() => {
+            arms.phase = Holster;
+            arms.t = 0.0;
+        }
+        Holster if t >= holster => arms.phase = Hidden,
+        _ => {}
+    }
+    let t = arms.t;
+    let mut layers = Vec::new();
+    let mut additive = Vec::new();
+    match arms.phase {
+        Draw => layers.extend(draw.map(|c| Layer { clip: c, cycle: (t / deploy).min(0.999), weight: 1.0 })),
+        Hold | Release => {
+            layers.extend(draw.map(|c| Layer { clip: c, cycle: 0.999, weight: 1.0 }));
+            let (delta, cycle) = if arms.phase == Hold {
+                (charge, charge.map(|c| (t / actor.clips[c].duration.max(1e-3)).rem_euclid(1.0)))
+            } else {
+                (attack, attack.map(|c| (t / actor.clips[c].duration.max(1e-3)).min(0.999)))
+            };
+            if let (Some(c), Some(cycle)) = (delta, cycle) {
+                actor.push_clip(&mut layers, &mut additive, c, cycle, 1.0);
+            }
+        }
+        Holster => layers.extend(holster_c.map(|c| Layer { clip: c, cycle: (t / holster).min(0.999), weight: 1.0 })),
+        Hidden => {}
+    }
+    actor.layers = layers;
+    actor.additive = additive;
+    let offset = actor.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+    let show = arms.phase != Hidden && *mode == CameraMode::Cockpit && *control == crate::pilotctl::Control::Titan;
+    if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
+        *vis = if show && eye_frame.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        if let Some((eye, rot)) = eye_frame {
+            tf.rotation = rot;
+            tf.translation = eye - rot * offset;
+        }
+    }
+}
+
 /// Swap BT's weapon when the loadout changes: new script, viewmodel (with BT's arms) and gun
 /// in his hand.
 #[allow(clippy::too_many_arguments)]

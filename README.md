@@ -832,8 +832,12 @@ where the script has them):
   stands in, nearly clear in the middle with a faint hex lattice and a bright rim, slowly
   turning and breathing. In the cockpit it sits where the game puts it: on the vortex blocker
   viewmodel's `vortex_center` tag at the end of its draw (105 units ahead, 24 left, 20 down,
-  tilted like the hand), sized to the dome model (60 units across). The blocker viewmodel
-  itself isn't loaded, so BT's left arm doesn't rise. The Thermal Shield is a refraction
+  tilted like the hand), sized to the dome model (60 units across). BT's left arm comes from
+  the shield's own viewmodel (`atpov_vortexblocker.mdl`, Scorch's `_scorch` one) with BT's arms
+  bone-merged, drawn beside the gun (`offhand_keep_primary_in_hand`): draw_seq over the
+  script's deploy_time (0.1 s, Scorch 0.2 s), the charge_seq delta while held, and on release
+  the attack_seq delta, which pushes the palm out and drops the arm out of view. It rides on
+  the gun viewmodel's eye frame, so it shares the gun's sway. The Thermal Shield is a refraction
   material in the game; a disc stands in for it too. The
   Particle Wall's shells build their pattern in the shader from scaled, scrolled UV layers; a
   tiled hex lattice stands in for it.
