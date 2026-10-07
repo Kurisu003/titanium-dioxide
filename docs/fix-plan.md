@@ -115,6 +115,23 @@ measurement; **C** = visuals and rendering.
 
 ### Weapons, HUD, sights
 
+**24. Tone's Sonar Pulse slot shows the Electric Smoke icon** (A, high, quick, added later)
+- *Cause (found):* the kit table in `titankit.rs` (~294) asks the UI atlas for `rui/titan_loadout/tactical/titan_tactical_sonar_pulse_menu`, which doesn't exist (the game calls it `radar_pulse`). The lookup fails, so the slot keeps the Electric Smoke icon it was created with. The table also uses the loadout-menu art (`*_menu`), where the HUD should use each weapon script's `hud_icon` (`mp_titanability_sonar_pulse.txt`: `hud_icon "rui/titan_loadout/tactical/titan_tactical_radar_pulse"`).
+- *Fix:* take every slot's icon from its weapon script's `hud_icon`, not a hand-typed path. Log any icon the atlas doesn't have, so a silent fallback can't happen again.
+- *Verify:* screenshot of each kit's HUD (8 kits), compared against the scripts' `hud_icon` art.
+
+**25. Tone's lock-on marks on enemy Titans are missing** (B, high, added later)
+- *What the game does:* each 40mm hit, and a Sonar Pulse, gives 1/3 of a lock. A three-segment ring around the enemy fills one third at a time, and Tracker Rockets need the full ring. Sources: the Tone and Tracker Rockets pages on titanfall.wiki.gg. The game's own art is in `ui.rpak`:
+  - `rui/hud/tone_tracker_hud/tone_tracker_1marks`: white, the lower-left third;
+  - `tone_tracker_2marks`: white, the lower two thirds;
+  - `tone_tracker_3marks`: the full ring, red, meaning locked;
+  - `tone_tracker_core_marks`: red with an inner ring, likely during Salvo Core.
+- *Ours:* nothing is drawn on the target; the count only shows as "LOCK n/3" text on the ordnance slot. The stacks themselves exist (`KitState.locks`).
+- *Research:* the RUI that draws these is compiled, so placement and size need R3: gameplay footage of Tone hitting a Titan once, twice and three times. Check where the ring sits (the target's centre or its chest), how big it is (fixed on screen, or scaling with distance), the colour of 1–2 marks (white, or tinted), and whether it fades when a lock decays (ours drop after 10 s without a hit). Also check whether Sonar Pulse gives our targets a third, as the game does.
+- *Fix:* draw the right image over each locked enemy's screen position, the same way the smart-ammo lock markers in `hud.rs` are placed.
+- *Verify:* screenshots after 1, 2 and 3 hits on a Titan, next to reference frames.
+
+
 **11. HUD countdowns don't behave like TF2** (C, medium)
 - *Likely cause:* not pinned down yet. Candidates:
   - ability cooldown icons (fill style or direction, whether a number shows);
@@ -201,27 +218,29 @@ measurement; **C** = visuals and rendering.
 We work through these one at a time, and the next one starts only after the user has tested and approved the current one.
 
 1. ~~Re-entering the Titan gives forward momentum (item 5)~~ (fixed in 76b3aa5: a leftover dash press from jumping into BT)
-2. Tone's Particle Wall curves the wrong way (19)
-3. Titan weapons lose their crosshair when zoomed (12)
-4. Legion right-click artifact on the weapon (13)
-5. On-foot muzzle flash stays behind in the world (14)
-6. Thunderbolt scope depends on looking up or down (15)
-7. Titan HUD moves far too much (1)
-8. BT slides too much when turning while holding forward (23)
-9. Titan dash feels weird (4)
-10. Everything moves too much and is too shaky (2)
-11. HUD countdowns don't behave like TF2 (11)
-12. Mozambique and sidearm recoil (10)
-13. ADS animation is weird (3)
-14. Holo Pilot moves weirdly (20)
-15. Wallrun start is unreliable (6)
-16. Archer has no proper sight (16)
-17. Sliding doesn't feel like TF2 (7)
-18. Grappling hook doesn't feel right (9)
-19. Floor drawn over explosions and shields (18)
-20. Smoke and see-through effects look wrong (17)
-21. Falling through buildings (8)
-22. Lighting (21, parked until the user asks)
+2. ~~Tone's Particle Wall curves the wrong way (19)~~ (fixed in 01b4830)
+3. Tone's Sonar Pulse shows the Electric Smoke icon (24)
+4. Titan weapons lose their crosshair when zoomed (12)
+5. Tone's lock-on marks on enemy Titans (25)
+6. Legion right-click artifact on the weapon (13)
+7. On-foot muzzle flash stays behind in the world (14)
+8. Thunderbolt scope depends on looking up or down (15)
+9. Titan HUD moves far too much (1)
+10. BT slides too much when turning while holding forward (23)
+11. Titan dash feels weird (4)
+12. Everything moves too much and is too shaky (2)
+13. HUD countdowns don't behave like TF2 (11)
+14. Mozambique and sidearm recoil (10)
+15. ADS animation is weird (3)
+16. Holo Pilot moves weirdly (20)
+17. Wallrun start is unreliable (6)
+18. Archer has no proper sight (16)
+19. Sliding doesn't feel like TF2 (7)
+20. Grappling hook doesn't feel right (9)
+21. Floor drawn over explosions and shields (18)
+22. Smoke and see-through effects look wrong (17)
+23. Falling through buildings (8)
+24. Lighting (21, parked until the user asks)
 
 ## Order of work (original grouping)
 
