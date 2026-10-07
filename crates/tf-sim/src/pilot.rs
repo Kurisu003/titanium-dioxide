@@ -149,6 +149,12 @@ pub struct WallrunParams {
     pub same_wall_dist: f32,
     pub same_wall_height: f32,
     pub same_wall_slope: f32,
+    /// wallrun_rotateMaxRate: "Maximum rotation speed around a wall in radians per second;
+    /// avoids sticking to walls that do tight curves".
+    pub rotate_max_rate: f32,
+    /// wallrun_angleChangeMinCos: "Cosine of maximum angle the wall can change away from you
+    /// without falling off".
+    pub angle_change_min_cos: f32,
 }
 
 impl Default for WallrunParams {
@@ -170,6 +176,8 @@ impl Default for WallrunParams {
             same_wall_dist: 100.0,
             same_wall_height: 0.0,
             same_wall_slope: 0.0,
+            rotate_max_rate: 3.0,
+            angle_change_min_cos: 0.8,
         }
     }
 }
@@ -711,7 +719,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             let still = PilotInput { forward: 0.0, ..*input };
             let mut impact = 0.0f32;
             for _ in 0..steps {
-                impact = impact.max(move_once(s, p, world, delta / steps as f32, &still));
+                impact = impact.max(move_once(s, p, world, delta / steps as f32, &still, dt / steps as f32));
             }
             s.grapple_touch = if s.on_ground() { 2 } else if impact > 0.0 { 1 } else { 0 };
             // Slamming into a wall knocks the hook loose, like arriving at it; from there the
@@ -977,12 +985,12 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     let delta = s.vel * dt;
     let steps = ((delta.length() / (p.radius * 0.5)).ceil() as usize).max(1);
     for _ in 0..steps {
-        move_once(s, p, world, delta / steps as f32, input);
+        move_once(s, p, world, delta / steps as f32, input, dt / steps as f32);
     }
 }
 
 /// Moves by `delta` with collision; returns the fastest speed lost into a wall (0 if none).
-fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta: Vec3, input: &PilotInput) -> f32 {
+fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta: Vec3, input: &PilotInput, step_dt: f32) -> f32 {
     let mut wall_impact = 0.0f32;
     s.pos += delta;
     let r = p.radius;
@@ -1063,9 +1071,25 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta:
             s.push_away = 0.0;
             s.vel.z = (s.vel.z + p.wallrun.up_boost).clamp(-p.wallrun_max_v, p.wallrun_max_v);
         }
-    } else if wallrunning && sensed.is_none() {
-        let normal = if let PilotMove::WallRun { normal, .. } = s.mode { normal } else { Vec3::ZERO };
-        fall_off_wall(s, p, normal);
+    } else if let PilotMove::WallRun { normal, time } = s.mode {
+        match sensed {
+            None => fall_off_wall(s, p, normal),
+            Some(n) => {
+                // Curved walls: the run turns with the wall, at most wallrun_rotateMaxRate,
+                // and lets go when the wall turns away by more than wallrun_angleChangeMinCos.
+                let (a, b) = (hv(normal).normalize_or_zero(), hv(n).normalize_or_zero());
+                let travel = hv(s.vel).normalize_or_zero();
+                let turning_away = b.dot(travel) > a.dot(travel);
+                if turning_away && a.dot(b) < p.wallrun.angle_change_min_cos {
+                    fall_off_wall(s, p, normal);
+                } else if a != Vec2::ZERO && b != Vec2::ZERO {
+                    let max = p.wallrun.rotate_max_rate * step_dt;
+                    let turn = a.perp_dot(b).atan2(a.dot(b)).clamp(-max, max);
+                    let r = Vec2::from_angle(turn).rotate(a) * hv(normal).length();
+                    s.mode = PilotMove::WallRun { normal: Vec3::new(r.x, r.y, normal.z), time };
+                }
+            }
+        }
     }
     wall_impact
 }

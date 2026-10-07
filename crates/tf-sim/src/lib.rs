@@ -651,6 +651,42 @@ mod tests {
             assert!(s.take_hard_landing(&p).is_none(), "reported once");
         }
 
+        /// Running around the outside of a curved wall (a 600-unit faceted cylinder): the run
+        /// turns with the wall (wallrun_rotateMaxRate) instead of running off its tangent.
+        #[test]
+        fn wallrun_follows_a_curved_wall() {
+            let mut w = CollisionWorld::default();
+            let s = 4000.0;
+            quad(&mut w, Vec3::new(-s, -s, 0.0), Vec3::new(s, -s, 0.0), Vec3::new(s, s, 0.0), Vec3::new(-s, s, 0.0));
+            let (c, r) = (Vec3::new(0.0, 900.0, 0.0), 600.0);
+            let at = |deg: f32| c + Vec3::new(deg.to_radians().cos(), deg.to_radians().sin(), 0.0) * r;
+            let mut deg = -170.0;
+            while deg < -10.0 {
+                let (a, b) = (at(deg), at(deg + 10.0));
+                quad(&mut w, a, a + Vec3::Z * 800.0, b + Vec3::Z * 800.0, b);
+                deg += 10.0;
+            }
+            let p = PilotParams::default();
+            let th = (-105.0f32).to_radians();
+            let mut st = PilotState::new(c + Vec3::new(th.cos(), th.sin(), 0.0) * (r + 20.0) + Vec3::Z * 100.0, 0.0);
+            st.mode = PilotMove::Air;
+            st.vel = Vec3::new(-th.sin(), th.cos(), 0.0) * 350.0 - Vec3::new(th.cos(), th.sin(), 0.0) * 40.0 + Vec3::Z * 50.0;
+            let mut first = None;
+            let mut run_time = 0.0f32;
+            for _ in 0..180 {
+                // The player steers along the run.
+                let yaw = st.vel.y.atan2(st.vel.x);
+                step(&mut st, &PilotInput { forward: 1.0, yaw, ..Default::default() }, &p, &w, 1.0 / 120.0);
+                if let PilotMove::WallRun { normal, time } = st.mode {
+                    first.get_or_insert(normal);
+                    run_time = time;
+                }
+            }
+            let PilotMove::WallRun { normal, .. } = st.mode else { panic!("fell off the curved wall after {run_time:.2} s: {:?}", st.mode) };
+            let turned = first.unwrap().angle_between(normal);
+            assert!(run_time > 1.2 && turned > 0.4, "ran {run_time:.2} s, turned {turned:.2} rad");
+        }
+
         #[test]
         fn wallrun_and_wall_jump() {
             let w = arena();

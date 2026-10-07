@@ -96,7 +96,7 @@ already playing (loops, music) too.
   shockwave rings); shield domes still use stand-ins; cloak and phase shift use stand-in visuals; some particle features are missing; lighting, fog and
   materials are approximations, not the game's shaders.
 - **Movement details** that the game's engine code (not its data files) controls: the formulas
-  behind the movement keys (we follow the game's own descriptions of them), wall-run curving and
+  behind the movement keys (we follow the game's own descriptions of them) and
   the fine "feel" are approximated.
 - **AI:** enemy Titans and grunts are basic. There is no campaign, story or mission scripting.
 - **No multiplayer** of any kind.
@@ -352,8 +352,11 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     (`wallrun_minAngle_air` 180). After jumping off a wall, the same wall (normals within
     `wallrun_sameWallDot` 0.9) can be run again only no higher than where you left it
     (`wallrun_sameWallHeight` 0, `wallrun_sameWallDist` 100 / `wallrun_sameWallSlope` 0); after
-    falling off one, it stays blocked until you touch the ground (ours). Not modelled: wall-run
-    curving (`wallrun_rotateMaxRate`, `wallrun_angleChangeMinCos`), the wall-jump repel
+    falling off one, it stays blocked until you touch the ground (ours). Curved walls: the run
+    turns with the wall it senses, at most `wallrun_rotateMaxRate` 3 rad/s, and lets go when the
+    wall turns away by more than `wallrun_angleChangeMinCos` 0.8 (37 degrees; a 45-degree
+    chamfer drops you onto the chamfer as a new wall). The `func_wallrun_curve` hint surfaces
+    aren't read. Not modelled: the wall-jump repel
     (`wallrun_repel*`), `wallrun_avoid_wall_top_decel`, wall-hang slipping
     (`wallrun_hangslip*`, `wallrun_hangStopTime`) and `player_extraairaccelleration`.
   - Air control is Source-style (engine defaults `airSpeed 60`, `airAcceleration 500`). Automantle
