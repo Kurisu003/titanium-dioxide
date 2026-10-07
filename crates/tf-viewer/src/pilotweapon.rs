@@ -156,6 +156,101 @@ impl Strings {
     }
 }
 
+/// The activity modifiers the engine sets for the Pilot that viewmodel sequences name (from
+/// client.dll's ACT_MODIFIER list: ads, crouch, ..., onehanded, ..., wallrun, wallhang,
+/// sprinting, rodeo, air, airfast, sliding...). The ACT_VM_ONEHANDED_* set is not used: its
+/// poses drop the free hand to the side, off screen (`sprint_onehanded_seq` puts the left wrist
+/// 27 units below the eye), which fits carrying something in that hand, like the CTF flag.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub struct VmMods {
+    pub crouch: bool,
+    pub air: bool,
+    pub sliding: bool,
+    pub wallrun: bool,
+}
+
+impl VmMods {
+    pub fn of(s: &tf_sim::pilot::PilotState) -> Self {
+        let m = &s.mode;
+        let sliding = matches!(m, PilotMove::Slide);
+        Self {
+            // A slide is crouched (the crouch sequences are the slide poses: `ads_in_crouch_seq`
+            // plays the R-201's `ads_in_slide_anim`, the gun canted to the middle of the view).
+            crouch: s.crouched || sliding,
+            air: matches!(m, PilotMove::Air) && s.zipline.is_none(),
+            sliding,
+            wallrun: matches!(m, PilotMove::WallRun { .. } | PilotMove::WallHang { .. }),
+        }
+    }
+    fn has(&self, name: &str) -> bool {
+        match name {
+            "crouch" => self.crouch,
+            "air" => self.air,
+            "sliding" => self.sliding,
+            "wallrun" => self.wallrun,
+            _ => false,
+        }
+    }
+}
+
+/// A viewmodel's sequences by activity, for picking the variant the current modifiers select.
+#[derive(Clone, Default, Debug)]
+pub struct VmSeqs(Vec<VmSeq>);
+
+#[derive(Clone, Debug)]
+struct VmSeq {
+    label: String,
+    activity: String,
+    /// Modifiers, negated ones with a leading '!'.
+    mods: Vec<String>,
+    fade_in: f32,
+    grid: bool,
+}
+
+/// The activities whose sequences are picked by modifier.
+const PICKED_ACTS: &[&str] = &[
+    "ACT_VM_IDLE", "ACT_VM_DRAW", "ACT_VM_DRAWFIRST", "ACT_VM_HOLSTER", "ACT_VM_RAISE", "ACT_VM_RAISE_FROM_MELEE", "ACT_VM_RAISE_FROM_SPRINT", "ACT_VM_SPRINT", "ACT_VM_ADS_IN", "ACT_VM_ADS_OUT",
+    "ACT_VM_RELOAD", "ACT_VM_RELOADEMPTY", "ACT_VM_RELOAD_LATE1", "ACT_VM_RELOAD_LATE2", "ACT_VM_RELOAD_LATE3", "ACT_VM_RELOADEMPTY_LATE1", "ACT_VM_RELOADEMPTY_LATE2", "ACT_VM_RELOADEMPTY_LATE3",
+];
+
+impl VmSeqs {
+    pub fn of(m: &tf_assets::mdl::Model) -> Self {
+        Self(
+            m.sequences
+                .iter()
+                .filter(|s| PICKED_ACTS.contains(&s.activity.as_str()))
+                .map(|s| VmSeq { label: s.label.clone(), activity: s.activity.clone(), mods: s.modifiers.clone(), fade_in: s.fade_in, grid: s.group_size[0] * s.group_size[1] > 1 })
+                .collect(),
+        )
+    }
+    /// The single (non-grid) sequences that a modifier selects, to load besides the plain ones.
+    pub fn variants(&self) -> Vec<String> {
+        self.0.iter().filter(|q| !q.grid && !q.mods.is_empty() && q.activity != "ACT_VM_IDLE").map(|q| q.label.clone()).collect()
+    }
+    /// The sequence for `activity` under `mods`, as Source picks among an activity's sequences
+    /// (`SelectWeightedSequenceFromModifiers`, with Respawn's negated modifiers): every listed
+    /// modifier must hold (present, or absent when negated) and the one naming the most wins;
+    /// ties keep model order.
+    pub fn pick(&self, activity: &str, mods: VmMods) -> Option<&str> {
+        let mut best: Option<(&VmSeq, usize)> = None;
+        for q in self.0.iter().filter(|q| q.activity == activity) {
+            let ok = q.mods.iter().all(|m| match m.strip_prefix('!') {
+                Some(n) => !mods.has(n),
+                None => mods.has(m),
+            });
+            if ok && best.is_none_or(|(_, n)| q.mods.len() > n) {
+                best = Some((q, q.mods.len()));
+            }
+        }
+        best.map(|(q, _)| q.label.as_str())
+    }
+    /// The ideal cross-fade in time of the sequence `activity` picks under `mods`.
+    pub fn fade_in(&self, activity: &str, mods: VmMods) -> Option<f32> {
+        let label = self.pick(activity, mods)?;
+        self.0.iter().find(|q| q.label == label).map(|q| q.fade_in)
+    }
+}
+
 /// One gun's state.
 pub struct PilotWeapon {
     pub arsenal: usize,
@@ -202,6 +297,8 @@ pub struct PilotWeapon {
     pub screens: Vec<crate::ruiscreen::ScreenMesh>,
     /// Not drawn yet: the first draw plays `drawfirst_seq` over `deployfirst_time`.
     pub first_draw: bool,
+    /// The viewmodel's sequences by activity and modifier.
+    pub seqs: std::sync::Arc<VmSeqs>,
 }
 
 impl PilotWeapon {
@@ -236,6 +333,7 @@ impl PilotWeapon {
             fx_atts: [None, None],
             screens: Vec::new(),
             first_draw: true,
+            seqs: Default::default(),
         }
     }
     /// Seconds the current draw takes before the gun can fire: `deployfirst_time` the first time
@@ -292,6 +390,11 @@ struct VmLayers {
     /// How much `ads_out_seq` is shown (see `vmmotion::ads_layers`) and last frame's zoom.
     ads_out: f32,
     last_ads: f32,
+    /// The activity modifiers picking each activity's sequence, the ones before the last change
+    /// and seconds since it (the picks cross-fade over the new idle's fade-in time).
+    mods: VmMods,
+    prev_mods: VmMods,
+    mods_t: f32,
 }
 
 impl Default for PilotLoadout {
@@ -356,12 +459,17 @@ pub fn build_loadout(
         let ads_scope = vm_model.as_ref().zip(def.ads_scope.as_ref()).and_then(|(m, (name, _))| {
             Some((m.bodyparts.iter().position(|b| b.name.eq_ignore_ascii_case(name))?, m.bone_index("def_c_scope_ads")?))
         });
+        // The crouch / air variants the activity modifiers pick (`VmSeqs::pick`).
+        let seqs = vm_model.as_ref().map(|m| VmSeqs::of(m)).unwrap_or_default();
+        let variants: Vec<String> = seqs.variants().into_iter().map(|l| format!("?{l}")).collect();
+        let mut names = vec![
+            "draw_seq", "holster_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "sprintraise_seq", "ads_in_seq", "?ads_out_seq", "?drawfirst_seq", "?rechamber_seq", "?raise_frommelee_seq", "?raise_seq",
+            "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq",
+        ];
+        names.extend(variants.iter().map(|l| l.as_str()));
         let spec = ActorSpec {
             path: &def.viewmodel,
-            sequences: &[
-                "draw_seq", "holster_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "sprintraise_seq", "ads_in_seq", "?ads_out_seq", "?drawfirst_seq", "?rechamber_seq", "?raise_frommelee_seq", "?raise_seq",
-                "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq",
-            ],
+            sequences: &names,
             // The engine's additive viewmodel layers (the snipers and the Charge Rifle name
             // their jump/land transitions without `_iron`).
             grids: &["attack_seq", "?idle_seq_autoplay", "?walk_seq", "?run_layer_reload", "?switch_to_jump_iron", "?switch_to_land_iron", "?switch_to_jump", "?switch_to_land"],
@@ -394,6 +502,7 @@ pub fn build_loadout(
         }
         let pivots = sway_pivots(&gd, &def);
         let mut gun = PilotWeapon::new(index, def, viewmodel);
+        gun.seqs = std::sync::Arc::new(seqs);
         gun.projectile = projectile;
         gun.pivots = pivots;
         gun.ads_scope = ads_scope;
@@ -1260,6 +1369,29 @@ pub fn pilot_viewmodel(
     let cur_ads = lo.guns.get(active).map_or(0.0, |g| g.ads);
     vl.ads_out = crate::vmmotion::ads_out_step(vl.ads_out, cur_ads, vl.last_ads, dt);
     vl.last_ads = cur_ads;
+    // Crouching (sliding included) and leaving the ground change the activity modifiers, which
+    // pick other sequences for the same activities (`ads_in_crouch_seq`...); the engine fades a
+    // newly picked sequence in over its fadeintime (0.2 s for the idles).
+    let seqs = lo.guns.get(active).map(|g| g.seqs.clone()).unwrap_or_default();
+    let mods = VmMods::of(&s);
+    let fade = seqs.fade_in("ACT_VM_IDLE", mods).unwrap_or(0.2).max(0.05);
+    vl.mods_t += dt;
+    if mods != vl.mods {
+        let k = (vl.mods_t / fade).min(1.0);
+        if mods == vl.prev_mods {
+            // Back before the fade finished: carry on from the current mix.
+            vl.prev_mods = vl.mods;
+            vl.mods_t = (1.0 - k) * fade;
+        } else {
+            if k >= 0.5 {
+                vl.prev_mods = vl.mods;
+            }
+            vl.mods_t = 0.0;
+        }
+        vl.mods = mods;
+    }
+    let mods_k = (vl.mods_t / fade).min(1.0);
+    let (cur_mods, prev_mods) = (vl.mods, vl.prev_mods);
     lo.vm_layers = vl;
     let target = if sprint { 1.0 } else { 0.0 };
     lo.sprint_blend += (target - lo.sprint_blend) * (1.0 - (-dt * 8.0).exp());
@@ -1276,9 +1408,26 @@ pub fn pilot_viewmodel(
     let Ok(mut actor) = actors.get_mut(vm) else { return };
     actor.autoplay = false;
     let clip = |a: &Actor, n: &str| a.clip(n);
+    // An activity's sequence under the current modifiers and, while that fades in, the one the
+    // previous modifiers picked, with their weights; `plain` is the sequence to use when the
+    // model names no activity.
+    let pick = |a: &Actor, act: &str, plain: &str| -> [(Option<usize>, f32); 2] {
+        let by = |m: VmMods| seqs.pick(act, m).and_then(|l| a.clip(l)).or_else(|| a.clip(plain));
+        let (cur, prev) = (by(cur_mods), by(prev_mods));
+        if cur == prev || prev.is_none() || mods_k >= 1.0 { [(cur, 1.0), (None, 0.0)] } else { [(cur, mods_k), (prev, 1.0 - mods_k)] }
+    };
+    // Push a picked pair as layers, each at the cycle `cycle` gives for its clip.
+    let push = |a: &Actor, layers: &mut Vec<Layer>, p: [(Option<usize>, f32); 2], cycle: &dyn Fn(&Actor, usize) -> f32, w: f32| {
+        for (c, f) in p {
+            if let Some(c) = c.filter(|_| f > 0.0) {
+                layers.push(Layer { clip: c, cycle: cycle(a, c), weight: w * f });
+            }
+        }
+    };
     let sprint_clip = clip(&actor, "sprint_seq");
     // Leaving a sprint plays `sprintraise_seq` (ACT_VM_RAISE_FROM_SPRINT) instead of fading.
-    let raise_clip = clip(&actor, "sprintraise_seq").filter(|_| !vm_off("raise"));
+    let raise_pick = pick(&actor, "ACT_VM_RAISE_FROM_SPRINT", "sprintraise_seq");
+    let raise_clip = raise_pick[0].0.filter(|_| !vm_off("raise"));
     let raising = raise_clip.filter(|&c| !sprint && vl.sprint_end_t < actor.clips[c].duration);
     if raising.is_some() {
         lo.sprint_blend = 0.0;
@@ -1293,58 +1442,62 @@ pub fn pilot_viewmodel(
     let mut grid_layers = Vec::new();
     let grid_dur = |a: &Actor, n: &str| a.grids.get(n).and_then(|g| g.clips.first()).map(|&c| a.clips[c].duration.max(1e-3));
     let speed = Vec2::new(s.vel.x, s.vel.y).length();
-    let draw = clip(&actor, "draw_seq");
+    let draw = pick(&actor, "ACT_VM_DRAW", "draw_seq");
     // The first draw of a gun plays `drawfirst_seq` (ACT_VM_DRAWFIRST) where it has one.
-    let draw_now = if first_draw { clip(&actor, "drawfirst_seq").or(draw) } else { draw };
+    let draw_now = if first_draw { Some(pick(&actor, "ACT_VM_DRAWFIRST", "drawfirst_seq")).filter(|p| p[0].0.is_some()).unwrap_or(draw) } else { draw };
+    // A resumed reload plays its stage's `_late` sequence.
+    let reload_pick = {
+        let late = (reload_stage > 0)
+            .then(|| if empty_reload { (format!("ACT_VM_RELOADEMPTY_LATE{reload_stage}"), format!("reload_empty_late{reload_stage}_seq")) } else { (format!("ACT_VM_RELOAD_LATE{reload_stage}"), format!("reload_late{reload_stage}_seq")) })
+            .map(|(act, plain)| pick(&actor, &act, &plain))
+            .filter(|p| p[0].0.is_some());
+        let base = if empty_reload { Some(pick(&actor, "ACT_VM_RELOADEMPTY", "reload_empty_seq")).filter(|p| p[0].0.is_some()) } else { None };
+        late.or(base).unwrap_or_else(|| pick(&actor, "ACT_VM_RELOAD", "reload_seq"))
+    };
     let mut steady = false;
     if let Some((_, t)) = switching {
-        if let Some(c) = clip(&actor, "holster_seq") {
-            layers.push(Layer { clip: c, cycle: (t / holster_time).min(0.999), weight: 1.0 });
-        }
-    } else if draw_now.is_some() && deploy_t < deploy_time {
-        let c = draw_now.unwrap();
-        layers.push(Layer { clip: c, cycle: (deploy_t / deploy_time).min(0.999), weight: 1.0 });
-    } else if let (true, Some(c)) = (reloading, {
-        // A resumed reload plays its stage's `_late` sequence.
-        let late = (reload_stage > 0).then(|| if empty_reload { format!("reload_empty_late{reload_stage}_seq") } else { format!("reload_late{reload_stage}_seq") }).and_then(|n| clip(&actor, &n));
-        late.or(if empty_reload { clip(&actor, "reload_empty_seq").or(clip(&actor, "reload_seq")) } else { clip(&actor, "reload_seq") })
-    }) {
-        layers.push(Layer { clip: c, cycle: reload_frac, weight: 1.0 });
+        let k = (t / holster_time).min(0.999);
+        push(&actor, &mut layers, pick(&actor, "ACT_VM_HOLSTER", "holster_seq"), &|_, _| k, 1.0);
+    } else if draw_now[0].0.is_some() && deploy_t < deploy_time {
+        let k = (deploy_t / deploy_time).min(0.999);
+        push(&actor, &mut layers, draw_now, &|_, _| k, 1.0);
+    } else if reloading && reload_pick[0].0.is_some() {
+        push(&actor, &mut layers, reload_pick, &|_, _| reload_frac, 1.0);
         // Walking while reloading sways the gun with the reload's own run layer.
         if let Some(d) = grid_dur(&actor, "run_layer_reload").filter(|_| !vm_off("walk")) {
             grid_layers.push(GridLayer { grid: "run_layer_reload", x: 0.0, y: 0.0, cycle: (vl.clock / d).fract(), weight: (speed / 173.0).min(1.0) * vl.ground_blend, relative: false });
         }
-    } else if let (Some((crate::pilotability::ThrowPhase::Raise, t)), Some(c)) = (throw.phase, clip(&actor, "raise_seq")) {
+    } else if let (Some((crate::pilotability::ThrowPhase::Raise, t)), p @ [(Some(_), _), _]) = (throw.phase, pick(&actor, "ACT_VM_RAISE", "raise_seq")) {
         // Back up after a throw.
-        layers.push(Layer { clip: c, cycle: (t / crate::pilotability::THROW_RAISE_SECS).min(0.999), weight: 1.0 });
-    } else if let (Some(t), Some(c)) = (melee.t.filter(|&t| t >= crate::executions::MELEE_ANIM_SECS), clip(&actor, "raise_frommelee_seq")) {
+        let k = (t / crate::pilotability::THROW_RAISE_SECS).min(0.999);
+        push(&actor, &mut layers, p, &|_, _| k, 1.0);
+    } else if let (Some(t), p @ [(Some(_), _), _]) = (melee.t.filter(|&t| t >= crate::executions::MELEE_ANIM_SECS), pick(&actor, "ACT_VM_RAISE_FROM_MELEE", "raise_frommelee_seq")) {
         // Back up after a melee swing, over melee_raise_recovery_animtime.
         let k = ((t - crate::executions::MELEE_ANIM_SECS) / melee.raise.max(0.05)).min(0.999);
-        layers.push(Layer { clip: c, cycle: k, weight: 1.0 });
+        push(&actor, &mut layers, p, &|_, _| k, 1.0);
     } else if let Some((c, t)) = s.zipline.and_then(|r| Some((clip(&actor, "ptpov_zipline_start")?, r.mount))).filter(|&(c, t)| t < actor.clips[c].duration) {
         // Grabbing a zipline: `ptpov_zipline_start` (ACT_VM_ZIPLINE_MOUNT).
         layers.push(Layer { clip: c, cycle: once(&actor, c, t), weight: 1.0 });
-    } else if let Some(c) = raising {
-        layers.push(Layer { clip: c, cycle: once(&actor, c, vl.sprint_end_t), weight: 1.0 });
+    } else if raising.is_some() {
+        let t = vl.sprint_end_t;
+        push(&actor, &mut layers, raise_pick, &|a, c| once(a, c, t), 1.0);
     } else {
         steady = true;
         let still = 1.0 - sprint_blend;
         // Aiming plays `ads_in_seq` (hip pose to ADS pose) and leaving it `ads_out_seq`, at the
         // zoom fraction, so their own motion paths show (the R-201's gun dips below the hip pose
         // on the way out); a change of direction cross-fades the two.
-        match (clip(&actor, "ads_in_seq"), clip(&actor, "ads_out_seq")) {
-            (Some(ci), out) => {
-                let [(cyc_in, w_in), (cyc_out, w_out)] = crate::vmmotion::ads_layers(ads, if out.is_some() { vl.ads_out } else { 0.0 });
-                layers.push(Layer { clip: ci, cycle: cyc_in, weight: (still * w_in).max(1e-3) });
-                if let Some(co) = out {
-                    layers.push(Layer { clip: co, cycle: cyc_out, weight: still * w_out });
+        // Crouched (and sliding) the crouch pair plays: its hip pose cants the gun to the middle.
+        match (pick(&actor, "ACT_VM_ADS_IN", "ads_in_seq"), pick(&actor, "ACT_VM_ADS_OUT", "ads_out_seq")) {
+            (pin @ [(Some(_), _), _], pout) => {
+                let out = pout[0].0.is_some();
+                let [(cyc_in, w_in), (cyc_out, w_out)] = crate::vmmotion::ads_layers(ads, if out { vl.ads_out } else { 0.0 });
+                push(&actor, &mut layers, pin, &|_, _| cyc_in, (still * w_in).max(1e-3));
+                if out {
+                    push(&actor, &mut layers, pout, &|_, _| cyc_out, still * w_out);
                 }
             }
-            (None, _) => {
-                if let Some(c) = draw {
-                    layers.push(Layer { clip: c, cycle: 0.999, weight: still.max(1e-3) });
-                }
-            }
+            _ => push(&actor, &mut layers, draw, &|_, _| 0.999, still.max(1e-3)),
         }
         if let Some(c) = sprint_clip {
             layers.push(Layer { clip: c, cycle: lo.vm_cycle, weight: sprint_blend });

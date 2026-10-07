@@ -125,6 +125,8 @@ pub struct Sequence {
     /// activity, the one whose modifiers match the current ones is played (`crouch`, `air`,
     /// `onehanded`...).
     pub modifiers: Vec<String>,
+    /// Ideal cross-fade in time (`fadeintime`, 0x68; studiomdl's default is 0.2 s).
+    pub fade_in: f32,
 }
 
 /// mstudioevent_t (v53, 0x50 bytes: cycle, event, type, options[64], name index): fires `name` with `options` when the cycle passes `cycle`.
@@ -333,6 +335,7 @@ impl Model {
                 param_index: [r.i32(o + 0x4C), r.i32(o + 0x50)],
                 param_start: [r.f32(o + 0x54), r.f32(o + 0x58)],
                 param_end: [r.f32(o + 0x5C), r.f32(o + 0x60)],
+                fade_in: r.f32(o + 0x68),
                 modifiers: {
                     let (mi, nm) = (r.i32(o + 0xB8) as usize, r.i32(o + 0xBC).clamp(0, 32) as usize);
                     (0..nm).map(|k| { let m = o + mi + k * 8; format!("{}{}", if r.i32(m + 4) & 0xFF != 0 { "!" } else { "" }, r.cstr(m + r.i32(m) as usize)) }).collect()

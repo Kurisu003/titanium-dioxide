@@ -432,6 +432,17 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     the sequences' `AE_WPN_READYTOFIRE` events, which match them only sometimes: at natural
     speed the R-201's first draw reaches its event at 1.27 s (script 1.25 s), but its normal draw
     reaches it at 0.40 s (script 0.7 s).
+  - Each activity's sequence is picked by the Pilot's activity modifiers, as the engine picks
+    among sequences sharing an activity (each sequence lists modifiers, Respawn's with a negate
+    flag; all of a sequence's must hold and the most specific wins). Crouched, and so also
+    sliding, the guns play their `crouch` sequences (`ads_in/out_crouch_seq`, `draw_crouch_seq`,
+    `reload_crouch_seq`, `raise_crouch_seq`...): the R-201's crouch hip pose cants the gun so
+    its sight sits in the middle of the view (its animation is named `ads_in_slide_anim`). In the
+    air, `air` ones play (the R-201's air ADS sequences reuse the standing animations; only its
+    `sprintraise_seq_air` differs). A change of modifiers cross-fades the old picks into the new
+    over the new idle's `fadeintime` (0.2 s). The `ACT_VM_ONEHANDED_*` set is not used: its poses
+    drop the free hand to the side, off screen, which looks like the pose for carrying something
+    in that hand (the CTF flag; a guess), not wall-running.
   - Weapon-script keys not used yet, because what the engine does with them isn't known:
     `lower_time` (the sprint pose blends in; no `lower_seq` plays), `sway_rotate_attach_blend_time_zoomed`
     (the pivot moves with the zoom fraction instead), `viewkick_move_scale`, `viewkick_hover_scale`,

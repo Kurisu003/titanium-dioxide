@@ -10,7 +10,7 @@ fn main() -> anyhow::Result<()> {
     for (name, m) in &all {
         for (i, p) in m.pose_params.iter().enumerate() { println!("{name}: pose {i} {} {}..{} loop {}", p.name, p.start, p.end, p.looping); }
         for s in m.sequences.iter().filter(|s| s.label.to_lowercase().contains(&f) || s.activity.to_lowercase().contains(&f)) {
-            println!("{name}: {} act={} mods={:?} flags={:#x} grid={:?} params={:?} {:?}..{:?} anims={:?}", s.label, s.activity, s.modifiers, s.flags, s.group_size, s.param_index, s.param_start, s.param_end, &s.anims[..s.anims.len().min(4)]);
+            println!("{name}: {} act={} mods={:?} fade={} flags={:#x} grid={:?} params={:?} {:?}..{:?} anims={:?}", s.label, s.activity, s.modifiers, s.fade_in, s.flags, s.group_size, s.param_index, s.param_start, s.param_end, &s.anims[..s.anims.len().min(4)]);
             for e in &s.events {
                 println!("    {:.3} {} {} {:?}", e.cycle, e.event, e.name, e.options);
             }
