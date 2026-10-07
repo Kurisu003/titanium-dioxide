@@ -2075,7 +2075,7 @@ pub fn kit_world(
         let burst_delay = n.cluster_duration / (n.cluster_bursts / CLUSTER_GROUP_SIZE).max(1) as f32;
         // The next pop: a random point in the dome over the hit, out to the burst range, cut
         // short by the world (ClusterRocketBurst).
-        let mut next_pop = |from: Vec3, rand: &mut dyn FnMut() -> f32| -> (Vec3, Vec3, f32) {
+        let next_pop = |from: Vec3, rand: &mut dyn FnMut() -> f32| -> (Vec3, Vec3, f32) {
             let v = loop {
                 let v = Vec3::new(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, rand() * 2.0 - 1.0);
                 if v.length_squared() > 1e-4 && v.length_squared() <= 1.0 {

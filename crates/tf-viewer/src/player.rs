@@ -776,9 +776,9 @@ pub fn simulate(
             crate::particles::emit(&mut commands, crate::particles::Effect::DustRing { at: feet, radius: 120.0 * UNIT });
             log::debug!("BT heavy landing at {:.0} u/s", s.land_speed);
         }
-        if piloted {
-            input.dash = false;
-        }
+        // The dash press is used up this frame either way: on foot, Space (jump) sets it too,
+        // and a leftover press would fire BT's dash the moment you embark.
+        input.dash = false;
         tf.translation = bv(titan.state.pos);
         tf.rotation = Quat::from_rotation_z(titan.state.yaw);
     }

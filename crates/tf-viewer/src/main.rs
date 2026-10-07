@@ -21,6 +21,7 @@ mod dialogue;
 mod env;
 mod game;
 mod gamedata;
+mod inputrec;
 mod hitbox;
 mod hud;
 mod executions;
@@ -290,8 +291,8 @@ fn main() {
             Update,
             (
                 (
-                    player::gather_input,
-                    game::gate_input,
+                    (player::gather_input, inputrec::replay_input).chain(),
+                    (game::gate_input, inputrec::record_input).chain(),
                     targets::script_aim,
                     game::director,
                     (zipline::zipline_grab, pilotctl::control_transitions, autotitan::auto_titan_think).chain(),
