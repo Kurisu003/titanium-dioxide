@@ -1275,7 +1275,8 @@ pub fn update_subtitles(mut commands: Commands, time: Res<Time>, ui: Res<UiAsset
                         position_type: PositionType::Absolute,
                         left: percent(20),
                         right: percent(20),
-                        bottom: vh(15.0),
+                        // Above the Pilot's health bar (at ~16%) as well as BT's.
+                        bottom: vh(21.0),
                         justify_content: JustifyContent::Center,
                         padding: UiRect::axes(vh(1.4), vh(0.7)),
                         ..default()
