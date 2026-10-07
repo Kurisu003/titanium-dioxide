@@ -122,6 +122,8 @@ pub struct WeaponDef {
     pub attack_presses_ads: bool,
     /// `projectilemodel`.
     pub projectile_model: String,
+    /// `projectile_trail_effect_0`: the system a projectile carries in flight ("" for none).
+    pub trail: &'static str,
     /// Recoil (`viewkick_*`) and viewmodel sway/bob (`sway_*`, `bob_*`).
     pub kick: crate::vmmotion::KickDef,
     pub motion: crate::vmmotion::MotionDef,
@@ -380,6 +382,7 @@ impl WeaponDef {
             smart: crate::smartammo::SmartDef::from_settings(name, &mods.iter().map(|m| m.to_string()).collect::<Vec<_>>(), &s),
             attack_presses_ads: f("attack_button_presses_ads", 0.0) > 0.0,
             projectile_model: s.get(".projectilemodel").unwrap_or_default().to_string(),
+            trail: intern(s.get(".projectile_trail_effect_0").unwrap_or_default().trim()),
             kick: crate::vmmotion::KickDef::from_settings(&s),
             motion: crate::vmmotion::MotionDef::from_settings(&s),
             spread: crate::spread::SpreadDef::from_settings(&s),

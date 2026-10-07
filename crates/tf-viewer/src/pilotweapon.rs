@@ -686,11 +686,51 @@ pub fn spawn_bolt(commands: &mut Commands, fx: &FxAssets, pos: Vec3, vel: Vec3, 
     let energy = ["particle_accelerator", "sniper", "arc", "lstar", "plasma"].iter().any(|k| def.name.contains(k));
     let color = if energy { Vec3::new(1.0, 2.5, 6.0) } else if def.name.contains("meteor") { Vec3::new(6.0, 2.0, 0.5) } else { Vec3::new(5.0, 2.6, 1.0) };
     let smoke = !energy && def.explosion_radius > 0.0;
-    commands.spawn((
-        Transform::from_translation(to_bevy(pos)),
-        crate::particles::Glow::new(color, size, smoke),
-        PilotBolt::new(pos, vel, gravity, def, from_titan),
-    ));
+    let facing = Quat::from_rotation_arc(Vec3::Y, to_bevy(vel).normalize_or(Vec3::Y));
+    let mut e = commands.spawn((Transform::from_translation(to_bevy(pos)).with_rotation(facing), Visibility::default(), PilotBolt::new(pos, vel, gravity, def, from_titan)));
+    // The script's look: its trail system (`projectile_trail_effect_0`) and `projectilemodel`.
+    // Weapons without a trail keep the hand-built glow.
+    if !def.trail.is_empty() && std::env::var_os("TF_OLD_FX").is_none() {
+        e.insert(crate::pfx::PfxTrail::new(def.trail));
+        if !def.projectile_model.is_empty() && !def.projectile_model.contains("empty_model") {
+            e.insert(ProjectileModel(crate::weapons::intern(&def.projectile_model)));
+        }
+    } else {
+        e.insert(crate::particles::Glow::new(color, size, smoke));
+    }
+}
+
+/// A projectile drawn with its weapon's `projectilemodel` (see `attach_projectile_models`).
+#[derive(Component)]
+pub struct ProjectileModel(pub &'static str);
+
+/// Give new projectiles their model, built once per model path.
+#[allow(clippy::type_complexity)]
+pub fn attach_projectile_models(
+    mut commands: Commands,
+    gd: Res<crate::gamedata::GameData>,
+    mut cache: ResMut<crate::convert::Cache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut built: Local<std::collections::HashMap<&'static str, Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>>,
+    new: Query<(Entity, &ProjectileModel), Added<ProjectileModel>>,
+) {
+    for (id, m) in &new {
+        let parts = built.entry(m.0).or_insert_with(|| match crate::world::build_static_model(&gd, m.0, &mut cache, &mut meshes, &mut images, &mut materials) {
+            Ok((parts, _)) => parts,
+            Err(e) => {
+                log::warn!("projectile {}: {e:#}", m.0);
+                Vec::new()
+            }
+        });
+        // As the smart missile's: the model in game axes (nose along +Z) turned into Bevy's
+        // Y-up, metre space.
+        let local = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
+        for (mesh, mat) in parts.iter() {
+            commands.entity(id).with_child((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), local));
+        }
+    }
 }
 
 /// Launch a smart missile (the Archer's rocket): the script's projectile model with a smoke

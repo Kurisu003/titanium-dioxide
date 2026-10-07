@@ -301,7 +301,7 @@ fn main() {
                     (executions::titan_execution, executions::pilot_execution).chain(),
                     weapons::weapon_fire,
                     pilotweapon::pilot_weapon_fire,
-                    pilotweapon::update_pilot_bolts,
+                    (pilotweapon::update_pilot_bolts, pilotweapon::attach_projectile_models).chain(),
                     abilities::update_abilities,
                     abilities::update_missiles,
                     titankit::kit_input,

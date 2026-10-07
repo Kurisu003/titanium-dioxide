@@ -938,14 +938,41 @@ pub struct ClusterRocket {
     age: f32,
 }
 
-/// The Cluster Missile's follow-up bursts around where it hit.
+/// The Cluster Missile's bursts (StartClusterExplosions / ClusterRocketBursts): the
+/// CLUSTER_BASE_FX at the hit, then after `projectile_explosion_delay` a group of burst
+/// projectiles (CreateClusterBurst: P_wpn_dumbfire_burst_trail on a grenade) that each hop from
+/// pop to pop around the hit, exploding at every landing with the exp_rocket_cluster_secondary
+/// table. Everything stops CLUSTER_ROCKET_DURATION after the bursts start.
 #[derive(Component)]
 pub struct ClusterBursts {
     center: Vec3,
-    left: u32,
-    timer: f32,
+    normal: Vec3,
+    delay: f32,
+    life: f32,
+    base: Option<Entity>,
+    hops: Vec<ClusterHop>,
     rng: u64,
 }
+
+/// One burst projectile: flying ballistically (GetVelocityForDestOverTime, gravity 750) from
+/// `from` to `to` over `dur`, with `left` hops after this one.
+struct ClusterHop {
+    ent: Entity,
+    from: Vec3,
+    to: Vec3,
+    vel: Vec3,
+    t: f32,
+    dur: f32,
+    left: u32,
+}
+
+/// CLUSTER_ROCKET_BURST_GROUP_SIZE, _BURST_DELAY and _BURST_OFFSET are code-side constants the
+/// scripts don't show; these are guesses (a group of 5 hops every 1.25 s over the 5 s).
+const CLUSTER_GROUP_SIZE: u32 = 5;
+const CLUSTER_BURST_DELAY: f32 = 0.25;
+const CLUSTER_BURST_OFFSET: f32 = 0.2;
+/// mp_titanweapon_dumbfire_rockets' projectile_explosion_delay.
+const CLUSTER_EXPLOSION_DELAY: f32 = 0.5;
 
 #[derive(Component)]
 pub struct ParticleWall {
@@ -1225,7 +1252,14 @@ pub fn kit_input(
                 st.ord_cd_max = n.cluster_cd;
                 st.ord_cd = n.cluster_cd;
                 let from = eye + right * 60.0 + dir * 80.0;
-                commands.spawn((Transform::from_translation(to_bevy(from)), Glow::new(Vec3::new(5.0, 3.0, 1.2), 0.5, true), ClusterRocket { pos: from, vel: dir * n.cluster_speed, age: 0.0 }));
+                let rocket = ClusterRocket { pos: from, vel: dir * n.cluster_speed, age: 0.0 };
+                let at = Transform::from_translation(to_bevy(from)).with_rotation(Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y)));
+                if std::env::var_os("TF_OLD_FX").is_some() {
+                    commands.spawn((at, Glow::new(Vec3::new(5.0, 3.0, 1.2), 0.5, true), rocket));
+                } else {
+                    // The script's projectile: projectilemodel and projectile_trail_effect_0.
+                    commands.spawn((at, Visibility::default(), rocket, crate::pfx::PfxTrail::new("Rocket_Smoke_SMALL_Titan_2"), crate::pilotweapon::ProjectileModel("models/weapons/bullets/projectile_rocket_largest.mdl")));
+                }
                 true
             }
             OrdKind::ArcWave => {
@@ -1966,13 +2000,18 @@ pub fn kit_world(
     }
 
     // --- Cluster Missile ---
+    let old_fx = std::env::var_os("TF_OLD_FX").is_some();
     for (id, mut r, mut tf) in &mut rockets {
         r.age += dt;
         let step = r.vel * dt;
         let len = step.length().max(1e-4);
         let dir = step / len;
         let mut t_end = len;
-        let mut hit = world.0.raycast(SVec3::from(r.pos.to_array()), SVec3::from(dir.to_array()), len).map(|h| h.t);
+        let mut normal = -dir;
+        let mut hit = world.0.raycast(SVec3::from(r.pos.to_array()), SVec3::from(dir.to_array()), len).map(|h| {
+            normal = Vec3::from(h.normal.to_array());
+            h.t
+        });
         if let Some(t) = hit {
             t_end = t;
         }
@@ -1982,43 +2021,128 @@ pub fn kit_world(
                     if t < t_end {
                         t_end = t;
                         hit = Some(t);
+                        normal = -dir;
                     }
                 }
             }
         }
         r.pos += dir * t_end;
         tf.translation = to_bevy(r.pos);
+        tf.rotation = Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y));
         if hit.is_none() && r.age < 6.0 {
             continue;
         }
         commands.entity(id).despawn();
         let at = r.pos - dir * 10.0;
         splash(&mut enemies, at, n.cluster_inner, n.cluster_radius, n.cluster_heavy, n.cluster_pilot, &mut core);
-        emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 1.3 });
-        crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
-        commands.spawn(ClusterBursts { center: at, left: n.cluster_bursts, timer: 0.2, rng: (r.age.to_bits() as u64) | 1 });
+        let base = if old_fx {
+            emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 1.3 });
+            crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
+            None
+        } else {
+            emit(&mut commands, Effect::Hit { at: to_bevy(r.pos), normal: to_bevy(normal).normalize_or(Vec3::Y), table: "exp_rocket_dumbfire", surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
+            // exp_rocket_dumbfire's Sound_attacker, and the base's sound.
+            crate::audio::event_at(&mut commands, "Default.ClusterRocket_Primary_Explosion_1P_vs_3P", at);
+            crate::audio::event_at(&mut commands, "Explo_ThermiteGrenade_Impact_3P", at);
+            // CLUSTER_BASE_FX on a mover facing along the surface normal.
+            let rot = Quat::from_rotation_arc(Vec3::NEG_Z, to_bevy(normal).normalize_or(Vec3::Y));
+            Some(commands.spawn((Transform::from_translation(to_bevy(r.pos)).with_rotation(rot), crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"))).id())
+        };
+        commands.spawn(ClusterBursts { center: r.pos, normal, delay: CLUSTER_EXPLOSION_DELAY, life: CLUSTER_EXPLOSION_DELAY + n.cluster_duration, base, hops: Vec::new(), rng: (r.age.to_bits() as u64) | 1 });
     }
     for (id, mut b) in &mut bursts {
-        b.timer -= dt;
-        while b.timer <= 0.0 && b.left > 0 {
-            b.timer += n.cluster_duration / n.cluster_bursts.max(1) as f32;
-            b.left -= 1;
-            let mut r = || {
-                b.rng ^= b.rng << 13;
-                b.rng ^= b.rng >> 7;
-                b.rng ^= b.rng << 17;
-                (b.rng >> 40) as f32 / (1u64 << 24) as f32
-            };
-            let (a, d) = (r() * std::f32::consts::TAU, r().sqrt() * n.cluster_range);
-            let at = b.center + Vec3::new(a.cos() * d, a.sin() * d, 30.0);
-            splash(&mut enemies, at, n.cluster_inner * 0.5, n.cluster_radius * 0.6, n.cluster_heavy, n.cluster_pilot, &mut core);
-            emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 0.6 });
-            if b.left % 4 == 0 {
-                crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
+        let b = &mut *b;
+        let mut rand = {
+            let rng = &mut b.rng;
+            move || {
+                *rng ^= *rng << 13;
+                *rng ^= *rng >> 7;
+                *rng ^= *rng << 17;
+                (*rng >> 40) as f32 / (1u64 << 24) as f32
             }
-        }
-        if b.left == 0 {
+        };
+        b.life -= dt;
+        if b.life <= 0.0 {
+            for h in &b.hops {
+                commands.entity(h.ent).despawn();
+            }
+            if let Some(e) = b.base {
+                commands.entity(e).despawn();
+            }
             commands.entity(id).despawn();
+            continue;
+        }
+        let burst_delay = n.cluster_duration / (n.cluster_bursts / CLUSTER_GROUP_SIZE).max(1) as f32;
+        // The next pop: a random point in the dome over the hit, out to the burst range, cut
+        // short by the world (ClusterRocketBurst).
+        let mut next_pop = |from: Vec3, rand: &mut dyn FnMut() -> f32| -> (Vec3, Vec3, f32) {
+            let v = loop {
+                let v = Vec3::new(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, rand() * 2.0 - 1.0);
+                if v.length_squared() > 1e-4 && v.length_squared() <= 1.0 {
+                    let v = v.normalize();
+                    break if v.dot(b.normal) < 0.0 { -v } else { v };
+                }
+            };
+            let pop_vec = v * n.cluster_range * rand();
+            let len = pop_vec.length();
+            let frac = world.0.raycast(SVec3::from(b.center.to_array()), SVec3::from((pop_vec / len.max(1e-4)).to_array()), len).map_or(1.0, |h| h.t / len.max(1e-4));
+            let to = b.center + pop_vec * frac;
+            let dur = (burst_delay - CLUSTER_BURST_DELAY - (rand() * 2.0 - 1.0) * CLUSTER_BURST_OFFSET).max(0.05);
+            let vel = Vec3::new((to.x - from.x) / dur, (to.y - from.y) / dur, (to.z + 0.5 * 750.0 * dur * dur - from.z) / dur);
+            (to, vel, dur)
+        };
+        if b.delay > 0.0 {
+            b.delay -= dt;
+            if b.delay <= 0.0 {
+                // CLUSTER_ROCKET_BURST_GROUP_SIZE projectiles, a frame apart, from 8 units off
+                // the surface; each explodes count / group + 1 times.
+                let from = b.center + b.normal * 8.0;
+                for k in 0..CLUSTER_GROUP_SIZE {
+                    let (to, vel, dur) = next_pop(from, &mut rand);
+                    let ent = commands.spawn((Transform::from_translation(to_bevy(from)), Visibility::default(), crate::pfx::PfxTrail::new("P_wpn_dumbfire_burst_trail"), crate::pilotweapon::ProjectileModel("models/weapons/grenades/m20_f_grenade.mdl"))).id();
+                    b.hops.push(ClusterHop { ent, from, to, vel, t: -(k as f32) / 60.0, dur, left: n.cluster_bursts / CLUSTER_GROUP_SIZE });
+                }
+            }
+            continue;
+        }
+        let mut pops = Vec::new();
+        for h in b.hops.iter_mut() {
+            if h.t < 0.0 && h.t + dt < 0.0 {
+                h.t += dt;
+                continue;
+            }
+            h.t += dt;
+            if h.t < h.dur {
+                let p = h.from + h.vel * h.t - Vec3::Z * 0.5 * 750.0 * h.t * h.t;
+                commands.entity(h.ent).insert(Transform::from_translation(to_bevy(p)));
+                continue;
+            }
+            pops.push(h.to);
+            if h.left == 0 {
+                commands.entity(h.ent).despawn();
+                h.dur = f32::INFINITY;
+                continue;
+            }
+            h.left -= 1;
+            h.from = h.to;
+            h.t = 0.0;
+        }
+        b.hops.retain(|h| h.dur.is_finite() || h.left > 0);
+        let hops: Vec<usize> = (0..b.hops.len()).filter(|&i| b.hops[i].t == 0.0).collect();
+        for i in hops {
+            let from = b.hops[i].from;
+            let (to, vel, dur) = next_pop(from, &mut rand);
+            let h = &mut b.hops[i];
+            (h.to, h.vel, h.dur) = (to, vel, dur);
+        }
+        for at in pops {
+            splash(&mut enemies, at, n.cluster_inner, n.cluster_radius, n.cluster_heavy, n.cluster_pilot, &mut core);
+            if old_fx {
+                emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 0.6 });
+            } else {
+                emit(&mut commands, Effect::Hit { at: to_bevy(at), normal: to_bevy(b.normal).normalize_or(Vec3::Y), table: "exp_rocket_cluster_secondary", surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
+            }
+            crate::audio::event_at(&mut commands, "Default.ClusterRocket_Explosion_1P_vs_3P", at);
         }
     }
 
