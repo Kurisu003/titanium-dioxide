@@ -338,6 +338,30 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     A full turn push is 150 degrees/s and a full move push is 173 units/s; both are guesses.
   - `bob_*` bobs the gun while walking (one vertical cycle per `bob_cycle_time`, the sideways
     part and angles at half rate, scaled by speed up to `bob_max_speed`).
+  - Aiming plays the viewmodel's `ads_in_seq` (hip pose to ADS pose) and leaving it
+    `ads_out_seq`, at the zoom fraction, so `zoom_time_in`/`_out` (and fast-ADS mods) set their
+    pace and their own paths show: the R-201 reaches the sight two-thirds of the way in, and its
+    gun dips below the hip pose on the way out. (We used to blend straight between the two end
+    poses.) A change of direction cross-fades the two over 0.1 s (a guess).
+  - The FOV narrows over the script's `ads_fov_zoomfrac_start`..`end` part of the zoom (the
+    Kraber's 0.5-0.9: the scope comes up first), else over the whole of it; the smoothstep easing
+    is a guess.
+  - `sprint_seq` loops every `sprintcycle_time` (0.55 s for every gun, while the clips are
+    0.667 s long).
+  - A gun's first draw plays `drawfirst_seq` over `deployfirst_time` (the R-201's 1.25 s
+    charging-handle pull); later draws play `draw_seq` over `deploy_time`. The gun can fire once
+    that time has passed, and putting it away takes `holster_time`. (Guns used to fire at 60% of
+    the draw, with holsters capped at 0.6 s.) Readiness follows these script times rather than
+    the sequences' `AE_WPN_READYTOFIRE` events, which match them only sometimes: at natural
+    speed the R-201's first draw reaches its event at 1.27 s (script 1.25 s), but its normal draw
+    reaches it at 0.40 s (script 0.7 s).
+  - Weapon-script keys not used yet, because what the engine does with them isn't known:
+    `lower_time` (the sprint pose blends in; no `lower_seq` plays), `sway_rotate_attach_blend_time_zoomed`
+    (the pivot moves with the zoom fraction instead), `viewkick_move_scale`, `viewkick_hover_scale`,
+    `viewpunch_multiplier`, `zoom_angle_shift_pitch/yaw`, `zoom_toggle_fov` (the snipers' zoom
+    toggle), `bob_tilt_angle` and the older `sway_turn/move_angle/origin_factor` and `sway_gain`
+    keys (the shotguns), and `dof_*` (there's no depth of field). `viewkick_air_scale_ads` is 1 in
+    every gun's SP block, so it would change nothing.
   - On top of these, viewmodels play the engine's additive layers: `idle_seq_autoplay` (the
     breathing loop), `walk_seq` over the velocity and `ads_blend` pose parameters in real time,
     `run_layer_reload` when reloading on the move, the jump and land transitions, and

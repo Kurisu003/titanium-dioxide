@@ -392,6 +392,40 @@ impl VmMotion {
     }
 }
 
+/// How far the FOV has narrowed at zoom fraction `ads`: the zoom happens over the script's
+/// `ads_fov_zoomfrac_start..end` part of the transition (the Kraber's 0.5..0.9: the scope comes up
+/// first, then the view zooms), eased with a smoothstep (the easing is a guess).
+pub fn ads_fov_blend(ads: f32, (start, end): (f32, f32)) -> f32 {
+    let t = if end > start { ((ads - start) / (end - start)).clamp(0.0, 1.0) } else if ads >= end { 1.0 } else { 0.0 };
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Seconds a change of zoom direction takes to cross-fade between `ads_in_seq` and
+/// `ads_out_seq` (a guess; the engine's sequence blend time isn't in the data).
+pub const ADS_SEQ_CROSSFADE: f32 = 0.1;
+
+/// The ADS transition layers: `ads_in_seq` runs from the hip pose to the ADS pose and
+/// `ads_out_seq` back, each driven by the zoom fraction (so `zoom_time_in/out` and fast-ADS mods
+/// set their pace). `out` is how much the zoom-out sequence is shown (1 while zooming out,
+/// cross-faded on a change of direction). Returns (cycle, weight) for the in and out sequences.
+pub fn ads_layers(ads: f32, out: f32) -> [(f32, f32); 2] {
+    let ads = ads.clamp(0.0, 1.0);
+    [(ads.min(0.999), 1.0 - out), ((1.0 - ads).min(0.999), out)]
+}
+
+/// Moves `out` (see `ads_layers`) toward the direction the zoom is moving this frame.
+pub fn ads_out_step(out: f32, ads: f32, last_ads: f32, dt: f32) -> f32 {
+    let target = if ads < last_ads {
+        1.0
+    } else if ads > last_ads {
+        0.0
+    } else {
+        return out;
+    };
+    let step = dt / ADS_SEQ_CROSSFADE;
+    if target > out { (out + step).min(1.0) } else { (out - step).max(0.0) }
+}
+
 /// Rotation for (pitch, yaw, roll) degrees in the view frame (x forward, y left, z up).
 pub fn angles_quat(a: Vec3) -> Quat {
     Quat::from_rotation_z(a.y.to_radians()) * Quat::from_rotation_y(a.x.to_radians()) * Quat::from_rotation_x(a.z.to_radians())
@@ -500,5 +534,53 @@ impl CockpitSway {
         self.origin_vel += dir.normalize_or_zero() * PUSH * s * w;
         // Hit from the left (dir pointing right, -y) rolls the cockpit right (positive roll).
         self.angles_vel.z += -dir.y.clamp(-1.0, 1.0) * ROLL_RANGE * s * w;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fov_zooms_only_inside_its_window() {
+        // Kraber: ads_fov_zoomfrac_start 0.5, end 0.9.
+        assert_eq!(ads_fov_blend(0.3, (0.5, 0.9)), 0.0);
+        assert_eq!(ads_fov_blend(0.5, (0.5, 0.9)), 0.0);
+        assert!((ads_fov_blend(0.7, (0.5, 0.9)) - 0.5).abs() < 1e-6);
+        assert_eq!(ads_fov_blend(0.95, (0.5, 0.9)), 1.0);
+        // No window in the script: the whole transition.
+        assert!((ads_fov_blend(0.5, (0.0, 1.0)) - 0.5).abs() < 1e-6);
+        assert_eq!(ads_fov_blend(1.0, (0.0, 1.0)), 1.0);
+    }
+
+    #[test]
+    fn ads_layers_meet_at_the_ends() {
+        // Steady hip: the in sequence's start and the out sequence's end are both the hip pose.
+        for out in [0.0, 0.4, 1.0] {
+            let [(ci, wi), (co, wo)] = ads_layers(0.0, out);
+            assert_eq!(ci, 0.0);
+            assert_eq!(co, 0.999);
+            assert!((wi + wo - 1.0).abs() < 1e-6);
+        }
+        // Full ADS: the in sequence's end and the out sequence's start.
+        let [(ci, _), (co, _)] = ads_layers(1.0, 0.0);
+        assert_eq!((ci, co), (0.999, 0.0));
+    }
+
+    #[test]
+    fn zoom_direction_cross_fades() {
+        // Zooming out: the out sequence fades in over the cross-fade time.
+        let mut out = 0.0;
+        for _ in 0..5 {
+            out = ads_out_step(out, 0.5, 0.6, 0.01);
+        }
+        assert!((out - 0.5).abs() < 1e-5);
+        // Holding still keeps whatever blend there is.
+        assert_eq!(ads_out_step(out, 0.5, 0.5, 0.01), out);
+        // Zooming in again fades back.
+        for _ in 0..20 {
+            out = ads_out_step(out, 0.6, 0.5, 0.01);
+        }
+        assert_eq!(out, 0.0);
     }
 }

@@ -200,6 +200,8 @@ pub struct PilotWeapon {
     pub fx_atts: [Option<(String, Transform)>; 2],
     /// The viewmodel's screens its script's RUIs draw on (ruiscreen.rs).
     pub screens: Vec<crate::ruiscreen::ScreenMesh>,
+    /// Not drawn yet: the first draw plays `drawfirst_seq` over `deployfirst_time`.
+    pub first_draw: bool,
 }
 
 impl PilotWeapon {
@@ -233,7 +235,13 @@ impl PilotWeapon {
             ads_scope: None,
             fx_atts: [None, None],
             screens: Vec::new(),
+            first_draw: true,
         }
+    }
+    /// Seconds the current draw takes before the gun can fire: `deployfirst_time` the first time
+    /// it comes out, else `deploy_time`.
+    pub fn deploy_secs(&self) -> f32 {
+        if self.first_draw && self.def.deploy_first_time > 0.0 { self.def.deploy_first_time } else { self.def.deploy_time }
     }
     pub fn reloading(&self) -> bool {
         self.reload_left > 0.0
@@ -281,6 +289,9 @@ struct VmLayers {
     was_sprint: bool,
     jumps: u32,
     ground_blend: f32,
+    /// How much `ads_out_seq` is shown (see `vmmotion::ads_layers`) and last frame's zoom.
+    ads_out: f32,
+    last_ads: f32,
 }
 
 impl Default for PilotLoadout {
@@ -295,7 +306,7 @@ impl PilotLoadout {
     }
     /// The gun is up (not mid-switch or still drawing).
     pub fn ready(&self) -> bool {
-        self.switching.is_none() && self.active().is_some_and(|g| self.deploy_t >= g.def.deploy_time.min(1.0) * 0.6)
+        self.switching.is_none() && self.active().is_some_and(|g| self.deploy_t >= g.deploy_secs())
     }
 }
 
@@ -348,7 +359,7 @@ pub fn build_loadout(
         let spec = ActorSpec {
             path: &def.viewmodel,
             sequences: &[
-                "draw_seq", "holster_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "sprintraise_seq", "ads_in_seq", "?rechamber_seq", "?raise_frommelee_seq", "?raise_seq",
+                "draw_seq", "holster_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "sprintraise_seq", "ads_in_seq", "?ads_out_seq", "?drawfirst_seq", "?rechamber_seq", "?raise_frommelee_seq", "?raise_seq",
                 "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq",
             ],
             // The engine's additive viewmodel layers (the snipers and the Charge Rifle name
@@ -630,7 +641,15 @@ pub fn pilot_weapon_fire(
     let hitboxes = hitboxes.as_deref().unwrap_or(&no_boxes);
     let Ok((pilot, mut lo)) = pilots.single_mut() else { return };
     let lo = &mut *lo;
+    let prev_deploy = lo.deploy_t;
     lo.deploy_t += dt;
+    if lo.switching.is_none() {
+        if let Some(g) = lo.guns.get_mut(lo.active) {
+            if prev_deploy < g.deploy_secs() && lo.deploy_t >= g.deploy_secs() {
+                g.first_draw = false;
+            }
+        }
+    }
     for g in &mut lo.guns {
         g.fire_t += dt;
     }
@@ -675,7 +694,7 @@ pub fn pilot_weapon_fire(
     }
     if let Some((to, t)) = lo.switching {
         let t = t + dt;
-        let holster = lo.guns[lo.active].def.holster_time.min(0.6);
+        let holster = lo.guns[lo.active].def.holster_time;
         if t >= holster {
             lo.active = to;
             lo.switching = None;
@@ -1238,6 +1257,9 @@ pub fn pilot_viewmodel(
     vl.was_ground = on_ground;
     vl.was_sprint = sprint;
     vl.ground_blend += (if on_ground { 1.0 } else { 0.0 } - vl.ground_blend) * (1.0 - (-dt * 10.0).exp());
+    let cur_ads = lo.guns.get(active).map_or(0.0, |g| g.ads);
+    vl.ads_out = crate::vmmotion::ads_out_step(vl.ads_out, cur_ads, vl.last_ads, dt);
+    vl.last_ads = cur_ads;
     lo.vm_layers = vl;
     let target = if sprint { 1.0 } else { 0.0 };
     lo.sprint_blend += (target - lo.sprint_blend) * (1.0 - (-dt * 8.0).exp());
@@ -1248,7 +1270,8 @@ pub fn pilot_viewmodel(
     // Reload, draw and holster sequences play scaled to the script's times (the R-201's 2 s
     // reload_seq over reload_time 2.2; the Wingman's 2.9 s one over 2.1), as the engine does.
     let reload_frac = (g.reload_t / (g.reload_t + g.reload_left).max(1e-3)).min(0.999);
-    let (deploy_time, holster_time) = (g.def.deploy_time.max(0.05), g.def.holster_time.min(0.6).max(0.05));
+    let (deploy_time, holster_time) = (g.deploy_secs().max(0.05), g.def.holster_time.max(0.05));
+    let (first_draw, sprint_cycle) = (g.first_draw && g.def.deploy_first_time > 0.0, g.def.sprint_cycle);
     let (pivots, motion_def, ads_scope, scope_frac, vm_offset) = (g.pivots.clone(), g.def.motion.clone(), g.ads_scope, g.def.scope_frac, g.def.vm_offset);
     let Ok(mut actor) = actors.get_mut(vm) else { return };
     actor.autoplay = false;
@@ -1261,7 +1284,8 @@ pub fn pilot_viewmodel(
         lo.sprint_blend = 0.0;
     }
     let sprint_blend = lo.sprint_blend;
-    let dur = sprint_clip.map(|c| actor.clips[c].duration).unwrap_or(1.0);
+    // `sprintcycle_time` sets the loop's pace (0.55 s against the clips' 0.667 s).
+    let dur = if sprint_cycle > 0.0 { sprint_cycle } else { sprint_clip.map(|c| actor.clips[c].duration).unwrap_or(1.0) };
     lo.vm_cycle = (lo.vm_cycle + dt / dur.max(0.1)).rem_euclid(1.0);
     let once = |a: &Actor, c: usize, t: f32| (t / a.clips[c].duration.max(1e-3)).min(0.999);
     let mut layers = Vec::new();
@@ -1270,13 +1294,15 @@ pub fn pilot_viewmodel(
     let grid_dur = |a: &Actor, n: &str| a.grids.get(n).and_then(|g| g.clips.first()).map(|&c| a.clips[c].duration.max(1e-3));
     let speed = Vec2::new(s.vel.x, s.vel.y).length();
     let draw = clip(&actor, "draw_seq");
+    // The first draw of a gun plays `drawfirst_seq` (ACT_VM_DRAWFIRST) where it has one.
+    let draw_now = if first_draw { clip(&actor, "drawfirst_seq").or(draw) } else { draw };
     let mut steady = false;
     if let Some((_, t)) = switching {
         if let Some(c) = clip(&actor, "holster_seq") {
             layers.push(Layer { clip: c, cycle: (t / holster_time).min(0.999), weight: 1.0 });
         }
-    } else if draw.is_some() && deploy_t < deploy_time {
-        let c = draw.unwrap();
+    } else if draw_now.is_some() && deploy_t < deploy_time {
+        let c = draw_now.unwrap();
         layers.push(Layer { clip: c, cycle: (deploy_t / deploy_time).min(0.999), weight: 1.0 });
     } else if let (true, Some(c)) = (reloading, {
         // A resumed reload plays its stage's `_late` sequence.
@@ -1303,11 +1329,22 @@ pub fn pilot_viewmodel(
     } else {
         steady = true;
         let still = 1.0 - sprint_blend;
-        if let Some(c) = draw {
-            layers.push(Layer { clip: c, cycle: 0.999, weight: (still * (1.0 - ads)).max(1e-3) });
-        }
-        if let Some(c) = clip(&actor, "ads_in_seq") {
-            layers.push(Layer { clip: c, cycle: 0.999, weight: still * ads });
+        // Aiming plays `ads_in_seq` (hip pose to ADS pose) and leaving it `ads_out_seq`, at the
+        // zoom fraction, so their own motion paths show (the R-201's gun dips below the hip pose
+        // on the way out); a change of direction cross-fades the two.
+        match (clip(&actor, "ads_in_seq"), clip(&actor, "ads_out_seq")) {
+            (Some(ci), out) => {
+                let [(cyc_in, w_in), (cyc_out, w_out)] = crate::vmmotion::ads_layers(ads, if out.is_some() { vl.ads_out } else { 0.0 });
+                layers.push(Layer { clip: ci, cycle: cyc_in, weight: (still * w_in).max(1e-3) });
+                if let Some(co) = out {
+                    layers.push(Layer { clip: co, cycle: cyc_out, weight: still * w_out });
+                }
+            }
+            (None, _) => {
+                if let Some(c) = draw {
+                    layers.push(Layer { clip: c, cycle: 0.999, weight: still.max(1e-3) });
+                }
+            }
         }
         if let Some(c) = sprint_clip {
             layers.push(Layer { clip: c, cycle: lo.vm_cycle, weight: sprint_blend });

@@ -791,7 +791,7 @@ pub fn pilot_camera(
         let base = 60f32.to_radians();
         let ratio = (w.def.zoom_fov.to_radians() * 0.5).tan() / (70f32.to_radians() * 0.5).tan();
         let zoomed = 2.0 * ((base * 0.5).tan() * ratio).atan();
-        let a = w.ads * w.ads * (3.0 - 2.0 * w.ads);
+        let a = crate::vmmotion::ads_fov_blend(w.ads, w.def.ads_fov_frac);
         pp.fov = base + (zoomed - base) * if *control == Control::Pilot { a } else { 0.0 };
     }
     // BT is visible from outside, unless destroyed.

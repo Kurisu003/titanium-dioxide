@@ -100,10 +100,18 @@ pub struct WeaponDef {
     /// `primary_fire_does_not_block_sprint` (Gunrunner): fire while sprinting.
     pub fire_while_sprinting: bool,
     pub zoom_time_out: f32,
+    /// Seconds from starting to draw the gun until it can fire; the draw sequence plays over it.
     pub deploy_time: f32,
+    /// `deployfirst_time`: the same for the first draw (`drawfirst_seq`), 0 if the script has none.
+    pub deploy_first_time: f32,
     pub holster_time: f32,
     /// Seconds to bring the gun back up after sprinting before it can fire.
     pub raise_time: f32,
+    /// `sprintcycle_time`: one loop of `sprint_seq` (0.55 s for every gun, whose sprint loops
+    /// are 0.667 s long); 0 plays it at its own length.
+    pub sprint_cycle: f32,
+    /// `ads_fov_zoomfrac_start/end`: the part of the zoom transition over which the FOV narrows.
+    pub ads_fov_frac: (f32, f32),
     /// No magazine (`ammo_clip_size` 0): `clip` is the stockpile and there is no reload.
     pub no_reload: bool,
     pub charge: ChargeDef,
@@ -364,8 +372,11 @@ impl WeaponDef {
             fire_while_sprinting: f("primary_fire_does_not_block_sprint", 0.0) > 0.0,
             zoom_time_out: f("zoom_time_out", f("zoom_time_in", 0.3)),
             deploy_time: f("deploy_time", 0.6),
+            deploy_first_time: f("deployfirst_time", 0.0),
             holster_time: f("holster_time", 0.4),
             raise_time: f("raise_time", 0.3),
+            sprint_cycle: f("sprintcycle_time", 0.0),
+            ads_fov_frac: (f("ads_fov_zoomfrac_start", 0.0), f("ads_fov_zoomfrac_end", 1.0)),
             smart: crate::smartammo::SmartDef::from_settings(name, &mods.iter().map(|m| m.to_string()).collect::<Vec<_>>(), &s),
             attack_presses_ads: f("attack_button_presses_ads", 0.0) > 0.0,
             projectile_model: s.get(".projectilemodel").unwrap_or_default().to_string(),
