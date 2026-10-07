@@ -230,8 +230,14 @@ particle alpha; `$vertexcolormodulate` tints, `$bluramount` is a 4-tap blur, `$i
 the depth test). Guessed: Respawn's `$opacitymap` is read as a mask that scales the offset and
 blends the sprite; other effects' sprites aren't refracted (they draw after the copy, over the
 refraction); the first-person overlay leaves refraction out. `TF_NO_REFRACT=1` turns it off and
-`TF_REFRACT_SCALE=k` multiplies the amounts (for checking). Not drawn: screen-space systems;
-light-source particles are off by default
+`TF_REFRACT_SCALE=k` multiplies the amounts (for checking). Screen effects (systems the
+scripts start at the world origin or on the cockpit whose `screen space effect` flag is set:
+Phase Shift's shimmer, Stim's streaks, the health hexes) run in screen units around their
+control point and draw on a plane 8 units in front of the eye through the world camera, so
+they refract: x ±100 spans the width (the systems' boxes are ±100 by ±63, a 16:10 screen) and
+y runs up (a guess; Source's own screen-space pass isn't known), with the viewmodel drawn over
+them. World systems that carry the flag too (lens flares, light glows) are drawn where they
+are. `TF_NO_SCREEN_FX=1` leaves screen effects out. Light-source particles are off by default
 (`TF_PFX_LIGHTS=1`: with the map's irradiance volume loaded, any visible point light makes Bevy
 0.18 draw BT in the wrong pose, unlit). `TF_OLD_FX=1` keeps the hand-built look below, which is
 also the fallback while the library loads, for smoke puffs and for first-person muzzle flashes
@@ -498,10 +504,10 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   the cockpit sway spring: up to `cockpitShake_sourceRollRange` (3 degrees) of roll, and about 4 units
   of push (by eye). A hit with no known source pushes from straight ahead.
 - **Pilot damage effects:** each hit while hurt starts `P_health_hex` (orange hexes around the
-  screen edge) on the visor, at most 10, cleared when health is full again
+  screen edge) as a screen effect, at most 10, cleared when health is full again
   (cl_pilot_health_hud.gnut); the red vignette follows `DamageOverlayUpdate`'s ramps (brightening
-  from full health to 84%, reddening to 48%). The hexes' plane distance (110 units ahead) and the
-  vignette's strength are by eye. `TF_HURT_PILOT=1` deals 15 damage every 1.5 s on foot.
+  from full health to 84%, reddening to 48%). The screen-space placement (see Effects) and the
+  vignette's strength are guesses. `TF_HURT_PILOT=1` deals 15 damage every 1.5 s on foot.
 - **Dash tilt:** BT's view rolls toward a dash's sideways direction, up to `dodge_viewTiltMax`
   (10 degrees) at `dodge_viewTiltIncreaseSpeed` 5, held `dodge_viewTiltFalloffTime` 0.7 s, back at
   `dodge_viewTiltDecreaseSpeed` 2.5; the cockpit model leans `dodge_cockpitTiltMax` 4 more
@@ -741,8 +747,8 @@ ORDNANCE). Values come from the MP_BASE blocks of the weapon scripts (charges ar
 the constants in their `.nut` files:
 
 - Stim (`mp_ability_heal`): 3 s of 40% extra speed and doubled health regen; 25 s recharge.
-  The screen plays `P_heal` while it runs (sh_stim.gnut), placed like `P_health_hex` (same
-  guessed visor distance). Cloak and Phase Shift's first-person looks are engine-side. Cloak
+  The screen plays `P_heal` while it runs (sh_stim.gnut), as a screen effect like
+  `P_health_hex` (see Effects). Cloak and Phase Shift's first-person looks are engine-side. Cloak
   draws the arms and gun as a refracting outline (cloak.rs: the picture behind them shifted by
   their view-space normal, a cool tint and a faint fresnel rim; strengths by eye,
   `TF_CLOAK="warp rim exponent tint"` to tune, `TF_NO_CLOAK_FX=1` for the old screen tint);
@@ -1234,7 +1240,8 @@ the free camera at a position in game units; `--no-props` skips static props.
   `common(NN).rpak` and `common_mp(NN).rpak` patch's own pages (newest first) for assets the base pak lacks (e.g. the R-101
   SFP's materials). Set `TF_NO_PATCH_PAKS=1` to skip that (~0.75 s at startup).
 - Collision uses render meshes, not the game's own collision lumps, so some decorative geometry blocks and some terrain may be missing.
-- Particle systems skip screen-space systems, and their light sources are off by default (see
+- Screen-space particle effects are placed by a guessed mapping and drawn under the viewmodel;
+  particle light sources are off by default (see
   Effects). Particle refraction approximates Source's Refract shader (see Effects); refracting
   model materials (the Vortex and Thermal Shield domes, the hex shields) still use stand-ins. Bullet holes are flat quads, not projected decals, so they don't
   wrap around edges. Point-blank

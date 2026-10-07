@@ -351,6 +351,9 @@ impl PilotStatus {
             1.0
         }
     }
+    pub fn stimmed(&self) -> bool {
+        self.is(Tactical::Stim)
+    }
     pub fn cloaked(&self) -> bool {
         self.is(Tactical::Cloak)
     }

@@ -507,6 +507,18 @@ pub fn emit_named_vm_frame(commands: &mut Commands, name: &str, at: Vec3, rot: Q
 #[derive(Component)]
 pub struct PfxOverlay;
 
+/// Marks a [`PfxRequest`] or [`PfxTrail`] as a screen effect: its screen-space systems
+/// ("screen space effect") draw over the view, positioned in screen units around control point
+/// 0 (the game starts these in the world at the origin: Phase Shift's shimmer). World systems
+/// that carry the flag too (lens flares) are not marked and stay where they are.
+#[derive(Component)]
+pub struct PfxScreen;
+
+/// Play a screen effect (see [`PfxScreen`]).
+pub fn emit_screen(commands: &mut Commands, name: &str) {
+    commands.spawn((PfxRequest { name: name.to_string(), cps: vec![Cp::facing(Vec3::ZERO, Vec3::X)], stop_after: None, vm: false }, PfxScreen));
+}
+
 /// Play a first-person system on the cockpit (as `emit_named_vm_frame`, drawn by the viewmodel
 /// camera so the cockpit model doesn't hide it).
 pub fn emit_named_cockpit(commands: &mut Commands, name: &str, at: Vec3, rot: Quat) {
@@ -812,7 +824,13 @@ struct Compiled {
     children: Vec<(usize, f32, bool)>,
     /// Whether any operator retires particles at the end of their life.
     decays: bool,
+    /// "screen space effect": simulated in screen units around the control point (x ±100
+    /// across, y up) and drawn over the view.
+    screen_space: bool,
 }
+
+/// How far in front of the eye screen-space systems draw (game units; past the near plane).
+const SCREEN_FX_DIST: f32 = 8.0;
 
 /// Control points per effect (the game's systems address up to CP 10).
 const NCP: usize = 16;
@@ -1246,6 +1264,7 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
         render,
         children,
         decays,
+        screen_space: def.screen_space,
     }
 }
 
@@ -1373,6 +1392,8 @@ struct Effect {
     vm: bool,
     /// Drawn by the viewmodel camera (cockpit effects: on top of the cockpit model).
     overlay: bool,
+    /// A screen effect ([`PfxScreen`]).
+    screen: bool,
 }
 
 fn new_node(sys: Arc<Compiled>, delay: f32) -> Node {
@@ -1510,7 +1531,7 @@ impl Pfx {
         let id = self.next_id;
         let stop_at = stop_after.unwrap_or(if attached.is_some() { f32::INFINITY } else { DEFAULT_STOP });
         let cp_set = (1u32 << cps.len().clamp(1, NCP)) - 1;
-        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: all, cp_set, age: 0.0, stop_at, stopped: false, stopped_at: f32::INFINITY, capped: false, attached, end_caps, vm: false, overlay: false });
+        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: all, cp_set, age: 0.0, stop_at, stopped: false, stopped_at: f32::INFINITY, capped: false, attached, end_caps, vm: false, overlay: false, screen: false });
         Some(id)
     }
 
@@ -2936,9 +2957,9 @@ pub fn update_pfx(
     pfx: Option<ResMut<Pfx>>,
     gd: Option<Res<crate::gamedata::GameData>>,
     world: Option<Res<crate::player::Collision>>,
-    requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>)>,
+    requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>, Has<PfxScreen>)>,
     impacts: Query<(Entity, &ImpactRequest)>,
-    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>)>,
+    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>),
     mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>),
@@ -2980,7 +3001,7 @@ pub fn update_pfx(
     // Requests.
     let fov = |vm: bool| lenses.iter().find(|(_, v)| *v == vm).and_then(|(p, _)| if let Projection::Perspective(pp) = p { Some(pp.fov) } else { None });
     let fp_lens = camera.single().ok().zip(fov(false)).zip(fov(true)).map(|((c, w), v)| (*c, w, v));
-    for (e, r, overlay) in &requests {
+    for (e, r, overlay, screen) in &requests {
         commands.entity(e).despawn();
         if ready {
             // First-person systems are emitted at viewmodel points but drawn through the world
@@ -3002,6 +3023,11 @@ pub fn update_pfx(
                     fx.overlay = overlay;
                 }
             }
+            if let (Some(id), true) = (spawned, screen) {
+                if let Some(fx) = pfx.effects.iter_mut().find(|f| f.id == id) {
+                    fx.screen = true;
+                }
+            }
         }
     }
     for (e, r) in &impacts {
@@ -3021,7 +3047,7 @@ pub fn update_pfx(
     }
     // Trails follow their entities.
     let mut alive_trails = Vec::new();
-    for (ent, gt, mut tr, end) in &mut trails {
+    for (ent, gt, mut tr, end, screen) in &mut trails {
         let at = to_game(gt.translation());
         let dir = tr.last.map(|l| at - l).filter(|d| d.length() > 1e-3).unwrap_or(Vec3::X);
         tr.last = Some(at);
@@ -3038,6 +3064,11 @@ pub fn update_pfx(
         if tr.effect.is_none() && ready {
             let cps: Vec<Cp> = std::iter::once(cp).chain(cp1).collect();
             tr.effect = pfx.spawn(&tr.name.clone(), &cps, None, Some(ent));
+            if let (Some(id), true) = (tr.effect, screen) {
+                if let Some(fx) = pfx.effects.iter_mut().find(|f| f.id == id) {
+                    fx.screen = true;
+                }
+            }
         }
         if let Some(id) = tr.effect {
             alive_trails.push(id);
@@ -3054,10 +3085,10 @@ pub fn update_pfx(
     for fx in pfx.effects.iter_mut() {
         if fx.attached.is_some() && !alive_trails.contains(&fx.id) && !fx.stopped {
             fx.stopped = true;
-            caps.push((fx.cps, fx.cp_set, std::mem::take(&mut fx.end_caps)));
+            caps.push((fx.cps, fx.cp_set, std::mem::take(&mut fx.end_caps), fx.screen));
         }
     }
-    for (cps, cp_set, list) in caps {
+    for (cps, cp_set, list, screen) in caps {
         for (sys, delay) in list {
             if let Some(lib) = pfx.lib.as_mut() {
                 let mut nodes = Vec::new();
@@ -3065,7 +3096,7 @@ pub fn update_pfx(
                 collect_nodes(lib, sys, delay, 0, &mut nodes, &mut more);
                 pfx.next_id += 1;
                 let id = pfx.next_id;
-                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: cps, cp_set, age: 0.0, stop_at: DEFAULT_STOP, stopped: false, stopped_at: f32::INFINITY, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false });
+                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: cps, cp_set, age: 0.0, stop_at: DEFAULT_STOP, stopped: false, stopped_at: f32::INFINITY, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false, screen });
             }
         }
     }
@@ -3339,11 +3370,18 @@ pub fn update_pfx(
     // size instead: out as a sprite grows to cover the view (radius near its distance), as
     // first-person smoke drifting over the camera would otherwise fill the screen.
     let vm_fade = move |pos: Vec3, radius: f32| (((pos - eye).dot(fwd) / radius.max(0.01) - 1.0) * 0.5).clamp(0.0, 1.0);
+    // Screen-space systems ("screen space effect": Phase Shift's shimmer, screen flashes) run
+    // in screen units around control point 0, x across (±100 spans the width) and y up, and
+    // draw on a plane just in front of the eye through the world camera (so refraction works).
+    let screen = lenses.iter().find(|(_, v)| !*v).and_then(|(p, _)| if let Projection::Perspective(pp) = p { Some(pp) } else { None }).map(|pp| {
+        let half_w = SCREEN_FX_DIST * (pp.fov * 0.5).tan() * pp.aspect_ratio;
+        half_w / 100.0
+    });
     let mut light_cands: Vec<(f32, Vec3, Vec3, f32)> = Vec::new();
     for fx in &pfx.effects {
         for n in &fx.nodes {
             for r in &n.sys.render {
-                if let Render::Light { scale, radius, by_alpha } = *r {
+                if let (&Render::Light { scale, radius, by_alpha }, false) = (r, fx.screen) {
                     for p in &n.particles {
                         let a = if by_alpha { p.alpha } else { 1.0 };
                         let c = p.color * scale * a;
@@ -3357,6 +3395,33 @@ pub fn update_pfx(
             let batch = &mut batches[li];
             for r in &n.sys.render {
                 match *r {
+                    Render::Sprites { rate, fit, .. } if fx.screen => {
+                        // TF_NO_SCREEN_FX=1 leaves them out (for comparing).
+                        let Some(scale) = screen.filter(|_| std::env::var_os("TF_NO_SCREEN_FX").is_none()) else { continue };
+                        let cp = fx.cps[0];
+                        let centre = eye + fwd * SCREEN_FX_DIST;
+                        for p in &n.particles {
+                            if p.alpha <= 0.002 || p.radius <= 0.0 {
+                                continue;
+                            }
+                            let d = p.pos - cp.pos;
+                            let at = centre + (right * d.dot(cp.fwd) + up * d.dot(cp.left)) * scale;
+                            let rect = sheet_rect(&layer.sheet, p, rate, fit);
+                            let c = p.color * layer.gain;
+                            let c = [c.x, c.y, c.z, p.alpha.min(1.0)];
+                            let (sr, sc) = p.rot.sin_cos();
+                            let r = p.radius * scale;
+                            let rx = (right * sc + up * sr) * r;
+                            let ry = (up * sc - right * sr) * r;
+                            let (u0, u1) = if p.flip { (rect[2], rect[0]) } else { (rect[0], rect[2]) };
+                            batch.quad([at - rx + ry, at + rx + ry, at + rx - ry, at - rx - ry], [[u0, rect[1]], [u1, rect[1]], [u1, rect[3]], [u0, rect[3]]], [c; 4], SCREEN_FX_DIST);
+                        }
+                        if fx.age.rem_euclid(0.5) < 0.02 {
+                            log::debug!("screen effect {}: {} particles, scale {scale:.4}, layer {li} ({})", n.sys.material, n.particles.len(), if layer.additive { "additive" } else { "blended/refract" });
+                        }
+                    }
+                    // Screen effects draw only their sprites (anything else would sit at the origin).
+                    _ if fx.screen => {}
                     Render::Sprites { rate, fit, orient } => {
                         let orient = if orient >= 0 { orient } else { layer.orient };
                         for p in &n.particles {

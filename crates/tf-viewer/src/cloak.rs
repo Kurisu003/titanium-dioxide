@@ -113,15 +113,14 @@ pub fn phase_shift_fx(
     let titan_phased = *control == Control::Titan && titan.iter().any(|k| k.phase > 0.0);
     let phased = ((status.phased() && *control == Control::Pilot) || titan_phased) && std::env::var_os("TF_NO_PHASE_FX").is_none();
     let cam = main.single().ok();
-    let origin = Vec3::ZERO;
     if phased && !*was {
-        *screen = Some(commands.spawn((Transform::from_translation(origin), crate::pfx::PfxTrail::new("P_phase_shift_screen"))).id());
-        crate::pfx::emit_named(&mut commands, "P_phase_shift_screen_start", origin, Vec3::Y);
+        *screen = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::new("P_phase_shift_screen"), crate::pfx::PfxScreen)).id());
+        crate::pfx::emit_screen(&mut commands, "P_phase_shift_screen_start");
     } else if !phased && *was {
         if let Some(e) = screen.take() {
             commands.entity(e).despawn();
         }
-        crate::pfx::emit_named(&mut commands, "P_phase_shift_screen_start", origin, Vec3::Y);
+        crate::pfx::emit_screen(&mut commands, "P_phase_shift_screen_start");
         if let Some(c) = cam {
             // At the Pilot's feet, 30 units ahead along the view's level heading.
             let fwd = (c.forward().as_vec3() * Vec3::new(1.0, 0.0, 1.0)).normalize_or(Vec3::NEG_Z);

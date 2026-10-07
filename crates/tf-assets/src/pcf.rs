@@ -226,8 +226,11 @@ pub struct SystemDef {
     pub radius: f32,
     pub color: [u8; 4],
     pub hdr_scale: f32,
-    /// Drawn in screen space (HUD-like effects).
+    /// "screen space effect": drawn over the screen (an orthographic view of the control
+    /// point's frame) rather than in the world.
     pub screen_space: bool,
+    /// "draw with screen space" (lens flares and glows: set on many world systems).
+    pub draw_screen_space: bool,
     pub emitters: Vec<Op>,
     pub initializers: Vec<Op>,
     pub operators: Vec<Op>,
@@ -291,7 +294,8 @@ pub fn parse_pcf(b: &[u8]) -> Result<Vec<SystemDef>> {
                 _ => [255; 4],
             },
             hdr_scale: num("color HDR scale", 1.0),
-            screen_space: num("screen space effect", 0.0) != 0.0 || num("draw with screen space", 0.0) != 0.0,
+            screen_space: num("screen space effect", 0.0) != 0.0,
+            draw_screen_space: num("draw with screen space", 0.0) != 0.0,
             emitters: ops(e, "emitters"),
             initializers: ops(e, "initializers"),
             operators: ops(e, "operators"),

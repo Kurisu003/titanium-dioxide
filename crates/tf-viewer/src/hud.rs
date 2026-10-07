@@ -931,17 +931,11 @@ pub fn hud_boot(
 #[derive(Component)]
 pub struct HealthHex(f32);
 
-/// Distance ahead of the eye of the visor plane the hexes sit in (the effect rings them 55-90
-/// units around its control point in the point's XY plane; the cockpit's origin offset isn't
-/// known, so this puts the ring at the screen edges - a guess).
-const HEALTH_HEX_DIST: f32 = 110.0;
-
 pub fn health_hex(
     mut commands: Commands,
     time: Res<Time>,
     control: Res<Control>,
     pilots: Query<&crate::pilotctl::PilotHealth>,
-    cams: Query<Entity, With<crate::player::MainCamera>>,
     hexes: Query<(Entity, &HealthHex)>,
     mut last: Local<Option<f32>>,
 ) {
@@ -954,55 +948,32 @@ pub fn health_hex(
         for (e, _) in &hexes {
             commands.entity(e).despawn();
         }
-    } else if let (Some(h), Some(prev), Ok(cam)) = (health, *last, cams.single()) {
+    } else if let (Some(h), Some(prev)) = (health, *last) {
         if h < prev - 0.01 {
             let mut list: Vec<_> = hexes.iter().collect();
             list.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
             for (e, _) in list.iter().skip(9) {
                 commands.entity(*e).despawn();
             }
-            // The effect's XY plane faces the camera: its up (Bevy Y) turned to point back at
-            // the eye.
-            let child = commands
-                .spawn((
-                    Transform::from_xyz(0.0, 0.0, -HEALTH_HEX_DIST * crate::player::UNIT).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                    Visibility::default(),
-                    crate::pfx::PfxTrail::oriented("P_health_hex"),
-                    HealthHex(time.elapsed_secs()),
-                ))
-                .id();
-            commands.entity(cam).add_child(child);
+            // A screen effect: the hexes ring 55-90 screen units around the middle.
+            commands.spawn((Transform::default(), crate::pfx::PfxTrail::new("P_health_hex"), crate::pfx::PfxScreen, HealthHex(time.elapsed_secs())));
         }
     }
     *last = health;
 }
 
 /// Stim's screen effect: `P_heal` on the cockpit while it runs (sh_stim.gnut
-/// StimVisualsEnabled), placed like `P_health_hex`; the script also feeds it the Pilot's speed
-/// on control point 1, which none of its operators read.
+/// StimVisualsEnabled; a screen effect, sparkles and streaks around the edges of the view),
+/// stopped with its end cap when Stim runs out. The script also feeds it the Pilot's speed on
+/// control point 1, which none of its operators read.
 #[derive(Component)]
 pub struct StimFx;
 
-pub fn stim_fx(
-    mut commands: Commands,
-    control: Res<Control>,
-    status: Res<crate::pilotability::PilotStatus>,
-    cams: Query<Entity, With<crate::player::MainCamera>>,
-    fx: Query<Entity, With<StimFx>>,
-) {
-    let on = *control == Control::Pilot && status.speed_scale() > 1.0;
+pub fn stim_fx(mut commands: Commands, control: Res<Control>, status: Res<crate::pilotability::PilotStatus>, fx: Query<Entity, With<StimFx>>) {
+    let on = *control == Control::Pilot && status.stimmed();
     match (on, fx.iter().next()) {
         (true, None) => {
-            let Ok(cam) = cams.single() else { return };
-            let child = commands
-                .spawn((
-                    Transform::from_xyz(0.0, 0.0, -HEALTH_HEX_DIST * crate::player::UNIT).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-                    Visibility::default(),
-                    crate::pfx::PfxTrail::oriented("P_heal"),
-                    StimFx,
-                ))
-                .id();
-            commands.entity(cam).add_child(child);
+            commands.spawn((Transform::default(), crate::pfx::PfxTrail::new("P_heal"), crate::pfx::PfxScreen, StimFx));
         }
         (false, Some(e)) => commands.entity(e).despawn(),
         _ => {}

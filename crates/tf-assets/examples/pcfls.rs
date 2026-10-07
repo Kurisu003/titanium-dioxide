@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
                 d.children.iter().map(|c| (c.name.as_str(), c.delay)).collect::<Vec<_>>()
             );
             if verbose {
-                println!("  radius={} color={:?} hdr={} initial={}", d.radius, d.color, d.hdr_scale, d.initial_particles);
+                println!("  radius={} color={:?} hdr={} initial={} screen_space={} draw_screen_space={}", d.radius, d.color, d.hdr_scale, d.initial_particles, d.screen_space, d.draw_screen_space);
                 for (kind, ops) in [("emit", &d.emitters), ("init", &d.initializers), ("op", &d.operators), ("render", &d.renderers), ("force", &d.forces), ("constraint", &d.constraints)] {
                     for o in ops {
                         let mut ps: Vec<(&String, &pcf::Value)> = o.params.iter().collect();
