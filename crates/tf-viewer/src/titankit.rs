@@ -286,6 +286,16 @@ const CORES: &[(&str, CoreKind, &str, &str)] = &[
     ("mp_titancore_siege_mode", CoreKind::Smart, "rui/titan_loadout/core/titan_core_smart", "SMART CORE"),
 ];
 
+/// The weapon scripts behind a kit's ordnance, defensive, utility and core.
+pub fn kit_scripts(k: &ActiveKit) -> [&'static str; 4] {
+    [
+        ORDNANCE.iter().find(|o| o.1 == k.ord).map_or("", |o| o.0),
+        DEFENSIVE.iter().find(|d| d.1 == k.def).map_or("", |d| d.0),
+        UTILITY.iter().find(|u| u.1 == k.util).map_or("", |u| u.0),
+        CORES.iter().find(|c| c.1 == k.core).map_or("", |c| c.0),
+    ]
+}
+
 /// titan_properties rows for BT's SP loadouts, used if the datatable can't be read:
 /// (primary, ordnance, special, antirodeo, core).
 const FALLBACK: &[(&str, &str, &str, &str, &str)] = &[
@@ -1480,7 +1490,9 @@ pub fn kit_input(
             CoreKind::Laser => {
                 // A continuous beam; each server frame it damages what it touches.
                 let (t, who) = trace(&world, &enemies, eye, dir, n.laser_core_range, n.laser_core_radius);
-                let (a, b) = (to_bevy(eye + right * 30.0 - Vec3::Z * 40.0), to_bevy(eye + dir * t));
+                // From the chest: the Laser Core viewmodel's muzzle_flash (atpov_laser_cannon:
+                // 32 ahead of and 44 below the camera bone; its arms hang out of view).
+                let (a, b) = (to_bevy(eye + dir * 32.0 - Vec3::Z * 44.0), to_bevy(eye + dir * t));
                 emit(&mut commands, Effect::Tracer { from: a, to: b, width: 1.2, color: Vec3::new(2.0, 4.0, 8.0) });
                 emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.0, energy: true });
                 st.core_tick -= dt;

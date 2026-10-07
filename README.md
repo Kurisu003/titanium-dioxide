@@ -833,14 +833,30 @@ where the script has them):
   turning and breathing. In the cockpit it sits where the game puts it: on the vortex blocker
   viewmodel's `vortex_center` tag at the end of its draw (105 units ahead, 24 left, 20 down,
   tilted like the hand), sized to the dome model (60 units across). BT's left arm comes from
-  the shield's own viewmodel (`atpov_vortexblocker.mdl`, Scorch's `_scorch` one) with BT's arms
-  bone-merged, drawn beside the gun (`offhand_keep_primary_in_hand`): draw_seq over the
-  script's deploy_time (0.1 s, Scorch 0.2 s), the charge_seq delta while held, and on release
-  the attack_seq delta, which pushes the palm out and drops the arm out of view. It rides on
-  the gun viewmodel's eye frame, so it shares the gun's sway. The Thermal Shield is a refraction
+  the shield's own viewmodel (see Offhand viewmodels below). The Thermal Shield is a refraction
   material in the game; a disc stands in for it too. The
   Particle Wall's shells build their pattern in the shader from scaled, scrolled UV layers; a
   tiled hex lattice stands in for it.
+- Offhand viewmodels (`offhandvm.rs`): every kit ability whose weapon script names a
+  `viewmodel` plays it in the cockpit, with BT's arms bone-merged as on the gun's: the Vortex
+  blocker's raised left hand (Ion's and Northstar's Tether Trap use it too), the shoulder rocket
+  pods (Multi-Target Missiles, Sonar Pulse, Tracker Rockets, Laser Shot, Cluster Missile, both
+  pods for Salvo Core), Scorch's Firewall and Flame Core fist slams, Ronin's Arc Wave swing and
+  Sword Block, Burst Core's gun grab and Laser Core's pose (arms hanging out of view; its beam
+  now starts at that model's chest `muzzle_flash`, 32 ahead of and 44 below the eye). Using an
+  ability plays draw_seq over the script's deploy_time; a held one (Vortex, Thermal Shield,
+  Sword Block, the missiles' lock-on, a charging core) then loops charge_seq (a delta over the
+  end of the draw when it's stored as one); firing or letting go plays attack_seq (held while
+  Laser and Salvo Core fire), then holster_seq over holster_time. An attack stored as a delta
+  (the blocker's push, which drops the arm out of view) or a model without a holster ends the
+  offhand with the attack. `offhand_keep_primary_in_hand` 0 (the cores, Arc Wave, Sword Block)
+  replaces the gun's viewmodel while the offhand plays; with it set, the offhand's animations
+  move only the left arm and park the right off screen. Guess: the `empty_handed` models
+  (Firewall, Flame Core, Laser Core) keep the primary in hand by script but slam with the gun
+  hand, so the gun is hidden while they play and drawn again after. The abilities' fire times
+  aren't delayed by the draw (the game fires an offhand once it has deployed). Use is read from
+  the abilities' state: a held flag, a cooldown jumping up, a utility charge spent, the core
+  leaving its build-up.
 - **Particle Wall**: 1750 health for 8 s. **Gun Shield**: 2500 health for 6 s. Both stop enemy
   rounds from the front (`targets::update_bolts` tests against `titankit::BoltShields`).
 - **Cluster Missile**: flies at 3500 u/s for 150 heavy splash, followed by 20 bursts over 5 s

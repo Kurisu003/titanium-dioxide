@@ -26,6 +26,7 @@ mod hud;
 mod executions;
 mod music;
 mod nav;
+mod offhandvm;
 mod aimassist;
 mod gamepad;
 mod pilotability;
@@ -263,6 +264,7 @@ fn main() {
         .insert_resource(map_choice)
         .insert_resource(weapons::TitanKit(start_titan))
         .init_resource::<titankit::ActiveKit>()
+        .init_resource::<offhandvm::Offhands>()
         .init_resource::<titankit::BoltShields>()
         .init_resource::<titankit::EnemyWalls>()
         .init_resource::<titankit::TitanBoltHits>()
@@ -307,7 +309,7 @@ fn main() {
                     .chain(),
                 (
                     player::drive_animation,
-                    (weapons::weapon_viewmodel, weapons::shield_arms).chain(),
+                    (weapons::weapon_viewmodel, offhandvm::offhand_viewmodels).chain(),
                     pilotweapon::pilot_viewmodel,
                     (pilotbody::update_pilot_body, actor::animate_actors).chain(),
                     actor::bone_merge,
@@ -720,28 +722,6 @@ fn setup(
         }
         Err(e) => log::warn!("viewmodel: {e:#}"),
     }
-    // The shields' viewmodels (BT's left arm), with BT's arms bone-merged like the gun's.
-    let mut shield_vm = |path: &str| -> Option<(Entity, Entity)> {
-        let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, vmcam::Viewmodel)).id();
-        commands.entity(root).add_child(anchor);
-        let spec = ActorSpec { path, sequences: &["draw_seq", "holster_seq"], grids: &["charge_seq", "attack_seq"], body: &[] };
-        let vm = actor::spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes)
-            .map_err(|e| log::warn!("shield viewmodel {path}: {e:#}"))
-            .ok()?;
-        let arms = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
-        match actor::spawn_actor(&mut commands, anchor, &gd, &arms, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
-            Ok(a) => {
-                commands.entity(a.entity).insert(actor::BoneMergeTo(vm.entity));
-            }
-            Err(e) => log::warn!("shield arms: {e:#}"),
-        }
-        Some((anchor, vm.entity))
-    };
-    let shield_arms = weapons::ShieldArms::new(
-        shield_vm("models/weapons/titan_vortex_blocker/atpov_vortexblocker.mdl"),
-        shield_vm("models/weapons/titan_vortex_blocker/atpov_vortexblocker_scorch.mdl"),
-    );
-    commands.insert_resource(shield_arms);
     let mut world_gun = None;
     if let Some(hand) = bt.as_ref().ok().and_then(|b| b.joint("ja_c_propGun")) {
         commands.insert_resource(weapons::BtHand(hand));
