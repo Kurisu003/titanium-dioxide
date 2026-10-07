@@ -120,6 +120,11 @@ pub struct Sequence {
     pub events: Vec<Event>,
     /// Per-bone blend weights (`weightlistindex`): 0 leaves a bone out of the sequence.
     pub bone_weights: Vec<f32>,
+    /// Activity modifiers (`activitymodifierindex`/`numactivitymodifiers` at 0xB8/0xBC;
+    /// mstudioactivitymodifier_t {name index, negate}, 8 bytes): among the sequences sharing an
+    /// activity, the one whose modifiers match the current ones is played (`crouch`, `air`,
+    /// `onehanded`...).
+    pub modifiers: Vec<String>,
 }
 
 /// mstudioevent_t (v53, 0x50 bytes: cycle, event, type, options[64], name index): fires `name` with `options` when the cycle passes `cycle`.
@@ -328,6 +333,10 @@ impl Model {
                 param_index: [r.i32(o + 0x4C), r.i32(o + 0x50)],
                 param_start: [r.f32(o + 0x54), r.f32(o + 0x58)],
                 param_end: [r.f32(o + 0x5C), r.f32(o + 0x60)],
+                modifiers: {
+                    let (mi, nm) = (r.i32(o + 0xB8) as usize, r.i32(o + 0xBC).clamp(0, 32) as usize);
+                    (0..nm).map(|k| { let m = o + mi + k * 8; format!("{}{}", if r.i32(m + 4) & 0xFF != 0 { "!" } else { "" }, r.cstr(m + r.i32(m) as usize)) }).collect()
+                },
                 bone_weights: {
                     let wi = r.i32(o + 0x9C) as usize;
                     (0..num_bones).map(|b| if wi == 0 { 1.0 } else { r.f32(o + wi + b * 4) }).collect()
