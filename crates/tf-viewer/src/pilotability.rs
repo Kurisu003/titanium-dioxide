@@ -1206,7 +1206,7 @@ pub fn spawn_pilot_slots(mut commands: Commands, ui: Res<UiAssets>, status: Res<
         commands.entity(col).add_children(&[frame, k, l]);
         commands.entity(root).add_child(col);
     }
-    // Phase Shift's blue wash.
+    // The old Phase Shift / Cloak screen tints (TF_NO_PHASE_FX / TF_NO_CLOAK_FX).
     commands.spawn((
         Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
         BackgroundColor(Color::NONE),
@@ -1289,7 +1289,8 @@ pub fn update_pilot_slots(
     if let Ok(mut bg) = tint.single_mut() {
         bg.0 = if *control != Control::Pilot {
             Color::NONE
-        } else if status.phased() {
+        } else if status.phased() && std::env::var_os("TF_NO_PHASE_FX").is_some() {
+            // (cloak::phase_shift_fx draws Phase Shift with the game's colour correction.)
             Color::srgba(0.25, 0.55, 1.0, 0.28)
         } else if status.cloaked() && std::env::var_os("TF_NO_CLOAK_FX").is_some() {
             // (cloak.rs draws the cloak on the arms and gun.)

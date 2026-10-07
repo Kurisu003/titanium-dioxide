@@ -93,7 +93,7 @@ already playing (loops, music) too.
 - **Weapon sights and scopes:** the reticles are compiled UI programs that can't be run yet, so
   optics show no reticle.
 - **Some visuals:** refraction is approximated, and only for particle effects (heat haze,
-  shockwave rings); shield domes still use stand-ins; phase shift uses a stand-in screen tint; some particle features are missing; lighting, fog and
+  shockwave rings); shield domes still use stand-ins; some particle features are missing; lighting, fog and
   materials are approximations, not the game's shaders.
 - **Movement details** that the game's engine code (not its data files) controls: the formulas
   behind the movement keys (we follow the game's own descriptions of them) and
@@ -746,7 +746,13 @@ the constants in their `.nut` files:
   draws the arms and gun as a refracting outline (cloak.rs: the picture behind them shifted by
   their view-space normal, a cool tint and a faint fresnel rim; strengths by eye,
   `TF_CLOAK="warp rim exponent tint"` to tune, `TF_NO_CLOAK_FX=1` for the old screen tint);
-  Phase Shift keeps a blue screen tint as a stand-in.
+  Phase Shift draws the game's colour correction (`materials/correction/mp_ability_shifter.raw`,
+  which sh_phase_shift.gnut registers: a 32x32x32 table that maps each colour by its brightest
+  channel onto a pale-blue ramp running white, black, then blue-grey, an inverted ghost world)
+  as a full-screen pass after tonemapping on the viewmodel camera (colorcorr.rs, so not over
+  the HUD), fading over 0.15 s (a guess), with the script's `P_phase_shift_screen`,
+  `P_phase_shift_screen_start` and `P_phase_shift_main` systems; `TF_NO_PHASE_FX=1` keeps
+  the old blue tint.
 - Cloak (`mp_ability_cloak`): 15 s during which enemies only see you within 400 units; 20 s.
 - Phase Shift (`mp_ability_shifter`): 2 s of being untouchable and unseen; 15 s.
 - Grapple (`mp_ability_grapple`): hooks a surface within `grapple_maxLength` (1100) and reels you

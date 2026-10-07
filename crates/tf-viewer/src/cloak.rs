@@ -1,4 +1,4 @@
-//! The Pilot's cloak in first person: while Cloak (`mp_ability_cloak`) runs, the arms and gun
+//! The Pilot's Cloak and Phase Shift in first person. Cloak: while Cloak (`mp_ability_cloak`) runs, the arms and gun
 //! draw as a refracting outline (cloak.wgsl) instead of their own materials. The game's cloak
 //! look is engine-side (its scripts only call `EnableCloak`), so the strength of the warp, the
 //! tint and the rim are by eye.
@@ -80,6 +80,64 @@ pub fn cloak_viewmodel(
     } else {
         for (e, c) in &cloaked {
             commands.entity(e).remove::<(MeshMaterial3d<CloakMaterial>, Cloaked)>().insert(MeshMaterial3d(c.0.clone()));
+        }
+    }
+}
+
+/// Phase Shift's first-person look, as sh_phase_shift.gnut plays it: the game's colour
+/// correction (`materials/correction/mp_ability_shifter.raw`) over the picture while phased,
+/// `P_phase_shift_screen` running and `P_phase_shift_screen_start` when it starts and ends, and
+/// `P_phase_shift_main` 30 units in front of the Pilot on coming out. The correction fades
+/// in and out over 0.15 s (a guess; the engine blends it).
+#[allow(clippy::type_complexity)]
+pub fn phase_shift_fx(
+    mut commands: Commands,
+    time: Res<Time>,
+    status: Res<PilotStatus>,
+    control: Res<Control>,
+    gd: Res<crate::gamedata::GameData>,
+    mut images: ResMut<Assets<Image>>,
+    mut state: Local<(Option<Option<Handle<Image>>>, bool, f32, Option<Entity>)>,
+    cams: Query<(Entity, Option<&crate::colorcorr::ColorCorrection>), With<crate::vmcam::ViewmodelCamera>>,
+    main: Query<&GlobalTransform, With<crate::player::MainCamera>>,
+) {
+    let (lut, was, weight, screen) = &mut *state;
+    let lut = lut
+        .get_or_insert_with(|| {
+            let raw = gd.read_file("materials/correction/mp_ability_shifter.raw").ok()?;
+            crate::colorcorr::lut_image(&raw).map(|img| images.add(img))
+        })
+        .clone();
+    let phased = status.phased() && *control == Control::Pilot && std::env::var_os("TF_NO_PHASE_FX").is_none();
+    let cam = main.single().ok();
+    let origin = Vec3::ZERO;
+    if phased && !*was {
+        *screen = Some(commands.spawn((Transform::from_translation(origin), crate::pfx::PfxTrail::new("P_phase_shift_screen"))).id());
+        crate::pfx::emit_named(&mut commands, "P_phase_shift_screen_start", origin, Vec3::Y);
+    } else if !phased && *was {
+        if let Some(e) = screen.take() {
+            commands.entity(e).despawn();
+        }
+        crate::pfx::emit_named(&mut commands, "P_phase_shift_screen_start", origin, Vec3::Y);
+        if let Some(c) = cam {
+            // At the Pilot's feet, 30 units ahead along the view's level heading.
+            let fwd = (c.forward().as_vec3() * Vec3::new(1.0, 0.0, 1.0)).normalize_or(Vec3::NEG_Z);
+            let at = c.translation() - Vec3::Y * 60.0 * crate::player::UNIT + fwd * 30.0 * crate::player::UNIT;
+            crate::pfx::emit_named(&mut commands, "P_phase_shift_main", at, Vec3::Y);
+        }
+    }
+    *was = phased;
+    let target = if phased { 1.0 } else { 0.0 };
+    let step = time.delta_secs() / 0.15;
+    *weight = if *weight < target { (*weight + step).min(target) } else { (*weight - step).max(target) };
+    let Some(lut) = lut else { return };
+    for (e, cc) in &cams {
+        if *weight > 0.0 {
+            if cc.is_none_or(|c| (c.weight - *weight).abs() > 1e-4) {
+                commands.entity(e).insert(crate::colorcorr::ColorCorrection { lut: lut.clone(), weight: *weight });
+            }
+        } else if cc.is_some() {
+            commands.entity(e).remove::<crate::colorcorr::ColorCorrection>();
         }
     }
 }
