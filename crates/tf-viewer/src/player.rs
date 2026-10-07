@@ -37,6 +37,102 @@ pub struct Collision(pub CollisionWorld, pub Option<crate::nav::Nav>, pub Option
 #[derive(Resource, Clone)]
 pub struct TitanSettings(pub TitanParams);
 
+/// BT's camera and cockpit feel keys from titan_buddy.set over titan_base.set, with the
+/// client.dll settings-table defaults for the keys neither sets. Quoted descriptions are the
+/// settings' own help strings in client.dll.
+#[derive(Resource, Clone, Debug)]
+pub struct TitanFeel {
+    /// sprintViewOffset: "How far to slide the player's [view] down as they enter a sprinting
+    /// state."
+    pub sprint_view_offset: f32,
+    /// sprintStartDelay: "How long to wait before transitioning into sprintViewOffset";
+    /// sprintStartDuration: "How long to take to transition into sprintViewOffset";
+    /// sprintStartFastDuration: the same "after landing from a sprinting jump";
+    /// sprintEndDuration: "How long to take to transition out of sprintViewOffset".
+    pub sprint_start_delay: f32,
+    pub sprint_start: f32,
+    pub sprint_start_fast: f32,
+    pub sprint_end: f32,
+    /// sprinttiltMaxRoll: "Degrees of view tilt when turning while sprinting".
+    pub sprint_tilt_max_roll: f32,
+    /// pitchOffsetScale: "Max distance to translate the player's view forward as he looks down."
+    pub pitch_offset_scale: f32,
+    /// cockpit_stepJolt_origin / _angles: "Cockpit jolt per footstep."
+    pub step_jolt_origin: Vec3,
+    pub step_jolt_angles: Vec3,
+    /// The stand stance's footstepInterval / footstepIntervalSprint (ms) and footstepMinSpeed.
+    pub footstep_interval: f32,
+    pub footstep_interval_sprint: f32,
+    pub footstep_min_speed: f32,
+    /// hardFallDist: "Approximate distance the player must fall to trigger a 'heavy landing'
+    /// sound"; viewkickFallDistMin/Max: "the range for figuring viewkick from a fall", up to
+    /// viewkickFallDistMaxScale, "Max viewkick from a fall". All are "converted into and
+    /// compared against impact velocity".
+    pub hard_fall_dist: f32,
+    pub viewkick_fall_min: f32,
+    pub viewkick_fall_max: f32,
+    pub viewkick_fall_max_scale: f32,
+    /// viewPunchSpring: BT's springs.txt entry for view punches.
+    pub punch_spring: String,
+}
+
+impl Default for TitanFeel {
+    fn default() -> Self {
+        // titan_buddy.set / titan_base.set, and the settings-table defaults (sprintStartDelay,
+        // sprintStartFastDuration 0.2).
+        Self {
+            sprint_view_offset: -25.0,
+            sprint_start_delay: 0.2,
+            sprint_start: 1.0,
+            sprint_start_fast: 0.2,
+            sprint_end: 0.3,
+            sprint_tilt_max_roll: 3.0,
+            pitch_offset_scale: 40.0,
+            step_jolt_origin: Vec3::new(0.0, 0.0, -5.0),
+            step_jolt_angles: Vec3::ZERO,
+            footstep_interval: 700.0,
+            footstep_interval_sprint: 415.0,
+            footstep_min_speed: 0.0,
+            hard_fall_dist: 40.0,
+            viewkick_fall_min: 10.0,
+            viewkick_fall_max: 120.0,
+            viewkick_fall_max_scale: 6.0,
+            punch_spring: "punch_titan_atlas".to_string(),
+        }
+    }
+}
+
+impl TitanFeel {
+    pub fn from_settings(s: &tf_assets::settings::PlayerSettings) -> Self {
+        let d = Self::default();
+        let v3 = |k: &str, def: Vec3| s.vec3(k).map(Vec3::from_array).unwrap_or(def);
+        Self {
+            sprint_view_offset: s.f32("global.sprintViewOffset", d.sprint_view_offset),
+            sprint_start_delay: s.f32("global.sprintStartDelay", d.sprint_start_delay),
+            sprint_start: s.f32("global.sprintStartDuration", d.sprint_start),
+            sprint_start_fast: s.f32("global.sprintStartFastDuration", d.sprint_start_fast),
+            sprint_end: s.f32("global.sprintEndDuration", d.sprint_end),
+            sprint_tilt_max_roll: s.f32("global.sprinttiltMaxRoll", d.sprint_tilt_max_roll),
+            pitch_offset_scale: s.f32("global.pitchOffsetScale", d.pitch_offset_scale),
+            step_jolt_origin: v3("global.cockpit_stepJolt_origin", d.step_jolt_origin),
+            step_jolt_angles: v3("global.cockpit_stepJolt_angles", d.step_jolt_angles),
+            footstep_interval: s.f32("stand.footstepInterval", d.footstep_interval),
+            footstep_interval_sprint: s.f32("stand.footstepIntervalSprint", d.footstep_interval_sprint),
+            footstep_min_speed: s.f32("stand.footstepMinSpeed", d.footstep_min_speed),
+            hard_fall_dist: s.f32("global.hardFallDist", d.hard_fall_dist),
+            viewkick_fall_min: s.f32("global.viewkickFallDistMin", d.viewkick_fall_min),
+            viewkick_fall_max: s.f32("global.viewkickFallDistMax", d.viewkick_fall_max),
+            viewkick_fall_max_scale: s.f32("global.viewkickFallDistMaxScale", d.viewkick_fall_max_scale),
+            punch_spring: s.get("global.viewPunchSpring").map(|v| v.trim().to_ascii_lowercase()).unwrap_or(d.punch_spring),
+        }
+    }
+
+    /// Impact speed of a fall of `dist` units.
+    fn fall_speed(dist: f32, gravity: f32) -> f32 {
+        (2.0 * gravity * dist.max(0.0)).sqrt()
+    }
+}
+
 /// The free camera's `--cam` / `--look` start (Bevy space), re-applied by the script's `free`.
 #[derive(Resource, Clone, Copy)]
 pub struct FreeCamStart(pub Vec3, pub Vec3);
@@ -63,6 +159,9 @@ pub struct PlayerTitan {
     pub blend_speed: f32,
     blend_dir: Vec2,
     sprint_blend: f32,
+    /// Footstep timer (ms) and the number of footsteps taken (cockpit jolts follow it).
+    step_time: f32,
+    pub steps: u32,
 }
 
 impl PlayerTitan {
@@ -77,6 +176,8 @@ impl PlayerTitan {
             blend_speed: 0.0,
             blend_dir: Vec2::X,
             sprint_blend: 0.0,
+            step_time: 0.0,
+            steps: 0,
         }
     }
 }
@@ -536,6 +637,7 @@ pub fn simulate(
     )>,
     mut mods: ResMut<crate::titankit::TitanMoveMods>,
     auto: Res<crate::autotitan::AutoTitan>,
+    feel: Res<TitanFeel>,
 ) {
     let dt = time.delta_secs().min(0.1);
     for (mut titan, mut tf, core, health, titanfall, weapon) in &mut titans {
@@ -581,7 +683,7 @@ pub fn simulate(
             titan.state.vel = SVec3::new(v.x, v.y, v.z);
             titan.state.on_ground = false;
         }
-        let dashes = titan.state.dashes;
+        let (dashes, landings) = (titan.state.dashes, titan.state.landings);
         for i in 0..n {
             let mut step_input = ti;
             step_input.dash = ti.dash && i == 0;
@@ -589,6 +691,14 @@ pub fn simulate(
         }
         if titan.state.dashes != dashes {
             crate::audio::cue(&mut commands, crate::audio::Cue::BtDash, None);
+        }
+        // A fall past hardFallDist (40 units, as an impact speed) is a heavy landing: BT's
+        // sound_groundImpact and his landingImpactTable (titan_landing) dust. Playing the impact
+        // table only on heavy landings (not after every dash hop) is a guess.
+        if titan.state.landings != landings && titan.state.land_speed >= TitanFeel::fall_speed(feel.hard_fall_dist, params.gravity) {
+            crate::audio::event(&mut commands, "Titan.GroundImpact");
+            crate::particles::emit(&mut commands, crate::particles::Effect::DustRing { at: to_bevy(bv(titan.state.pos)), radius: 120.0 * UNIT });
+            log::debug!("BT heavy landing at {:.0} u/s", titan.state.land_speed);
         }
         if piloted {
             input.dash = false;
@@ -603,6 +713,7 @@ pub fn drive_animation(
     mut commands: Commands,
     time: Res<Time>,
     settings: Res<TitanSettings>,
+    feel: Res<TitanFeel>,
     mut titans: Query<(&mut PlayerTitan, Option<&crate::combat::Melee>)>,
     mut actors: Query<&mut Actor>,
 ) {
@@ -660,13 +771,17 @@ pub fn drive_animation(
             stride = stride * (1.0 - sprint_w) + sprint_w * clip.ground_speed * clip.duration;
         }
         if stride > 1.0 {
-            let before = t.move_cycle;
             t.move_cycle = (t.move_cycle + t.blend_speed * dt / stride).rem_euclid(1.0);
-            // Two footfalls per walk cycle.
-            let crossed = (before < 0.5 && t.move_cycle >= 0.5) || t.move_cycle < before;
-            if crossed && t.blend_speed > 40.0 {
-                crate::audio::cue(&mut commands, crate::audio::Cue::BtStep, None);
-            }
+        }
+        // Footsteps run on the player's step timer, not the animation (BT's walk and sprint
+        // sequences carry no footstep events): every footstepInterval (700 ms) walking and
+        // footstepIntervalSprint (415 ms) sprinting, above footstepMinSpeed (0) on the ground.
+        // As in Source's UpdateStepSound, the first step comes as soon as BT moves.
+        t.step_time = (t.step_time - dt * 1000.0).max(0.0);
+        if s.on_ground && speed > feel.footstep_min_speed.max(1.0) && t.step_time <= 0.0 {
+            t.step_time = if s.sprinting { feel.footstep_interval_sprint } else { feel.footstep_interval };
+            t.steps += 1;
+            crate::audio::cue(&mut commands, crate::audio::Cue::BtStep, None);
         }
         if let Some(c) = idle {
             t.idle_cycle = (t.idle_cycle + dt / actor.clips[c].duration).rem_euclid(1.0);
@@ -719,6 +834,7 @@ pub fn update_camera(
     mut cockpit_tf: Query<&mut Transform, (Without<MainCamera>, Without<PlayerTitan>, Without<Camera>)>,
     (time, mut chase, mut sway, mut tilt): (Res<Time>, Local<f32>, Local<crate::vmmotion::CockpitSway>, Local<DashTilt>),
     (damage_from, mut last_hp): (Res<crate::hud::DamageFrom>, Local<Option<f32>>),
+    (feel, springs, mut fall): (Res<TitanFeel>, Res<crate::vmmotion::WeaponSprings>, Local<FallKick>),
 ) {
     if *mode == CameraMode::Free || *control != crate::pilotctl::Control::Titan {
         *last_hp = None;
@@ -729,8 +845,10 @@ pub fn update_camera(
     let s = &t.state;
     let p = &settings.0;
     let dash_roll = tilt.step(s, time.delta_secs());
-    let (sprint_lower, sprint_roll) = tilt.sprint_step(s, time.delta_secs());
-    let (yaw, pitch) = (s.yaw + punch.yaw.to_radians(), s.pitch + punch.pitch.to_radians());
+    let (sprint_lower, sprint_roll) = tilt.sprint_step(s, &feel, time.delta_secs());
+    let spring = springs.0.get(&feel.punch_spring).map(|(hip, _)| (hip.k.x, hip.c.x)).unwrap_or((65.0, 15.0));
+    let fall_pitch = fall.step(s, &feel, p.gravity, spring, time.delta_secs());
+    let (yaw, pitch) = (s.yaw + punch.yaw.to_radians(), s.pitch + (punch.pitch + fall_pitch).to_radians());
     let dir = Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin());
     // ADS zoom: the game's FOVs are horizontal at 4:3 (75 hip); convert the ratio to our
     // vertical 60 degree base.
@@ -746,12 +864,11 @@ pub fn update_camera(
         // Phased (Phase Dash) BT isn't drawn either.
         *v = if cockpit || mods.phased { Visibility::Hidden } else { Visibility::Inherited };
     }
-    // Cockpit step jolt (titan_buddy.set: cockpit_stepJolt_origin "0 0 -5"): dip twice per
-    // walk cycle, once per footstep, scaled by how much BT is moving.
-    let moving = (t.blend_speed / p.speed).clamp(0.0, 1.5);
-    let jolt = Vec3::Z * (-5.0 * moving * (t.move_cycle * std::f32::consts::TAU * 2.0).sin().abs());
-    let jolt = jolt + Vec3::Z * sprint_lower;
-    let eye = bv(s.eye(p)) + jolt;
+    // Sprinting lowers the view; looking down slides it forward (pitchOffsetScale, 40 units
+    // looking straight down; following the sine of the pitch is a guess). The cockpit rides on
+    // the view, so it moves with both.
+    let ahead = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0) * feel.pitch_offset_scale * s.pitch.max(0.0).sin();
+    let eye = bv(s.eye(p)) + Vec3::Z * sprint_lower + ahead;
     if let Some((c, c_actor)) = t.cockpit {
         if let Ok(mut v) = vis.get_mut(c) {
             *v = if cockpit { Visibility::Inherited } else { Visibility::Hidden };
@@ -764,6 +881,12 @@ pub fn update_camera(
         let (cy, sy) = (s.yaw.cos(), s.yaw.sin());
         let vel = Vec3::new(s.vel.x * cy + s.vel.y * sy, -s.vel.x * sy + s.vel.y * cy, s.vel.z);
         sway.step(&crate::vmmotion::CockpitSwayDef::TITAN, s.yaw, s.pitch, vel, time.delta_secs());
+        // Each footstep jolts the cockpit (cockpit_stepJolt_origin "0 0 -5"); the view itself
+        // doesn't bob.
+        if tilt.steps != t.steps {
+            tilt.steps = t.steps;
+            sway.step_jolt(feel.step_jolt_origin, feel.step_jolt_angles);
+        }
         // Damage (hull or shield) jolts the cockpit away from where it came from
         // (TitanCockpit_DamageFeedback: joltDir = eye - damageOrigin, damage / 2000).
         let hp = health.map(|h| h.v.health + h.v.shield);
@@ -782,7 +905,7 @@ pub fn update_camera(
             let rot = Quat::from_rotation_z(s.yaw) * Quat::from_rotation_y(s.pitch);
             let rs = crate::vmmotion::angles_quat(sway.angles) * Quat::from_rotation_x(dash_roll * DODGE_COCKPIT_TILT_MAX / DODGE_VIEW_TILT_MAX);
             ctf.rotation = rot * rs;
-            ctf.translation = bv(s.eye(p)) + jolt - rot * rs * offset + rot * sway.origin;
+            ctf.translation = eye - rot * rs * offset + rot * sway.origin;
         }
     }
     let pos = if cockpit {
@@ -818,21 +941,57 @@ pub fn update_camera(
 const DODGE_VIEW_TILT_MAX: f32 = 10.0;
 const DODGE_COCKPIT_TILT_MAX: f32 = 4.0;
 
-/// BT's sprint view (titan_base.set sprintViewOffset -25, titan_buddy.set sprinttiltMaxRoll 3),
-/// with the Pilot's easing (pilotctl.rs) and the same client.dll sprinttilt_* lean.
-const TITAN_SPRINT_VIEW_OFFSET: f32 = -25.0;
-const TITAN_SPRINT_TILT_MAX_ROLL: f32 = 3.0;
-
 #[derive(Default)]
 pub struct DashTilt {
     dashes: u32,
     side: f32,
     since: f32,
     frac: f32,
+    /// Sprint view: fraction into sprintViewOffset, time sprinting, whether the fast start
+    /// applies, and time on the ground without sprinting.
     sprint: f32,
+    sprint_wait: f32,
+    sprint_fast: bool,
+    ground_idle: f32,
     tilt_frac: f32,
     tilt_vel: f32,
     prev_yaw: f32,
+    /// Footsteps already jolted into the cockpit.
+    steps: u32,
+}
+
+/// Landing viewkick: a fall between viewkickFallDistMin and Max (BT: 10..120 units, as impact
+/// speeds) kicks the view by up to viewkickFallDistMaxScale (6 degrees), springing back on BT's
+/// viewPunchSpring (springs.txt punch_titan_atlas: constant 65, damping 15). That the kick is an
+/// instant downward pitch scaling linearly with impact speed is a guess (Source's rough landing
+/// sets the punch angle directly).
+#[derive(Default)]
+pub struct FallKick {
+    landings: u32,
+    pitch: f32,
+    vel: f32,
+}
+
+impl FallKick {
+    /// The kick's pitch in degrees (positive is down).
+    fn step(&mut self, s: &tf_sim::titan::TitanState, feel: &TitanFeel, gravity: f32, (k, c): (f32, f32), dt: f32) -> f32 {
+        if s.landings != self.landings {
+            self.landings = s.landings;
+            let (lo, hi) = (TitanFeel::fall_speed(feel.viewkick_fall_min, gravity), TitanFeel::fall_speed(feel.viewkick_fall_max, gravity));
+            let f = ((s.land_speed - lo) / (hi - lo).max(1.0)).clamp(0.0, 1.0);
+            if f > 0.0 {
+                self.pitch = self.pitch.max(f * feel.viewkick_fall_max_scale);
+                log::debug!("BT landing at {:.0} u/s: viewkick {:.2} deg", s.land_speed, self.pitch);
+            }
+        }
+        let n = ((dt / 0.004).ceil() as usize).clamp(1, 50);
+        let h = dt / n as f32;
+        for _ in 0..n {
+            self.vel += (-k * self.pitch - c * self.vel) * h;
+            self.pitch += self.vel * h;
+        }
+        self.pitch
+    }
 }
 
 impl DashTilt {
@@ -852,16 +1011,37 @@ impl DashTilt {
     }
 
     /// Sprint lowering (game units, negative is down) and lean (radians, positive to the right).
-    fn sprint_step(&mut self, s: &tf_sim::titan::TitanState, dt: f32) -> (f32, f32) {
+    /// The view waits sprintStartDelay (0.2 s), then eases into sprintViewOffset over
+    /// sprintStartDuration (1.0 s; sprintStartFastDuration 0.2 s when BT was in the air out of a
+    /// sprint, e.g. a dash) and out over sprintEndDuration (0.3 s). The smoothstep curve over
+    /// those times is a guess.
+    fn sprint_step(&mut self, s: &tf_sim::titan::TitanState, feel: &TitanFeel, dt: f32) -> (f32, f32) {
         let want = if s.sprinting { 1.0 } else { 0.0 };
-        self.sprint += (want - self.sprint) * (1.0 - (-dt * 6.0).exp());
+        if !s.on_ground && self.sprint > 0.0 {
+            self.sprint_fast = true;
+        }
+        self.ground_idle = if s.on_ground && !s.sprinting { self.ground_idle + dt } else { 0.0 };
+        if self.ground_idle > 0.1 || self.sprint >= 1.0 {
+            self.sprint_fast = false;
+        }
+        if s.sprinting {
+            self.sprint_wait += dt;
+            if self.sprint_fast || self.sprint > 0.0 || self.sprint_wait >= feel.sprint_start_delay {
+                let dur = if self.sprint_fast { feel.sprint_start_fast } else { feel.sprint_start };
+                self.sprint = (self.sprint + dt / dur.max(1e-3)).min(1.0);
+            }
+        } else {
+            self.sprint_wait = 0.0;
+            self.sprint = (self.sprint - dt / feel.sprint_end.max(1e-3)).max(0.0);
+        }
+        let eased = self.sprint * self.sprint * (3.0 - 2.0 * self.sprint);
         let turn = ((s.yaw - self.prev_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI) / dt.max(1e-3);
         self.prev_yaw = s.yaw;
         let target = (-turn.to_degrees() / 120.0).clamp(-1.0, 1.0) * want;
         let want_vel = ((target - self.tilt_frac) * 12.0).clamp(-2.0, 2.0);
         self.tilt_vel += (want_vel - self.tilt_vel).clamp(-35.0 * dt, 35.0 * dt);
         self.tilt_frac = (self.tilt_frac + self.tilt_vel * dt).clamp(-1.0, 1.0);
-        (TITAN_SPRINT_VIEW_OFFSET * self.sprint, self.tilt_frac * TITAN_SPRINT_TILT_MAX_ROLL.to_radians() * self.sprint)
+        (feel.sprint_view_offset * eased, self.tilt_frac * feel.sprint_tilt_max_roll.to_radians() * eased)
     }
 }
 

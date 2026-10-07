@@ -97,6 +97,10 @@ pub struct TitanState {
     pub power_delay: f32,
     /// Number of dashes started (for effects/animation triggers).
     pub dashes: u32,
+    /// Number of landings from the air, and the last one's downward impact speed (units/s), for
+    /// the landing viewkick and heavy-landing effects.
+    pub landings: u32,
+    pub land_speed: f32,
 }
 
 impl TitanState {
@@ -113,6 +117,8 @@ impl TitanState {
             power: 100.0,
             power_delay: 0.0,
             dashes: 0,
+            landings: 0,
+            land_speed: 0.0,
         }
     }
 
@@ -267,6 +273,10 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
     }
     match ground {
         Some(z) if s.vel.z <= 0.0 => {
+            if !was_on_ground {
+                s.landings += 1;
+                s.land_speed = -s.vel.z;
+            }
             s.pos.z = z;
             s.vel.z = 0.0;
             s.on_ground = true;

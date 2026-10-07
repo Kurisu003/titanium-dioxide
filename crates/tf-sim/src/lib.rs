@@ -49,6 +49,19 @@ mod tests {
     }
 
     #[test]
+    fn landing_records_impact_speed() {
+        let w = world();
+        // A 120-unit fall (viewkickFallDistMax) lands at about sqrt(2 * 750 * 120) = 424 u/s.
+        let mut s = TitanState::new(Vec3::new(0.0, -1000.0, 120.0), 0.0);
+        run(&mut s, TitanInput::default(), &w, 1.0);
+        assert_eq!(s.landings, 1);
+        assert!((s.land_speed - 424.0).abs() < 15.0, "impact speed {}", s.land_speed);
+        // Walking on flat ground lands no more.
+        run(&mut s, TitanInput { forward: 1.0, ..Default::default() }, &w, 1.0);
+        assert_eq!(s.landings, 1);
+    }
+
+    #[test]
     fn sprint_and_step_up() {
         let w = world();
         let mut s = TitanState::new(Vec3::new(0.0, 0.0, 0.0), std::f32::consts::FRAC_PI_2);

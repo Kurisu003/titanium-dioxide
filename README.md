@@ -398,6 +398,28 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   followed on `cockpit_spring_*` (65 / 9), all engine defaults. The input scaling is compiled,
   so a turn of 1 degree/s pushes factor x 0.01 and 1 unit/s of speed factor x 0.003
   (reconstruction, as is clamping before the gain).
+- **BT's view and footsteps** (`player.rs` `TitanFeel`, read from titan_buddy.set over
+  titan_base.set; the quoted meanings are the settings' help strings in `client.dll`):
+  - Footsteps run on the player step timer, not the animation (BT's walk and sprint sequences
+    carry no footstep events): `footstepInterval` 700 ms walking, `footstepIntervalSprint` 415 ms
+    sprinting, any speed over `footstepMinSpeed` 0 on the ground; the first step comes as soon as
+    BT moves (as in Source's `UpdateStepSound`).
+  - Each footstep jolts the cockpit, not the view ("Cockpit jolt per footstep":
+    `cockpit_stepJolt_origin` 0 0 -5). It kicks the cockpit sway spring so it dips about 5 units;
+    the kick size is the same reconstruction as the damage jolt. The view itself doesn't bob.
+  - Sprinting slides the view down `sprintViewOffset` -25 after `sprintStartDelay` 0.2 s (the
+    settings-table default) over `sprintStartDuration` 1.0 s, and back over `sprintEndDuration`
+    0.3 s; back in the air out of a sprint (a dash), `sprintStartFastDuration` 0.2 s applies. The
+    view leans into sprinting turns by up to `sprinttiltMaxRoll` 3 degrees with the Pilot's
+    `sprinttilt_*` steering. The smoothstep curve over those times is a guess.
+  - Looking down slides the view forward up to `pitchOffsetScale` 40 units; following the sine
+    of the pitch is a guess. The cockpit moves with the view.
+  - Landing kicks the view down by up to `viewkickFallDistMaxScale` 6 degrees between falls of
+    `viewkickFallDistMin` 10 and `viewkickFallDistMax` 120 units (compared as impact speeds),
+    springing back on BT's `viewPunchSpring` (springs.txt `punch_titan_atlas`, 65 / 15). The
+    pitch-down direction and the linear scaling are guesses. A fall past `hardFallDist` 40 is a
+    heavy landing: `sound_groundImpact` (`Titan.GroundImpact`) and the `titan_landing` impact
+    table's dust. Playing the dust only on heavy landings is a guess.
 - **Viewmodels** (`vmcam.rs`): guns, the Pilot's first-person arms and BT's cockpit are drawn
   by their own camera on top of the world at the player settings' `viewmodelfov` (70 for
   Pilots, 75 in a Titan), so they keep their size while the world zooms in ADS and never clip

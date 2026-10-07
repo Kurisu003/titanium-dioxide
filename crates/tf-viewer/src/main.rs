@@ -505,6 +505,9 @@ fn setup(
         let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
         let buddy = PlayerSettings::load("scripts/players/mp/titan_buddy.set", true, &mut read).unwrap_or_default();
         let bt = vitals::Vitals::from_settings(&buddy, None);
+        let feel = player::TitanFeel::from_settings(&buddy);
+        log::info!("BT feel: {feel:?}");
+        commands.insert_resource(feel);
         let mut kits: Vec<targets::EnemyKit> = (0..targets::ENEMY_CLASSES.len()).map(|i| targets::EnemyKit::class(i, &mut read)).collect();
         kits.push(targets::EnemyKit::infantry(&mut read));
         commands.insert_resource(executions::PilotMeleeDef::load(&mut read));

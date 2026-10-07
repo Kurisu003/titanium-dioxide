@@ -475,6 +475,16 @@ impl CockpitSway {
         }
     }
 
+    /// A footstep's cockpit jolt (cockpit_stepJolt_origin / _angles, "Cockpit jolt per
+    /// footstep"): `origin` in units (forward, left, up), `angles` in degrees (pitch, yaw, roll).
+    /// The engine side is compiled; this kicks the cockpit spring so it peaks near the given
+    /// offset, the same reconstruction as `jolt`.
+    pub fn step_jolt(&mut self, origin: Vec3, angles: Vec3) {
+        let w = SPRING_K.sqrt() / 0.6;
+        self.origin_vel += origin * w;
+        self.angles_vel += angles * w;
+    }
+
     /// A damage jolt (cl_titan_cockpit.nut JoltCockpit -> engine CockpitJolt): severity is the
     /// damage over 2000, clamped to 0..1 (CalcJoltMagnitude). `dir` is from the damage toward
     /// the eye, in the view's yaw frame (forward, left, up). The engine side is compiled; this
