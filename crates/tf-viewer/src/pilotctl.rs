@@ -449,6 +449,8 @@ pub fn control_transitions(
                 let (anim, clip) = embark_anim_for(titan.state.yaw, -to_bt, !combat);
                 pilot.embark_anim = anim;
                 tf.recover = None;
+                // BT stands still for the embark (its animation drives him, not his movement).
+                titan.state.vel = SVec3::ZERO;
                 *control = Control::Embark(0.0);
                 log::info!("embarking ({}, {clip}; nearest enemy {nearest:.0})", pilot.embark_anim);
                 fpseq.start(clip, hijack_frame(&titan), Some((eye, view_quat(pilot.state.yaw, pilot.state.pitch))), false);
@@ -492,6 +494,8 @@ pub fn control_transitions(
                 fpseq.stop();
                 input.yaw = titan.state.yaw;
                 input.pitch = 0.0;
+                // The embark ends at rest (TitanEmbark: player.SetVelocity( <0,0,0> )).
+                titan.state.vel = SVec3::ZERO;
                 pilot.embark_from = None;
                 *control = Control::Titan;
                 log::info!("in BT");

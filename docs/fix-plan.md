@@ -187,7 +187,33 @@ measurement; **C** = visuals and rendering.
 
 **22. No audio in the first play session.** I launched the game through the muted test wrapper; the second launch had sound. The log also lists sound events that have no sound found (e.g. `Pilot_Rodeo_Titan_Attach`, `weapon_predator_rangeswitch_*`). That is a separate, minor cleanup.
 
-## Order of work
+## Working order: easiest to hardest
+
+We work through these one at a time, and the next one starts only after the user has tested and approved the current one.
+
+1. Re-entering the Titan gives forward momentum (item 5)
+2. Tone's Particle Wall curves the wrong way (19)
+3. Titan weapons lose their crosshair when zoomed (12)
+4. Legion right-click artifact on the weapon (13)
+5. On-foot muzzle flash stays behind in the world (14)
+6. Thunderbolt scope depends on looking up or down (15)
+7. Titan HUD moves far too much (1)
+8. Titan dash feels weird (4)
+9. Everything moves too much and is too shaky (2)
+10. HUD countdowns don't behave like TF2 (11)
+11. Mozambique and sidearm recoil (10)
+12. ADS animation is weird (3)
+13. Holo Pilot moves weirdly (20)
+14. Wallrun start is unreliable (6)
+15. Archer has no proper sight (16)
+16. Sliding doesn't feel like TF2 (7)
+17. Grappling hook doesn't feel right (9)
+18. Floor drawn over explosions and shields (18)
+19. Smoke and see-through effects look wrong (17)
+20. Falling through buildings (8)
+21. Lighting (21, parked until the user asks)
+
+## Order of work (original grouping)
 
 1. **Quick, concrete bugs:**
    - 5: embark momentum;
