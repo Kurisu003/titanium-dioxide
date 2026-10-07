@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/tf-assets", "crates/tf-sim", "crates/tf-viewer"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+
+[profile.dev]
+opt-level = 2
+
+# The simulation and asset readers are hot loops; keep them fast even in debug builds.
+[profile.dev.package.tf-sim]
+opt-level = 3
+
+[profile.dev.package.tf-assets]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3

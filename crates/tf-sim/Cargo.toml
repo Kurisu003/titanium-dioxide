@@ -1,0 +1,7 @@
+[package]
+name = "tf-sim"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+glam = "0.30"

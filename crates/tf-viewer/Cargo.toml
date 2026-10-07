@@ -1,0 +1,15 @@
+[package]
+name = "tf-viewer"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+tf-assets = { path = "../tf-assets" }
+tf-sim = { path = "../tf-sim" }
+anyhow = "1"
+bevy = { version = "0.18", features = ["free_camera", "pbr_specular_textures"] }
+log = "0.4"
+
+[features]
+# Per-system timing traces (Chrome trace JSON in the working directory): `--features profile`.
+profile = ["bevy/trace_chrome"]
