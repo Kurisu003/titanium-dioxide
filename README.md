@@ -188,7 +188,9 @@ particle positions` moves control points onto a node's first particles (with "se
 facing their normal or motion), which is how a shell eject's resting child follows the flying
 casing; `Remap Percentage Between Two Control Points to Scalar`, `Ramp Scalar Linear Random`,
 `Oscillate Scalar Simple` (per-particle closed form; Source runs it on the system clock),
-`Lerp EndCap Scalar` (after the effect is stopped), `Stop Effect after Duration`, `Movement
+`Lerp EndCap Scalar` (after the effect is stopped), `Stop Effect after Duration` (which stops
+its children's emission too, as Source's StopEmission does, with "Control Point to Scale
+Duration" scaling it by a control point's X when one is set), `Movement
 Rotate Particle Around Axis` and `Movement Maintain Position Along Path` (no bulge or cohesion)
 are in too. `Remap Control Point to Vector` (into the colour) and `Remap Control Point to
 Scalar` read only control points that hold a value (passed by the caller or set by an
@@ -844,6 +846,15 @@ where the script has them):
   - Arc Wave: 1500, radius 112.
   - Flame Core: three waves 128 units apart, 4000 each, radius 180.
   - Firewall: leaves thermite for 5.2 × 1.75 s, burning 100 per server frame within 60 units.
+    As in `CreateThermiteWallSegment`, the first step only notes where the wave is.
+
+  Their effects are the scripts': each Arc Wave segment plays `P_arcwave_exp`; each Firewall
+  patch runs `P_wpn_meteor_wall` from itself back to the last patch (control point 1); each
+  Flame Core row gets two `P_wpn_meteor_waveCP` from the middle wave out to 238 units either
+  side, killed after 3 s. (The script links a row's effects across its three waves; read
+  literally in thread order the spans come out ±18 units, so ±238, which covers the outer
+  waves plus `FLAME_WALL_MAX_HEIGHT`, is a guess at the intent.) `TF_OLD_FX=1` keeps the
+  hand-built bursts.
 - **Thermal Shield**: held for up to 3 s. It burns caught rounds instead of throwing them back,
   and deals 200 five times a second to anything within 300 units in front.
 - **Sword Block**: you take 30% damage while holding it (15% during Sword Core) and can't fire.
@@ -900,18 +911,22 @@ where the script has them):
   charges = `ammo_clip_size / ammo_per_shot`, length = `fire_duration`):
   - Electric Smoke (20 s): a cloud 240 units ahead (or on BT if that's blocked) that after 1 s
     deals 45/s to infantry and 450/s to Titans between 320 and 375 units (`TitanSmokescreen`).
-    The cloud's lifetime is engine-side; 7 s is an approximation.
+    The cloud's lifetime is engine-side; 7 s is an approximation. Its effect is
+    `P_wpn_smk_electric` at the script's five `fxOffsets`, with the lifetime on control point 1,
+    which the system reads as such (smoke 1.25-1.5 times it, arcs stopping after it; the
+    Smokescreen script that sets it isn't shipped, so that is inferred from the system).
   - Sonar Pulse (16.7 s): marks everything within 1250 units for 5 s.
   - Phase Dash (12.5 s): 1 s phased - not drawn, no damage taken - launched at 1000 u/s along
     the movement input (+200 up), then `move_slow` 0.6 fading over 0.5 s.
   - Hover (10 s, 2.75 s long): `FlyerHovers` - rise at 225-450 u/s for 0.5 s, easing to 70 u/s
     by 1.25 s, horizontal speed capped at 250, `dodge_speed_slow` 0.65 fading 0.75 s after.
   - Slow Trap (15 s, 2 charges): a canister at 1500 u/s; 1 s after landing its gas (240 units,
-    12 s) slows whoever stands in it (strength approximated at 0.5). Fire sets it off
+    12 s; `P_meteor_Trap_start` and `P_meteor_trap_gas` on the canister) slows whoever stands in it (strength approximated at 0.5). Fire sets it off
     (`OnSlowTrapDamaged`: Firewall thermite, the Flame Core, the Thermal Shield): the cloud
-    explodes and 12 lines of thermite run out from it (`IgniteTrap`: yaw 30 x i, the last six
+    explodes (`P_meteor_trap_center`) and 12 lines of thermite run out from it (`IgniteTrap`: yaw 30 x i, the last six
     reversed, from 75 units out, the slow trap weapon's `wave_step_dist`/`wave_max_count`),
-    each patch a 75-unit meteor tick for the Firewall's lifetime. The lines' pitch is dropped
+    each patch a 75-unit meteor tick for the Firewall's lifetime, and each line's
+    `P_meteor_trap_burn` runs from its end back to the trap (`FlameOn`). The lines' pitch is dropped
     (they follow the ground anyway); explosive barrels aren't a thing here.
   - Laser Tripwire (10 s): three pylons (900 u/s straight, 1200 to the sides) arm after 1 s and
     for 12 s beam between neighbours; crossing a beam deals 200 (1500 to Titans) once a second.

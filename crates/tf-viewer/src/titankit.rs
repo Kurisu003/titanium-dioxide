@@ -26,6 +26,7 @@ use crate::abilities::{spawn_missile, CoreState, MissileAssets, MissileSpec, Ord
 use crate::combat::{TitanHealth, Vortex, VortexMode};
 use crate::gamedata::GameData;
 use crate::particles::{emit, Effect, Glow};
+use crate::pfx::Cp;
 use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
 use crate::pilotctl::Control;
 use crate::targets::Enemy;
@@ -147,9 +148,23 @@ pub struct TitanSmoke {
     hurt_pilot: bool,
 }
 
-/// TitanSmokescreen: an Electric Smoke cloud at `at` (`enemy` when an enemy Titan's).
-pub fn spawn_smoke(commands: &mut Commands, at: Vec3, enemy: bool) {
+/// TitanSmokescreen: an Electric Smoke cloud at `at`, facing `fwd` (`enemy` when an enemy
+/// Titan's). Its effect is `P_wpn_smk_electric` at the script's five `fxOffsets` (200 back and
+/// to either side 20 up, and 148 up above the middle and the back), with the cloud's lifetime
+/// on control point 1 (what the system's operators read it as). The Smokescreen script isn't
+/// in the shipped scripts, so the plain variant (beside `_burn_mod` and `_heal`) is a guess.
+pub fn spawn_smoke(commands: &mut Commands, at: Vec3, fwd: Vec3, enemy: bool) {
     commands.spawn((Transform::from_translation(to_bevy(at)), TitanSmoke { pos: at, life: TITAN_SMOKE_LIFETIME, delay: 1.0, tick: 0.0, puff: 0.0, enemy, hurt_pilot: false }));
+    if std::env::var_os("TF_OLD_FX").is_some() {
+        return;
+    }
+    let cp = Cp::facing(at, Vec3::new(fwd.x, fwd.y, 0.0).normalize_or(Vec3::X));
+    for o in [Vec3::new(-200.0, 0.0, 20.0), Vec3::new(0.0, 200.0, 20.0), Vec3::new(0.0, -200.0, 20.0), Vec3::new(0.0, 0.0, 148.0), Vec3::new(-200.0, 0.0, 148.0)] {
+        let pos = at + cp.fwd * o.x + cp.left * o.y + cp.up * o.z;
+        // Control point 1's X is the cloud's lifetime: its smoke lives 1.25-1.5 times that and
+        // its arcs stop after it.
+        crate::pfx::emit_named_cps(commands, "P_wpn_smk_electric", &[Cp { pos, ..cp }, Cp { pos: Vec3::new(TITAN_SMOKE_LIFETIME, 0.0, 0.0), ..cp }], Some(TITAN_SMOKE_LIFETIME));
+    }
 }
 
 /// Scorch's Slow Trap canister: flies, lands, builds, then gasses a circle that slows.
@@ -837,8 +852,8 @@ pub fn spawn_enemy_wave(commands: &mut Commands, kind: WaveKind, from: Vec3, dir
     let dir = dir.with_z(0.0).normalize_or(Vec3::X);
     let group = ENEMY_WAVE_GROUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let wave = match kind {
-        WaveKind::Arc => Wave { kind, pos: from + dir * 25.0, head: from + dir * 25.0, first: true, dir, step: ENEMY_ARC_STEP, left: ENEMY_ARC_COUNT, timer: 0.0, radius: 112.0, titan: ENEMY_ARC_TITAN, pilot: ENEMY_ARC_PILOT, group, enemy: true },
-        _ => Wave { kind: WaveKind::Firewall, pos: from + dir * 25.0, head: from + dir * 25.0, first: true, dir, step: ENEMY_FIREWALL_STEP, left: ENEMY_FIREWALL_COUNT, timer: 0.0, radius: 60.0, titan: 0.0, pilot: 0.0, group, enemy: true },
+        WaveKind::Arc => Wave { kind, pos: from + dir * 25.0, head: from + dir * 25.0, first: true, dir, step: ENEMY_ARC_STEP, left: ENEMY_ARC_COUNT, timer: 0.0, radius: 112.0, titan: ENEMY_ARC_TITAN, pilot: ENEMY_ARC_PILOT, group, enemy: true, trap: None, row: false },
+        _ => Wave { kind: WaveKind::Firewall, pos: from + dir * 25.0, head: from + dir * 25.0, first: true, dir, step: ENEMY_FIREWALL_STEP, left: ENEMY_FIREWALL_COUNT, timer: 0.0, radius: 60.0, titan: 0.0, pilot: 0.0, group, enemy: true, trap: None, row: false },
     };
     log::info!("enemy {kind:?} wave from {:?}", from.round());
     commands.spawn(wave);
@@ -877,6 +892,11 @@ pub struct Wave {
     group: u32,
     /// An enemy Titan's wave: it hurts BT and the Pilot instead.
     enemy: bool,
+    /// An ignited Slow Trap's fire line: the trap's position (its `P_meteor_trap_burn` runs
+    /// from the line's end back to it).
+    trap: Option<Vec3>,
+    /// The Flame Core's middle wave, which carries each row's effects.
+    row: bool,
 }
 
 /// A patch of Firewall thermite.
@@ -889,9 +909,13 @@ pub struct Thermite {
     enemy: bool,
     /// Damage radius (FLAME_WALL_DAMAGE_RADIUS_DEF 60; an ignited Slow Trap's lines 75).
     radius: f32,
-    /// Seconds to the next flame puff.
+    /// Seconds to the next flame puff (TF_OLD_FX).
     flicker: f32,
 }
+
+/// Flame Core: each row's effects reach FLAME_WALL_MAX_HEIGHT (110) past the outer waves,
+/// PROJECTILE_SEPARATION (128) from the middle one (mp_titancore_flame_wave.nut).
+const FLAME_ROW_HALF_WIDTH: f32 = 128.0 + 110.0;
 
 #[derive(Component)]
 pub struct ClusterRocket {
@@ -1179,7 +1203,7 @@ pub fn kit_input(
                 st.ord_cd_max = n.firewall_cd;
                 st.ord_cd = n.firewall_cd;
                 let group = (time.elapsed_secs() * 1000.0) as u32;
-                commands.spawn(Wave { kind: WaveKind::Firewall, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.firewall_step, left: n.firewall_count, timer: 0.0, radius: n.thermite_radius, titan: 0.0, pilot: 0.0, group, enemy: false });
+                commands.spawn(Wave { kind: WaveKind::Firewall, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.firewall_step, left: n.firewall_count, timer: 0.0, radius: n.thermite_radius, titan: 0.0, pilot: 0.0, group, enemy: false, trap: None, row: false });
                 crate::audio::event(&mut commands, "flamewall_flame_start");
                 true
             }
@@ -1194,7 +1218,7 @@ pub fn kit_input(
                 st.ord_cd_max = n.arc_cd;
                 st.ord_cd = n.arc_cd;
                 let group = (time.elapsed_secs() * 1000.0) as u32;
-                commands.spawn(Wave { kind: WaveKind::Arc, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.arc_step, left: n.arc_count, timer: 0.0, radius: 112.0, titan: n.arc_titan, pilot: n.arc_pilot, group, enemy: false });
+                commands.spawn(Wave { kind: WaveKind::Arc, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.arc_step, left: n.arc_count, timer: 0.0, radius: 112.0, titan: n.arc_titan, pilot: n.arc_pilot, group, enemy: false, trap: None, row: false });
                 true
             }
             OrdKind::Tracker => {
@@ -1341,7 +1365,7 @@ pub fn kit_input(
                 let to = ahead + Vec3::Z * 60.0 - eye;
                 let clear = world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(to.normalize_or_zero().to_array()), to.length()).is_none();
                 let at = if clear { ahead } else { bt_pos };
-                spawn_smoke(&mut commands, at, false);
+                spawn_smoke(&mut commands, at, fwd, false);
                 true
             }
             UtilKind::SonarPulse => {
@@ -1467,7 +1491,7 @@ pub fn kit_input(
                 let group = (time.elapsed_secs() * 1000.0) as u32 ^ 0x5A5A;
                 let base = Vec3::from(s.pos.to_array()) + fwd * 25.0;
                 for (off, sfx) in [(-1.0, "flamewave_blast_right"), (0.0, "flamewave_blast_middle"), (1.0, "flamewave_blast_left")] {
-                    commands.spawn(Wave { kind: WaveKind::Flame, pos: base + right * off * 128.0, head: base + right * off * 128.0, first: true, dir: fwd, step: n.flame_step, left: n.flame_count, timer: 0.0, radius: 180.0, titan: n.flame_titan, pilot: n.flame_pilot, group, enemy: false });
+                    commands.spawn(Wave { kind: WaveKind::Flame, pos: base + right * off * 128.0, head: base + right * off * 128.0, first: true, dir: fwd, step: n.flame_step, left: n.flame_count, timer: 0.0, radius: 180.0, titan: n.flame_titan, pilot: n.flame_pilot, group, enemy: false, trap: None, row: off == 0.0 });
                     crate::audio::event(&mut commands, sfx);
                 }
             }
@@ -1663,16 +1687,53 @@ pub fn kit_world(
                 w.left = 0;
                 break;
             };
+            // The last segment (the Firewall's savedOrigin), None at the first.
+            let prev = (!w.first).then_some(w.pos);
             w.first = false;
             w.head = head;
             w.pos = seg;
             let at = to_bevy(w.pos + Vec3::Z * 20.0);
+            let old_fx = std::env::var_os("TF_OLD_FX").is_some();
+            // The scripts' effects stand on the segment (downTrace.endPos), facing the wave.
+            let ground = Cp::facing(w.pos, w.dir);
             match w.kind {
-                WaveKind::Arc => emit(&mut commands, Effect::Impact { at, normal: Vec3::Y, scale: 2.4, energy: true }),
-                WaveKind::Flame => emit(&mut commands, Effect::Explosion { at, scale: 0.9 }),
+                WaveKind::Arc if old_fx => emit(&mut commands, Effect::Impact { at, normal: Vec3::Y, scale: 2.4, energy: true }),
+                // CreateEmpWaveSegment.
+                WaveKind::Arc => crate::pfx::emit_named_cp(&mut commands, "P_arcwave_exp", ground),
+                WaveKind::Flame if old_fx => emit(&mut commands, Effect::Explosion { at, scale: 0.9 }),
+                WaveKind::Flame => {
+                    // CreateFlameWaveSegment: two P_wpn_meteor_waveCP per row, from the middle
+                    // wave out to either side (control point 1), killed after 3 s.
+                    if w.row {
+                        let side = w.dir.cross(Vec3::Z).normalize_or(Vec3::X) * FLAME_ROW_HALF_WIDTH;
+                        for s in [side, -side] {
+                            crate::pfx::emit_named_cps(&mut commands, "P_wpn_meteor_waveCP", &[ground, Cp { pos: w.pos + s, ..ground }], Some(3.0));
+                        }
+                    }
+                }
+                // CreateThermiteWallSegment / CreateSlowTrapSegment: the first step only notes
+                // where the wave is.
                 WaveKind::Firewall => {
-                    emit(&mut commands, Effect::Explosion { at, scale: 0.45 });
-                    commands.spawn((Transform::from_translation(at), Glow::new(Vec3::new(6.0, 2.2, 0.4), 2.2, true), Thermite { pos: w.pos, life: if w.enemy { ENEMY_FIREWALL_THERMITE_SECS } else { n.thermite_life }, group: w.group, radius: w.radius, flicker: w.left as f32 * 0.13, enemy: w.enemy }));
+                    if let Some(prev) = prev {
+                        let life = if w.enemy { ENEMY_FIREWALL_THERMITE_SECS } else { n.thermite_life };
+                        let patch = commands.spawn((Transform::from_translation(at), Thermite { pos: w.pos, life, group: w.group, radius: w.radius, flicker: w.left as f32 * 0.13, enemy: w.enemy })).id();
+                        // The effect runs from this segment back to the last one (control point
+                        // 1); a Slow Trap line's runs from its end back to the trap once the line
+                        // is laid (FlameOn). It goes with the patch.
+                        log::debug!("thermite patch at {:?} (wave {:?} left {})", w.pos.round(), w.kind, w.left);
+                        let fx = match w.trap {
+                            None => Some(("P_wpn_meteor_wall", prev)),
+                            Some(origin) if w.left == 0 => Some(("P_meteor_trap_burn", origin)),
+                            Some(_) => None,
+                        };
+                        if old_fx {
+                            emit(&mut commands, Effect::Explosion { at, scale: 0.45 });
+                            commands.entity(patch).insert(Glow::new(Vec3::new(6.0, 2.2, 0.4), 2.2, true));
+                        } else if let Some((name, end)) = fx {
+                            let local = to_bevy(w.pos) - at;
+                            commands.entity(patch).with_child((Transform::from_translation(local), crate::pfx::PfxTrail::new(name), crate::pfx::PfxBeamEnd(to_bevy(end))));
+                        }
+                    }
                 }
             }
             if w.enemy && w.kind != WaveKind::Firewall {
@@ -1736,9 +1797,9 @@ pub fn kit_world(
             continue;
         }
         fire.push((t.pos, t.radius));
-        // The burning wall: flame puffs rising off each patch.
+        // The burning wall (TF_OLD_FX): flame puffs rising off each patch.
         t.flicker -= dt;
-        if t.flicker <= 0.0 {
+        if t.flicker <= 0.0 && std::env::var_os("TF_OLD_FX").is_some() {
             t.flicker += 0.35;
             emit(&mut commands, Effect::Explosion { at: to_bevy(t.pos + Vec3::Z * 40.0), scale: 0.4 });
         }
@@ -1797,7 +1858,12 @@ pub fn kit_world(
         }
         commands.entity(id).despawn();
         let origin = trap.pos + Vec3::Z * SLOW_TRAP_GAS_HEIGHT;
-        emit(&mut commands, Effect::Explosion { at: to_bevy(origin), scale: 1.6 });
+        // IgniteTrap: P_meteor_trap_center at the gas, killed after 3 s.
+        if std::env::var_os("TF_OLD_FX").is_some() {
+            emit(&mut commands, Effect::Explosion { at: to_bevy(origin), scale: 1.6 });
+        } else {
+            crate::pfx::emit_named_cps(&mut commands, "P_meteor_trap_center", &[Cp::facing(origin, Vec3::X)], Some(3.0));
+        }
         crate::audio::event_at(&mut commands, "incendiary_trap_explode", origin);
         crate::audio::event_at(&mut commands, "incendiary_trap_burn", origin);
         let group = (time.elapsed_secs() * 1000.0) as u32 ^ 0x1F1F;
@@ -1805,7 +1871,7 @@ pub fn kit_world(
             let yaw = (30.0 * i as f32).to_radians();
             let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
             let dir = if i > 5 { -fwd } else { fwd };
-            commands.spawn(Wave { kind: WaveKind::Firewall, pos: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS, head: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS, first: true, dir, step: n.trap_step, left: n.trap_count, timer: i as f32 * 0.008, radius: FIRE_TRAP_MINI_EXPLOSION_RADIUS, titan: 0.0, pilot: 0.0, group: group + i, enemy: false });
+            commands.spawn(Wave { kind: WaveKind::Firewall, pos: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS, head: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS, first: true, dir, step: n.trap_step, left: n.trap_count, timer: i as f32 * 0.008, radius: FIRE_TRAP_MINI_EXPLOSION_RADIUS, titan: 0.0, pilot: 0.0, group: group + i, enemy: false, trap: Some(origin), row: false });
         }
         log::info!("slow trap ignited ({} lines of {} x {:.0})", 12, n.trap_count, n.trap_step);
     }
@@ -2206,7 +2272,7 @@ pub fn utility_world(
         sm.life -= dt;
         sm.delay -= dt;
         sm.puff += dt;
-        if sm.puff >= 0.08 {
+        if sm.puff >= 0.08 && std::env::var_os("TF_OLD_FX").is_some() {
             sm.puff = 0.0;
             let a = sm.life * 9.1;
             let r = TITAN_SMOKE_OUTER * 0.7 * (a * 0.41).sin().abs();
@@ -2276,11 +2342,19 @@ pub fn utility_world(
             t.build -= dt;
             if t.build <= 0.0 {
                 crate::audio::event_at(&mut commands, "incendiary_trap_gas", t.pos);
+                // The script's looping P_meteor_Trap_start and its gas, P_meteor_trap_gas, on
+                // the canister (its "smoke" attachment, taken as the canister's origin).
+                if std::env::var_os("TF_OLD_FX").is_none() {
+                    commands.entity(id).with_children(|c| {
+                        c.spawn((Transform::default(), crate::pfx::PfxTrail::oriented("P_meteor_Trap_start")));
+                        c.spawn((Transform::default(), crate::pfx::PfxTrail::oriented("P_meteor_trap_gas")));
+                    });
+                }
             }
         } else {
             t.life -= dt;
             t.puff += dt;
-            if t.puff >= 0.1 {
+            if t.puff >= 0.1 && std::env::var_os("TF_OLD_FX").is_some() {
                 t.puff = 0.0;
                 let a = t.life * 6.3;
                 let r = SLOW_TRAP_RADIUS * 0.8 * (a * 0.53).sin().abs();

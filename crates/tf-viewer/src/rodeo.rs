@@ -404,7 +404,7 @@ pub fn rodeo_update(
     // Anti-rodeo: the Titan pops its Electric Smoke on itself once you've been on for a while.
     if e.smoke_charges > 0 && ride.since >= ANTI_RODEO_SMOKE_DELAY && e.alive() {
         e.smoke_charges -= 1;
-        crate::titankit::spawn_smoke(&mut commands, e.pos, true);
+        crate::titankit::spawn_smoke(&mut commands, e.pos, Vec3::X, true);
         crate::audio::event_at(&mut commands, "Titan_Offhand_ElectricSmoke_Deploy_3P", e.pos);
         log::info!("rodeo: the Titan released its Electric Smoke");
     }

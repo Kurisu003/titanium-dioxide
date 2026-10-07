@@ -526,6 +526,16 @@ pub fn emit_named_cockpit(commands: &mut Commands, name: &str, at: Vec3, rot: Qu
     commands.spawn((PfxRequest { name: name.to_string(), cps: vec![Cp { pos: to_game(at), fwd, left, up }], stop_after: None, vm: true }, PfxOverlay));
 }
 
+/// Play a system at a control point frame (game space).
+pub fn emit_named_cp(commands: &mut Commands, name: &str, cp: Cp) {
+    emit_named_cps(commands, name, &[cp], None);
+}
+
+/// Play a system with its control points (game space), stopped after `stop_after` seconds.
+pub fn emit_named_cps(commands: &mut Commands, name: &str, cps: &[Cp], stop_after: Option<f32>) {
+    commands.spawn(PfxRequest { name: name.to_string(), cps: cps.to_vec(), stop_after, vm: false });
+}
+
 /// Play a system at an attachment frame (as `emit_named_vm_frame`), in the world.
 pub fn emit_named_frame(commands: &mut Commands, name: &str, at: Vec3, rot: Quat) {
     let (fwd, left, up) = (dir_to_game(rot * Vec3::X).normalize_or(Vec3::X), dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y), dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z));
@@ -755,7 +765,9 @@ enum Oper {
     /// Lerp EndCap Scalar: once the effect is stopped, a field eases to a value over `time`.
     LerpEndCap { field: Field, to: f32, time: f32 },
     /// Stop Effect after Duration: the node stops emitting (and optionally clears) after it.
-    StopAfter { duration: f32, kill: bool },
+    /// `scale_cp`: "Control Point to Scale Duration", whose X multiplies the duration (the
+    /// Electric Smoke's arcs run for the lifetime its script puts on control point 1).
+    StopAfter { duration: f32, kill: bool, scale_cp: Option<usize> },
     /// Remap Percentage Between Two Control Points to Scalar: where a particle lies along the
     /// line from one point to the other.
     PctBetweenCps { a: usize, b: usize, out: Field, pmin: f32, pmax: f32, omin: f32, omax: f32, active: bool, scale_init: bool, scale_cur: bool },
@@ -824,9 +836,6 @@ struct Compiled {
     children: Vec<(usize, f32, bool)>,
     /// Whether any operator retires particles at the end of their life.
     decays: bool,
-    /// "screen space effect": simulated in screen units around the control point (x ±100
-    /// across, y up) and drawn over the view.
-    screen_space: bool,
 }
 
 /// How far in front of the eye screen-space systems draw (game units; past the near plane).
@@ -1132,7 +1141,11 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 prop: o.b("start/end proportional", true),
             },
             "Lerp EndCap Scalar" => Oper::LerpEndCap { field: field(o.i("output field", 3)), to: o.f("value to lerp to", 1.0), time: o.f("lerp time", 1.0).max(1e-3) },
-            "Stop Effect after Duration" => Oper::StopAfter { duration: o.f("Duration at which to Stop", 1.0), kill: o.b("Destroy All Particles Immediately", false) },
+            "Stop Effect after Duration" => Oper::StopAfter {
+                duration: o.f("Duration at which to Stop", 1.0),
+                kill: o.b("Destroy All Particles Immediately", false),
+                scale_cp: usize::try_from(o.i("Control Point to Scale Duration", -1)).ok().filter(|&c| c < NCP),
+            },
             "Remap Percentage Between Two Control Points to Scalar" => Oper::PctBetweenCps {
                 a: cpn(o, "starting control point"),
                 b: o.i("ending control point", 1).clamp(0, NCP as i32 - 1) as usize,
@@ -1264,7 +1277,6 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
         render,
         children,
         decays,
-        screen_space: def.screen_space,
     }
 }
 
@@ -1362,6 +1374,8 @@ struct Node {
     decal_done: bool,
     /// The parent system's node (for `Position From Parent Particles`).
     parent: Option<usize>,
+    /// Stopped by its Stop Effect after Duration (which stops its children's emission too).
+    op_stopped: bool,
     /// Node age at which `Restart Effect after Duration` restarts it (0: not chosen yet).
     restart_at: f32,
 }
@@ -1398,7 +1412,7 @@ struct Effect {
 
 fn new_node(sys: Arc<Compiled>, delay: f32) -> Node {
     let n = sys.emit.len();
-    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), decal_done: false, parent: None, restart_at: 0.0 }
+    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), decal_done: false, parent: None, op_stopped: false, restart_at: 0.0 }
 }
 
 /// The system tree under `root`, with each child's delay added to its parent's.
@@ -2159,9 +2173,15 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
     // Stop Effect after Duration: the node stops emitting (and may clear) once it is reached.
     let mut emitting = emitting;
     for o in &sys.oper {
-        if let Oper::StopAfter { duration, kill } = *o {
+        if let Oper::StopAfter { duration, kill, scale_cp } = *o {
+            // Scaled only by a control point that holds a value.
+            let duration = match scale_cp {
+                Some(c) if ctx.cp_set & (1 << c) != 0 => duration * cps[c].pos.x,
+                _ => duration,
+            };
             if n.age >= duration {
                 emitting = false;
+                n.op_stopped = true;
                 if kill && n.age - dt < duration {
                     n.particles.clear();
                 }
@@ -3177,6 +3197,8 @@ pub fn update_pfx(
         fx.capped |= fx.stopped;
         let cp_frame_prev = fx.cp_frame_prev;
         fx.cp_frame_prev = fx.cps;
+        let parents: Vec<Option<usize>> = fx.nodes.iter().map(|n| n.parent).collect();
+        let mut stopped_by_op: Vec<bool> = fx.nodes.iter().map(|n| n.op_stopped).collect();
         for ni in 0..fx.nodes.len() {
             let parent: Vec<P> = match fx.nodes[ni].parent {
                 Some(pi) if fx.nodes[ni].sys.init.iter().any(|i| matches!(i, Init::FromParent { .. } | Init::InheritParent { .. })) || fx.nodes[ni].sys.oper.iter().any(|o| matches!(o, Oper::InheritAttr { .. })) => fx.nodes[pi].particles.iter().filter(|p| !p.dead).copied().collect(),
@@ -3192,8 +3214,20 @@ pub fn update_pfx(
                     apply_inits(&sys, p, &fx.cps, &cp_vel, fx.cp_set, &[], &sheet_len, &mut rng, id, false, true);
                 }
             }
+            // A Stop Effect after Duration on a system stops its children's emission as well
+            // (Source's StopEmission walks the children).
+            let parent_stopped = {
+                let mut at = n.parent;
+                let mut stopped = false;
+                while let Some(pi) = at {
+                    stopped |= stopped_by_op[pi];
+                    at = parents[pi];
+                }
+                stopped
+            };
             let mut ctx = StepCtx { cp_delta: &delta, cp_vel: &cp_vel, cp_prev: &cp_frame_prev, cp_set: fx.cp_set, since_stop, player, parent: &parent };
-            step_node(n, &mut fx.cps, &mut ctx, emitting, dt, &mut rng, world, &mut budget, &sheet_len);
+            step_node(n, &mut fx.cps, &mut ctx, emitting && !parent_stopped, dt, &mut rng, world, &mut budget, &sheet_len);
+            stopped_by_op[ni] = n.op_stopped;
             fx.cp_set = ctx.cp_set;
         }
     }
