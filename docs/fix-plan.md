@@ -159,6 +159,12 @@ measurement; **C** = visuals and rendering.
 - *Research:* compare the railgun's `zoom_fov` and `ads_*` keys with other Titan guns, and check what our camera FOV does during its ADS (log it).
 - *Fix and verify:* FOV log and screenshots while zooming in.
 
+**29. Titan projectile models point the wrong way** (A, high, added later)
+- *Likely cause:* since 82eb7bf, bolts carry their script's `projectilemodel`, all turned with one fixed rotation copied from the Archer's missile, which assumed the model's nose runs along +Z. Most Source models point along +X, so the Titan rockets and shells fly sideways or tail-first.
+- *Research:* each projectile model's bounds and attachments (`mdlinfo`/`attachdump`: the `exhaust` attachment the trail uses, and which axis is longest) for every Titan gun's `projectilemodel`. Also check which way the Archer's missile really points, since that's where the +Z came from.
+- *Fix:* orient models by their real forward axis (very likely +X, and the same for all), and put the trail on the `exhaust` attachment like the game.
+- *Verify:* screenshots of each projectile in flight from the side.
+
 **12. Titan weapons lose their crosshair when zoomed** (A, high, quick)
 - *Likely cause:* `crosshair.rs` (~142) fades every crosshair out by `adsFrac`. That is right for Pilot guns with sights, but Titan weapons in TF2 keep the crosshair while zoomed.
 - *Research:* R3, to confirm which crosshairs stay and whether they shrink or tighten with zoom (they get `player_zoomFrac` as an argument).
@@ -236,30 +242,31 @@ We work through these one at a time, and the next one starts only after the user
 1. ~~Re-entering the Titan gives forward momentum (item 5)~~ (fixed in 76b3aa5: a leftover dash press from jumping into BT)
 2. ~~Tone's Particle Wall curves the wrong way (19)~~ (fixed in 01b4830)
 3. ~~Tone's Sonar Pulse shows the Electric Smoke icon (24)~~ (fixed: icons from the scripts' hud_icon, kept at their own aspect)
-4. Titan weapons lose their crosshair when zoomed (12)
-5. Northstar's railgun zooms out when aiming (28)
-6. Ion's tripwire beams are misaligned (27)
-7. Tone's lock-on marks on enemy Titans (25)
-8. Legion right-click artifact on the weapon (13)
-9. On-foot muzzle flash stays behind in the world (14)
-10. Thunderbolt scope depends on looking up or down (15)
-11. Scorch's gun can't light his gas canisters (26)
-12. Titan HUD moves far too much (1)
-13. BT slides too much when turning while holding forward (23)
-14. Titan dash feels weird (4)
-15. Everything moves too much and is too shaky (2)
-16. HUD countdowns don't behave like TF2 (11)
-17. Mozambique and sidearm recoil (10)
-18. ADS animation is weird (3)
-19. Holo Pilot moves weirdly (20)
-20. Wallrun start is unreliable (6)
-21. Archer has no proper sight (16)
-22. Sliding doesn't feel like TF2 (7)
-23. Grappling hook doesn't feel right (9)
-24. Floor drawn over explosions and shields (18)
-25. Smoke and see-through effects look wrong (17)
-26. Falling through buildings (8)
-27. Lighting (21, parked until the user asks)
+4. ~~Titan weapons lose their crosshair when zoomed (12)~~ (fixed: only Pilot guns fade theirs)
+5. Titan projectile models point the wrong way (29)
+6. Northstar's railgun zooms out when aiming (28)
+7. Ion's tripwire beams are misaligned (27)
+8. Tone's lock-on marks on enemy Titans (25)
+9. Legion right-click artifact on the weapon (13)
+10. On-foot muzzle flash stays behind in the world (14)
+11. Thunderbolt scope depends on looking up or down (15)
+12. Scorch's gun can't light his gas canisters (26)
+13. Titan HUD moves far too much (1)
+14. BT slides too much when turning while holding forward (23)
+15. Titan dash feels weird (4)
+16. Everything moves too much and is too shaky (2)
+17. HUD countdowns don't behave like TF2 (11)
+18. Mozambique and sidearm recoil (10)
+19. ADS animation is weird (3)
+20. Holo Pilot moves weirdly (20)
+21. Wallrun start is unreliable (6)
+22. Archer has no proper sight (16)
+23. Sliding doesn't feel like TF2 (7)
+24. Grappling hook doesn't feel right (9)
+25. Floor drawn over explosions and shields (18)
+26. Smoke and see-through effects look wrong (17)
+27. Falling through buildings (8)
+28. Lighting (21, parked until the user asks)
 
 ## Order of work (original grouping)
 

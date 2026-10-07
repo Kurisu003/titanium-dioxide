@@ -2,8 +2,8 @@
 //! e.g. `ui/crosshair_tri`); RUI is compiled UI code, so the layouts are rebuilt here from the
 //! RUI atlas's crosshair parts (`rui/hud/crosshairs/*`). Pieces sit on a ring as wide as the
 //! weapon's current spread cone (the RUI's `adjustedSpread weapon_spread` argument) at the
-//! current zoom, and the crosshair fades out while aiming down sights. Which parts make up
-//! which crosshair, and their size, are reconstructions.
+//! current zoom, and a Pilot gun's crosshair fades out while aiming down sights (a Titan's
+//! stays). Which parts make up which crosshair, and their size, are reconstructions.
 
 use crate::ui::UiAssets;
 use bevy::prelude::*;
@@ -105,13 +105,15 @@ pub fn update(
 ) {
     use crate::pilotctl::Control;
     let Ok((root, children)) = roots.single() else { return };
+    // How far the crosshair fades: a Pilot's gun hands over to its sight while aiming down
+    // sights; a Titan's guns have none (ADS only zooms), so theirs stays up.
     let (name, spread, ads) = match *control {
         Control::Pilot => match pilots.single().ok().and_then(|l| l.active()) {
             Some(g) => (g.def.crosshair.clone(), g.cur_spread, g.ads),
             None => (String::new(), 0.0, 0.0),
         },
         _ => match titans.single() {
-            Ok(w) => (w.def.crosshair.clone(), w.cur_spread, w.ads),
+            Ok(w) => (w.def.crosshair.clone(), w.cur_spread, 0.0),
             Err(_) => (String::new(), 0.0, 0.0),
         },
     };
