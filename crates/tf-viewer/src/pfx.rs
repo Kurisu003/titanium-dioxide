@@ -24,7 +24,8 @@
 //! - renderers: animated sprites (orientations 0-3), sprite trails, ropes, light sources
 //!   (a small pool of point lights).
 //!
-//! Not drawn: refraction materials and screen-space systems. Decals (`Emit Decal`) are quads
+//! Refracting materials draw as screen-space refraction (`RefractMaterial`, refract.wgsl). Not
+//! drawn: screen-space systems. Decals (`Emit Decal`) are quads
 //! laid on the surface at the impact.
 
 use crate::player::{to_bevy, MainCamera, UNIT};
@@ -94,12 +95,65 @@ impl bevy::pbr::MaterialExtension for SoftParticle {
 
 pub type SoftMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, SoftParticle>;
 
+/// Refracting sprite material (the game's `Refract` particle materials: heat haze, shockwave
+/// rings, the vortex's pinched ring). It reads the scene drawn so far through Bevy's view
+/// transmission texture (a copy of the main pass taken before the transmissive phase, which
+/// the base material's `specular_transmission > 0` puts these sprites in) and offsets the
+/// lookup by the normal map. See refract.wgsl.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+#[bind_group_data(SoftKey)]
+pub struct RefractParticle {
+    /// x: `$refractamount`, y: `$bluramount` (pixels), z: 1 with `$vertexcolormodulate`.
+    #[uniform(100)]
+    pub params: Vec4,
+    /// Packed: RG the normal map's XY, B the `$opacitymap`, A the normal map's alpha.
+    #[texture(101)]
+    #[sampler(102)]
+    pub normal: Option<Handle<Image>>,
+    pub ignorez: bool,
+}
+
+impl From<&RefractParticle> for SoftKey {
+    fn from(m: &RefractParticle) -> Self {
+        SoftKey { ignorez: m.ignorez }
+    }
+}
+
+impl bevy::pbr::MaterialExtension for RefractParticle {
+    fn fragment_shader() -> bevy::shader::ShaderRef {
+        "embedded://tf_viewer/refract.wgsl".into()
+    }
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialExtensionPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        key: bevy::pbr::MaterialExtensionKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        // The transmissive phase draws opaque-style (no blending, depth writes): these are
+        // translucent sprites (`$translucent`, `$nowritez`), blended by their opacity map.
+        if let Some(t) = descriptor.fragment.as_mut().and_then(|f| f.targets.first_mut()).and_then(|t| t.as_mut()) {
+            t.blend = Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING);
+        }
+        if let Some(ds) = descriptor.depth_stencil.as_mut() {
+            ds.depth_write_enabled = false;
+            if key.bind_group_data.ignorez {
+                ds.depth_compare = bevy::render::render_resource::CompareFunction::Always;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub type RefractMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, RefractParticle>;
+
 pub struct SoftMaterialPlugin;
 
 impl Plugin for SoftMaterialPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "soft.wgsl");
+        bevy::asset::embedded_asset!(app, "refract.wgsl");
         app.add_plugins(MaterialPlugin::<SoftMaterial>::default());
+        app.add_plugins(MaterialPlugin::<RefractMaterial>::default());
     }
 }
 
@@ -2256,14 +2310,15 @@ fn precache(keys: &[String], vpk_paths: &[std::path::PathBuf], frontend: Option<
 }
 
 /// Read a particle material's .vmt and decode its base texture (with `$texcolorfromalpha`'s
-/// ramp applied); None if it can't be drawn (refraction, or missing). Pure, so new effects'
-/// materials decode in parallel.
+/// ramp applied), or a refracting material's packed normal map (`decode_refract`); None if
+/// it can't be drawn (missing). Pure, so new effects' materials decode in parallel.
 fn decode_material(key: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Option<(vtf::Vtf, HashMap<String, String>)> {
     let vmt_path = format!("materials/{}", if key.ends_with(".vmt") { key.to_string() } else { format!("{key}.vmt") });
     let text = String::from_utf8_lossy(&read(&vmt_path)?).into_owned();
     let (shader, kv) = parse_vmt(&text);
     if shader.contains("refract") || kv.contains_key("$refractamount") || kv.contains_key("$forcerefract") {
-        return None;
+        // TF_NO_REFRACT=1 leaves refraction out (for comparing).
+        return if std::env::var_os("TF_NO_REFRACT").is_some() { None } else { decode_refract(kv, read) };
     }
     let tex = kv.get("$basetexture")?.replace('\\', "/").to_ascii_lowercase();
     // Some name the source art (`dirt_burst_full.tga`): the compiled texture is the .vtf.
@@ -2283,6 +2338,30 @@ fn decode_material(key: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Option<
     Some((v, kv))
 }
 
+/// A `Refract` material's textures packed into one linear image: RG the normal map's XY, B
+/// its `$opacitymap` (white without one) and A the normal map's alpha (the refraction mask
+/// in Source's Refract shader). The kv gains `%refract`.
+fn decode_refract(mut kv: HashMap<String, String>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Option<(vtf::Vtf, HashMap<String, String>)> {
+    let path = |k: &str| kv.get(k).map(|t| format!("materials/{}.vtf", t.replace('\\', "/").to_ascii_lowercase().trim_end_matches(".vtf")));
+    let mut v = vtf::decode(&read(&path("$normalmap")?)?, 512).ok()?;
+    let opa = path("$opacitymap").and_then(|p| read(&p)).and_then(|b| vtf::decode(&b, 512).ok());
+    // An opacity map's value: its alpha if it has one, else its grey level.
+    let opa_alpha = opa.as_ref().is_some_and(|o| o.rgba.chunks_exact(4).any(|px| px[3] != 255));
+    let (w, h) = (v.width as usize, v.height as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let o = opa.as_ref().map_or(255, |o| {
+                let (ow, oh) = (o.width as usize, o.height as usize);
+                let px = &o.rgba[((y * oh / h) * ow + x * ow / w) * 4..][..4];
+                if opa_alpha { px[3] } else { px[0] }
+            });
+            v.rgba[(y * w + x) * 4 + 2] = o;
+        }
+    }
+    kv.insert("%refract".into(), "1".into());
+    Some((v, kv))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layer_for(
     pfx: &mut Pfx,
@@ -2293,6 +2372,7 @@ fn layer_for(
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
     mats: &mut Assets<SoftMaterial>,
+    refract_mats: &mut Assets<RefractMaterial>,
 ) -> Option<usize> {
     let key = material.replace('\\', "/").to_ascii_lowercase();
     let layer_key = if overlay { format!("{key}#overlay") } else { key.clone() };
@@ -2307,6 +2387,13 @@ fn layer_for(
             None => decode_material(&key, &read)?,
         };
         let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
+        if kv.contains_key("%refract") {
+            // The first-person overlay has no scene copy of its own: refraction there is left out.
+            if overlay {
+                return None;
+            }
+            return Some(refract_layer(&key, v, &kv, commands, images, meshes, refract_mats));
+        }
         let additive = flag("$additive") || flag("$addself");
         let overbright = kv.get("$overbrightfactor").and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0).max(0.1);
         let orient = kv.get("$orientation").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
@@ -2361,6 +2448,43 @@ fn layer_for(
     idx
 }
 
+/// A refracting material's layer: its sprites take the transmissive phase (refract.wgsl).
+fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<RefractMaterial>) -> Layer {
+    let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
+    let num = |k: &str| kv.get(k).and_then(|s| s.trim().parse::<f32>().ok());
+    let mut img = Image::new(
+        Extent3d { width: v.width, height: v.height, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        std::mem::take(&mut v.rgba),
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = bevy::image::ImageSampler::linear();
+    // TF_REFRACT_SCALE=k multiplies every material's amount (for checking it).
+    let scale = std::env::var("TF_REFRACT_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+    let material = mats.add(RefractMaterial {
+        base: StandardMaterial {
+            // Only to put the sprites in the transmissive phase (it is what makes Bevy copy the
+            // scene for them); the lighting model isn't used.
+            specular_transmission: 1.0,
+            unlit: true,
+            alpha_mode: AlphaMode::Opaque,
+            cull_mode: None,
+            double_sided: true,
+            fog_enabled: false,
+            ..default()
+        },
+        extension: RefractParticle {
+            params: Vec4::new(num("$refractamount").unwrap_or(0.0) * scale, num("$bluramount").unwrap_or(0.0), if flag("$vertexcolormodulate") { 1.0 } else { 0.0 }, 0.0),
+            normal: Some(images.add(img)),
+            ignorez: flag("$ignorez"),
+        },
+    });
+    let mesh = meshes.add(empty_mesh());
+    let entity = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver)).id();
+    Layer { key: key.to_string(), additive: false, gain: 1.0, orient: num("$orientation").map_or(0, |o| o as i32), sheet: v.sheet, mesh, entity }
+}
+
 fn empty_mesh() -> Mesh {
     let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
@@ -2405,7 +2529,7 @@ pub fn update_pfx(
     impacts: Query<(Entity, &ImpactRequest)>,
     mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
-    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>),
+    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>),
     mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>),
     mut vis: Query<&mut Visibility>,
     mut lights: Query<(&mut PointLight, &mut Transform)>,
@@ -2561,7 +2685,7 @@ pub fn update_pfx(
         }
     }
     for (fi, ni, m, overlay) in needed {
-        let l = layer_for(&mut pfx, &m, overlay, &gd, &mut commands, images, meshes, mats);
+        let l = layer_for(&mut pfx, &m, overlay, &gd, &mut commands, images, meshes, mats, &mut assets.5);
         pfx.effects[fi].nodes[ni].layer = l.or(Some(usize::MAX));
     }
     if loads > 0 {

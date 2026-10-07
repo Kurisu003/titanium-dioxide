@@ -92,8 +92,8 @@ already playing (loops, music) too.
 
 - **Weapon sights and scopes:** the reticles are compiled UI programs that can't be run yet, so
   optics show no reticle.
-- **Some visuals:** refraction effects (heat haze, shield distortion) aren't drawn; cloak and
-  phase shift use stand-in visuals; some particle features are missing; lighting, fog and
+- **Some visuals:** refraction is approximated, and only for particle effects (heat haze,
+  shockwave rings); shield domes still use stand-ins; cloak and phase shift use stand-in visuals; some particle features are missing; lighting, fog and
   materials are approximations, not the game's shaders.
 - **Movement details** that the game's engine code (not its data files) controls: wall-run
   curving and slipping, some slide behaviour, and the fine "feel" are approximated.
@@ -194,8 +194,17 @@ white disc under this tonemapper, so the camera's bloom carries the rest (an app
 of the game's HDR pipeline, not its numbers). Model renderers draw (shield walls, casings).
 `Emit Decal` lays a bullet hole on level geometry: one of the system's materials (its
 `_subrect` atlas name maps to the material without the suffix), 4 units wide (the size is a
-guess), the newest 256 kept; `TF_NO_DECALS=1` turns them off. Not drawn:
-refraction materials and screen-space systems; light-source particles are off by default
+guess), the newest 256 kept; `TF_NO_DECALS=1` turns them off. Refracting materials (the
+`Refract` shader: heat haze, explosion shockwave rings, distortion rings) draw in Bevy's
+transmissive phase (`RefractMaterial`, refract.wgsl): a copy of the scene drawn so far (world
+and sky) is looked up offset by the material's normal map as in Source's Refract shader (the
+screen-space offset is the normal's XY times `$refractamount`, the normal map's alpha and the
+particle alpha; `$vertexcolormodulate` tints, `$bluramount` is a 4-tap blur, `$ignorez` skips
+the depth test). Guessed: Respawn's `$opacitymap` is read as a mask that scales the offset and
+blends the sprite; other effects' sprites aren't refracted (they draw after the copy, over the
+refraction); the first-person overlay leaves refraction out. `TF_NO_REFRACT=1` turns it off and
+`TF_REFRACT_SCALE=k` multiplies the amounts (for checking). Not drawn: screen-space systems;
+light-source particles are off by default
 (`TF_PFX_LIGHTS=1`: with the map's irradiance volume loaded, any visible point light makes Bevy
 0.18 draw BT in the wrong pose, unlit). `TF_OLD_FX=1` keeps the hand-built look below, which is
 also the fallback while the library loads, for smoke puffs and for first-person muzzle flashes
@@ -1074,8 +1083,9 @@ the free camera at a position in game units; `--no-props` skips static props.
   `common(NN).rpak` and `common_mp(NN).rpak` patch's own pages (newest first) for assets the base pak lacks (e.g. the R-101
   SFP's materials). Set `TF_NO_PATCH_PAKS=1` to skip that (~0.75 s at startup).
 - Collision uses render meshes, not the game's own collision lumps, so some decorative geometry blocks and some terrain may be missing.
-- Particle systems skip refraction and screen-space systems, and their light sources are off
-  by default (see Effects). Bullet holes are flat quads, not projected decals, so they don't
+- Particle systems skip screen-space systems, and their light sources are off by default (see
+  Effects). Particle refraction approximates Source's Refract shader (see Effects); refracting
+  model materials (the Vortex and Thermal Shield domes, the hex shields) still use stand-ins. Bullet holes are flat quads, not projected decals, so they don't
   wrap around edges. Point-blank
   hits on BT's hull play the game's systems at the game's sizes (Tone's 40mm bursts are
   100-unit fireballs 50 units from the eye), so a Titan shelling the cockpit still fills the
