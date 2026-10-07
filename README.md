@@ -751,8 +751,8 @@ the constants in their `.nut` files:
   channel onto a pale-blue ramp running white, black, then blue-grey, an inverted ghost world)
   as a full-screen pass after tonemapping on the viewmodel camera (colorcorr.rs, so not over
   the HUD), fading over 0.15 s (a guess), with the script's `P_phase_shift_screen`,
-  `P_phase_shift_screen_start` and `P_phase_shift_main` systems; `TF_NO_PHASE_FX=1` keeps
-  the old blue tint.
+  `P_phase_shift_screen_start` and `P_phase_shift_main` systems (Ronin's Phase Dash gets the
+  same, with `P_phase_shift_main_XO`); `TF_NO_PHASE_FX=1` keeps the old blue tint.
 - Cloak (`mp_ability_cloak`): 15 s during which enemies only see you within 400 units; 20 s.
 - Phase Shift (`mp_ability_shifter`): 2 s of being untouchable and unseen; 15 s.
 - Grapple (`mp_ability_grapple`): hooks a surface within `grapple_maxLength` (1100) and reels you

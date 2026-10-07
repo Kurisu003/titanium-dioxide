@@ -100,6 +100,7 @@ pub fn phase_shift_fx(
     mut state: Local<(Option<Option<Handle<Image>>>, bool, f32, Option<Entity>)>,
     cams: Query<(Entity, Option<&crate::colorcorr::ColorCorrection>), With<crate::vmcam::ViewmodelCamera>>,
     main: Query<&GlobalTransform, With<crate::player::MainCamera>>,
+    titan: Query<&crate::titankit::KitState>,
 ) {
     let (lut, was, weight, screen) = &mut *state;
     let lut = lut
@@ -108,7 +109,9 @@ pub fn phase_shift_fx(
             crate::colorcorr::lut_image(&raw).map(|img| images.add(img))
         })
         .clone();
-    let phased = status.phased() && *control == Control::Pilot && std::env::var_os("TF_NO_PHASE_FX").is_none();
+    // Ronin's Phase Dash phases BT the same way (sh_phase_shift.gnut handles Titans too).
+    let titan_phased = *control == Control::Titan && titan.iter().any(|k| k.phase > 0.0);
+    let phased = ((status.phased() && *control == Control::Pilot) || titan_phased) && std::env::var_os("TF_NO_PHASE_FX").is_none();
     let cam = main.single().ok();
     let origin = Vec3::ZERO;
     if phased && !*was {
@@ -123,7 +126,7 @@ pub fn phase_shift_fx(
             // At the Pilot's feet, 30 units ahead along the view's level heading.
             let fwd = (c.forward().as_vec3() * Vec3::new(1.0, 0.0, 1.0)).normalize_or(Vec3::NEG_Z);
             let at = c.translation() - Vec3::Y * 60.0 * crate::player::UNIT + fwd * 30.0 * crate::player::UNIT;
-            crate::pfx::emit_named(&mut commands, "P_phase_shift_main", at, Vec3::Y);
+            crate::pfx::emit_named(&mut commands, if *control == Control::Titan { "P_phase_shift_main_XO" } else { "P_phase_shift_main" }, at, Vec3::Y);
         }
     }
     *was = phased;
