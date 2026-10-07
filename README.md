@@ -93,7 +93,7 @@ already playing (loops, music) too.
 - **Weapon sights and scopes:** the reticles are compiled UI programs that can't be run yet, so
   optics show no reticle.
 - **Some visuals:** refraction is approximated, and only for particle effects (heat haze,
-  shockwave rings); shield domes still use stand-ins; cloak and phase shift use stand-in visuals; some particle features are missing; lighting, fog and
+  shockwave rings); shield domes still use stand-ins; phase shift uses a stand-in screen tint; some particle features are missing; lighting, fog and
   materials are approximations, not the game's shaders.
 - **Movement details** that the game's engine code (not its data files) controls: the formulas
   behind the movement keys (we follow the game's own descriptions of them) and
@@ -742,8 +742,11 @@ the constants in their `.nut` files:
 
 - Stim (`mp_ability_heal`): 3 s of 40% extra speed and doubled health regen; 25 s recharge.
   The screen plays `P_heal` while it runs (sh_stim.gnut), placed like `P_health_hex` (same
-  guessed visor distance). Cloak and Phase Shift's first-person looks are engine-side, so they
-  keep a faint blue screen tint as a stand-in.
+  guessed visor distance). Cloak and Phase Shift's first-person looks are engine-side. Cloak
+  draws the arms and gun as a refracting outline (cloak.rs: the picture behind them shifted by
+  their view-space normal, a cool tint and a faint fresnel rim; strengths by eye,
+  `TF_CLOAK="warp rim exponent tint"` to tune, `TF_NO_CLOAK_FX=1` for the old screen tint);
+  Phase Shift keeps a blue screen tint as a stand-in.
 - Cloak (`mp_ability_cloak`): 15 s during which enemies only see you within 400 units; 20 s.
 - Phase Shift (`mp_ability_shifter`): 2 s of being untouchable and unseen; 15 s.
 - Grapple (`mp_ability_grapple`): hooks a surface within `grapple_maxLength` (1100) and reels you

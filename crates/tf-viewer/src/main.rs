@@ -32,6 +32,7 @@ mod gamepad;
 mod pilotability;
 mod pilotbody;
 mod autotitan;
+mod cloak;
 mod rodeo;
 mod fparms;
 mod settings;
@@ -216,6 +217,7 @@ fn main() {
         .add_plugins(convert::BlendMaterialPlugin)
         .add_plugins(pfx::SoftMaterialPlugin)
         .add_plugins(uber::UberPlugin)
+        .add_plugins(cloak::CloakPlugin)
         .add_plugins(particles::ParticlePlugin)
         .add_systems(Update, (perf_log, weapons::shimmer_shields))
         .insert_resource(args)
@@ -326,7 +328,7 @@ fn main() {
                     hud::update_smart_hud,
                     pilotability::pilot_abilities,
                     (pilotability::update_grenades, pilotability::grenade_visuals).chain(),
-                    pilotability::update_pilot_slots,
+                    (pilotability::update_pilot_slots, cloak::cloak_viewmodel),
                     (pilotability::update_pulse_markers, rodeo::battery_hud).chain(),
                 )
                     .chain(),
