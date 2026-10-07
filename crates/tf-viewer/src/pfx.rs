@@ -11,18 +11,28 @@
 //! Supported:
 //! - emitters: emit_instantaneously, emit_continuously, emit noise (its mean rate),
 //!   emit over distance, emit_instantaneously by distance;
-//! - initializers: lifetime/radius/alpha/colour/rotation/rotation speed/sequence/trail length
-//!   random, scalar and vector random, remap noise to scalar, position within sphere/box,
-//!   along ring, along path, offset and warp, velocity random/noise/inherit, move particles
-//!   between two control points, lifetime from sequence, yaw flip;
+//! - initializers: lifetime/radius/alpha/colour/rotation/rotation speed/yaw/sequence/trail
+//!   length random, scalar and vector random, remap noise to scalar, remap initial scalar,
+//!   remap particle count to scalar, remap control point to scalar, position within
+//!   sphere/box, along ring, along path, from parent particles, offset and warp, velocity
+//!   random/noise/inherit, move particles between two control points, lifetime from sequence,
+//!   yaw flip, normal align to CP, inherit initial value from parent particle, set CP position;
 //! - operators: movement basic, lifespan decay, radius scale, alpha fade and decay (and the
-//!   tracer variant), alpha fade in/out (random and simple), colour fade, rotation spin roll,
-//!   graph scalar, lerp initial scalar, lock to control point, max velocity, set control point
-//!   positions;
+//!   tracer variant), alpha fade in/out (random and simple), colour fade, rotation spin
+//!   roll/yaw, rotation about 3D axis, orient relative to CP, graph scalar, lerp initial
+//!   scalar, lerp end cap scalar, remap scalar, remap distance to CP / between two CPs /
+//!   percentage between two CPs to scalar, remap control point to vector (colour) and to
+//!   scalar, remap velocity to vector (normal), oscillate scalar (and simple) and vector
+//!   (colour), ramp scalar linear simple/random, lock to control point, normal lock to control
+//!   point, max velocity, rotate particle around axis, maintain position along path, inherit
+//!   attribute from parent particle, set control point positions, set CP to player, set
+//!   (child) control points from particle positions, restart effect / stop effect after
+//!   duration;
 //! - forces: pull towards control point, random, turbulent, twist around axis;
 //! - constraints: collision via traces (world BVH), constrain distance to control point;
 //! - renderers: animated sprites (orientations 0-3), sprite trails, ropes, light sources
-//!   (a small pool of point lights).
+//!   (a small pool of point lights), models (oriented by each particle's normal, yaw, roll
+//!   and spin), decals.
 //!
 //! Refracting materials draw as screen-space refraction (`RefractMaterial`, refract.wgsl). Not
 //! drawn: screen-space systems. Decals (`Emit Decal`) are quads
@@ -571,6 +581,10 @@ enum Field {
     /// Creation time (as an input: the particle's age).
     Age,
     Id,
+    /// Rotation about the up vector (model particles, orientation 2 sprites).
+    Yaw,
+    Color,
+    Position,
     Other,
 }
 
@@ -586,6 +600,9 @@ fn field(i: i32) -> Field {
         16 => Field::Alpha2,
         8 => Field::Age,
         11 => Field::Id,
+        12 => Field::Yaw,
+        6 => Field::Color,
+        0 => Field::Position,
         _ => Field::Other,
     }
 }
@@ -647,6 +664,20 @@ enum Init {
     FromParent { scale: f32 },
     /// Remap Initial Scalar: one field's starting value from another's.
     Remap { inp: Field, out: Field, imin: f32, imax: f32, omin: f32, omax: f32, scale: bool, active: bool },
+    /// Rotation Yaw Random (degrees, as Rotation Random).
+    Yaw { initial: f32, min: f32, max: f32, exp: f32, flip: bool },
+    /// Normal Align to CP: the particle normal is the control point's forward axis.
+    NormalAlign { cp: usize },
+    /// Inherit Initial Value From Parent Particle: a field from the parent system's particle
+    /// with the same index (or a random one), times `scale`.
+    InheritParent { field: Field, scale: f32, random: bool },
+    /// Remap Particle Count to Scalar: the particle's number (its id) remapped to a field.
+    CountRemap { imin: f32, imax: f32, out: Field, omin: f32, omax: f32, scale: bool, active: bool },
+    /// Set CP Position: a control point placed at an offset in another's frame (run when the
+    /// node's control points are set up each frame, like Set Control Point Positions).
+    SetCp { out: usize, base: usize, pos: Vec3, local: bool },
+    /// Remap Control Point to Scalar (initializer): a component of a control point's value.
+    CpToScalar { cp: usize, comp: usize, imin: f32, imax: f32, out: Field, omin: f32, omax: f32, scale: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -689,6 +720,39 @@ enum Oper {
     SetCps { base: usize, sets: Vec<(usize, Vec3)>, world: bool },
     /// Set Control Point To Player: the control point follows the camera (view origin).
     CpToPlayer { cp: usize },
+    /// Rotation Spin Yaw: as Rotation Spin Roll, on the yaw.
+    SpinYaw { rate: f32, min: f32, stop: f32 },
+    /// Normal Lock to Control Point: the normal turns with the control point.
+    NormalLock { cp: usize },
+    /// Remap Velocity to Vector into the normal (field 21): the normal follows the motion.
+    VelToNormal,
+    /// Rotation about 3D Axis (model particles): spin about a model-space axis, optionally
+    /// easing to `end_rate` over `decay` lifetimes. ("enable modulate by roll speed attribute"
+    /// is not applied: what it scales by is unknown.)
+    Axis3D { axis: Vec3, rate: f32, decays: bool, end_rate: f32, decay: f32 },
+    /// Movement Rotate Particle Around Axis: positions (and velocities) orbit a control point.
+    Orbit { cp: usize, axis: Vec3, rate: f32, local: bool },
+    /// Ramp Scalar Linear Random: Ramp Scalar Linear Simple with per-particle random rates and
+    /// times (proportional to the lifetime or in seconds).
+    RampRandom { field: Field, rate: (f32, f32), st: (f32, f32), et: (f32, f32), prop: bool },
+    /// Lerp EndCap Scalar: once the effect is stopped, a field eases to a value over `time`.
+    LerpEndCap { field: Field, to: f32, time: f32 },
+    /// Stop Effect after Duration: the node stops emitting (and optionally clears) after it.
+    StopAfter { duration: f32, kill: bool },
+    /// Remap Percentage Between Two Control Points to Scalar: where a particle lies along the
+    /// line from one point to the other.
+    PctBetweenCps { a: usize, b: usize, out: Field, pmin: f32, pmax: f32, omin: f32, omax: f32, active: bool, scale_init: bool, scale_cur: bool },
+    /// Set (child) control points from particle positions: control points follow particles.
+    CpsFromParticles { first: usize, count: usize, skip: usize, orient: bool },
+    /// Inherit Attribute From Parent Particle: a field follows the parent's particle.
+    InheritAttr { field: Field, scale: f32 },
+    /// Movement Maintain Position Along Path: particles held on the line between two points
+    /// (bulge and cohesion are not applied).
+    KeepOnPath { start: usize, end: usize, count: f32 },
+    /// Remap Control Point to Vector into the colour (only for control points that were set).
+    CpToColor { cp: usize, imin: Vec3, imax: Vec3, omin: Vec3, omax: Vec3, scale: bool },
+    /// Remap Control Point to Scalar (only for control points that were set).
+    CpToScalar { cp: usize, comp: usize, imin: f32, imax: f32, out: Field, omin: f32, omax: f32, scale_init: bool, scale_cur: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -818,7 +882,7 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
             },
             "Velocity Inherit from Control Point" => Init::InheritCpVelocity { cp: cpn(o, "control point number"), scale: o.f("velocity scale", 1.0) },
             "Position From Parent Particles" => Init::FromParent { scale: o.f("Inherited Velocity Scale", 0.0) },
-            "Remap Initial Scalar" => Init::Remap {
+            "Remap Initial Scalar" | "remap initial scalar" => Init::Remap {
                 inp: field(o.i("input field", 8)),
                 out: field(o.i("output field", 3)),
                 imin: o.f("input minimum", 0.0),
@@ -857,6 +921,41 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 end: cpn(o, "end control point number"),
                 sequential: o.function.ends_with("Sequential"),
                 count: o.f("particles to map from start to end", 100.0).max(1.0),
+            },
+            // Source's defaults (C_INIT_RandomYaw): 0 + 0..360 degrees.
+            "Rotation Yaw Random" => Init::Yaw {
+                initial: o.f("yaw_initial", 0.0),
+                min: o.f("yaw_offset_min", 0.0),
+                max: o.f("yaw_offset_max", 360.0),
+                exp: o.f("yaw_random_exponent", 1.0),
+                flip: o.b("randomly_flip_direction", false),
+            },
+            "Normal Align to CP" => Init::NormalAlign { cp: cpn(o, "control_point_number") },
+            "Inherit Initial Value From Parent Particle" => Init::InheritParent { field: field(o.i("Inherited Field", 3)), scale: o.f("Scale", 1.0), random: o.b("Random Parent Particle Distribution", false) },
+            "Remap Particle Count to Scalar" => Init::CountRemap {
+                imin: o.f("input minimum", 0.0),
+                imax: o.f("input maximum", 10.0),
+                out: field(o.i("output field", 3)),
+                omin: o.f("output minimum", 0.0),
+                omax: o.f("output maximum", 1.0),
+                scale: o.b("output is scalar of initial random range", false),
+                active: o.b("only active within specified input range", false),
+            },
+            "Set CP Position" => Init::SetCp {
+                out: o.i("output control point", 1).clamp(0, NCP as i32 - 1) as usize,
+                base: cpn(o, "offset control point"),
+                pos: v3(o.v3("position", [0.0; 3])),
+                local: o.b("offset in local space", true),
+            },
+            "Remap Control Point to Scalar" => Init::CpToScalar {
+                cp: cpn(o, "input control point number"),
+                comp: o.i("input field 0-2 X/Y/Z", 0).clamp(0, 2) as usize,
+                imin: o.f("input minimum", 0.0),
+                imax: o.f("input maximum", 1.0),
+                out: field(o.i("output field", 3)),
+                omin: o.f("output minimum", 0.0),
+                omax: o.f("output maximum", 1.0),
+                scale: o.b("output is scalar of initial random range", false),
             },
             _ => continue,
         };
@@ -983,6 +1082,82 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                     sets.push((n, v3(o.v3(loc, [128.0 * d as f32, 0.0, 0.0]))));
                 }
                 Oper::SetCps { base: cpn(o, "Control Point to offset positions from"), sets, world: o.b("Set positions in world space", false) }
+            }
+            "Rotation Spin Yaw" => Oper::SpinYaw { rate: o.f("yaw_rate_degrees", 0.0).to_radians(), min: o.f("yaw_rate_min", 0.0).to_radians(), stop: o.f("yaw_stop_time", 0.0) },
+            "Normal Lock to Control Point" => Oper::NormalLock { cp: cpn(o, "control_point_number") },
+            "Remap Velocity to Vector" if o.i("output field", 0) == 21 => Oper::VelToNormal,
+            // Respawn's operator. Never-written values are taken as its defaults: the Z axis
+            // (no system names it) and 360 degrees/s (a guess; 0 is written out 21 times).
+            "Rotation about 3D Axis" => Oper::Axis3D {
+                axis: v3(o.v3("model-space axis of rotation", [0.0, 0.0, 1.0])).normalize_or(Vec3::Z),
+                rate: o.f("starting spin rate in degrees per second", 360.0).to_radians(),
+                decays: o.b("enable decay over time", false),
+                end_rate: o.f("fully decayed spin rate", 0.0).to_radians(),
+                decay: o.f("decay time in lifetimes", 1.0).max(1e-3),
+            },
+            "Movement Rotate Particle Around Axis" => Oper::Orbit {
+                cp: cpn(o, "Control Point"),
+                axis: v3(o.v3("Rotation Axis", [0.0, 0.0, 1.0])).normalize_or(Vec3::Z),
+                rate: o.f("Rotation Rate", 180.0).to_radians(),
+                local: o.b("Use Local Space", false),
+            },
+            "Ramp Scalar Linear Random" => Oper::RampRandom {
+                field: field(o.i("ramp field", 3)),
+                rate: (o.f("ramp rate min", 0.0), o.f("ramp rate max", 1.0)),
+                st: (o.f("start time min", 0.0), o.f("start time max", 0.0)),
+                et: (o.f("end time min", 1.0), o.f("end time max", 1.0)),
+                prop: o.b("start/end proportional", true),
+            },
+            "Lerp EndCap Scalar" => Oper::LerpEndCap { field: field(o.i("output field", 3)), to: o.f("value to lerp to", 1.0), time: o.f("lerp time", 1.0).max(1e-3) },
+            "Stop Effect after Duration" => Oper::StopAfter { duration: o.f("Duration at which to Stop", 1.0), kill: o.b("Destroy All Particles Immediately", false) },
+            "Remap Percentage Between Two Control Points to Scalar" => Oper::PctBetweenCps {
+                a: cpn(o, "starting control point"),
+                b: o.i("ending control point", 1).clamp(0, NCP as i32 - 1) as usize,
+                out: field(o.i("output field", 3)),
+                pmin: o.f("percentage minimum", 0.0),
+                pmax: o.f("percentage maximum", 1.0),
+                omin: o.f("output minimum", 0.0),
+                omax: o.f("output maximum", 1.0),
+                active: o.b("only active within input range", false),
+                scale_init: o.b("output is scalar of initial random range", false),
+                scale_cur: o.b("output is scalar of current value", false),
+            },
+            "Set child control points from particle positions" | "Set control points from particle positions" | "Set per child control point from particle positions" => Oper::CpsFromParticles {
+                first: cpn(o, "First control point to set"),
+                count: o.i("# of control points to set", 1).clamp(1, NCP as i32) as usize,
+                skip: o.i("first particle to copy", 0).max(0) as usize,
+                orient: o.b("set orientation", false),
+            },
+            "Inherit Attribute From Parent Particle" => Oper::InheritAttr { field: field(o.i("Inherited Field", 3)), scale: o.f("Scale", 1.0) },
+            "Movement Maintain Position Along Path" => Oper::KeepOnPath {
+                start: cpn(o, "start control point number"),
+                end: cpn(o, "end control point number"),
+                count: o.f("particles to map from start to end", 100.0).max(1.0),
+            },
+            "Remap Control Point to Vector" if o.i("output field", 0) == 6 => Oper::CpToColor {
+                cp: cpn(o, "input control point number"),
+                imin: v3(o.v3("input minimum", [0.0; 3])),
+                imax: v3(o.v3("input maximum", [0.0; 3])),
+                omin: v3(o.v3("output minimum", [0.0; 3])),
+                omax: v3(o.v3("output maximum", [0.0; 3])),
+                scale: o.b("output is scalar of initial random range", false),
+            },
+            "Remap Control Point to Scalar" => Oper::CpToScalar {
+                cp: cpn(o, "input control point number"),
+                comp: o.i("input field 0-2 X/Y/Z", 0).clamp(0, 2) as usize,
+                imin: o.f("input minimum", 0.0),
+                imax: o.f("input maximum", 1.0),
+                out: field(o.i("output field", 3)),
+                omin: o.f("output minimum", 0.0),
+                omax: o.f("output maximum", 1.0),
+                scale_init: o.b("output is scalar of initial random range", false),
+                scale_cur: o.b("output is scalar of current value", false),
+            },
+            // Source integrates against the system's clock; the per-particle closed form of
+            // Oscillate Scalar is used here.
+            "Oscillate Scalar Simple" => {
+                let (rate, freq) = (o.f("oscillation rate", 0.0), o.f("oscillation frequency", 1.0));
+                Oper::Oscillate { field: field(o.i("oscillation field", 7)), rate: (rate, rate), freq: (freq, freq), st: (0.0, 0.0), et: (1.0e9, 1.0e9), prop: false, mult: o.f("oscillation multiplier", 2.0), phase: o.f("oscillation start phase", 0.5) }
             }
             _ => continue,
         };
@@ -1133,6 +1308,11 @@ struct P {
     base_trail: f32,
     rot: f32,
     spin: f32,
+    /// Rotation about the up vector (radians), and the particle normal (zero: none).
+    yaw: f32,
+    normal: Vec3,
+    /// Model particles: the accumulated `Rotation about 3D Axis` spin (model space).
+    orient: Quat,
     seq: u16,
     flip: bool,
     /// Per-particle random in 0..1 (random fade times).
@@ -1168,9 +1348,17 @@ struct Effect {
     cps: [Cp; NCP],
     cp_prev: [Vec3; NCP],
     cp_vel: [Vec3; NCP],
+    /// Last frame's control points (Normal Lock to Control Point turns normals with them).
+    cp_frame_prev: [Cp; NCP],
+    /// Control points that hold a value (given by the caller or set by an operator): the
+    /// Remap Control Point operators read only these (the others copy CP 0's position, where
+    /// the game would hold a value its scripts set).
+    cp_set: u32,
     age: f32,
     stop_at: f32,
     stopped: bool,
+    /// Effect age when it was stopped (Lerp EndCap Scalar), infinite while running.
+    stopped_at: f32,
     /// End-cap-only initializers have been re-run on the living particles.
     capped: bool,
     attached: Option<Entity>,
@@ -1316,7 +1504,8 @@ impl Pfx {
         self.next_id += 1;
         let id = self.next_id;
         let stop_at = stop_after.unwrap_or(if attached.is_some() { f32::INFINITY } else { DEFAULT_STOP });
-        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], age: 0.0, stop_at, stopped: false, capped: false, attached, end_caps, vm: false, overlay: false });
+        let cp_set = (1u32 << cps.len().clamp(1, NCP)) - 1;
+        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: all, cp_set, age: 0.0, stop_at, stopped: false, stopped_at: f32::INFINITY, capped: false, attached, end_caps, vm: false, overlay: false });
         Some(id)
     }
 
@@ -1587,7 +1776,7 @@ fn cap_active(cap: i8, emitting: bool) -> bool {
 /// (state 1) on a living particle when its effect is stopped, the way the gun shield picks up
 /// its 5 s lifetime and fade only once it is dropped.
 #[allow(clippy::too_many_arguments)]
-fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], parent: &[(Vec3, Vec3)], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool, recap: bool) {
+fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool, recap: bool) {
     let mut had_life = false;
     for (i, cap) in sys.init.iter().zip(&sys.init_cap) {
         if if recap { *cap != 1 } else { !cap_active(*cap, emitting) } {
@@ -1675,9 +1864,9 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 if parent.is_empty() {
                     p.dead = true;
                 } else {
-                    let (pos, vel) = parent[((rand(rng) * parent.len() as f32) as usize).min(parent.len() - 1)];
-                    p.pos = pos;
-                    p.vel += vel * scale;
+                    let q = &parent[((rand(rng) * parent.len() as f32) as usize).min(parent.len() - 1)];
+                    p.pos = q.pos;
+                    p.vel += q.vel * scale;
                 }
             }
             Init::Remap { inp, out, imin, imax, omin, omax, scale, active } => {
@@ -1686,11 +1875,13 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                     Field::Alpha => p.base_alpha,
                     Field::Id => p.id as f32,
                     Field::Lifetime => p.life,
+                    Field::Yaw => p.yaw,
+                    Field::Roll => p.rot,
                     _ => 0.0,
                 };
                 let (lo, hi) = (imin.min(imax), imin.max(imax));
                 if !(active && (x < lo || x > hi)) {
-                    let v = remap(x, imin, imax, omin, omax);
+                    let v = angle_out(out, remap(x, imin, imax, omin, omax));
                     let mul = scale || matches!(out, Field::Alpha2);
                     match out {
                         Field::Radius => p.base_radius = if mul { p.base_radius * v } else { v },
@@ -1698,6 +1889,7 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                         Field::Alpha2 => p.base_alpha *= v.max(0.0),
                         Field::Trail => p.base_trail = if mul { p.base_trail * v } else { v },
                         Field::Roll => p.rot = if mul { p.rot * v } else { v },
+                        Field::Yaw => p.yaw = if mul { p.yaw * v } else { v },
                         Field::RollSpeed => p.spin = if mul { p.spin * v } else { v },
                         Field::Lifetime => {
                             p.life = if mul { p.life * v } else { v };
@@ -1714,6 +1906,7 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                     Field::Alpha => p.base_alpha = v,
                     Field::Trail => p.base_trail = v,
                     Field::Roll => p.rot = v,
+                    Field::Yaw => p.yaw = v,
                     Field::RollSpeed => p.spin = v,
                     Field::Lifetime => {
                         p.life = v;
@@ -1735,12 +1928,56 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 let k = if sequential { (index as f32 % count) / count } else { rand(rng) };
                 p.pos = cps[start].pos.lerp(cps[end].pos, k);
             }
+            Init::Yaw { initial, min, max, exp, flip } => {
+                let mut y = (initial + rexp(rng, min, max, exp)).to_radians();
+                if flip && rand(rng) < 0.5 {
+                    y = -y;
+                }
+                p.yaw = y;
+            }
+            Init::NormalAlign { cp } => p.normal = cps[cp].fwd,
+            Init::InheritParent { field: f, scale, random } => {
+                if !parent.is_empty() {
+                    let k = if random { (rand(rng) * parent.len() as f32) as usize } else { index as usize };
+                    let q = &parent[k % parent.len()];
+                    match f {
+                        Field::Position => p.pos = q.pos,
+                        Field::Lifetime => {
+                            p.life = q.life * scale;
+                            had_life = true;
+                        }
+                        Field::Radius => p.base_radius = q.radius * scale,
+                        Field::Alpha => p.base_alpha = q.alpha * scale,
+                        Field::Color => p.base_color = q.color * scale,
+                        Field::Trail => p.base_trail = q.trail * scale,
+                        Field::Roll => p.rot = q.rot * scale,
+                        Field::Yaw => p.yaw = q.yaw * scale,
+                        _ => {}
+                    }
+                }
+            }
+            Init::CountRemap { imin, imax, out, omin, omax, scale, active } => {
+                let x = index as f32;
+                let (lo, hi) = (imin.min(imax), imin.max(imax));
+                if !(active && (x < lo || x > hi)) {
+                    let v = angle_out(out, remap(x, imin, imax, omin, omax));
+                    write_init(p, out, v, scale, &mut had_life);
+                }
+            }
+            Init::CpToScalar { cp, comp, imin, imax, out, omin, omax, scale } => {
+                if cp_set & (1 << cp) != 0 {
+                    let v = angle_out(out, remap(cps[cp].pos[comp], imin, imax, omin, omax));
+                    write_init(p, out, v, scale, &mut had_life);
+                }
+            }
+            Init::SetCp { .. } => {}
         }
     }
     let _ = had_life;
 }
 
-fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], parent: &[(Vec3, Vec3)], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool) -> P {
+#[allow(clippy::too_many_arguments)]
+fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool) -> P {
     let mut p = P {
         pos: cps[0].pos,
         radius: sys.radius,
@@ -1756,12 +1993,40 @@ fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], parent: 
         id: index,
         ..Default::default()
     };
-    apply_inits(sys, &mut p, cps, cp_vel, parent, sheet_len, rng, index, emitting, false);
+    apply_inits(sys, &mut p, cps, cp_vel, cp_set, parent, sheet_len, rng, index, emitting, false);
     p.radius = p.base_radius;
     p.alpha = p.base_alpha;
     p.color = p.base_color;
     p.trail = p.base_trail;
     p
+}
+
+/// Source's remaps take angle outputs (roll, yaw) in degrees (ATTRIBUTES_WHICH_ARE_ANGLES).
+fn angle_out(f: Field, v: f32) -> f32 {
+    if matches!(f, Field::Roll | Field::Yaw) {
+        v.to_radians()
+    } else {
+        v
+    }
+}
+
+/// An initializer's value into a field's starting value (or scaling it).
+fn write_init(p: &mut P, f: Field, v: f32, mul: bool, had_life: &mut bool) {
+    let w = |cur: &mut f32| *cur = if mul { *cur * v } else { v };
+    match f {
+        Field::Radius => w(&mut p.base_radius),
+        Field::Alpha => w(&mut p.base_alpha),
+        Field::Alpha2 => p.base_alpha *= v.max(0.0),
+        Field::Trail => w(&mut p.base_trail),
+        Field::Roll => w(&mut p.rot),
+        Field::Yaw => w(&mut p.yaw),
+        Field::RollSpeed => w(&mut p.spin),
+        Field::Lifetime => {
+            w(&mut p.life);
+            *had_life = true;
+        }
+        _ => {}
+    }
 }
 
 fn set_field(p: &mut P, f: Field, v: f32, mul: bool) {
@@ -1771,6 +2036,7 @@ fn set_field(p: &mut P, f: Field, v: f32, mul: bool) {
         Field::Alpha => apply(&mut p.alpha),
         Field::Trail => apply(&mut p.trail),
         Field::Roll => apply(&mut p.rot),
+        Field::Yaw => apply(&mut p.yaw),
         // The second alpha (Respawn's renderers post-multiply it, or erode by it): a
         // multiplier on alpha here, starting from 1.
         Field::Alpha2 if !no_alpha2() => p.alpha *= v.max(0.0),
@@ -1792,6 +2058,7 @@ fn get_field(p: &P, f: Field) -> f32 {
         Field::Alpha => p.alpha,
         Field::Trail => p.trail,
         Field::Roll => p.rot,
+        Field::Yaw => p.yaw,
         Field::Alpha2 => 1.0,
         Field::Lifetime => p.life,
         Field::Age => p.age,
@@ -1806,6 +2073,7 @@ fn get_base(p: &P, f: Field) -> f32 {
         Field::Alpha => p.base_alpha,
         Field::Trail => p.base_trail,
         Field::Roll => p.rot,
+        Field::Yaw => p.yaw,
         Field::Alpha2 => 1.0,
         Field::Lifetime => p.life,
         Field::Age => p.age,
@@ -1835,28 +2103,45 @@ fn put(p: &mut P, f: Field, v: f32, scale_init: bool, scale_cur: bool) {
     }
 }
 
+/// What a node's step reads from its effect besides the control points themselves.
+struct StepCtx<'a> {
+    /// This frame's control point movement and velocity.
+    cp_delta: &'a [Vec3; NCP],
+    cp_vel: &'a [Vec3; NCP],
+    /// Last frame's control points.
+    cp_prev: &'a [Cp; NCP],
+    /// Control points holding a value (see `Effect::cp_set`); operators that set one add it.
+    cp_set: u32,
+    /// Seconds since the effect was stopped (negative while it runs).
+    since_stop: f32,
+    /// The view origin (Set Control Point To Player).
+    player: Vec3,
+    /// The parent system's living particles (for the parent-particle operators).
+    parent: &'a [P],
+}
+
 /// Advance one node by `dt`.
 #[allow(clippy::too_many_arguments)]
-fn step_node(
-    n: &mut Node,
-    cps: &mut [Cp; NCP],
-    cp_delta: &[Vec3; NCP],
-    cp_vel: &[Vec3; NCP],
-    emitting: bool,
-    dt: f32,
-    rng: &mut u64,
-    world: Option<&crate::player::Collision>,
-    budget: &mut usize,
-    sheet_len: &dyn Fn(u16) -> f32,
-    player: Vec3,
-    parent: &[(Vec3, Vec3)],
-) {
+fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: bool, dt: f32, rng: &mut u64, world: Option<&crate::player::Collision>, budget: &mut usize, sheet_len: &dyn Fn(u16) -> f32) {
+    let (cp_delta, cp_vel, player, parent) = (ctx.cp_delta, ctx.cp_vel, ctx.player, ctx.parent);
     if n.delay > 0.0 {
         n.delay -= dt;
         return;
     }
     let sys = n.sys.clone();
     n.age += dt;
+    // Stop Effect after Duration: the node stops emitting (and may clear) once it is reached.
+    let mut emitting = emitting;
+    for o in &sys.oper {
+        if let Oper::StopAfter { duration, kill } = *o {
+            if n.age >= duration {
+                emitting = false;
+                if kill && n.age - dt < duration {
+                    n.particles.clear();
+                }
+            }
+        }
+    }
     for o in &sys.oper {
         if let Oper::Restart { min, max, kill } = *o {
             if n.restart_at <= 0.0 {
@@ -1886,10 +2171,21 @@ fn step_node(
             for &(i, off) in sets {
                 if i != *base {
                     cps[i] = Cp { pos: if *world { off } else { b.pos + b.local(off) }, ..b };
+                    ctx.cp_set |= 1 << i;
                 }
             }
         }
     }
+    for i in &sys.init {
+        if let Init::SetCp { out, base, pos, local } = *i {
+            if out != base {
+                let b = cps[base];
+                cps[out] = Cp { pos: b.pos + if local { b.local(pos) } else { pos }, ..b };
+                ctx.cp_set |= 1 << out;
+            }
+        }
+    }
+    let cp_set = ctx.cp_set;
     // Emit.
     let mut new = 0u32;
     if !n.started {
@@ -1932,7 +2228,7 @@ fn step_node(
     for _ in 0..new {
         let id = n.next_id;
         n.next_id += 1;
-        let p = init_particle(&sys, cps, cp_vel, parent, sheet_len, rng, id, emitting);
+        let p = init_particle(&sys, cps, cp_vel, cp_set, parent, sheet_len, rng, id, emitting);
         n.particles.push(p);
     }
     // Simulate.
@@ -2120,7 +2416,98 @@ fn step_node(
                         p.vel = p.vel.clamp_length_max(max);
                     }
                 }
-                Oper::SetCps { .. } | Oper::CpToPlayer { .. } | Oper::Restart { .. } => {}
+                Oper::SpinYaw { rate, min, stop } => {
+                    let r = if stop > 0.0 { min + (rate - min) * (1.0 - p.age / stop).max(0.0) } else { rate };
+                    p.yaw += r * dt;
+                }
+                Oper::NormalLock { cp } => {
+                    if !newborn && p.normal != Vec3::ZERO {
+                        let (a, b) = (&ctx.cp_prev[cp], &cps[cp]);
+                        p.normal = b.local(Vec3::new(p.normal.dot(a.fwd), p.normal.dot(a.left), p.normal.dot(a.up)));
+                    }
+                }
+                Oper::VelToNormal => {
+                    if p.vel.length_squared() > 1e-6 {
+                        p.normal = p.vel.normalize();
+                    }
+                }
+                Oper::Axis3D { axis, rate, decays, end_rate, decay } => {
+                    let r = if decays { rate + (end_rate - rate) * (t / decay).min(1.0) } else { rate };
+                    p.orient = (p.orient * Quat::from_axis_angle(axis, r * dt)).normalize();
+                }
+                Oper::Orbit { cp, axis, rate, local } => {
+                    let c = &cps[cp];
+                    let ax = if local { c.local(axis) } else { axis }.normalize_or(Vec3::Z);
+                    let q = Quat::from_axis_angle(ax, rate * dt);
+                    p.pos = c.pos + q * (p.pos - c.pos);
+                    p.vel = q * p.vel;
+                }
+                Oper::RampRandom { field: f, rate, st, et, prop } => {
+                    let h = |k: u32| ((p.id.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503))) >> 8) as f32 / (1u32 << 24) as f32;
+                    let r = angle_out(f, rate.0 + (rate.1 - rate.0) * h(5));
+                    let span = if prop { p.life.max(0.0) } else { 1.0 };
+                    let (s0, e0) = ((st.0 + (st.1 - st.0) * h(6)) * span, (et.0 + (et.1 - et.0) * h(7)) * span);
+                    let k = (p.age.min(e0) - s0).max(0.0);
+                    if k > 0.0 {
+                        if matches!(f, Field::Alpha2) {
+                            p.alpha *= (1.0 + r * k).clamp(0.0, 1.0);
+                        } else {
+                            let v = get_field(p, f) + r * k;
+                            set_field(p, f, if matches!(f, Field::Alpha) { v.clamp(0.0, 1.0) } else { v }, false);
+                        }
+                    }
+                }
+                Oper::LerpEndCap { field: f, to, time } => {
+                    if ctx.since_stop >= 0.0 {
+                        let k = (ctx.since_stop / time).clamp(0.0, 1.0);
+                        if matches!(f, Field::Lifetime) {
+                            p.life += (to - p.life) * k;
+                        } else {
+                            let cur = get_field(p, f);
+                            set_field(p, f, cur + (to - cur) * k, false);
+                        }
+                    }
+                }
+                Oper::PctBetweenCps { a, b, out, pmin, pmax, omin, omax, active, scale_init, scale_cur } => {
+                    let (pa, d) = (cps[a].pos, cps[b].pos - cps[a].pos);
+                    let pct = (p.pos - pa).dot(d) / d.length_squared().max(1e-6);
+                    let (lo, hi) = (pmin.min(pmax), pmin.max(pmax));
+                    if !(active && (pct < lo || pct > hi)) {
+                        put(p, out, angle_out(out, remap(pct, pmin, pmax, omin, omax)), scale_init, scale_cur);
+                    }
+                }
+                Oper::InheritAttr { field: f, scale } => {
+                    if !parent.is_empty() {
+                        let q = &parent[pi % parent.len()];
+                        match f {
+                            Field::Position => p.pos = q.pos,
+                            Field::Radius => p.radius = q.radius * scale,
+                            Field::Alpha => p.alpha = q.alpha * scale,
+                            Field::Color => p.color = q.color * scale,
+                            Field::Roll => p.rot = q.rot * scale,
+                            Field::Yaw => p.yaw = q.yaw * scale,
+                            Field::Trail => p.trail = q.trail * scale,
+                            _ => {}
+                        }
+                    }
+                }
+                Oper::KeepOnPath { start, end, count } => {
+                    let k = (p.id as f32 % count) / count;
+                    p.pos = cps[start].pos.lerp(cps[end].pos, k);
+                }
+                Oper::CpToColor { cp, imin, imax, omin, omax, scale } => {
+                    if cp_set & (1 << cp) != 0 {
+                        let x = cps[cp].pos;
+                        let v = Vec3::new(remap(x.x, imin.x, imax.x, omin.x, omax.x), remap(x.y, imin.y, imax.y, omin.y, omax.y), remap(x.z, imin.z, imax.z, omin.z, omax.z));
+                        p.color = if scale { p.color * v } else { v * sys.hdr };
+                    }
+                }
+                Oper::CpToScalar { cp, comp, imin, imax, out, omin, omax, scale_init, scale_cur } => {
+                    if cp_set & (1 << cp) != 0 {
+                        put(p, out, angle_out(out, remap(cps[cp].pos[comp], imin, imax, omin, omax)), scale_init, scale_cur);
+                    }
+                }
+                Oper::SetCps { .. } | Oper::CpToPlayer { .. } | Oper::Restart { .. } | Oper::StopAfter { .. } | Oper::CpsFromParticles { .. } => {}
             }
         }
         if !sys.decays && p.life > 0.0 && p.age >= p.life {
@@ -2163,6 +2550,25 @@ fn step_node(
         p.rot += p.spin * dt;
     }
     n.particles.retain(|p| !p.dead);
+    // Set (child) control points from particle positions: the node's first particles carry
+    // control points (the shell ejects' resting child lands where the flying shell is).
+    for o in &sys.oper {
+        if let Oper::CpsFromParticles { first, count, skip, orient } = *o {
+            for (k, p) in n.particles.iter().skip(skip).take(count).enumerate() {
+                let i = first + k;
+                if i >= NCP {
+                    break;
+                }
+                cps[i] = if orient {
+                    let dir = if p.normal != Vec3::ZERO { p.normal } else { p.vel };
+                    Cp::facing(p.pos, if dir.length_squared() > 1e-6 { dir } else { cps[i].fwd })
+                } else {
+                    Cp { pos: p.pos, ..cps[i] }
+                };
+                ctx.cp_set |= 1 << i;
+            }
+        }
+    }
 }
 
 impl Node {
@@ -2635,10 +3041,10 @@ pub fn update_pfx(
     for fx in pfx.effects.iter_mut() {
         if fx.attached.is_some() && !alive_trails.contains(&fx.id) && !fx.stopped {
             fx.stopped = true;
-            caps.push((fx.cps, std::mem::take(&mut fx.end_caps)));
+            caps.push((fx.cps, fx.cp_set, std::mem::take(&mut fx.end_caps)));
         }
     }
-    for (cps, list) in caps {
+    for (cps, cp_set, list) in caps {
         for (sys, delay) in list {
             if let Some(lib) = pfx.lib.as_mut() {
                 let mut nodes = Vec::new();
@@ -2646,7 +3052,7 @@ pub fn update_pfx(
                 collect_nodes(lib, sys, delay, 0, &mut nodes, &mut more);
                 pfx.next_id += 1;
                 let id = pfx.next_id;
-                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], age: 0.0, stop_at: DEFAULT_STOP, stopped: false, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false });
+                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: cps, cp_set, age: 0.0, stop_at: DEFAULT_STOP, stopped: false, stopped_at: f32::INFINITY, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false });
             }
         }
     }
@@ -2702,6 +3108,10 @@ pub fn update_pfx(
         if fx.age >= fx.stop_at {
             fx.stopped = true;
         }
+        if fx.stopped && fx.stopped_at.is_infinite() {
+            fx.stopped_at = fx.age;
+        }
+        let since_stop = if fx.stopped { fx.age - fx.stopped_at } else { -1.0 };
         // Set Control Point To Player moves its point before the deltas are taken, so locked
         // particles follow the camera from the first frame.
         for n in &fx.nodes {
@@ -2721,9 +3131,11 @@ pub fn update_pfx(
         let cp_vel = fx.cp_vel;
         let recap = fx.stopped && !fx.capped;
         fx.capped |= fx.stopped;
+        let cp_frame_prev = fx.cp_frame_prev;
+        fx.cp_frame_prev = fx.cps;
         for ni in 0..fx.nodes.len() {
-            let parent: Vec<(Vec3, Vec3)> = match fx.nodes[ni].parent {
-                Some(pi) if fx.nodes[ni].sys.init.iter().any(|i| matches!(i, Init::FromParent { .. })) => fx.nodes[pi].particles.iter().filter(|p| !p.dead).map(|p| (p.pos, p.vel)).collect(),
+            let parent: Vec<P> = match fx.nodes[ni].parent {
+                Some(pi) if fx.nodes[ni].sys.init.iter().any(|i| matches!(i, Init::FromParent { .. } | Init::InheritParent { .. })) || fx.nodes[ni].sys.oper.iter().any(|o| matches!(o, Oper::InheritAttr { .. })) => fx.nodes[pi].particles.iter().filter(|p| !p.dead).copied().collect(),
                 _ => Vec::new(),
             };
             let n = &mut fx.nodes[ni];
@@ -2733,10 +3145,12 @@ pub fn update_pfx(
                 let sys = n.sys.clone();
                 for p in n.particles.iter_mut() {
                     let id = p.id;
-                    apply_inits(&sys, p, &fx.cps, &cp_vel, &[], &sheet_len, &mut rng, id, false, true);
+                    apply_inits(&sys, p, &fx.cps, &cp_vel, fx.cp_set, &[], &sheet_len, &mut rng, id, false, true);
                 }
             }
-            step_node(n, &mut fx.cps, &delta, &cp_vel, emitting, dt, &mut rng, world, &mut budget, &sheet_len, player, &parent);
+            let mut ctx = StepCtx { cp_delta: &delta, cp_vel: &cp_vel, cp_prev: &cp_frame_prev, cp_set: fx.cp_set, since_stop, player, parent: &parent };
+            step_node(n, &mut fx.cps, &mut ctx, emitting, dt, &mut rng, world, &mut budget, &sheet_len);
+            fx.cp_set = ctx.cp_set;
         }
     }
     pfx.layers = layers;
@@ -2863,8 +3277,14 @@ pub fn update_pfx(
                         // Model Z on the normal with a fixed roll: model X toward world down (shortest-arc
                         // rotations flip with the facing, which stood the A-Wall's models on
                         // their heads facing one way and buried them the other).
-                        let base = if *orient_normal { normal_basis(cp.fwd) } else { basis };
-                        let rot = base * Quat::from_rotation_z(*yaw) * Quat::from_rotation_y(*pitch) * Quat::from_rotation_x(*roll);
+                        // Model Z on the particle's normal (Normal Align to CP, Remap Velocity to
+                        // Vector) or, with none, on control point 0's forward axis.
+                        let base = if *orient_normal { normal_basis(if p.normal != Vec3::ZERO { p.normal } else { cp.fwd }) } else { basis };
+                        // Then the particle's own yaw and roll (as AngleMatrix with pitch 0: yaw
+                        // about Z, roll about X; debris and shell casings tumble by these), the
+                        // model-space angles and the Rotation about 3D Axis spin.
+                        let own = Quat::from_rotation_z(p.yaw) * Quat::from_rotation_x(p.rot);
+                        let rot = base * own * Quat::from_rotation_z(*yaw) * Quat::from_rotation_y(*pitch) * Quat::from_rotation_x(*roll) * p.orient;
                         if fx.age.rem_euclid(0.5) < 0.02 {
                             let cam_game = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
                             log::trace!("model instance {} age {:.1} at {:?} radius {} alpha {} cp0 {:?} fwd {:?} camera {:?} dist {:.0} model -x/+z goes to {:?} / {:?}", n.sys.material, fx.age, p.pos, p.radius, p.alpha, cp.pos, cp.fwd, cam_game, p.pos.distance(cam_game), rot * Vec3::NEG_X, rot * Vec3::Z);

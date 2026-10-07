@@ -168,7 +168,33 @@ Source's operators; the last two integrate per frame in Source and use the close
 (Source uses world XY). `Rotation Spin Roll` eases to `spin_rate_min` over `spin_stop_time` seconds, `Oscillate Vector`
 swings the colour (its default field) and `Restart Effect after Duration` re-runs a system's
 emitters every min..max seconds. `Position From Parent Particles` births a child system's particles on
-random living particles of its parent, inheriting their velocity scaled. `TF_PFX_NO_ALPHA2=1`
+random living particles of its parent, inheriting their velocity scaled.
+Particles also carry a yaw, a normal and (for models) a spin: `Rotation Yaw Random` and
+`Rotation Spin Yaw` set and turn the yaw, `Normal Align to CP` takes a control point's forward
+axis as the normal, `Normal Lock to Control Point` turns it with the point and `Remap Velocity
+to Vector` (into the normal) makes it follow the motion. `Render models` now orients each
+model by its particle: Z on the normal when "orient model z to normal" is set (else control
+point 0's forward, as before), then the particle's yaw about Z and roll about X (Source's
+AngleMatrix with pitch 0; which axis the roll uses is a guess), the model-space angles and
+Respawn's `Rotation about 3D Axis` spin about a model-space axis (its never-written defaults,
+the Z axis and 360 degrees/s, are guesses; "modulate by roll speed" is not applied). Debris
+chunks and caught Vortex rounds tumble instead of all sharing the control point's frame.
+Remaps into roll or yaw take degrees, as Source's do. `Inherit Initial Value From Parent
+Particle` and `Inherit Attribute From Parent Particle` copy a field (position, lifetime,
+radius, alpha, colour, roll, yaw, trail) from the parent's particle with the same index;
+`Remap Particle Count to Scalar` maps the particle's number ("from end of list" is ignored);
+`Set CP Position` places a control point in another's frame; `Set (child) control points from
+particle positions` moves control points onto a node's first particles (with "set orientation"
+facing their normal or motion), which is how a shell eject's resting child follows the flying
+casing; `Remap Percentage Between Two Control Points to Scalar`, `Ramp Scalar Linear Random`,
+`Oscillate Scalar Simple` (per-particle closed form; Source runs it on the system clock),
+`Lerp EndCap Scalar` (after the effect is stopped), `Stop Effect after Duration`, `Movement
+Rotate Particle Around Axis` and `Movement Maintain Position Along Path` (no bulge or cohesion)
+are in too. `Remap Control Point to Vector` (into the colour) and `Remap Control Point to
+Scalar` read only control points that hold a value (passed by the caller or set by an
+operator): the others copy control point 0's position, where the game's scripts would have set
+a colour or a scale, so those systems keep their own colour. Sprites ignore the normal and yaw
+(orientation 3 still faces control point 0's up). `TF_PFX_NO_ALPHA2=1`
 ignores the second alpha, for comparing. System colours are converted from sRGB to linear
 before tinting (the game tints its sRGB textures in gamma space, which is the same product);
 taken as linear they had washed every effect out, drawing a frag's dark dirt smoke as a pale
