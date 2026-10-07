@@ -58,7 +58,7 @@ pub struct Offhands {
     insts: Vec<Inst>,
     /// Last frame's ordnance and defensive cooldowns, utility charges and whether the core
     /// was building, for spotting a use.
-    prev: Option<(f32, f32, u32, bool)>,
+    prev: Option<(f32, f32, u32, bool, bool)>,
 }
 
 fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> {
@@ -147,8 +147,12 @@ pub fn offhand_viewmodels(
     // firing). A core is held while it charges; the Laser Core's beam and the Salvo Core's
     // missiles keep firing while it is active.
     let building = matches!(core.state, crate::abilities::CoreState::Building);
-    let (p_ord, p_def, p_util, p_build) = o.prev.unwrap_or((st.ord_cd, st.def_cd, st.util_charges, building));
-    o.prev = Some((st.ord_cd, st.def_cd, st.util_charges, building));
+    let pending = st.ord_pending.is_some();
+    let (p_ord, p_def, p_util, p_build, p_pending) = o.prev.unwrap_or((st.ord_cd, st.def_cd, st.util_charges, building, pending));
+    o.prev = Some((st.ord_cd, st.def_cd, st.util_charges, building, pending));
+    // Ordnance that waits for its deploy starts its draw on the press; Tracker Rockets when
+    // they fire.
+    let ord_used = (pending && !p_pending) || (kit.ord == OrdKind::Tracker && st.ord_cd > p_ord + 1e-3);
     let ord_held = kit.ord == OrdKind::Missiles && ord.charging;
     let def_held = match kit.def {
         DefKind::Vortex | DefKind::IonVortex | DefKind::HeatShield => vortex.active,
@@ -158,7 +162,7 @@ pub fn offhand_viewmodels(
     let core_charging = matches!(core.state, crate::abilities::CoreState::Charging(_));
     let core_firing = matches!(kit.core, crate::titankit::CoreKind::Laser | crate::titankit::CoreKind::Salvo) && matches!(core.state, crate::abilities::CoreState::Active(_));
     let signals = [
-        (ord_held, kit.ord != OrdKind::Missiles && st.ord_cd > p_ord + 1e-3, false),
+        (ord_held, ord_used, false),
         (def_held, st.def_cd > p_def + 1e-3, false),
         (false, st.util_charges < p_util, false),
         (core_charging, p_build && !building, core_firing),

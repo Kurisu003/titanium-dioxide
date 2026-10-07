@@ -858,8 +858,10 @@ where the script has them):
   replaces the gun's viewmodel while the offhand plays; with it set, the offhand's animations
   move only the left arm and park the right off screen. Guess: the `empty_handed` models
   (Firewall, Flame Core, Laser Core) keep the primary in hand by script but slam with the gun
-  hand, so the gun is hidden while they play and drawn again after. The abilities' fire times
-  aren't delayed by the draw (the game fires an offhand once it has deployed). Use is read from
+  hand, so the gun is hidden while they play and drawn again after. Ordnance fires once it has
+  deployed (the script's deploy_time: Firewall 0.15 s, Arc Wave 0.2 s, Laser Shot and Cluster
+  Missile 0.3 s), so the Firewall starts where the fist lands; the Multi-Target Missiles fire on
+  release and Tracker Rockets on the press (they need a full lock then). Use is read from
   the abilities' state: a held flag, a cooldown jumping up, a utility charge spent, the core
   leaving its build-up.
 - **Particle Wall**: 1750 health for 8 s. **Gun Shield**: 2500 health for 6 s. Both stop enemy

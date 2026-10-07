@@ -326,6 +326,8 @@ pub struct KitSpec {
     pub def_label: String,
     pub core_label: String,
     pub ord_sound: String,
+    /// The ordnance script's deploy_time: an offhand fires once it has deployed.
+    pub ord_deploy: f32,
     pub def_sound: String,
 }
 
@@ -575,11 +577,12 @@ impl KitDefs {
         let table = gd.paks.iter().find_map(|p| tf_assets::datatable::DataTable::load(p, "datatable/titan_properties.rpak"));
         let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
         let n = KitNumbers::load(&mut read);
-        // A weapon script's localised name and 1P fire sound.
-        let mut info = |id: &str| -> (Option<String>, String) {
-            let Some(s) = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read) else { return (None, String::new()) };
+        // A weapon script's localised name, 1P fire sound and deploy time.
+        let mut info = |id: &str| -> (Option<String>, String, f32) {
+            let Some(s) = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read) else { return (None, String::new(), 0.0) };
             let name = s.get(".printname").map(|k| k.trim_start_matches('#').to_string()).and_then(|k| strings.and_then(|t| t.0.get(&k)).map(|v| v.to_uppercase()));
-            (name, s.get(".fire_sound_1_player_1p").unwrap_or_default().to_string())
+            let deploy = s.get(".deploy_time").and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
+            (name, s.get(".fire_sound_1_player_1p").unwrap_or_default().to_string(), deploy)
         };
         let mut kits = Vec::new();
         for gun in TITAN_ARSENAL {
@@ -594,13 +597,13 @@ impl KitDefs {
                 (f.1.to_string(), f.2.to_string(), f.3.to_string(), f.4.to_string(), String::new())
             });
             let u = UTILITY.iter().find(|x| x.0 == util_id).copied().unwrap_or(UTILITY[0]);
-            let (util_name, util_sound) = info(u.0);
+            let (util_name, util_sound, _) = info(u.0);
             let o = ORDNANCE.iter().find(|x| x.0 == ord_id).copied().unwrap_or(ORDNANCE[0]);
             let d = DEFENSIVE.iter().find(|x| x.0 == def_id).copied().unwrap_or(DEFENSIVE[0]);
             let c = CORES.iter().find(|x| x.0 == core_id).copied().unwrap_or(CORES[0]);
-            let (ord_name, ord_sound) = info(o.0);
-            let (def_name, def_sound) = info(d.0);
-            let (core_name, _) = info(c.0);
+            let (ord_name, ord_sound, ord_deploy) = info(o.0);
+            let (def_name, def_sound, _) = info(d.0);
+            let (core_name, _, _) = info(c.0);
             kits.push(KitSpec {
                 ord: o.1,
                 def: d.1,
@@ -616,6 +619,7 @@ impl KitDefs {
                 def_label: def_name.unwrap_or_else(|| d.3.to_string()),
                 core_label: core_name.unwrap_or_else(|| c.3.to_string()),
                 ord_sound,
+                ord_deploy,
                 def_sound,
             });
         }
@@ -746,6 +750,8 @@ pub struct KitState {
     pub melee_damage: f32,
     pub melee_range: f32,
     prev_ord: bool,
+    /// Time left until a pressed ordnance fires (its deploy).
+    pub ord_pending: Option<f32>,
     prev_def: bool,
     /// Rockets waiting to launch: target and how they fly, at `queue_rate` per second.
     queue: Vec<(Option<Entity>, MissileSpec)>,
@@ -790,6 +796,7 @@ impl Default for KitState {
             melee_damage: 500.0,
             melee_range: 280.0,
             prev_ord: false,
+            ord_pending: None,
             prev_def: false,
             queue: Vec::new(),
             queue_rate: 12.0,
@@ -1126,7 +1133,20 @@ pub fn kit_input(
     let pressed = input.ordnance && !st.prev_ord && !frozen;
     st.prev_ord = input.ordnance;
     let spec = &defs.kits[active.index.min(defs.kits.len() - 1)];
-    if pressed && st.ord_cd <= 0.0 {
+    // An offhand fires once it has deployed (the script's deploy_time; its viewmodel plays the
+    // draw meanwhile). The Multi-Target Missiles lock on while held, and Tracker Rockets check
+    // for a full lock when pressed.
+    let deferred = !matches!(active.ord, OrdKind::Missiles | OrdKind::Tracker);
+    let mut fire_now = pressed && st.ord_cd <= 0.0 && !deferred;
+    if pressed && st.ord_cd <= 0.0 && st.ord_pending.is_none() && deferred && (active.ord != OrdKind::LaserShot || st.energy >= n.laser_cost) {
+        st.ord_pending = Some(spec.ord_deploy);
+    }
+    if let Some(t) = st.ord_pending {
+        let t = t - dt;
+        st.ord_pending = (t > 0.0).then_some(t);
+        fire_now |= t <= 0.0 && !frozen;
+    }
+    if fire_now {
         let fired = match active.ord {
             OrdKind::Missiles => false,
             OrdKind::LaserShot if st.energy >= n.laser_cost => {
