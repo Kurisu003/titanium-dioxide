@@ -729,7 +729,7 @@ fn setup(
         &gd,
         &ActorSpec {
             path: "models/weapons/titan_xo16_shorty/atpov_xo16shorty.mdl",
-            sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
+            sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
             grids: &["idle_seq", "attack_seq"],
             body: &[],
         },

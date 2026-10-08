@@ -29,6 +29,8 @@ pub struct Clip {
     /// AE_CL_PLAYSOUND_FOR_TYPE events: the actor's sound type is prefixed to the name
     /// ("Jog.Generic_3P" on an Ion plays "ion_jog_generic_3p").
     pub typed_sounds: Vec<(f32, String)>,
+    /// AE_WPN_RELOAD_MILESTONE_N events: the milestone number and its cycle.
+    pub milestones: Vec<(u8, f32)>,
 }
 
 impl Clip {
@@ -339,6 +341,7 @@ fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
         movement: anim.movement.clone(),
         sounds: Vec::new(),
         typed_sounds: Vec::new(),
+        milestones: Vec::new(),
     })
 }
 
@@ -506,6 +509,17 @@ fn build_template(
     });
     let t_parse = t.elapsed();
     let owners: Vec<&Model> = std::iter::once(&*model).chain(includes.iter().map(|m| &**m)).collect();
+    // TF_DUMP_SEQS=<part of a model path>: log that model's sequences and their activities.
+    if std::env::var("TF_DUMP_SEQS").is_ok_and(|f| !f.is_empty() && path.contains(&f)) {
+        for o in &owners {
+            for s in &o.sequences {
+                log::info!("{path}: sequence {} act={} mods={:?}", s.label, s.activity, s.modifiers);
+                for e in &s.events {
+                    log::info!("{path}:     {:.3} {} {}", e.cycle, e.name, e.options);
+                }
+            }
+        }
+    }
     let find = |label: &str| {
         owners.iter().find_map(|o| {
             o.sequences.iter().position(|s| s.label.eq_ignore_ascii_case(label)).map(|i| (*o, i))
@@ -534,6 +548,11 @@ fn build_template(
                 .iter()
                 .filter(|e| e.name == "AE_CL_PLAYSOUND_FOR_TYPE" && !e.options.is_empty())
                 .map(|e| (e.cycle, e.options.to_ascii_lowercase().replace('.', "_")))
+                .collect();
+            clip.milestones = owner.sequences[si]
+                .events
+                .iter()
+                .filter_map(|e| Some((e.name.strip_prefix("AE_WPN_RELOAD_MILESTONE_")?.parse().ok()?, e.cycle)))
                 .collect();
             Ok(clip)
         })();

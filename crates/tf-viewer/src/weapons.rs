@@ -542,6 +542,11 @@ pub struct Weapon {
     pub def: WeaponDef,
     pub ammo: u32,
     pub reload_left: f32,
+    /// The reload in progress: an empty (`reloadempty`) one, and the last
+    /// AE_WPN_RELOAD_MILESTONE it has passed (an interrupted reload resumes from there with
+    /// its `_late` sequence and time).
+    reload_empty: bool,
+    reload_milestone: u8,
     pub cooldown: f32,
     pub spread_kick: f32,
     pub since_fire: f32,
@@ -586,6 +591,9 @@ enum VmSeq {
     Fire,
     Reload,
     ReloadEmpty,
+    /// `reload_lateN_seq` / `reload_empty_lateN_seq`: a reload resumed past milestone N.
+    ReloadLate(u8),
+    ReloadEmptyLate(u8),
     Sprint,
     /// `sprintraise_seq` (ACT_VM_RAISE_FROM_SPRINT) when a sprint ends.
     SprintRaise,
@@ -598,6 +606,48 @@ enum VmSeq {
     Charge,
     /// The Power Shot itself (`power_shot_fire_seq`).
     AltFire,
+}
+
+impl VmSeq {
+    /// A reload's viewmodel sequence.
+    fn reload_name(self) -> Option<&'static str> {
+        const LATE: [&str; 3] = ["reload_late1_seq", "reload_late2_seq", "reload_late3_seq"];
+        const EMPTY_LATE: [&str; 3] = ["reload_empty_late1_seq", "reload_empty_late2_seq", "reload_empty_late3_seq"];
+        match self {
+            VmSeq::Reload => Some("reload_seq"),
+            VmSeq::ReloadEmpty => Some("reload_empty_seq"),
+            VmSeq::ReloadLate(m) => LATE.get(m as usize - 1).copied(),
+            VmSeq::ReloadEmptyLate(m) => EMPTY_LATE.get(m as usize - 1).copied(),
+            _ => None,
+        }
+    }
+    /// A reload's length from the weapon script (the sequence is scaled to it).
+    fn reload_time(self, def: &WeaponDef) -> f32 {
+        self.reload_time_of(ReloadTimes::of(def))
+    }
+    fn reload_time_of(self, t: ReloadTimes) -> f32 {
+        match self {
+            VmSeq::ReloadEmpty => t.empty,
+            VmSeq::ReloadLate(m) => t.late[m as usize - 1],
+            VmSeq::ReloadEmptyLate(m) => t.empty_late[m as usize - 1],
+            _ => t.full,
+        }
+    }
+}
+
+/// A weapon's reload times (reload_time, reloadempty_time and their `_late1..3`).
+#[derive(Clone, Copy)]
+struct ReloadTimes {
+    full: f32,
+    empty: f32,
+    late: [f32; 3],
+    empty_late: [f32; 3],
+}
+
+impl ReloadTimes {
+    fn of(def: &WeaponDef) -> Self {
+        Self { full: def.reload_time, empty: def.reload_empty_time, late: def.reload_late, empty_late: def.reloadempty_late }
+    }
 }
 
 impl Weapon {
@@ -636,6 +686,8 @@ impl Weapon {
             ammo: def.clip,
             def,
             reload_left: 0.0,
+            reload_empty: false,
+            reload_milestone: 0,
             cooldown: 0.0,
             spread_kick: 0.0,
             since_fire: 10.0,
@@ -899,16 +951,49 @@ pub fn weapon_fire(
 
     if w.reload_left > 0.0 {
         w.reload_left -= dt;
+        // Milestones passed: the playing reload sequence's AE_WPN_RELOAD_MILESTONE events.
+        let seq = w.vm_seq.reload_name();
+        let total = w.vm_seq.reload_time(&w.def);
+        let cycle = 1.0 - w.reload_left / total.max(0.05);
+        let passed = w.viewmodel.zip(seq).and_then(|((_, vm), name)| {
+            let a = actors.get(vm).ok()?;
+            let c = a.clip(name)?;
+            a.clips[c].milestones.iter().filter(|m| m.1 <= cycle).map(|m| m.0).max()
+        });
+        w.reload_milestone = w.reload_milestone.max(passed.unwrap_or(0));
         if w.reload_left <= 0.0 {
             w.ammo = w.def.clip;
+            w.reload_milestone = 0;
         }
+    }
+    // Raising an offhand (the Vortex, a punch, Sword Block) makes it the active weapon, and the
+    // gun's deactivation (client.dll 0x1805a3fd0) drops its weapon state to idle and clears
+    // m_bInReload: the reload is cancelled, keeping the milestone it reached.
+    if busy && w.reloading() && health.is_none_or(|h| h.dead_for.is_none()) {
+        w.reload_left = 0.0;
+        w.vm_seq = VmSeq::Idle;
+        w.vm_time = 0.0;
+        log::debug!("reload cancelled at milestone {}", w.reload_milestone);
     }
     let want_reload = (input.reload && w.ammo < w.def.clip) || (w.ammo == 0 && fire);
     input.reload = false;
     if want_reload && !w.reloading() && !frozen {
         let empty = w.ammo == 0;
-        w.reload_left = if empty { w.def.reload_empty_time } else { w.def.reload_time };
-        w.vm_seq = if empty { VmSeq::ReloadEmpty } else { VmSeq::Reload };
+        // Resume an interrupted reload of the same kind past its milestone with the `_late`
+        // sequence and time (when the weapon has one).
+        if empty != w.reload_empty {
+            w.reload_milestone = 0;
+        }
+        let lates = if empty { w.def.reloadempty_late } else { w.def.reload_late };
+        let m = w.reload_milestone.min(3);
+        w.vm_seq = match (m, empty) {
+            (1..=3, false) if lates[m as usize - 1] > 0.0 => VmSeq::ReloadLate(m),
+            (1..=3, true) if lates[m as usize - 1] > 0.0 => VmSeq::ReloadEmptyLate(m),
+            (_, false) => VmSeq::Reload,
+            (_, true) => VmSeq::ReloadEmpty,
+        };
+        w.reload_empty = empty;
+        w.reload_left = w.vm_seq.reload_time(&w.def);
         // The reload sounds are the viewmodel animation's own sound events (actor_event_sounds).
         w.vm_time = 0.0;
     }
@@ -1254,12 +1339,11 @@ pub fn weapon_viewmodel(
     let dur = |a: &Actor, c: Option<usize>| c.map(|c| a.clips[c].duration).unwrap_or(0.5);
 
     // One-shot sequences fall back to idle (or sprint) when they finish.
-    let (deploy_time, reload_time, reload_empty_time) = (w.def.deploy_time, w.def.reload_time, w.def.reload_empty_time);
+    let (deploy_time, reload_times) = (w.def.deploy_time, ReloadTimes::of(&w.def));
     let done = |a: &Actor, seq: VmSeq, t: f32| match seq {
         VmSeq::Draw => t >= deploy_time.max(0.05),
         VmSeq::Fire => t >= dur(a, grid_clip(a, "attack_seq", 0)),
-        VmSeq::Reload => t >= reload_time.max(0.05),
-        VmSeq::ReloadEmpty => t >= reload_empty_time.max(0.05),
+        VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => t >= seq.reload_time_of(reload_times).max(0.05),
         VmSeq::Melee => t >= dur(a, clip(a, "melee_seq")).min(crate::combat::MELEE_ANIM + 0.2),
         VmSeq::MeleeDash => t >= dur(a, clip(a, "melee_dash_seq").or(clip(a, "melee_seq"))).min(crate::combat::MELEE_ANIM + 0.2),
         VmSeq::SprintRaise => t >= dur(a, clip(a, "sprintraise_seq")) || s.sprinting,
@@ -1311,8 +1395,7 @@ pub fn weapon_viewmodel(
         seq => {
             let name = match seq {
                 VmSeq::Draw => "draw_seq",
-                VmSeq::Reload => "reload_seq",
-                VmSeq::ReloadEmpty => "reload_empty_seq",
+                VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => seq.reload_name().unwrap_or("reload_seq"),
                 VmSeq::Melee => "melee_seq",
                 VmSeq::MeleeDash if clip(&actor, "melee_dash_seq").is_some() => "melee_dash_seq",
                 VmSeq::MeleeDash => "melee_seq",
@@ -1326,8 +1409,7 @@ pub fn weapon_viewmodel(
                 // Draw and reload play over the script's deploy/reload time, as the engine scales them.
                 let script_len = match seq {
                     VmSeq::Draw => Some(deploy_time),
-                    VmSeq::Reload => Some(reload_time),
-                    VmSeq::ReloadEmpty => Some(reload_empty_time),
+                    VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => Some(seq.reload_time_of(reload_times)),
                     _ => None,
                 };
                 let cycle = match script_len {
@@ -1414,7 +1496,7 @@ pub fn switch_titan_weapon(
     let vm_body = body_of(&def.viewmodel);
     let spec = ActorSpec {
         path: &def.viewmodel,
-        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
+        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
         grids: &["idle_seq", "attack_seq"],
         body: &vm_body,
     };
