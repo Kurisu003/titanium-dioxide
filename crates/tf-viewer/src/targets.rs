@@ -1320,7 +1320,13 @@ pub fn update_bolts(
             continue;
         }
         if matches!(struck, Struck::Vortex) {
-            vortex.absorbed += 1;
+            // Caught for the release (Vortex_StoreImpactEvent, up to VORTEX_BULLET_ABSORB_COUNT_MAX),
+            // unless the weapon's rounds are only absorbed.
+            if w.vortex_absorb {
+                vortex.absorbed += 1;
+            } else {
+                vortex.caught = (vortex.caught + 1).min(VORTEX_ABSORB_MAX);
+            }
             audio::cue(&mut commands, Cue::VortexAbsorb, Some(at));
             // The caught round hangs in the shield (vortex_absorb_effect_third_person).
             crate::pfx::emit_named(&mut commands, "wpn_vortex_projectile_rifle", to_bevy(at), to_bevy(dir).normalize_or(Vec3::NEG_Z));

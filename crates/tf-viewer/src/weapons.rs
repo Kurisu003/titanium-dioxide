@@ -72,6 +72,9 @@ pub struct WeaponDef {
     pub npc_min_engage_titan: f32,
     /// Spread scale and bias per eWeaponProficiency (poor..perfect).
     pub proficiency: [(f32, f32); 5],
+    /// vortex_refire_behavior: "absorb" rounds are swallowed by a Vortex; the rest (bullet,
+    /// rocket, explosive_round...) are thrown back on release.
+    pub vortex_absorb: bool,
     // Pilot weapon handling.
     pub printname: String,
     pub viewmodel: String,
@@ -350,6 +353,7 @@ impl WeaponDef {
                 // Engine default when the script leaves it out.
                 (f("proficiency_perfect_spreadscale", 1.0), f("proficiency_perfect_bias", 1.0)),
             ],
+            vortex_absorb: s.get(".vortex_refire_behavior").is_some_and(|b| b.eq_ignore_ascii_case("absorb")),
             printname: s.get(".printname").unwrap_or_default().trim_start_matches('#').to_string(),
             viewmodel: s.get(".viewmodel").unwrap_or_default().to_string(),
             automatic: s.get("sp_base.fire_mode").or_else(|| s.get(".fire_mode")).is_none_or(|m| m == "auto"),

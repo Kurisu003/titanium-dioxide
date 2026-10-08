@@ -254,7 +254,7 @@ We work through these one at a time, and the next one starts only after the user
 12. ~~Scorch's gun can't light his gas canisters (26)~~ (fixed: the T-203 shell's blast and its new physics thermite (Proto_MeteorCreatesThermite) ignite the gas)
 12b. ~~Scorch's Thermal Shield catches rounds and its fire doesn't hurt shielded enemies (added later)~~ (fixed: it destroys rounds (P_wpn_HeatShield_impact), burns every 0.1 s within 175 of the hand and 70 degrees of the view; its burn, thermite and trap fire are radius damage that a Vortex/Thermal/Gun Shield doesn't stop; trap segments tick every 0.2 s within 240 of the canister. `TF_STATIC_TITAN=1` spawns one standing, unkillable test Titan)
 13. ~~Titan HUD moves far too much (1)~~ (fixed from client.dll: cockpit sway eases at cockpitSwayGain per second toward a target clamped to +-1 unit / +-0.5 degrees, fed by view-space velocity x frametime and the 5-frame turn rate x tick interval; footstep jolts are spring velocity kicks (-5 u/s, x2 sprinting); CockpitJolt moves severity units toward the hit plus 100x as velocity; the dash tilt follows the heading under a 0.7 s smoothstep at 5/2.5 per second)
-13b. Vortex doesn't throw caught rounds back on release (added later)
+13b. ~~Vortex doesn't throw caught rounds back on release (added later)~~ (fixed: only weapons with vortex_refire_behavior "absorb" (Ion's Splitter Rifle) are absorbed; everything else is caught (up to 32) and fired back on release. Still approximate: the return fire is hitscan bullets at 140 each, where the game sends bullets back as one shotgun blast and rockets as real projectiles)
 14. BT slides too much when turning while holding forward (23)
 15. Titan dash feels weird (4)
 16. Everything moves too much and is too shaky (2)
