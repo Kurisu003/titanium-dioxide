@@ -1411,8 +1411,8 @@ pub fn kit_input(
         if frozen {
             st.power = None;
             weapon.set_alt_shot(false);
-            if let Some(e) = st.power_fx.take() {
-                commands.entity(e).despawn();
+            if let Some(Ok(mut c)) = st.power_fx.take().map(|e| commands.get_entity(e)) {
+                c.despawn();
             }
         } else {
             if weapon.ads >= 0.999 {
@@ -1425,16 +1425,20 @@ pub fn kit_input(
                     }
                 }
             }
-            if let (Some(e), Some((p, r))) = (st.power_fx, gun_muzzle.barrel) {
-                commands.entity(e).insert(Transform::from_translation(p).looking_to(r * Vec3::X, r * Vec3::Z));
+            if let (Some(e), Some(j)) = (st.power_fx, gun_muzzle.barrel) {
+                // On the fx_barrel joint, down the barrels: its Z (see weapon_viewmodel's barrel
+                // blur).
+                if let Ok(mut c) = commands.get_entity(e) {
+                    c.insert((Transform::IDENTITY.looking_to(Vec3::Z, Vec3::Y), ChildOf(j)));
+                }
             }
             st.power = Some(t);
             if t >= POWER_SHOT_CHARGE {
                 st.power = None;
                 weapon.set_alt_shot(false);
                 weapon.play_alt_fire();
-                if let Some(e) = st.power_fx.take() {
-                    commands.entity(e).despawn();
+                if let Some(Ok(mut c)) = st.power_fx.take().map(|e| commands.get_entity(e)) {
+                    c.despawn();
                 }
                     let (t, who) = trace(&world, &enemies, eye, dir, 12000.0, 30.0);
                     let at = eye + dir * t;

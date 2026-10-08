@@ -797,8 +797,8 @@ pub struct GunMuzzle {
     pub frame: Option<(Vec3, Quat)>,
     /// The frame is the viewmodel's.
     pub cockpit: bool,
-    /// The `fx_barrel` attachment's frame, likewise (Power Shot's charge effect).
-    pub barrel: Option<(Vec3, Quat)>,
+    /// The `fx_barrel` joint, likewise (Power Shot's charge effect rides on it).
+    pub barrel: Option<Entity>,
     /// The Predator viewmodel's `gun_shield_fp` attachment (on `def_c_base`, 16.2 up and 119.4
     /// along the barrel), where the Gun Shield's first-person effect stands.
     pub shield_fp: Option<Vec3>,
@@ -853,7 +853,7 @@ pub fn weapon_fire(
     let gun_actor = if gun_muzzle.cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun };
     let joint_frame = |name: &str| gun_actor.and_then(|a| actors.get(a).ok()?.joint(name)).and_then(|j| globals.get(j).ok()).map(|g| (g.translation(), g.rotation()));
     gun_muzzle.frame = joint_frame("muzzle_flash");
-    gun_muzzle.barrel = joint_frame("fx_barrel");
+    gun_muzzle.barrel = gun_actor.and_then(|a| actors.get(a).ok()?.joint("fx_barrel"));
     gun_muzzle.shield_fp = w.viewmodel.and_then(|v| actors.get(v.1).ok()?.joint("def_c_base")).and_then(|j| globals.get(j).ok()).map(|g| g.transform_point(Vec3::new(0.0, 16.2, 119.4)));
     // The left hand is busy during Vortex and punches, Sword Block holds the sword up; dead
     // Titans don't shoot.
@@ -909,7 +909,7 @@ pub fn weapon_fire(
         let spinning = ads_target > 0.0 && game_fx;
         let cockpit = *mode == CameraMode::Cockpit && piloted;
         let actor = if cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun };
-        let frame = actor.and_then(|a| crate::pilotweapon::vm_attachment(&actors, &globals, a, &("fx_barrel".to_string(), Transform::IDENTITY)));
+        let barrel = actor.and_then(|a| actors.get(a).ok()?.joint("fx_barrel"));
         match (spinning, w.spin_fx) {
             (true, None) => {
                 audio::event(&mut commands, "weapon_predator_windup_1p");
@@ -921,13 +921,21 @@ pub fn weapon_fire(
             }
             (false, Some(e)) => {
                 audio::event(&mut commands, "weapon_predator_winddown_1p");
-                commands.entity(e).despawn();
+                if let Ok(mut c) = commands.get_entity(e) {
+                    c.despawn();
+                }
                 w.spin_fx = None;
             }
             _ => {}
         }
-        if let (Some(e), Some((p, r))) = (w.spin_fx, frame) {
-            commands.entity(e).insert(Transform::from_translation(p).looking_to(r * Vec3::X, r * Vec3::Z));
+        // On the fx_barrel joint itself, so it moves with the gun in the same frame (placed from
+        // the joint's last-frame global it trailed behind the barrels while turning). fx_barrel's
+        // Z runs down the barrels (unlike muzzle_flash, whose X does), and the blur sleeve model
+        // lies along its control point's forward.
+        if let (Some(e), Some(j)) = (w.spin_fx, barrel) {
+            if let Ok(mut c) = commands.get_entity(e) {
+                c.insert((Transform::IDENTITY.looking_to(Vec3::Z, Vec3::Y), ChildOf(j)));
+            }
         }
     }
     // Charge weapons (the Plasma Railgun charges while aiming down sights; charge_time 2.25 s

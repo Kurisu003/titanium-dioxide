@@ -2988,6 +2988,34 @@ impl Batch {
 
 /// Spawn requests, follow trails, simulate every effect and rebuild the per-material meshes.
 #[allow(clippy::too_many_arguments)]
+/// A particle model instance (a child of the world root, its parts children of it).
+#[derive(Component)]
+pub struct FxModelInstance;
+
+/// `update_pfx` places the model instances after this frame's transform propagation, so they
+/// would draw at last frame's place (a frame behind a turning view: Legion's barrel sleeve
+/// trailed the gun). Their globals are worked out here for this frame.
+pub fn sync_fx_model_globals(
+    root: Option<Res<crate::pilotweapon::WorldRoot>>,
+    mut globals: Query<&mut GlobalTransform>,
+    models: Query<(Entity, &Transform, Option<&Children>), With<FxModelInstance>>,
+    locals: Query<&Transform, Without<FxModelInstance>>,
+) {
+    let Some(root) = root else { return };
+    let Ok(root_gt) = globals.get(root.0).copied() else { return };
+    for (e, tf, children) in &models {
+        let gt = root_gt.mul_transform(*tf);
+        if let Ok(mut g) = globals.get_mut(e) {
+            *g = gt;
+        }
+        for &c in children.into_iter().flatten() {
+            if let (Ok(local), Ok(mut g)) = (locals.get(c), globals.get_mut(c)) {
+                *g = gt.mul_transform(*local);
+            }
+        }
+    }
+}
+
 pub fn update_pfx(
     mut commands: Commands,
     time: Res<Time>,
@@ -3337,7 +3365,7 @@ pub fn update_pfx(
                             None => None,
                         })
                         .clone();
-                    let e = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+                    let e = commands.spawn((Transform::default(), Visibility::Hidden, FxModelInstance)).id();
                     if let Some(parts) = parts {
                         for (m, mat) in parts.iter() {
                             if let Some(aabb) = meshes.get(m).and_then(|m| bevy::camera::primitives::MeshAabb::compute_aabb(m)) {
