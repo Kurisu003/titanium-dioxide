@@ -47,6 +47,12 @@ const TITAN_SMOKE_OUTER: f32 = 375.0;
 const TITAN_SMOKE_DPS_PILOT: f32 = 45.0;
 const TITAN_SMOKE_DPS_TITAN: f32 = 450.0;
 const SONAR_PULSE_DURATION: f32 = 5.0;
+/// SONAR_PULSE_RADIUS (mp_titanability_sonar_pulse.nut).
+pub const SONAR_PULSE_RADIUS: f32 = 1250.0;
+/// mp_titanability_sonar_pulse.txt: projectile_launch_speed 5000, projectile_gravity_scale 3 (of
+/// the 750 u/s² projectile gravity).
+const SONAR_SHOT_SPEED: f32 = 5000.0;
+const SONAR_SHOT_GRAVITY: f32 = 3.0 * DEPLOYABLE_GRAVITY;
 const PHASE_DASH_SPEED: f32 = 1000.0;
 const PHASE_DASH_TIME: f32 = 1.0;
 const PHASE_FADE: f32 = 0.5;
@@ -69,6 +75,11 @@ const POWER_SHOT_CLOSE_NEAR: f32 = 800.0;
 const POWER_SHOT_CLOSE_FAR: f32 = 1600.0;
 const POWER_SHOT_CLOSE_FAR_PILOT: f32 = 50.0;
 const POWER_SHOT_SPLASH_HEAVY: f32 = 1800.0;
+/// mp_titanweapon_40mm.nut's TRACKER_LIFETIME in SP (MP: 15): how long each tracker mark
+/// lasts. BT carries the SP loadouts.
+const TRACKER_LIFETIME: f32 = 60.0;
+/// Tracker marks per target: the tracker HUD's art and the rockets go up to three.
+pub const TRACKER_MAX: usize = 3;
 /// SmartAmmo_SetMissileSpeed in mp_titanweapon_tracker_rockets.nut.
 const TRACKER_ROCKET_SPEED: f32 = 1800.0;
 const SLOW_TRAP_SLOW: f32 = 0.5;
@@ -851,8 +862,8 @@ pub struct KitState {
     /// The Laser Core's beam and end-glow systems while it fires.
     laser_fx: Option<(Entity, Entity)>,
     core_tick: f32,
-    /// Tone's lock stacks: (enemy, stacks, seconds since the last hit).
-    pub locks: Vec<(Entity, u32, f32)>,
+    /// Tone's tracker marks: each marked enemy with the seconds left on each of its marks.
+    pub locks: Vec<(Entity, Vec<f32>)>,
     rng: u64,
 }
 
@@ -1088,6 +1099,29 @@ fn view_dir(yaw: f32, pitch: f32) -> Vec3 {
     Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin())
 }
 
+/// ApplyTrackerMark (mp_titanweapon_40mm.nut): one more tracker mark on `target`, lasting
+/// TRACKER_LIFETIME; the owner hears HUD_40mm_TrackerBeep_Locked at three, _Hit below. With three
+/// marks already, the oldest is renewed (a guess: the engine's SmartAmmo tracker list isn't in the
+/// scripts) and nothing plays, as the script returns when the count doesn't change.
+fn apply_tracker_mark(commands: &mut Commands, locks: &mut Vec<(Entity, Vec<f32>)>, target: Entity) {
+    let marks = match locks.iter_mut().find(|l| l.0 == target) {
+        Some(l) => &mut l.1,
+        None => {
+            locks.push((target, Vec::new()));
+            &mut locks.last_mut().unwrap().1
+        }
+    };
+    if marks.len() >= TRACKER_MAX {
+        if let Some(oldest) = marks.iter_mut().min_by(|a, b| a.total_cmp(b)) {
+            *oldest = TRACKER_LIFETIME;
+        }
+        return;
+    }
+    marks.push(TRACKER_LIFETIME);
+    log::debug!("tone tracker marks on {target:?}: {}", marks.len());
+    crate::audio::event(commands, if marks.len() >= TRACKER_MAX { "HUD_40mm_TrackerBeep_Locked" } else { "HUD_40mm_TrackerBeep_Hit" });
+}
+
 /// Damage an enemy with titan-armour or pilot damage and credit BT's core.
 fn hurt(e: &mut Enemy, titan: f32, pilot: f32, core: &mut TitanCore) {
     let amount = if e.infantry { pilot } else { titan };
@@ -1201,7 +1235,7 @@ pub fn kit_input(
     control: Res<crate::pilotctl::Control>,
     mut titans: Query<(&PlayerTitan, &mut KitState, &mut TitanCore, &mut TitanHealth, &Vortex, &mut crate::weapons::Weapon)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
-    (mut mods, mut status): (ResMut<TitanMoveMods>, ResMut<crate::pilotability::PilotStatus>),
+    mut mods: ResMut<TitanMoveMods>,
     (mut vis, tether_assets, gun_muzzle): (Query<&mut Visibility>, Option<Res<TetherAssets>>, Res<crate::weapons::GunMuzzle>),
 ) {
     let Some(defs) = defs else { return };
@@ -1229,29 +1263,25 @@ pub fn kit_input(
         st.energy_delay = n.energy_delay;
     }
 
-    // Tone's lock stacks from 40mm hits (one per hit, up to 3; they fade after 10 s).
+    // Tone's tracker marks from 40mm hits (Tracker40mm_DamagedTarget -> ApplyTrackerMark).
     for p in bolt_hits.0.drain(..) {
         if active.ord != OrdKind::Tracker {
             continue;
         }
-        let near = enemies.iter().filter(|(_, e)| e.alive()).map(|(id, e)| (id, (e.pos + Vec3::Z * e.height * 0.5).distance(p) - e.radius)).min_by(|a, b| a.1.total_cmp(&b.1));
-        log::debug!("tone: 40mm hit at {:.0}, nearest enemy {:?}", p, near.map(|n| n.1));
-        if let Some((id, _)) = near.filter(|n| n.1 < 120.0) {
-            match st.locks.iter_mut().find(|l| l.0 == id) {
-                Some(l) => {
-                    l.1 = (l.1 + 1).min(3);
-                    l.2 = 0.0;
-                }
-                None => st.locks.push((id, 1, 0.0)),
-            }
-            log::debug!("tone lock: {:?}", st.locks.iter().map(|l| l.1).collect::<Vec<_>>());
-            crate::audio::event(&mut commands, "Titan_Tone_SonarLock_Impact_1P");
+        let near = enemies.iter().filter(|(_, e)| e.alive()).map(|(id, e)| (id, e.infantry, (e.pos + Vec3::Z * e.height * 0.5).distance(p) - e.radius)).min_by(|a, b| a.2.total_cmp(&b.2));
+        log::debug!("tone: 40mm hit at {:.0}, nearest enemy {:?}", p, near.map(|n| n.2));
+        // Only Titans carry tracker marks.
+        if let Some((id, _, _)) = near.filter(|n| n.2 < 120.0 && !n.1) {
+            apply_tracker_mark(&mut commands, &mut st.locks, id);
         }
     }
     for l in &mut st.locks {
-        l.2 += dt;
+        for t in &mut l.1 {
+            *t -= dt;
+        }
+        l.1.retain(|t| *t > 0.0);
     }
-    st.locks.retain(|l| l.2 < 10.0 && enemies.get(l.0).is_ok_and(|(_, e)| e.alive()));
+    st.locks.retain(|l| !l.1.is_empty() && enemies.get(l.0).is_ok_and(|(_, e)| e.alive()));
 
     // --- Ordnance (Q): press to fire ---
     let pressed = input.ordnance && !st.prev_ord && !frozen;
@@ -1333,7 +1363,7 @@ pub fn kit_input(
                 let target = st
                     .locks
                     .iter()
-                    .filter(|l| l.1 >= 3)
+                    .filter(|l| l.1.len() >= TRACKER_MAX)
                     .filter_map(|l| enemies.get(l.0).ok().map(|(id, e)| (id, ((e.pos + Vec3::Z * e.height * 0.5) - eye).normalize().dot(dir))))
                     .max_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|t| t.0);
@@ -1553,9 +1583,18 @@ pub fn kit_input(
                 true
             }
             UtilKind::SonarPulse => {
-                // FireSonarPulse: everything within SONAR_PULSE_RADIUS is marked for 5 s.
-                status.pulse = Some((bt_pos, SONAR_PULSE_DURATION));
-                crate::audio::event(&mut commands, "Titan_Tone_SonarLock_Impact_Pulse_1P");
+                // FireSonarPulse: FireGenericBoltWithDrop, the echo pulsing where it lands
+                // (`sonar_shots`). It leaves the shoulder pod (this spot right of the view stands
+                // in for its muzzle) aimed at what the crosshair is on (projectile_adjust_to_gun_
+                // barrel), 1 degree higher (projectile_launch_pitch_offset).
+                let from = eye + right * 60.0 + dir * 80.0;
+                let reach = world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(dir.to_array()), 20000.0).map_or(20000.0, |h| h.t);
+                let aim = (eye + dir * reach - from).normalize_or(dir);
+                let d = view_dir(aim.y.atan2(aim.x), (-aim.z).asin() - 1f32.to_radians());
+                let shot = SonarShot { pos: from, vel: d * SONAR_SHOT_SPEED, age: 0.0 };
+                let at = Transform::from_translation(to_bevy(from)).with_rotation(Quat::from_rotation_arc(Vec3::Y, to_bevy(d).normalize_or(Vec3::Y)));
+                commands.spawn((at, Visibility::default(), shot, crate::pfx::PfxTrail::new("wpn_grenade_sonar_titan"), crate::pilotweapon::ProjectileModel("models/weapons/kunai/w_kunai_projectile.mdl")));
+                crate::audio::event(&mut commands, "Titan_Tone_SonarLock_Fired_ShoulderPod_1P");
                 true
             }
             UtilKind::PhaseDash => {
@@ -1620,7 +1659,10 @@ pub fn kit_input(
             }
         };
         if used {
-            st.util_charges -= 1;
+            // TF_NO_COOLDOWN (testing): the utility keeps its charges.
+            if std::env::var_os("TF_NO_COOLDOWN").is_none() {
+                st.util_charges -= 1;
+            }
             if st.util_cd <= 0.0 {
                 st.util_cd = un.cooldown;
             }
@@ -2469,7 +2511,7 @@ pub fn kit_view(
             (need / n.laser_cost, if need > 0.0 { format!("{:.0}%", st.energy / n.energy_max * 100.0) } else { String::new() })
         }
         OrdKind::Tracker => {
-            let best = st.locks.iter().map(|l| l.1).max().unwrap_or(0);
+            let best = st.locks.iter().map(|l| l.1.len()).max().unwrap_or(0);
             (if best >= 3 { frac(st.ord_cd, st.ord_cd_max) } else { 1.0 - best as f32 / 3.0 }, format!("LOCK {best}/3"))
         }
         _ => (frac(st.ord_cd, st.ord_cd_max), if st.ord_cd > 0.0 { format!("{:.0}", st.ord_cd.ceil()) } else { String::new() }),
@@ -2535,6 +2577,80 @@ pub fn kit_view(
     }
 }
 
+
+/// Tone's Sonar Pulse in flight (the kunai model with wpn_grenade_sonar_titan).
+#[derive(Component)]
+pub struct SonarShot {
+    pos: Vec3,
+    vel: Vec3,
+    age: f32,
+}
+
+/// Fly Sonar Pulse echoes; where one hits the world or a Titan it pulses
+/// (OnProjectileCollision_titanability_sonar_pulse -> PulseLocation): enemies within
+/// SONAR_PULSE_RADIUS are revealed for SONAR_PULSE_DURATION and each Titan there gets a tracker
+/// mark, with the exp_sonar_pulse impact and Titan_Tone_SonarLock_Impact_Pulse_1P.
+#[allow(clippy::type_complexity)]
+pub fn sonar_shots(
+    mut commands: Commands,
+    time: Res<Time>,
+    world: Res<Collision>,
+    active: Res<ActiveKit>,
+    mut status: ResMut<crate::pilotability::PilotStatus>,
+    mut shots: Query<(Entity, &mut SonarShot, &mut Transform)>,
+    enemies: Query<(Entity, &Enemy)>,
+    mut kits: Query<&mut KitState, With<PlayerTitan>>,
+) {
+    let dt = time.delta_secs().min(0.1);
+    for (id, mut sh, mut tf) in &mut shots {
+        sh.age += dt;
+        sh.vel.z -= SONAR_SHOT_GRAVITY * dt;
+        let step = sh.vel * dt;
+        let len = step.length().max(1e-4);
+        let dir = step / len;
+        let mut t_end = len;
+        let mut normal = -dir;
+        let mut hit = world.0.raycast(SVec3::from(sh.pos.to_array()), SVec3::from(dir.to_array()), len).map(|h| {
+            normal = Vec3::from(h.normal.to_array());
+            h.t
+        });
+        if let Some(t) = hit {
+            t_end = t;
+        }
+        for (_, e) in enemies.iter() {
+            if e.alive() && !e.infantry {
+                if let Some(t) = ray_cylinder(sh.pos, dir, e.pos, e.radius, e.height) {
+                    if t < t_end {
+                        t_end = t;
+                        hit = Some(t);
+                        normal = -dir;
+                    }
+                }
+            }
+        }
+        sh.pos += dir * t_end;
+        tf.translation = to_bevy(sh.pos);
+        tf.rotation = Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y));
+        if hit.is_none() && sh.age < 6.0 {
+            continue;
+        }
+        commands.entity(id).despawn();
+        let at = sh.pos;
+        log::debug!("sonar pulse at ({:.0}, {:.0}, {:.0})", at.x, at.y, at.z);
+        status.pulse = Some((at, SONAR_PULSE_DURATION));
+        emit(&mut commands, Effect::Hit { at: to_bevy(at), normal: to_bevy(normal).normalize_or(Vec3::Y), table: "exp_sonar_pulse", surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
+        crate::audio::event_at(&mut commands, "Titan_Tone_SonarLock_Impact_Pulse_1P", at);
+        if active.ord == OrdKind::Tracker {
+            if let Ok(mut kit) = kits.single_mut() {
+                for (e_id, e) in enemies.iter() {
+                    if e.alive() && !e.infantry && e.pos.distance(at) < SONAR_PULSE_RADIUS {
+                        apply_tracker_mark(&mut commands, &mut kit.locks, e_id);
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Spawn the tower model under each newly planted Laser Tripwire pylon and play its opening
 /// ("trip_wire_closed_to_open", held on its last frame).

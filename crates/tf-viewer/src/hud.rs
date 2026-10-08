@@ -263,6 +263,7 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         commands.entity(root).add_child(holder);
     }
     spawn_smart_hud(&mut commands, &ui, root);
+    spawn_tone_hud(&mut commands, &ui, root);
     // Charge meter: one pip per charge level (a single bar for a continuous charge).
     let charge_holder = commands
         .spawn(Node { position_type: PositionType::Absolute, top: percent(50), left: px(0), right: px(0), justify_content: JustifyContent::Center, ..default() })
@@ -847,6 +848,92 @@ pub fn update_smart_hud(
         }
         node.left = Val::Px(half * 0.35 + view_h * 0.012);
         node.top = Val::Px(-view_h * 0.012);
+    }
+}
+
+// ---- Tone's tracker marks ----
+//
+// cl_tone_hud.gnut: while Tracker Rockets are the ordnance, each enemy carrying tracker marks
+// gets a fullscreen `ui/tone_tracker_hud` RUI at its origin plus (world space centre - origin +
+// 42 up), shown while the enemy is in sight or sonar-detected, given the mark count. That RUI is
+// compiled, so it is recreated from its art: the ring's lower-left third (1 mark), lower two
+// thirds (2) and the whole ring in red (3, locked), cut from one 191x183 frame. The art is drawn
+// at its own pixel size on a 1080-high canvas (a guess at the RUI's scale).
+
+#[derive(Component)]
+pub struct ToneMarker(usize);
+#[derive(Component)]
+pub struct ToneMarkArt(usize, usize);
+const TONE_MARKERS: usize = 8;
+/// The ring's frame in 1080p pixels and where each piece sits in it: (path, x, y, w, h).
+const TONE_RING: (f32, f32) = (191.0, 183.0);
+const TONE_MARK_ART: [(&str, f32, f32, f32, f32); 3] = [
+    ("rui/hud/tone_tracker_hud/tone_tracker_1marks", 0.0, 66.0, 95.0, 117.0),
+    ("rui/hud/tone_tracker_hud/tone_tracker_2marks", 0.0, 66.0, 191.0, 117.0),
+    ("rui/hud/tone_tracker_hud/tone_tracker_3marks", 0.0, 0.0, 191.0, 183.0),
+];
+
+fn spawn_tone_hud(commands: &mut Commands, ui: &UiAssets, root: Entity) {
+    let v = |px: f32| vh(px / 10.8);
+    for i in 0..TONE_MARKERS {
+        let holder = commands.spawn((Node { position_type: PositionType::Absolute, ..default() }, Visibility::Hidden, ToneMarker(i))).id();
+        for (k, (path, x, y, w, h)) in TONE_MARK_ART.into_iter().enumerate() {
+            let node = Node { position_type: PositionType::Absolute, left: v(x - TONE_RING.0 * 0.5), top: v(y - TONE_RING.1 * 0.5), width: v(w), height: v(h), ..default() };
+            let e = image(commands, ui, path, node, Color::WHITE);
+            commands.entity(e).insert((ToneMarkArt(i, k + 1), Visibility::Hidden));
+            commands.entity(holder).add_child(e);
+        }
+        commands.entity(root).add_child(holder);
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn update_tone_hud(
+    control: Res<Control>,
+    mode: Res<CameraMode>,
+    active: Res<crate::titankit::ActiveKit>,
+    status: Res<crate::pilotability::PilotStatus>,
+    world: Res<crate::player::Collision>,
+    kits: Query<&crate::titankit::KitState, With<PlayerTitan>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<crate::player::MainCamera>>,
+    enemies: Query<&Enemy>,
+    mut markers: Query<(&ToneMarker, &mut Node, &mut Visibility), Without<ToneMarkArt>>,
+    mut art: Query<(&ToneMarkArt, &mut Visibility), Without<ToneMarker>>,
+) {
+    let mut spots: Vec<(Vec2, usize)> = Vec::new();
+    let shown = *control == Control::Titan && *mode != CameraMode::Free && active.ord == crate::titankit::OrdKind::Tracker;
+    if let (true, Ok(kit), Ok((camera, cam_tf))) = (shown, kits.single(), cameras.single()) {
+        let eye = crate::player::from_bevy(cam_tf.translation());
+        for (target, marks) in &kit.locks {
+            let Ok(e) = enemies.get(*target) else { continue };
+            if !e.alive() || marks.is_empty() {
+                continue;
+            }
+            let at = e.pos + Vec3::Z * (e.height * 0.5 + 42.0);
+            let sonar = status.pulse.is_some_and(|(p, _)| e.pos.distance(p) < crate::titankit::SONAR_PULSE_RADIUS);
+            let to = at - eye;
+            let seen = world.0.raycast(tf_sim::glam::Vec3::from(eye.to_array()), tf_sim::glam::Vec3::from(to.normalize_or_zero().to_array()), to.length() - e.radius).is_none();
+            if !(seen || sonar) {
+                continue;
+            }
+            if let Ok(p) = camera.world_to_viewport(cam_tf, crate::player::to_bevy(at)) {
+                spots.push((p, marks.len().min(crate::titankit::TRACKER_MAX)));
+            }
+        }
+    }
+    for (m, mut node, mut vis) in &mut markers {
+        match spots.get(m.0) {
+            Some((p, _)) => {
+                node.left = Val::Px(p.x);
+                node.top = Val::Px(p.y);
+                *vis = Visibility::Inherited;
+            }
+            None => *vis = Visibility::Hidden,
+        }
+    }
+    for (a, mut vis) in &mut art {
+        let on = spots.get(a.0).is_some_and(|s| s.1 == a.1);
+        *vis = if on { Visibility::Inherited } else { Visibility::Hidden };
     }
 }
 
