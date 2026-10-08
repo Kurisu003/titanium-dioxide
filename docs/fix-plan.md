@@ -251,7 +251,7 @@ We work through these one at a time, and the next one starts only after the user
 9. ~~Legion right-click artifact on the weapon (13)~~ (fixed: the barrel blur sleeve lay across fx_barrel's X instead of down its Z; it and every effect model drew a frame late. Follow-up: the sleeve is hidden behind the gun, as effect models draw in the world pass, and its vertex alpha and fade-in are missing)
 10. ~~On-foot muzzle flash stays behind in the world (14)~~ (fixed: FP muzzle flash and shell eject play on the viewmodel joints)
 11. ~~Thunderbolt scope depends on looking up or down (15)~~ (fixed: the walk layer played the Thunderbolt's 67-frame standing clip, which turns the gun 36 degrees for half its 2.2 s loop, at full weight while standing; the layer now fades in with speed)
-12. Scorch's gun can't light his gas canisters (26)
+12. ~~Scorch's gun can't light his gas canisters (26)~~ (fixed: the T-203 shell's blast and its new physics thermite (Proto_MeteorCreatesThermite) ignite the gas)
 13. Titan HUD moves far too much (1)
 14. BT slides too much when turning while holding forward (23)
 15. Titan dash feels weird (4)

@@ -661,6 +661,8 @@ pub struct PilotBolt {
     impact_table: &'static str,
     /// Its burn mod's damage and explosion, taken on when it leaves through your A-Wall.
     burn: Option<((f32, f32), (f32, f32, f32))>,
+    /// Scorch's T-203 shell: it leaves thermite where it lands (OnProjectileCollision_Meteor).
+    thermite: bool,
 }
 
 impl PilotBolt {
@@ -680,6 +682,7 @@ impl PilotBolt {
             homing: None,
             impact_table: def.impact_table,
             burn: def.burn.as_deref().filter(|_| !from_titan).map(|b| ((b.damage_near, b.damage_far), (b.explosion_damage, b.explosion_inner_radius, b.explosion_radius))),
+            thermite: from_titan && def.name == "mp_titanweapon_meteor",
         }
     }
 }
@@ -1181,6 +1184,7 @@ pub fn update_pilot_bolts(
     hitboxes: Option<Res<crate::hitbox::EnemyHitboxes>>,
     mut enemy_walls: ResMut<crate::titankit::EnemyWalls>,
     shields: Res<crate::pilotability::Shields>,
+    mut fire_spots: ResMut<crate::titankit::FireSpots>,
 ) {
     let dt = time.delta_secs().min(0.1);
     let no_boxes = crate::hitbox::EnemyHitboxes::default();
@@ -1262,6 +1266,10 @@ pub fn update_pilot_bolts(
             }
         }
         let (exp, inner, radius) = b.explosion;
+        if b.thermite {
+            fire_spots.blasts.push((b.pos, radius));
+            crate::titankit::spawn_meteor_thermite(&mut commands, b.pos - dir * 4.0, b.vel, victim.is_none(), b.pos.x.to_bits() ^ b.pos.y.to_bits().rotate_left(11) ^ b.travelled.to_bits().rotate_left(22));
+        }
         if exp > 0.0 && radius > 0.0 {
             for (_, mut e) in &mut enemies {
                 if !e.alive() {

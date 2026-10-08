@@ -1000,6 +1000,137 @@ pub struct Thermite {
     flicker: f32,
 }
 
+/// A piece of the T-203's thermite (Proto_MeteorCreatesThermite, mp_titanweapon_meteor.nut):
+/// an invisible debris prop that falls, bounces and burns for its lifetime, dealing a meteor
+/// tick within METEOR_THERMITE_DAMAGE_RADIUS_DEF (or the distance it moved, when faster) every
+/// 0.1 s from 0.2 s after landing. Its gas-igniting reach is the same circle.
+#[derive(Component)]
+pub struct MeteorThermite {
+    pos: Vec3,
+    vel: Vec3,
+    life: f32,
+    age: f32,
+    /// At rest (the base piece stops where a shot hit the world: StopPhysics).
+    still: bool,
+    /// Where it was at the last damage tick.
+    last: Vec3,
+    tick: f32,
+    /// The shot it came from: CreateOncePerTickDamageInflictorHelper lets each target take one
+    /// tick per server tick from all of a shot's pieces together.
+    shot: u32,
+}
+
+/// Fire this frame that can ignite Slow Trap gas from outside the kit systems: T-203 impact
+/// blasts (pushed by the bolts, drained by `kit_world`) and burning thermite pieces.
+#[derive(Resource, Default)]
+pub struct FireSpots {
+    pub blasts: Vec<(Vec3, f32)>,
+    burning: Vec<(Vec3, f32)>,
+}
+
+/// METEOR_THERMITE_DAMAGE_RADIUS_DEF.
+const METEOR_THERMITE_RADIUS: f32 = 45.0;
+/// thermiteLifetimeMin/Max (2.0, 2.5) times SP_THERMITE_DURATION_SCALE for the player.
+const METEOR_THERMITE_LIFE: (f32, f32) = (2.0 * 1.25, 2.5 * 1.25);
+
+/// Proto_MeteorCreatesThermite: where a T-203 shell lands, a base piece (P_wpn_meteor_exp) and
+/// four trails (P_wpn_meteor_exp_trail) thrown along the shell's velocity, its speed capped at
+/// 2500 and scaled by 0.35 (singleplayer), the trails each nudged 50 along a random forward
+/// and up. `vel` is the shell's velocity; `on_world` stops the base where it hit.
+pub fn spawn_meteor_thermite(commands: &mut Commands, at: Vec3, vel: Vec3, on_world: bool, seed: u32) {
+    let mut rng = seed | 1;
+    let mut rand = move |lo: f32, hi: f32| {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        lo + (hi - lo) * (rng as f32 / u32::MAX as f32)
+    };
+    let v = vel.normalize_or_zero() * vel.length().min(2500.0) * 0.35;
+    let shot = seed;
+    let piece = |pos: Vec3, vel: Vec3, life: f32, still: bool| MeteorThermite { pos, vel, life, age: 0.0, still, last: pos, tick: 0.2, shot };
+    commands.spawn((Transform::from_translation(to_bevy(at)), crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"), piece(at, v, METEOR_THERMITE_LIFE.1, on_world)));
+    for _ in 0..4 {
+        // AnglesToForward / AnglesToUp of random angles in -360..360.
+        let (p, y, r) = (rand(-360.0, 360.0).to_radians(), rand(-360.0, 360.0).to_radians(), rand(-360.0, 360.0).to_radians());
+        let (sp, cp, sy, cy, sr, cr) = (p.sin(), p.cos(), y.sin(), y.cos(), r.sin(), r.cos());
+        let fwd = Vec3::new(cp * cy, cp * sy, -sp);
+        let up = Vec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
+        let life = rand(METEOR_THERMITE_LIFE.0, METEOR_THERMITE_LIFE.1);
+        commands.spawn((Transform::from_translation(to_bevy(at)), crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp_trail"), piece(at, v + fwd * 50.0 + up * 50.0, life, false)));
+    }
+}
+
+/// The T-203's thermite pieces: debris physics against the world (prop_physics in
+/// TRACE_COLLISION_GROUP_DEBRIS, so they pass through Titans), burning and damage ticks.
+pub fn meteor_thermite(
+    mut commands: Commands,
+    time: Res<Time>,
+    world: Res<Collision>,
+    defs: Option<Res<KitDefs>>,
+    mut spots: ResMut<FireSpots>,
+    mut pieces: Query<(Entity, &mut MeteorThermite, &mut Transform)>,
+    mut enemies: Query<(Entity, &mut Enemy)>,
+    mut cores: Query<&mut TitanCore, With<PlayerTitan>>,
+) {
+    let dt = time.delta_secs().min(0.1);
+    spots.burning.clear();
+    let (tick_titan, tick_pilot) = defs.as_ref().map_or((100.0, 20.0), |d| (d.n.thermite_tick, d.n.thermite_tick_pilot));
+    let mut burned: Vec<(u32, Entity)> = Vec::new();
+    for (id, mut t, mut tf) in &mut pieces {
+        t.age += dt;
+        if t.age >= t.life {
+            commands.entity(id).despawn();
+            continue;
+        }
+        if !t.still {
+            // Bounce and friction are guesses (the engine's debris physics, empty_physics.mdl).
+            t.vel.z -= DEPLOYABLE_GRAVITY * dt;
+            let step = t.vel * dt;
+            let len = step.length();
+            if len > 1e-4 {
+                let d = step / len;
+                match world.0.raycast(SVec3::from(t.pos.to_array()), SVec3::from(d.to_array()), len + 2.0) {
+                    Some(h) => {
+                        let n = Vec3::from(h.normal.to_array());
+                        t.pos += d * (h.t - 2.0).max(0.0);
+                        let vn = t.vel.dot(n);
+                        let tangent = (t.vel - n * vn) * (-dt * 6.0).exp();
+                        t.vel = tangent - n * vn.min(0.0) * 0.25;
+                        if n.z > 0.7 && t.vel.length() < 30.0 {
+                            t.still = true;
+                        }
+                    }
+                    None => t.pos += step,
+                }
+            }
+            tf.translation = to_bevy(t.pos);
+        }
+        // "thermite falls and ignites" after 0.2 s, then burns every 0.1 s.
+        if t.age < 0.2 {
+            continue;
+        }
+        let radius = METEOR_THERMITE_RADIUS.max(t.pos.distance(t.last));
+        spots.burning.push((t.pos, radius));
+        t.tick -= dt;
+        if t.tick > 0.0 {
+            continue;
+        }
+        t.tick += 0.1;
+        t.last = t.pos;
+        let Ok(mut core) = cores.single_mut() else { continue };
+        for (eid, mut e) in enemies.iter_mut() {
+            if !e.alive() || burned.contains(&(t.shot, eid)) {
+                continue;
+            }
+            let d = (e.pos - t.pos).truncate().length() - e.radius;
+            if d < radius && t.pos.z > e.pos.z - radius && t.pos.z < e.pos.z + e.height + radius {
+                burned.push((t.shot, eid));
+                hurt(&mut e, tick_titan, tick_pilot, &mut core);
+            }
+        }
+    }
+}
+
 /// Flame Core: each row's effects reach FLAME_WALL_MAX_HEIGHT (110) past the outer waves,
 /// PROJECTILE_SEPARATION (128) from the middle one (mp_titancore_flame_wave.nut).
 const FLAME_ROW_HALF_WIDTH: f32 = 128.0 + 110.0;
@@ -1862,7 +1993,7 @@ pub fn kit_world(
     mut traps: Query<(Entity, &mut TetherTrap)>,
     mut titans: Query<(&PlayerTitan, &mut KitState, &mut TitanCore)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
-    (mut tick, mut hit_groups, gas, vortex, mut tethers, tether_assets, (control, difficulty, mut pilots, mut player, mut mods, mut enemy_walls, mode, gun_muzzle)): (
+    (mut tick, mut hit_groups, gas, vortex, mut tethers, tether_assets, (control, difficulty, mut pilots, mut player, mut mods, mut enemy_walls, mode, gun_muzzle, mut spots)): (
         Local<f32>,
         Local<HashMap<u32, Vec<Entity>>>,
         Query<(Entity, &SlowTrap)>,
@@ -1878,6 +2009,7 @@ pub fn kit_world(
             ResMut<EnemyWalls>,
             Res<CameraMode>,
             Res<crate::weapons::GunMuzzle>,
+            ResMut<FireSpots>,
         ),
     ),
 ) {
@@ -2088,6 +2220,10 @@ pub fn kit_world(
     // Core or the Thermal Shield): IgniteTrap - the cloud goes up and 12 lines of thermite run
     // out from it (FireWeaponGrenade at yaw 30 x i, the last six reversed, each from 75 out),
     // every patch a FIRE_TRAP_MINI_EXPLOSION_RADIUS 75 meteor tick for the Firewall's lifetime.
+    // The T-203's impact blasts and burning thermite (mp_titanweapon_meteor and
+    // mp_titanweapon_meteor_thermite damage both ignite it).
+    fire.extend(std::mem::take(&mut spots.blasts));
+    fire.extend(spots.burning.iter().copied());
     for (id, trap) in &gas {
         if !trap.landed || trap.build > 0.0 {
             continue;

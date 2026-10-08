@@ -300,6 +300,7 @@ fn main() {
         .init_resource::<titankit::EnemyWalls>()
         .init_resource::<weapons::GunMuzzle>()
         .init_resource::<titankit::TitanBoltHits>()
+        .init_resource::<titankit::FireSpots>()
         .init_resource::<titankit::KitView>()
         .init_resource::<titankit::TitanMoveMods>()
         .init_resource::<rodeo::Rodeo>()
@@ -334,7 +335,7 @@ fn main() {
                     abilities::update_missiles,
                     titankit::kit_input,
                     targets::update_enemies,
-                    (titankit::kit_world, titankit::utility_world, titankit::laser_towers, titankit::sonar_shots).chain(),
+                    (titankit::meteor_thermite, titankit::kit_world, titankit::utility_world, titankit::laser_towers, titankit::sonar_shots).chain(),
                     targets::update_bolts,
                     targets::death_explosions,
                     combat::player_combat,
