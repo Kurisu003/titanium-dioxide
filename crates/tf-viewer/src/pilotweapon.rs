@@ -556,6 +556,11 @@ pub fn vm_attachment(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, 
     Some((t, r))
 }
 
+/// A viewmodel attachment's joint entity and its frame in that joint's space.
+pub fn vm_joint(actors: &Query<&Actor>, vm: Entity, att: &(String, Transform)) -> Option<(Entity, Transform)> {
+    Some((actors.get(vm).ok()?.joint(&att.0)?, att.1))
+}
+
 /// The selected ordnance's viewmodel (its script's `viewmodel`, with the Pilot's arms), for
 /// the throw; rebuilt when the ordnance changes.
 #[allow(clippy::too_many_arguments)]
@@ -1139,17 +1144,17 @@ pub fn pilot_weapon_fire(
         // The script's first-person muzzle flash and shell eject at their attachments, drawn
         // with the viewmodel; the hand-built flash when the game's systems aren't available.
         let vm = w.viewmodel.map(|v| v.1);
-        let at = |i: usize| vm.zip(w.fx_atts[i].as_ref()).and_then(|(vm, a)| vm_attachment(&actors, &globals, vm, a));
+        let at = |i: usize| vm.zip(w.fx_atts[i].as_ref()).and_then(|(vm, a)| vm_joint(&actors, vm, a));
         let game_fx = pfx_ready && std::env::var_os("TF_OLD_FX").is_none();
         match (at(0), game_fx && !w.def.fx.muzzle_view.is_empty()) {
-            (Some((p, r)), true) => crate::pfx::emit_named_vm_frame(&mut commands, &w.def.fx.muzzle_view, p, r),
+            (Some((j, local)), true) => crate::pfx::emit_on_vm_joint(&mut commands, &w.def.fx.muzzle_view, j, local),
             _ => {
                 let energy = ["arc", "lstar", "plasma"].iter().any(|k| w.def.name.contains(k));
                 crate::particles::emit(&mut commands, crate::particles::Effect::Muzzle { at: muzzle, dir: to_bevy(forward).normalize_or(Vec3::NEG_Z), scale: 0.3, energy });
             }
         }
-        if let (Some((p, r)), true) = (at(1), game_fx && !w.def.fx.shell_view.is_empty()) {
-            crate::pfx::emit_named_vm_frame(&mut commands, &w.def.fx.shell_view, p, r);
+        if let (Some((j, local)), true) = (at(1), game_fx && !w.def.fx.shell_view.is_empty()) {
+            crate::pfx::emit_on_vm_joint(&mut commands, &w.def.fx.shell_view, j, local);
         }
         commands.spawn((
             PointLight { color: Color::srgb(1.0, 0.75, 0.45), intensity: 60_000.0, range: 6.0, ..default() },

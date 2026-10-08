@@ -502,6 +502,34 @@ pub fn emit_named_vm_frame(commands: &mut Commands, name: &str, at: Vec3, rot: Q
     commands.spawn(PfxRequest { name: name.to_string(), cps: vec![Cp { pos: to_game(at), fwd, left, up }], stop_after: None, vm: true });
 }
 
+/// With a [`PfxTrail`]: the trail entity removes itself after this many seconds (a one-shot
+/// system played on a moving attachment, see [`emit_on_vm_joint`]).
+#[derive(Component)]
+pub struct PfxOneShot(pub f32);
+
+/// Play a first-person system (`_FP` muzzle flash, shell eject) on a viewmodel attachment: on
+/// the attachment's joint (`local` is the attachment's frame in the joint's space, game axes),
+/// so the parts that lock to their control point follow the gun as the game's attached effects
+/// do; emitted at last frame's attachment position, the flash stayed behind in the world while
+/// moving. Released after a second, by when the locked parts are long gone; smoke and sparks
+/// don't lock and stay in the world either way.
+pub fn emit_on_vm_joint(commands: &mut Commands, name: &str, joint: Entity, local: Transform) {
+    // The trail's control point faces its entity's forward (-Z) with up +Y: the attachment's X
+    // and Z.
+    let tf = local.mul_transform(Transform::IDENTITY.looking_to(Vec3::X, Vec3::Z));
+    commands.spawn((tf, PfxTrail::oriented(name), PfxVmSpace, PfxOneShot(1.0), ChildOf(joint)));
+}
+
+/// Remove [`PfxOneShot`] trails whose time is up.
+pub fn tick_pfx_one_shots(mut commands: Commands, time: Res<Time>, mut shots: Query<(Entity, &mut PfxOneShot)>) {
+    for (e, mut s) in &mut shots {
+        s.0 -= time.delta_secs();
+        if s.0 <= 0.0 {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
 /// Marks a [`PfxRequest`] to be drawn by the viewmodel camera, over the first-person models
 /// (EffectSetIsWithCockpit: sparks on BT's cockpit panels).
 #[derive(Component)]
@@ -3135,6 +3163,12 @@ pub fn update_pfx(
             if let (Some(id), true) = (tr.effect, screen) {
                 if let Some(fx) = pfx.effects.iter_mut().find(|f| f.id == id) {
                     fx.screen = true;
+                }
+            }
+            // First-person, like a `vm` request (its fades near the eye).
+            if let (Some(id), true) = (tr.effect, vm_space) {
+                if let Some(fx) = pfx.effects.iter_mut().find(|f| f.id == id) {
+                    fx.vm = true;
                 }
             }
         }

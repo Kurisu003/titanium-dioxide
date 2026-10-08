@@ -776,10 +776,12 @@ fn titan_shot_fx(commands: &mut Commands, w: &Weapon, cockpit: bool, actors: &Qu
     let Some(atts) = w.fx_atts.as_ref() else { return false };
     let at = |actor: Option<Entity>, i: usize| actor.zip(atts[i].as_ref()).and_then(|(a, att)| crate::pilotweapon::vm_attachment(actors, globals, a, att));
     if cockpit {
-        let Some((p, r)) = at(w.viewmodel.map(|v| v.1), 0).filter(|_| !w.def.fx.muzzle_view.is_empty()) else { return false };
-        crate::pfx::emit_named_vm_frame(commands, &w.def.fx.muzzle_view, p, r);
-        if let Some((p, r)) = at(w.viewmodel.map(|v| v.1), 1).filter(|_| !w.def.fx.shell_view.is_empty()) {
-            crate::pfx::emit_named_vm_frame(commands, &w.def.fx.shell_view, p, r);
+        // On the viewmodel's joints, so the flash moves with the gun (see emit_on_vm_joint).
+        let joint = |i: usize| w.viewmodel.map(|v| v.1).zip(atts[i].as_ref()).and_then(|(a, att)| crate::pilotweapon::vm_joint(actors, a, att));
+        let Some((j, local)) = joint(0).filter(|_| !w.def.fx.muzzle_view.is_empty()) else { return false };
+        crate::pfx::emit_on_vm_joint(commands, &w.def.fx.muzzle_view, j, local);
+        if let Some((j, local)) = joint(1).filter(|_| !w.def.fx.shell_view.is_empty()) {
+            crate::pfx::emit_on_vm_joint(commands, &w.def.fx.shell_view, j, local);
         }
     } else {
         let Some((p, r)) = at(w.world_gun, 2).filter(|_| !w.def.fx.muzzle_world.is_empty()) else { return false };

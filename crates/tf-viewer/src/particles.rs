@@ -716,7 +716,7 @@ pub struct ParticlePlugin;
 
 impl Plugin for ParticlePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (load_particles, crate::pfx::start_pfx))
+        app.add_systems(Update, (load_particles, crate::pfx::start_pfx, crate::pfx::tick_pfx_one_shots))
             .add_systems(PostUpdate, (crate::pfx::pfx_test, update_particles, crate::pfx::update_pfx, crate::pfx::sync_fx_model_globals).chain().after(bevy::transform::TransformSystems::Propagate));
     }
 }
