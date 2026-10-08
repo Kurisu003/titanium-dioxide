@@ -433,12 +433,18 @@ pub fn angles_quat(a: Vec3) -> Quat {
 
 /// Cockpit sway (`cockpitSway*`): the cockpit model (BT's frame; the Pilot's HUD rides the
 /// helmet's `human_pov_cockpit`) lags behind turns and movement. Factors are pilot_base.set's for
-/// the Pilot; titan_buddy.set sets none, so BT uses the engine defaults (client.dll settings
-/// table: gain 3, turn -4 / roll 0 / origin -1, move -0.3 / roll -0.2 / origin -0.15). The
-/// target is clamped to cockpitSwayMin/Max (angles +-0.5, origin +-1) and scaled by the gain,
-/// and the sway follows it on the cockpit_spring (constant 65, damping 9) - all engine
-/// defaults. Reconstructed: a turn of 1 degree/s pushes `factor * TURN_K`, a speed of 1 unit/s
-/// `factor * MOVE_K`, and the clamp comes before the gain.
+/// the Pilot; titan_buddy.set sets none, so BT uses the engine defaults (client.dll's player
+/// settings table: gain 3, turn -4 / roll 0 / origin -1, move -0.3 / roll -0.2 / origin -0.15,
+/// limits +-1 unit and +-0.5 degrees).
+///
+/// The update follows client.dll (the routine at 0x1805939c0, fed by 0x1804e7e70):
+/// - the view-space velocity times the frame time, and the view's angular velocity averaged over
+///   the last 5 frames times the tick interval, each push a target through the factors (forward
+///   motion: origin x; sideways: origin y, yaw and roll; vertical: origin z and pitch; pitching:
+///   origin z and pitch; turning: origin y, yaw and roll);
+/// - the target is clamped to cockpitSwayMin/Max;
+/// - the sway eases toward it at `cockpitSwayGain` per second (state = lerp(target, state,
+///   exp(-gain dt))): the gain is a rate, not a scale.
 #[derive(Clone, Copy, Debug)]
 pub struct CockpitSwayDef {
     pub turn_angle: f32,
@@ -457,25 +463,39 @@ impl CockpitSwayDef {
     pub const TITAN: Self = Self { turn_angle: -4.0, turn_roll: 0.0, turn_origin: -1.0, move_angle: -0.3, move_roll: -0.2, move_origin: -0.15, gain: 3.0 };
 }
 
-const TURN_K: f32 = 0.01;
-const MOVE_K: f32 = 0.003;
+/// cockpitSwayMin/MaxAngle* and Min/MaxOrigin* engine defaults.
 const SWAY_MAX_ANGLE: f32 = 0.5;
 const SWAY_MAX_ORIGIN: f32 = 1.0;
+/// Frames the angular velocity is averaged over (a ring of 5, times 0.2).
+const SWAY_RATE_FRAMES: usize = 5;
+/// gpGlobals->interval_per_tick: base_tickinterval_sp (server.dll, 0.05; MP is 1/60).
+const TICK_INTERVAL: f32 = 0.05;
+/// cockpit_spring_* engine defaults, for the footstep and damage jolts.
 const SPRING_K: f32 = 65.0;
 const SPRING_D: f32 = 9.0;
 
 #[derive(Clone, Copy, Default)]
 pub struct CockpitSway {
     last: Option<(f32, f32)>,
-    /// (pitch, yaw, roll) degrees and origin offset (forward, left, up) in units.
-    pub angles: Vec3,
-    pub origin: Vec3,
+    /// The last frames' (pitch, yaw) rates in degrees per second, and the next slot.
+    rates: [(f32, f32); SWAY_RATE_FRAMES],
+    slot: usize,
+    /// The eased sway: (pitch, yaw, roll) degrees and (forward, left, up) units.
+    sway_angles: Vec3,
+    sway_origin: Vec3,
+    /// Jolts (footsteps, damage) on the cockpit spring, added on top.
+    jolt_angles: Vec3,
+    jolt_origin: Vec3,
     angles_vel: Vec3,
     origin_vel: Vec3,
+    /// (pitch, yaw, roll) degrees and origin offset (forward, left, up) in units: sway plus jolts.
+    pub angles: Vec3,
+    pub origin: Vec3,
 }
 
 impl CockpitSway {
-    /// `vel` in the view's yaw frame (forward, left, up).
+    /// `yaw`/`pitch` in radians (pitch positive looking down); `vel` in the view's yaw frame
+    /// (forward, left, up).
     pub fn step(&mut self, def: &CockpitSwayDef, yaw: f32, pitch: f32, vel: Vec3, dt: f32) {
         let dt = dt.max(1e-4);
         let (dyaw, dpitch) = match self.last {
@@ -486,60 +506,97 @@ impl CockpitSway {
             None => (0.0, 0.0),
         };
         self.last = Some((yaw, pitch));
-        let (tk, mk) = (TURN_K, MOVE_K);
-        // Yaw rate is positive turning left; pitch rate positive looking down.
-        let target_a = Vec3::new(
-            def.turn_angle * dpitch * tk + def.move_angle * vel.x * mk,
-            def.turn_angle * dyaw * tk,
-            def.turn_roll * dyaw * tk + def.move_roll * -vel.y * mk,
+        self.rates[self.slot] = (dpitch, dyaw);
+        self.slot = (self.slot + 1) % SWAY_RATE_FRAMES;
+        let k = 1.0 / SWAY_RATE_FRAMES as f32;
+        let (pitch_in, yaw_in) = self.rates.iter().fold((0.0, 0.0), |(p, y), r| (p + r.0 * k, y + r.1 * k));
+        let (pitch_in, yaw_in) = (pitch_in * TICK_INTERVAL, yaw_in * TICK_INTERVAL);
+        // The velocity in the view frame (pitch included), times the frame time.
+        let (sp, cp) = pitch.sin_cos();
+        let v = Vec3::new(vel.x * cp - vel.z * sp, vel.y, vel.x * sp + vel.z * cp) * dt;
+        let target_o = Vec3::new(
+            def.move_origin * v.x,
+            def.move_origin * v.y + def.turn_origin * yaw_in,
+            def.move_origin * v.z - def.turn_origin * pitch_in,
         )
-        .clamp(Vec3::splat(-SWAY_MAX_ANGLE), Vec3::splat(SWAY_MAX_ANGLE))
-            * def.gain;
-        let target_o = (Vec3::new(0.0, def.turn_origin * dyaw * tk, 0.0) + vel * def.move_origin * mk)
-            .clamp(Vec3::splat(-SWAY_MAX_ORIGIN), Vec3::splat(SWAY_MAX_ORIGIN))
-            * def.gain;
-        // Substep the spring so a long frame can't blow it up.
+        .clamp(Vec3::splat(-SWAY_MAX_ORIGIN), Vec3::splat(SWAY_MAX_ORIGIN));
+        let target_a = Vec3::new(
+            -def.move_angle * v.z - def.turn_angle * pitch_in,
+            def.move_angle * v.y + def.turn_angle * yaw_in,
+            -def.move_roll * v.y - def.turn_roll * yaw_in,
+        )
+        .clamp(Vec3::splat(-SWAY_MAX_ANGLE), Vec3::splat(SWAY_MAX_ANGLE));
+        let f = (-def.gain * dt).exp();
+        self.sway_origin = target_o.lerp(self.sway_origin, f);
+        self.sway_angles = target_a.lerp(self.sway_angles, f);
+        // The jolts spring back to rest. Substep so a long frame can't blow it up.
         let n = (dt / 0.005).ceil().max(1.0);
         let h = dt / n;
         for _ in 0..n as usize {
-            self.angles_vel += (SPRING_K * (target_a - self.angles) - SPRING_D * self.angles_vel) * h;
-            self.angles += self.angles_vel * h;
-            self.origin_vel += (SPRING_K * (target_o - self.origin) - SPRING_D * self.origin_vel) * h;
-            self.origin += self.origin_vel * h;
+            self.angles_vel += (-SPRING_K * self.jolt_angles - SPRING_D * self.angles_vel) * h;
+            self.jolt_angles += self.angles_vel * h;
+            self.origin_vel += (-SPRING_K * self.jolt_origin - SPRING_D * self.origin_vel) * h;
+            self.jolt_origin += self.origin_vel * h;
         }
+        self.angles = self.sway_angles + self.jolt_angles;
+        self.origin = self.sway_origin + self.jolt_origin;
     }
 
     /// A footstep's cockpit jolt (cockpit_stepJolt_origin / _angles, "Cockpit jolt per
-    /// footstep"): `origin` in units (forward, left, up), `angles` in degrees (pitch, yaw, roll).
-    /// The engine side is compiled; this kicks the cockpit spring so it peaks near the given
-    /// offset, the same reconstruction as `jolt`.
-    pub fn step_jolt(&mut self, origin: Vec3, angles: Vec3) {
-        let w = SPRING_K.sqrt() / 0.6;
-        self.origin_vel += origin * w;
-        self.angles_vel += angles * w;
+    /// footstep"). client.dll adds them to the cockpit spring's velocities (units/s and
+    /// degrees/s), times 2 while sprinting (1 walking; 0.5 in one other movement state).
+    pub fn step_jolt(&mut self, origin: Vec3, angles: Vec3, scale: f32) {
+        self.origin_vel += origin * scale;
+        self.angles_vel += angles * scale;
     }
 
-    /// A damage jolt (cl_titan_cockpit.nut JoltCockpit -> engine CockpitJolt): severity is the
-    /// damage over 2000, clamped to 0..1 (CalcJoltMagnitude). `dir` is from the damage toward
-    /// the eye, in the view's yaw frame (forward, left, up). The engine side is compiled; this
-    /// kicks the sway spring so the cockpit is shoved away from the hit and rolls by up to
-    /// cockpitShake_sourceRollRange (3 degrees) away from the side it came from. The push
-    /// distance (about 4 units at full severity) is by eye.
-    pub fn jolt(&mut self, dir: Vec3, severity: f32) {
-        const ROLL_RANGE: f32 = 3.0;
-        const PUSH: f32 = 4.0;
+    /// A damage jolt (cl_titan_cockpit.nut JoltCockpit -> CockpitJolt in client.dll): severity
+    /// is the damage over 2000, clamped to 0..1 (CalcJoltMagnitude); `dir` points from the
+    /// damage toward the eye (camera - damageOrigin), in the view's yaw frame (forward, left,
+    /// up); `pitch` in radians. The engine flattens the direction and, per unit of severity,
+    /// moves the cockpit 1 unit against it (toward the hit) and gives it 100 units/s that way,
+    /// and turns it by its forward part in pitch and its right part in yaw and against it in
+    /// roll (1 degree, 100 degrees/s).
+    pub fn jolt(&mut self, dir: Vec3, severity: f32, pitch: f32) {
+        const VEL: f32 = 100.0;
         let s = severity.clamp(0.0, 1.0);
-        // An initial velocity of v peaks near 0.6 v / w for this spring (w = sqrt(65)).
-        let w = SPRING_K.sqrt() / 0.6;
-        self.origin_vel += dir.normalize_or_zero() * PUSH * s * w;
-        // Hit from the left (dir pointing right, -y) rolls the cockpit right (positive roll).
-        self.angles_vel.z += -dir.y.clamp(-1.0, 1.0) * ROLL_RANGE * s * w;
+        let d = Vec3::new(dir.x, dir.y, 0.0).normalize_or_zero();
+        let (f, r, u) = (d.x, -d.y, pitch.sin() * d.x);
+        let o = Vec3::new(-f, r, -u) * s;
+        let a = Vec3::new(f, r, -r) * s;
+        self.jolt_origin += o;
+        self.origin_vel += o * VEL;
+        self.jolt_angles += a;
+        self.angles_vel += a * VEL;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cockpit_sway_eases_to_its_clamped_target() {
+        // BT turning left at 90 degrees/s: the target (-4 x 90 x 0.05 = -18 degrees of yaw,
+        // -4.5 units left) clamps to -0.5 and -1, and the sway eases there at 3/s.
+        let mut s = CockpitSway::default();
+        let dt = 1.0 / 60.0;
+        let mut yaw = 0.0f32;
+        for i in 0..120 {
+            yaw += 90f32.to_radians() * dt;
+            s.step(&CockpitSwayDef::TITAN, yaw, 0.0, Vec3::ZERO, dt);
+            if i == 19 {
+                // A third of a second in: 1 - exp(-1) of the way, less the 5-frame average's lag.
+                assert!(s.angles.y < -0.25 && s.angles.y > -0.33, "{}", s.angles.y);
+            }
+        }
+        assert!((s.angles.y + 0.5).abs() < 0.01 && (s.origin.y + 1.0).abs() < 0.02, "{:?} {:?}", s.angles, s.origin);
+        // Stopped: it eases back to rest.
+        for _ in 0..120 {
+            s.step(&CockpitSwayDef::TITAN, yaw, 0.0, Vec3::ZERO, dt);
+        }
+        assert!(s.angles.y.abs() < 0.01, "{}", s.angles.y);
+    }
 
     #[test]
     fn fov_zooms_only_inside_its_window() {

@@ -957,7 +957,7 @@ pub fn update_camera(
     let Ok((mut cam, mut projection)) = cameras.single_mut() else { return };
     let s = &t.state;
     let p = &settings.0;
-    let dash_roll = tilt.step(s, time.delta_secs());
+    let dash_roll = tilt.step(s, p.dash_speed, time.delta_secs());
     let (sprint_lower, sprint_roll) = tilt.sprint_step(s, &feel, time.delta_secs());
     view.sprint_lower = sprint_lower;
     let spring = springs.0.get(&feel.punch_spring).map(|(hip, _)| (hip.k.x, hip.c.x)).unwrap_or((65.0, 15.0));
@@ -994,11 +994,11 @@ pub fn update_camera(
         let (cy, sy) = (s.yaw.cos(), s.yaw.sin());
         let vel = Vec3::new(s.vel.x * cy + s.vel.y * sy, -s.vel.x * sy + s.vel.y * cy, s.vel.z);
         sway.step(&crate::vmmotion::CockpitSwayDef::TITAN, s.yaw, s.pitch, vel, time.delta_secs());
-        // Each footstep jolts the cockpit (cockpit_stepJolt_origin "0 0 -5"); the view itself
-        // doesn't bob.
+        // Each footstep jolts the cockpit (titan_buddy.set cockpit_stepJolt_origin "0 0 -5",
+        // twice as hard sprinting); the view itself doesn't bob.
         if tilt.steps != t.steps {
             tilt.steps = t.steps;
-            sway.step_jolt(feel.step_jolt_origin, feel.step_jolt_angles);
+            sway.step_jolt(feel.step_jolt_origin, feel.step_jolt_angles, if s.sprinting { 2.0 } else { 1.0 });
         }
         // Damage (hull or shield) jolts the cockpit away from where it came from
         // (TitanCockpit_DamageFeedback: joltDir = eye - damageOrigin, damage / 2000).
@@ -1010,7 +1010,7 @@ pub fn update_camera(
                 let from = damage_from.0.iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|d| d.0);
                 let dir_w = from.map(|f| (eye_w - f).normalize_or_zero()).unwrap_or(Vec3::new(-cy, -sy, 0.0));
                 let dir = Vec3::new(dir_w.x * cy + dir_w.y * sy, -dir_w.x * sy + dir_w.y * cy, dir_w.z);
-                sway.jolt(dir, (prev - now) / 2000.0);
+                sway.jolt(dir, (prev - now) / 2000.0, s.pitch);
             }
         }
         *last_hp = hp;
@@ -1057,12 +1057,18 @@ pub fn update_camera(
 /// direction (into the dash) is a guess.
 const DODGE_VIEW_TILT_MAX: f32 = 10.0;
 const DODGE_COCKPIT_TILT_MAX: f32 = 4.0;
+/// dodge_viewTiltFalloffTime, dodge_viewTiltIncreaseSpeed and dodge_viewTiltDecreaseSpeed
+/// (client.dll ConVar defaults).
+const DODGE_TILT_FALLOFF: f32 = 0.7;
+const DODGE_TILT_INCREASE: f32 = 5.0;
+const DODGE_TILT_DECREASE: f32 = 2.5;
 
 #[derive(Default)]
 pub struct DashTilt {
     dashes: u32,
-    side: f32,
     since: f32,
+    /// The tilt vector (world, horizontal) and its part along the view's right.
+    heading: tf_sim::glam::Vec2,
     frac: f32,
     /// Sprint view: fraction into sprintViewOffset, time sprinting, whether the fast start
     /// applies, and time on the ground without sprinting.
@@ -1112,18 +1118,33 @@ impl FallKick {
 }
 
 impl DashTilt {
-    /// Roll in radians, positive to the right.
-    fn step(&mut self, s: &tf_sim::titan::TitanState, dt: f32) -> f32 {
+    /// Roll in radians, positive to the right. client.dll (0x1802c1cb0 / 0x1802c31a0): a world
+    /// vector chases BT's horizontal heading, scaled up to full by half the dash speed (the
+    /// engine's threshold field is unknown; a guess) and by a smoothstep that falls from 1 to 0
+    /// over dodge_viewTiltFalloffTime (0.7 s) from the dash, moving at most
+    /// dodge_viewTiltIncreaseSpeed (5/s) while it grows and dodge_viewTiltDecreaseSpeed (2.5/s)
+    /// while it shrinks; its part along the view's right times dodge_viewTiltMax is the tilt.
+    fn step(&mut self, s: &tf_sim::titan::TitanState, dash_speed: f32, dt: f32) -> f32 {
         if s.dashes != self.dashes {
             self.dashes = s.dashes;
-            let right = tf_sim::glam::Vec2::new(s.yaw.sin(), -s.yaw.cos());
-            let h = tf_sim::glam::Vec2::new(s.vel.x, s.vel.y).normalize_or_zero();
-            self.side = h.dot(right);
             self.since = 0.0;
         }
         self.since += dt;
-        let (want, rate) = if self.since < 0.7 { (self.side, 5.0) } else { (0.0, 2.5) };
-        self.frac += (want - self.frac) * (1.0 - (-dt * rate).exp());
+        let falloff = if self.since < DODGE_TILT_FALLOFF {
+            let u = 1.0 - self.since / DODGE_TILT_FALLOFF;
+            (3.0 - 2.0 * u) * u * u
+        } else {
+            0.0
+        };
+        let h = tf_sim::glam::Vec2::new(s.vel.x, s.vel.y);
+        let full = (dash_speed * 0.5).max(1.0);
+        let target = h.normalize_or_zero() * (h.length() / full).min(1.0) * falloff;
+        let rate = if target.length_squared() > self.heading.length_squared() { DODGE_TILT_INCREASE } else { DODGE_TILT_DECREASE };
+        let to = target - self.heading;
+        let step = rate * dt;
+        self.heading = if to.length() > step { self.heading + to.normalize() * step } else { target };
+        let right = tf_sim::glam::Vec2::new(s.yaw.sin(), -s.yaw.cos());
+        self.frac = self.heading.dot(right);
         self.frac * DODGE_VIEW_TILT_MAX.to_radians()
     }
 
