@@ -75,6 +75,9 @@ pub struct WeaponDef {
     /// vortex_refire_behavior: "absorb" rounds are swallowed by a Vortex; the rest (bullet,
     /// rocket, explosive_round...) are thrown back on release.
     pub vortex_absorb: bool,
+    /// vortex_absorb_effect / _third_person: the system a caught round plays in the shield (seen
+    /// by the Vortex's owner / by everyone else).
+    pub vortex_fx: (String, String),
     // Pilot weapon handling.
     pub printname: String,
     pub viewmodel: String,
@@ -354,6 +357,10 @@ impl WeaponDef {
                 (f("proficiency_perfect_spreadscale", 1.0), f("proficiency_perfect_bias", 1.0)),
             ],
             vortex_absorb: s.get(".vortex_refire_behavior").is_some_and(|b| b.eq_ignore_ascii_case("absorb")),
+            vortex_fx: (
+                s.get(".vortex_absorb_effect").unwrap_or("wpn_vortex_projectile_rifle_FP").to_string(),
+                s.get(".vortex_absorb_effect_third_person").unwrap_or("wpn_vortex_projectile_rifle").to_string(),
+            ),
             printname: s.get(".printname").unwrap_or_default().trim_start_matches('#').to_string(),
             viewmodel: s.get(".viewmodel").unwrap_or_default().to_string(),
             automatic: s.get("sp_base.fire_mode").or_else(|| s.get(".fire_mode")).is_none_or(|m| m == "auto"),

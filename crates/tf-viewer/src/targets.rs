@@ -1217,15 +1217,16 @@ pub fn update_bolts(
     settings: Res<TitanSettings>,
     _fx: Res<FxAssets>,
     mut bolts: Query<(Entity, &mut Bolt, &mut Transform)>,
-    mut player: Query<(&PlayerTitan, &mut TitanHealth, &mut Vortex, Option<&mut TitanCore>)>,
+    mut player: Query<(Entity, &GlobalTransform, &PlayerTitan, &mut TitanHealth, &mut Vortex, Option<&mut TitanCore>)>,
     mut pilots: Query<(&PlayerPilot, &mut PilotHealth)>,
     mut damage_from: ResMut<crate::hud::DamageFrom>,
     status: Res<crate::pilotability::PilotStatus>,
+    mode: Res<crate::player::CameraMode>,
     mut walls: ResMut<crate::titankit::BoltShields>,
     mut shields: ResMut<crate::pilotability::Shields>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    let Ok((titan, mut bt_health, mut vortex, mut core)) = player.single_mut() else { return };
+    let Ok((bt_entity, bt_gt, titan, mut bt_health, mut vortex, mut core)) = player.single_mut() else { return };
     let Ok((pilot, mut pilot_health)) = pilots.single_mut() else { return };
     let target = player_target(*control, titan, bt_health.dead_for.is_none(), pilot, &settings);
     let eye = Vec3::from(titan.state.eye(&settings.0).to_array());
@@ -1328,8 +1329,18 @@ pub fn update_bolts(
                 vortex.caught = (vortex.caught + 1).min(VORTEX_ABSORB_MAX);
             }
             audio::cue(&mut commands, Cue::VortexAbsorb, Some(at));
-            // The caught round hangs in the shield (vortex_absorb_effect_third_person).
-            crate::pfx::emit_named(&mut commands, "wpn_vortex_projectile_rifle", to_bevy(at), to_bevy(dir).normalize_or(Vec3::NEG_Z));
+            // The caught round hangs in the shield until the release (Vortex_SpawnImpactAbsorbFX):
+            // played where it hit, parented to BT, with control point 1 at the bullet
+            // collection point; the owner sees vortex_absorb_effect, everyone else the third
+            // person one.
+            let name = if *mode == crate::player::CameraMode::Cockpit { &w.vortex_fx.0 } else { &w.vortex_fx.1 };
+            let local = bt_gt.affine().inverse().transform_point3(to_bevy(at));
+            commands.entity(bt_entity).with_child((
+                Transform::from_translation(local),
+                crate::pfx::PfxTrail::new(name),
+                crate::pfx::PfxBeamEnd(to_bevy(crate::combat::vortex_collection_point(eye, titan.state.yaw, titan.state.pitch))),
+                crate::combat::VortexCaughtFx,
+            ));
             continue;
         }
         let scale = difficulty.damage_to_player();

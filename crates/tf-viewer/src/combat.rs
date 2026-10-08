@@ -168,6 +168,39 @@ impl Vortex {
     }
 }
 
+/// A caught round's effect in the Vortex (a child of BT), removed when the shield goes down.
+#[derive(Component)]
+pub struct VortexCaughtFx;
+
+/// GetBulletCollectionOffset for a Titan: (300, -90, -70) from the eye in the view's frame
+/// (forward, left, up), where caught rounds swirl to (the absorb effects' control point 1).
+pub fn vortex_collection_point(eye: Vec3, yaw: f32, pitch: f32) -> Vec3 {
+    let fwd = Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin());
+    let left = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
+    let up = fwd.cross(left);
+    eye + fwd * 300.0 - left * 90.0 - up * 70.0
+}
+
+/// Keep the caught rounds' collection point in front of BT's view (the game parents it to the
+/// Titan), and remove their effects when the Vortex goes down (released, broken or stowed).
+pub fn update_vortex_caught_fx(
+    mut commands: Commands,
+    settings: Res<crate::player::TitanSettings>,
+    titans: Query<(&crate::player::PlayerTitan, &Vortex)>,
+    mut fx: Query<(Entity, &mut crate::pfx::PfxBeamEnd), With<VortexCaughtFx>>,
+) {
+    let Ok((titan, vortex)) = titans.single() else { return };
+    let eye = Vec3::from(titan.state.eye(&settings.0).to_array());
+    let end = crate::player::to_bevy(vortex_collection_point(eye, titan.state.yaw, titan.state.pitch));
+    for (e, mut cp) in &mut fx {
+        if vortex.active {
+            cp.0 = end;
+        } else {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
 #[derive(Component, Default)]
 pub struct Melee {
     /// Time since the punch started; None when idle.
