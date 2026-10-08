@@ -14,7 +14,59 @@ use tf_assets::mdl::Model;
 /// Local bone transforms for every bone of the actor.
 pub type Pose = Vec<(Vec3, Quat)>;
 
+/// A rigid transform as (rotation, translation).
+type Rigid = (Quat, Vec3);
+
+fn rmul(a: Rigid, b: Rigid) -> Rigid {
+    (a.0 * b.0, a.1 + a.0 * b.1)
+}
+
+fn rinv(a: Rigid) -> Rigid {
+    let r = a.0.inverse();
+    (r, -(r * a.1))
+}
+
+/// Conjugate by the reflection across the plane normal to `axis` (that coordinate negated).
+fn rreflect(a: Rigid, axis: usize) -> Rigid {
+    let (mut q, mut t) = (Vec4::from(a.0), a.1);
+    for k in 0..3 {
+        if k != axis {
+            q[k] = -q[k];
+        }
+    }
+    t[axis] = -t[axis];
+    (Quat::from_vec4(q), t)
+}
+
+/// Mirroring a pose: in the frame of the first root bone, each bone takes its left/right
+/// twin's transform reflected across the left-right plane, then a fixed correction that turns
+/// the reflected (left-handed) frame back into the bone's own bind frame, so the unmirrored
+/// mesh still skins cleanly. Bones without a twin (the spine, jx_vortex) map to themselves.
+pub struct Mirror {
+    pub twin: Vec<usize>,
+    /// The root frame's left-right axis (where the twins' bind positions differ most).
+    pub axis: usize,
+    /// Per bone: inverse(reflect(bind of twin)) * bind, root-relative.
+    pub fix: Vec<(Quat, Vec3)>,
+}
+
+/// Transforms of a pose relative to its first root bone, and that root's own.
+fn root_space(parents: &[i32], pose: &Pose) -> (Vec<Rigid>, Rigid) {
+    let mut m: Vec<Rigid> = Vec::with_capacity(pose.len());
+    for (i, &(p, q)) in pose.iter().enumerate() {
+        let local = (q, p);
+        m.push(match parents[i] {
+            par if par >= 0 => rmul(m[par as usize], local),
+            _ => local,
+        });
+    }
+    let root = m.first().copied().unwrap_or((Quat::IDENTITY, Vec3::ZERO));
+    let inv = rinv(root);
+    (m.into_iter().map(|t| rmul(inv, t)).collect(), root)
+}
+
 /// A decoded clip retargeted to the actor's skeleton.
+#[derive(Clone)]
 pub struct Clip {
     /// The animation stores offsets from the bind pose (STUDIO_DELTA) rather than a full pose.
     pub delta: bool,
@@ -31,9 +83,13 @@ pub struct Clip {
     pub typed_sounds: Vec<(f32, String)>,
     /// AE_WPN_RELOAD_MILESTONE_N events: the milestone number and its cycle.
     pub milestones: Vec<(u8, f32)>,
+    /// The sequence's per-bone weights (weightlist), retargeted by bone name, when it leaves
+    /// some bones out (gestures that move only an arm); None means every bone at 1.
+    pub bone_weights: Option<Vec<f32>>,
 }
 
 impl Clip {
+
     /// The average pose over all frames (quaternions summed in one hemisphere).
     pub fn mean(&self) -> Pose {
         let Some(first) = self.frames.first() else { return Vec::new() };
@@ -82,6 +138,7 @@ impl Clip {
 }
 
 /// An additive blend grid (e.g. `combat_aim_run`): clips indexed `x + y * width`.
+#[derive(Clone)]
 pub struct AimGrid {
     pub clips: Vec<usize>,
     pub width: usize,
@@ -147,6 +204,12 @@ pub struct Actor {
     pub additive: Vec<Layer>,
     /// Additive grids applied after the aim layer and before `additive`.
     pub grid_layers: Vec<GridLayer>,
+    /// Full-pose gesture layers blended over the result after the aim and grid layers, each
+    /// bone by the layer weight times the clip's bone weight (Source's SlerpBones for a
+    /// non-delta overlay, e.g. bt_vortex_arm_pose_add).
+    pub overlays: Vec<Layer>,
+    /// Twin joints and bind corrections for mirrored clips ([`Actor::add_mirrored`]).
+    pub mirror: Option<Arc<Mirror>>,
     /// Root bones moved by code after animation: (bone, model-space offset added).
     pub root_offsets: Vec<(usize, Vec3)>,
     /// When true, `animate_actors` advances every layer's cycle by itself (viewer mode).
@@ -192,6 +255,120 @@ impl Actor {
             additive.push(l);
         } else {
             layers.push(l);
+        }
+    }
+
+    /// Prepare [`Mirror`] data from the bind pose, pairing `_l_` and `_r_` bones by name.
+    pub fn enable_mirror(&mut self) {
+        let lower: Vec<String> = self.bone_names.iter().map(|n| n.to_ascii_lowercase()).collect();
+        let twin: Vec<usize> = (0..lower.len())
+            .map(|i| {
+                let n = &lower[i];
+                let other = if n.contains("_l_") { n.replacen("_l_", "_r_", 1) } else if n.contains("_r_") { n.replacen("_r_", "_l_", 1) } else { return i };
+                lower.iter().position(|m| *m == other).unwrap_or(i)
+            })
+            .collect();
+        let (bind, _) = root_space(&self.parents, &self.rest);
+        let spread = (0..bind.len()).filter(|&b| twin[b] != b).map(|b| (bind[b].1 - bind[twin[b]].1).abs()).fold(Vec3::ZERO, |a, d| a + d);
+        let axis = if spread.x >= spread.y && spread.x >= spread.z { 0 } else if spread.y >= spread.z { 1 } else { 2 };
+        let fix = (0..bind.len()).map(|b| rmul(rinv(rreflect(bind[twin[b]], axis)), bind[b])).collect();
+        self.mirror = Some(Arc::new(Mirror { twin, axis, fix }));
+    }
+
+    /// Reflect a full pose (see [`Mirror`]); needs [`Actor::enable_mirror`].
+    pub fn mirror_pose(&self, pose: &Pose) -> Pose {
+        let Some(m) = self.mirror.as_ref() else { return pose.clone() };
+        let (rel, root) = root_space(&self.parents, pose);
+        let mirrored: Vec<Rigid> = (0..rel.len()).map(|b| rmul(root, rmul(rreflect(rel[m.twin[b]], m.axis), m.fix[b]))).collect();
+        (0..mirrored.len())
+            .map(|b| {
+                let local = match self.parents[b] {
+                    p if p >= 0 => rmul(rinv(mirrored[p as usize]), mirrored[b]),
+                    _ => mirrored[b],
+                };
+                (local.1, local.0.normalize())
+            })
+            .collect()
+    }
+
+    /// A point and directions given in `bone`'s frame of the unmirrored clips, carried over
+    /// to its twin's frame under the mirrored ones: the twin's name, the point, the directions.
+    pub fn mirrored_frame(&self, bone: &str, p: Vec3, dirs: [Vec3; 2]) -> Option<(&str, Vec3, [Vec3; 2])> {
+        let m = self.mirror.as_ref()?;
+        let b = self.bone_names.iter().position(|n| n.eq_ignore_ascii_case(bone))?;
+        let t = m.twin[b];
+        let f = rinv(m.fix[t]);
+        // The twin's mirrored frame is reflect(bone's) * fix, so a point p of the bone's frame
+        // lands at inverse(fix) * S * p in the twin's (S negating the mirror axis).
+        let s = |mut v: Vec3| {
+            v[m.axis] = -v[m.axis];
+            v
+        };
+        Some((&self.bone_names[t], f.1 + f.0 * s(p), dirs.map(|d| f.0 * s(d))))
+    }
+
+    /// A mirrored copy of a clip. A delta clip is applied to the bind pose (post-multiplied,
+    /// or pre- when `post` is false), mirrored, and taken back as a delta from the bind pose
+    /// (exact over the bind pose, close over others). Root motion and bone weights swap sides.
+    fn mirrored_clip(&self, c: &Clip, post: bool) -> Clip {
+        let m = self.mirror.as_ref().expect("enable_mirror first");
+        let frames = c
+            .frames
+            .iter()
+            .map(|f| {
+                if !c.delta {
+                    return self.mirror_pose(f);
+                }
+                let full: Pose = f.iter().zip(&self.rest).map(|(&(dp, dq), &(rp, rq))| (rp + dp, if post { rq * dq } else { dq * rq })).collect();
+                self.mirror_pose(&full).into_iter().zip(&self.rest).map(|((p, q), &(rp, rq))| (p - rp, if post { rq.inverse() * q } else { q * rq.inverse() }.normalize())).collect()
+            })
+            .collect();
+        Clip {
+            delta: c.delta,
+            frames,
+            ground_speed: c.ground_speed,
+            duration: c.duration,
+            movement: c.movement.iter().map(|&[x, y, z, yaw]| [x, -y, z, -yaw]).collect(),
+            sounds: c.sounds.clone(),
+            typed_sounds: c.typed_sounds.clone(),
+            milestones: c.milestones.clone(),
+            bone_weights: c.bone_weights.as_ref().map(|w| m.twin.iter().map(|&t| w[t]).collect()),
+        }
+    }
+
+    /// Add mirrored copies of clips and grids as `<name>#m` (the twin joints and bind
+    /// correction from [`Actor::enable_mirror`]). A grid's yaw axis isn't reversed: only
+    /// right for an aim yaw of 0.
+    pub fn add_mirrored(&mut self, clips: &[&str], grids: &[&str]) {
+        let mut all: Vec<Clip> = self.clips.iter().cloned().collect();
+        let mut by_name = (*self.by_name).clone();
+        let mut gmap: HashMap<String, AimGrid> = self.grids.iter().map(|(k, g)| (k.clone(), g.clone())).collect();
+        for name in clips {
+            let Some(c) = self.clip(name) else { continue };
+            by_name.insert(format!("{}#m", name.to_ascii_lowercase()), all.len());
+            all.push(self.mirrored_clip(&self.clips[c], true));
+        }
+        for name in grids {
+            let Some(g) = self.grids.get(*name) else { continue };
+            let mut ng = g.clone();
+            ng.clips = g.clips.iter().map(|&c| {
+                all.push(self.mirrored_clip(&self.clips[c], g.post));
+                all.len() - 1
+            }).collect();
+            gmap.insert(format!("{name}#m"), ng);
+        }
+        self.clips = Arc::new(all);
+        self.by_name = Arc::new(by_name);
+        self.grids = Arc::new(gmap);
+    }
+
+    /// Add a gesture clip: a delta clip goes to `additive`, a full-pose one to `overlays`.
+    pub fn push_gesture(&mut self, clip: usize, cycle: f32, weight: f32) {
+        let l = Layer { clip, cycle, weight };
+        if self.clips[clip].delta {
+            self.additive.push(l);
+        } else {
+            self.overlays.push(l);
         }
     }
 
@@ -251,6 +428,19 @@ impl Actor {
                 let dq = Quat::IDENTITY.slerp(dq, l.weight);
                 b.1 = if g.post { b.1 * dq } else { dq * b.1 }.normalize();
                 b.0 += dp * l.weight;
+            }
+        }
+        for l in &self.overlays {
+            if l.weight <= 0.0 {
+                continue;
+            }
+            let clip = &self.clips[l.clip];
+            for (i, (b, (p, q))) in pose.iter_mut().zip(clip.sample(l.cycle)).enumerate() {
+                let w = l.weight * clip.bone_weights.as_ref().map_or(1.0, |ws| ws[i]);
+                if w > 0.0 {
+                    b.1 = b.1.slerp(q, w.min(1.0)).normalize();
+                    b.0 = b.0.lerp(p, w.min(1.0));
+                }
             }
         }
         for l in &self.additive {
@@ -342,6 +532,7 @@ fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
         sounds: Vec::new(),
         typed_sounds: Vec::new(),
         milestones: Vec::new(),
+        bone_weights: None,
     })
 }
 
@@ -428,6 +619,8 @@ pub fn spawn_actor(
         aim: None,
         additive: Vec::new(),
         grid_layers: Vec::new(),
+        overlays: Vec::new(),
+        mirror: None,
         root_offsets: Vec::new(),
         autoplay: true,
         event_sounds: spec.path.contains("/atpov_") || spec.path.contains("/ptpov_"),
@@ -509,11 +702,40 @@ fn build_template(
     });
     let t_parse = t.elapsed();
     let owners: Vec<&Model> = std::iter::once(&*model).chain(includes.iter().map(|m| &**m)).collect();
-    // TF_DUMP_SEQS=<part of a model path>: log that model's sequences and their activities.
+    // TF_DUMP_SEQS=<part of a model path>: log that model's bodyparts, bones (bind pose) and
+    // attachments, and its sequences with their activities, flags and events;
+    // TF_DUMP_WEIGHTS=<part of a sequence label> adds those sequences' bone weights.
     if std::env::var("TF_DUMP_SEQS").is_ok_and(|f| !f.is_empty() && path.contains(&f)) {
+        log::info!("{path}: bodyparts {:?}", model.bodyparts.iter().map(|b| (&b.name, b.num_models)).collect::<Vec<_>>());
+        for (i, b) in model.bones.iter().enumerate() {
+            log::info!("{path}: bone {i} {} parent {} pos {:?} quat {:?}", b.name, b.parent, b.pos, b.quat);
+        }
+        for a in &model.attachments {
+            log::info!("{path}: attachment {} on bone {}", a.name, model.bones.get(a.bone as usize).map_or("?", |b| b.name.as_str()));
+        }
         for o in &owners {
             for s in &o.sequences {
-                log::info!("{path}: sequence {} act={} mods={:?}", s.label, s.activity, s.modifiers);
+                log::info!("{path}: sequence {} act={} mods={:?} flags={:#x} anims={:?}", s.label, s.activity, s.modifiers, s.flags, s.anims);
+                if std::env::var("TF_DUMP_WEIGHTS").is_ok_and(|f| s.label.contains(&f)) {
+                    for (b, w) in s.bone_weights.iter().enumerate() {
+                        log::info!("{path}:     weight {b} {} {w}", o.bones.get(b).map_or("?", |b| b.name.as_str()));
+                    }
+                    for &ai in &s.anims {
+                        if let Ok(a) = o.animation(ai) {
+                            log::info!("{path}:     anim {ai} flags={:#x} frames={}", a.flags, a.num_frames);
+                            // Model-space positions of the hands and the gun prop in frame 0.
+                            let mut g: Vec<(Vec3, Quat)> = Vec::new();
+                            for (bi, b) in o.bones.iter().enumerate() {
+                                let (p, q) = (Vec3::from(a.frames[0][bi].0), Quat::from_array(a.frames[0][bi].1));
+                                let w = if b.parent >= 0 { let (pp, pq) = g[b.parent as usize]; (pp + pq * p, pq * q) } else { (p, q) };
+                                g.push(w);
+                                if matches!(b.name.as_str(), "def_l_wrist" | "def_r_wrist" | "ja_c_propGun" | "jx_vortex") {
+                                    log::info!("{path}:       {} at {:.1}", b.name, w.0);
+                                }
+                            }
+                        }
+                    }
+                }
                 for e in &s.events {
                     log::info!("{path}:     {:.3} {} {}", e.cycle, e.name, e.options);
                 }
@@ -554,6 +776,10 @@ fn build_template(
                 .iter()
                 .filter_map(|e| Some((e.name.strip_prefix("AE_WPN_RELOAD_MILESTONE_")?.parse().ok()?, e.cycle)))
                 .collect();
+            let ws = &owner.sequences[si].bone_weights;
+            if ws.len() == owner.bones.len() && ws.iter().any(|&w| w < 1.0) {
+                clip.bone_weights = Some(model.bones.iter().map(|b| owner.bone_index(&b.name).map_or(0.0, |oi| ws[oi])).collect());
+            }
             Ok(clip)
         })();
         match r {
@@ -742,12 +968,12 @@ pub fn actor_event_sounds(mut commands: Commands, mut actors: Query<&mut Actor>)
 
 pub fn bone_merge(
     mut commands: Commands,
-    followers: Query<(Entity, &Actor, Option<&BoneMerge>), With<BoneMergeTo>>,
+    followers: Query<(Entity, &Actor, Option<&BoneMerge>, Option<&BoneMergeSplit>), With<BoneMergeTo>>,
     leaders: Query<&Actor, Without<BoneMergeTo>>,
     targets: Query<&BoneMergeTo>,
     mut transforms: Query<&mut Transform>,
 ) {
-    for (e, actor, merge) in &followers {
+    for (e, actor, merge, split) in &followers {
         let Ok(target) = targets.get(e) else { continue };
         let Ok(leader) = leaders.get(target.0) else { continue };
         let Some(merge) = merge else {
@@ -756,9 +982,24 @@ pub fn bone_merge(
             commands.entity(e).insert(BoneMerge { map });
             continue;
         };
+        // A split hands the bones from `root` down to a second leader, matched by name.
+        let second = split.and_then(|sp| Some((sp, leaders.get(sp.leader).ok()?, actor.bone_names.iter().position(|n| n.eq_ignore_ascii_case(sp.root))?)));
         for (i, &j) in actor.joints.iter().enumerate() {
-            let Some(li) = merge.map[i] else { continue };
-            let Ok(src) = transforms.get(leader.joints[li]).copied() else { continue };
+            let other = second.as_ref().and_then(|(_, l2, root)| {
+                let mut b = i as i32;
+                while b >= 0 && b as usize != *root {
+                    b = actor.parents[b as usize];
+                }
+                (b >= 0).then(|| l2.bone_names.iter().position(|n| n.eq_ignore_ascii_case(&actor.bone_names[i])).map(|k| l2.joints[k]))?
+            });
+            let src_joint = match other {
+                Some(k) => k,
+                None => {
+                    let Some(li) = merge.map[i] else { continue };
+                    leader.joints[li]
+                }
+            };
+            let Ok(src) = transforms.get(src_joint).copied() else { continue };
             if let Ok(mut dst) = transforms.get_mut(j) {
                 *dst = src;
             }
@@ -769,6 +1010,14 @@ pub fn bone_merge(
 /// Request a bone merge onto the given leader actor entity.
 #[derive(Component)]
 pub struct BoneMergeTo(pub Entity);
+
+/// With [`BoneMergeTo`]: the bones from `root` down follow this other leader instead (BT's
+/// arms on the gun take the left arm from a keep-primary offhand's viewmodel).
+#[derive(Component)]
+pub struct BoneMergeSplit {
+    pub leader: Entity,
+    pub root: &'static str,
+}
 
 /// The cockpit's main screen is left out (see `spawn_actor`), which would show the parts of the
 /// cockpit it covers in the game: drop the triangles that lie behind it (or on it) seen from

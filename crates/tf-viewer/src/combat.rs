@@ -145,13 +145,16 @@ pub struct Vortex {
     shield: Option<Entity>,
     /// The spawned shield effect is the first-person (`_FP`) variant.
     shield_fp: bool,
+    /// The spawned shield rides BT's `jx_vortex` joint (third person) instead of being placed
+    /// each frame.
+    shield_arm: bool,
     pub mode: VortexMode,
     burn_timer: f32,
 }
 
 impl Default for Vortex {
     fn default() -> Self {
-        Self { charge: VORTEX_HOLD, active: false, caught: 0, absorbed: 0, delay: 0.0, shield: None, shield_fp: false, mode: VortexMode::Vortex, burn_timer: 0.0 }
+        Self { charge: VORTEX_HOLD, active: false, caught: 0, absorbed: 0, delay: 0.0, shield: None, shield_fp: false, shield_arm: false, mode: VortexMode::Vortex, burn_timer: 0.0 }
     }
 }
 
@@ -237,6 +240,7 @@ pub fn player_combat(
     mut dummies: Query<&mut Enemy>,
     mut shields: Query<&mut Transform>,
     kit: Option<Res<crate::titankit::ActiveKit>>,
+    actors: Query<&crate::actor::Actor>,
 ) {
     let dt = time.delta_secs();
     let Ok((mut titan, mut health, mut vortex, mut melee, mut core, kit_state)) = player.single_mut() else { return };
@@ -389,7 +393,23 @@ pub fn player_combat(
     // 24 left, 20.5 down from the camera bone, its X axis turned slightly right and up), and
     // the effect's dome model (fx\vortex_shield_hld, 60 units across) sits 10 units out along
     // that axis. Elsewhere (third person, the heat shield, TF_OLD_FX's disc) it stays on the
-    // view line.
+    // view line. In third person the blocker's world model (w_vortexblocker.mdl, rooted at
+    // jx_vortex) bone-merges onto BT's jx_vortex joint, which bt_vortex_arm_pose_add raises;
+    // the model's idle_seq holds its vortex_center tag at (25.59, 11.81, 0) in that frame,
+    // unrotated (ahead of the raised hand, facing out). The shield rides the raised arm (the
+    // scale undoes the actor's UNIT).
+    // BT plays the pose mirrored (player.rs), so the shield goes on the twin of the arm
+    // jx_vortex hangs from: the tag's frame under def_r_elbow (jx_vortex's local in the pose's
+    // first frame, then the tag) is carried over to def_l_elbow.
+    const TAG: Vec3 = Vec3::new(25.59, 11.81, 0.0);
+    let arm = actors.get(titan.actor).ok().and_then(|a| {
+        let jx = a.bone_names.iter().position(|n| n == "jx_vortex")?;
+        let (lp, lq) = a.clips[a.clip("bt_vortex_arm_pose_add")?].frames.first()?[jx];
+        let (bone, p, [fwd, up]) = a.mirrored_frame("def_r_elbow", lp + lq * TAG, [lq * Vec3::X, lq * Vec3::Z])?;
+        Some((a.joint(bone)?, Transform::from_translation(p).looking_to(fwd, up)))
+    });
+    let arm_joint = arm.map(|a| a.0);
+    let arm_tf = arm.map_or(Transform::IDENTITY, |a| a.1).with_scale(Vec3::splat(1.0 / crate::player::UNIT));
     let shield_tf = |fp: bool, heat: bool| {
         if fp && game_fx && !heat {
             let r = Quat::from_rotation_z(s.yaw) * Quat::from_rotation_y(s.pitch);
@@ -411,7 +431,12 @@ pub fn player_combat(
         (true, None) => {
             let heat = vortex.mode == VortexMode::Heat;
             let (mesh, mat) = if heat { fx.heat_disc.clone() } else { fx.vortex_disc.clone() };
-            let root = commands.spawn((shield_tf(fp, heat), Visibility::default())).id();
+            let arm = arm_joint.filter(|_| !fp && game_fx && !heat);
+            let root = commands.spawn((if arm.is_some() { arm_tf } else { shield_tf(fp, heat) }, Visibility::default())).id();
+            if let Some(j) = arm {
+                commands.entity(j).add_child(root);
+            }
+            vortex.shield_arm = arm.is_some();
             if game_fx {
                 // mp_titanweapon_vortex_shield.nut's fxChargingFPControlPoint /
                 // fxChargingControlPoint (the dome model, its glow and trails).
@@ -428,11 +453,12 @@ pub fn player_combat(
             // through scrolled, distorted UV layers and emissive edge fades) barely shows through
             // our effect shader, so the disc still stands in for it: in the cockpit where the
             // dome sits (10 units out along the tag's axis) at the model's own size, 60 units
-            // across (its particle radius 3 is not applied: a guess). The heat shield's flame fan
-            // is a drawn model.
+            // across (its particle radius 3 is not applied: a guess); on BT's arm likewise (the
+            // third-person system spawns the same dome 10 out, radius 4, also not applied). The
+            // heat shield's flame fan is a drawn model.
             if !(game_fx && heat) {
                 // (The size rides on a holder: the shimmer animates the disc's own scale.)
-                let local = if fp && game_fx { Transform::from_translation(Vec3::NEG_Z * 10.0 * crate::player::UNIT).with_scale(Vec3::splat(30.0 / VORTEX_RADIUS)) } else { Transform::IDENTITY };
+                let local = if (fp || vortex.shield_arm) && game_fx { Transform::from_translation(Vec3::NEG_Z * 10.0 * crate::player::UNIT).with_scale(Vec3::splat(30.0 / VORTEX_RADIUS)) } else { Transform::IDENTITY };
                 let holder = commands.spawn((local, Visibility::default())).id();
                 commands.entity(root).add_child(holder);
                 let disc = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, crate::weapons::ShieldShimmer)).id();
@@ -446,7 +472,7 @@ pub fn player_combat(
         }
         _ => {}
     }
-    if let Some(e) = vortex.shield {
+    if let Some(e) = vortex.shield.filter(|_| !vortex.shield_arm) {
         if let Ok(mut tf) = shields.get_mut(e) {
             // Forward = outward, the way enemy shields orient their effects (the disc is double-sided).
             *tf = shield_tf(vortex.shield_fp, vortex.mode == VortexMode::Heat);

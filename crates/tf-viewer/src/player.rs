@@ -216,6 +216,9 @@ pub struct PlayerTitan {
     /// Footstep timer (ms) and the number of footsteps taken (cockpit jolts follow it).
     step_time: f32,
     pub steps: u32,
+    /// The held offhand's arm pose (ACT_MP_OFFHAND_CHARGING) blended in, 0..1, and its cycle.
+    offhand_blend: f32,
+    offhand_cycle: f32,
 }
 
 impl PlayerTitan {
@@ -232,6 +235,8 @@ impl PlayerTitan {
             sprint_blend: 0.0,
             step_time: 0.0,
             steps: 0,
+            offhand_blend: 0.0,
+            offhand_cycle: 0.0,
         }
     }
 }
@@ -790,11 +795,11 @@ pub fn drive_animation(
     time: Res<Time>,
     settings: Res<TitanSettings>,
     feel: Res<TitanFeel>,
-    mut titans: Query<(&mut PlayerTitan, Option<&crate::combat::Melee>)>,
+    mut titans: Query<(&mut PlayerTitan, Option<&crate::combat::Melee>, Option<&crate::combat::Vortex>)>,
     mut actors: Query<&mut Actor>,
 ) {
     let dt = time.delta_secs();
-    for (mut t, melee) in &mut titans {
+    for (mut t, melee, vortex) in &mut titans {
         let Ok(mut actor) = actors.get_mut(t.actor) else { continue };
         actor.autoplay = false;
         let s = t.state.clone();
@@ -806,6 +811,19 @@ pub fn drive_animation(
                 actor.aim = None;
                 continue;
             }
+        }
+        // BT's NPC set (bt_combat_*, its aim matrices and the Vortex arm pose) holds the gun in
+        // the left hand and raises the right arm for the Vortex, the mirror image of the
+        // cockpit view. Not the model data, a deliberate choice: he plays mirrored copies of
+        // those clips (`<name>#m`), gun in the right hand, the Vortex in the left. The MP crouch
+        // set is right-handed already and scripted sequences stay as they are (they're synced
+        // with the pilot's).
+        if actor.mirror.is_none() {
+            actor.enable_mirror();
+            actor.add_mirrored(
+                &["bt_combat_idle", "bt_casual_idle", "bt_combat_walk_forward", "bt_combat_walk_backward", "bt_combat_walk_left", "bt_combat_walk_right", "bt_combat_sprint_forward_noaim", "bt_vortex_arm_pose_add", "bt_vortex_ion_arm_pose_add"],
+                &["combat_aim_stand", "combat_aim_run"],
+            );
         }
         let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
         let left = Vec2::new(-s.yaw.sin(), s.yaw.cos());
@@ -821,10 +839,12 @@ pub fn drive_animation(
         }
         t.sprint_blend += (sprint_target - t.sprint_blend) * k;
 
-        let names = ["bt_combat_walk_forward", "bt_combat_walk_backward", "bt_combat_walk_left", "bt_combat_walk_right"];
-        let ids: Vec<Option<usize>> = names.iter().map(|n| actor.clip(n)).collect();
-        let idle = actor.clip("bt_combat_idle").or_else(|| actor.clip("bt_casual_idle"));
-        let sprint = actor.clip("bt_combat_sprint_forward_noaim");
+        let mirrored = |n: &str| actor.clip(&format!("{n}#m")).or_else(|| actor.clip(n));
+        // Mirrored, the walk to the right is the one that goes left.
+        let names = ["bt_combat_walk_forward", "bt_combat_walk_backward", "bt_combat_walk_right", "bt_combat_walk_left"];
+        let ids: Vec<Option<usize>> = names.iter().map(|n| mirrored(n)).collect();
+        let idle = mirrored("bt_combat_idle").or_else(|| mirrored("bt_casual_idle"));
+        let sprint = mirrored("bt_combat_sprint_forward_noaim");
 
         // Directional weights from the movement direction in BT's frame.
         let d = t.blend_dir;
@@ -922,9 +942,34 @@ pub fn drive_animation(
         }
         actor.layers = layers;
 
+        // A held offhand plays its ACT_MP_OFFHAND_CHARGING gesture over the body, chosen by the
+        // weapon's activity modifier: BT raises the shield arm (mirrored, the left: see above;
+        // bt_vortex_arm_pose_add for
+        // mp_titanweapon_vortex_shield, bt_vortex_ion_arm_pose_add for Ion's). It comes in over
+        // the offhand's deploy_time (0.1 s) and goes out over its holster_time (0.3 s), as the
+        // viewmodel does (the gesture layer's own blend times aren't known).
+        use crate::combat::VortexMode;
+        let pose = vortex.and_then(|v| match v.mode {
+            VortexMode::Vortex => actor.clip("bt_vortex_arm_pose_add#m"),
+            VortexMode::Ion => actor.clip("bt_vortex_ion_arm_pose_add#m"),
+            VortexMode::Heat => None,
+        });
+        let held = vortex.is_some_and(|v| v.active);
+        t.offhand_blend = if held { (t.offhand_blend + dt / 0.1).min(1.0) } else { (t.offhand_blend - dt / 0.3).max(0.0) };
+        // Despite its name the pose is a full-pose sequence (no STUDIO_DELTA) whose weightlist
+        // covers only the right arm, its prop bone and jx_vortex, the bone the blocker's world
+        // model (w_vortexblocker.mdl, rooted at jx_vortex) bone-merges onto.
+        actor.additive.clear();
+        actor.overlays.clear();
+        if let Some(c) = pose.filter(|_| t.offhand_blend > 0.0) {
+            t.offhand_cycle = (t.offhand_cycle + dt / actor.clips[c].duration.max(1e-3)).rem_euclid(1.0);
+            let k = t.offhand_blend * t.offhand_blend * (3.0 - 2.0 * t.offhand_blend);
+            actor.push_gesture(c, t.offhand_cycle, k);
+        }
+
         // The aim matrix folds the shoulder pods and points the gun arm at the view pitch.
         // Source pitch is positive looking down; aim_pitch is positive aiming up.
-        let grid = if crouch_w > 0.5 && actor.grids.contains_key("MP_crouch_Aim_all") { "MP_crouch_Aim_all" } else if moving > 0.5 { "combat_aim_run" } else { "combat_aim_stand" };
+        let grid = if crouch_w > 0.5 && actor.grids.contains_key("MP_crouch_Aim_all") { "MP_crouch_Aim_all" } else if moving > 0.5 { "combat_aim_run#m" } else { "combat_aim_stand#m" };
         let no_aim = std::env::var_os("TF_NO_AIM").is_some();
         actor.aim = (!no_aim).then(|| Aim { grid: grid.to_string(), yaw: 0.0, pitch: -s.pitch.to_degrees(), weight: 1.0 - t.sprint_blend });
     }

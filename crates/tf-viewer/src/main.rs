@@ -649,6 +649,7 @@ fn setup(
         bt_pos.z = h.point.z;
     }
     let yaw = bt_yaw.to_radians();
+    log::debug!("BT spawns at {bt_pos} facing {bt_yaw}");
     input.yaw = yaw;
 
     // BT: the placement entity carries the simulation state; the actor hangs below it.
@@ -682,6 +683,8 @@ fn setup(
                 "at_hotdrop_drop_2knee_turbo",
                 "at_hotdrop_quickstand",
                 "?CQB_CrouchIdle_MP",
+                "?bt_vortex_arm_pose_add",
+                "?bt_vortex_ion_arm_pose_add",
             ],
             // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
             grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],

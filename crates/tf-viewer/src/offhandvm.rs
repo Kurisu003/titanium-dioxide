@@ -17,7 +17,7 @@
 //! The abilities aren't told about this: their use is read from their state (a held flag, a
 //! cooldown that jumps up, a utility charge spent, the core leaving its build-up).
 
-use crate::actor::{Actor, ActorSpec, BoneMergeTo, Layer};
+use crate::actor::{Actor, ActorSpec, BoneMergeSplit, BoneMergeTo, Layer};
 use crate::player::{CameraMode, PlayerTitan};
 use crate::weapons::Weapon;
 use bevy::prelude::*;
@@ -48,6 +48,8 @@ struct Inst {
     def: OffhandDef,
     anchor: Entity,
     actor: Entity,
+    /// BT's arms bone-merged onto it.
+    arms: Option<Entity>,
     phase: Phase,
     t: f32,
 }
@@ -106,6 +108,7 @@ pub fn offhand_viewmodels(
     mut titans: Query<(&mut Weapon, &crate::combat::Vortex, &crate::abilities::Ordnance, &crate::abilities::TitanCore, &crate::titankit::KitState), With<PlayerTitan>>,
     mut actors: Query<&mut Actor>,
     mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
+    merges: Query<(Entity, &BoneMergeTo, Has<BoneMergeSplit>)>,
 ) {
     use crate::titankit::{DefKind, OrdKind};
     let Ok((mut w, vortex, ord, core, st)) = titans.single_mut() else { return };
@@ -133,14 +136,18 @@ pub fn offhand_viewmodels(
             }
         };
         let arms = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
-        match crate::actor::spawn_actor(&mut commands, anchor, &gd, &arms, cache, meshes, images, materials, bindposes) {
+        let arms = match crate::actor::spawn_actor(&mut commands, anchor, &gd, &arms, cache, meshes, images, materials, bindposes) {
             Ok(a) => {
                 commands.entity(a.entity).insert(BoneMergeTo(vm.entity));
+                Some(a.entity)
             }
-            Err(e) => log::warn!("offhand arms: {e:#}"),
-        }
+            Err(e) => {
+                log::warn!("offhand arms: {e:#}");
+                None
+            }
+        };
         log::info!("offhand viewmodel for {script}: {def:?}");
-        o.insts.push(Inst { script, def, anchor, actor: vm.entity, phase: Phase::Hidden, t: 0.0 });
+        o.insts.push(Inst { script, def, anchor, actor: vm.entity, arms, phase: Phase::Hidden, t: 0.0 });
     }
 
     // What each slot (ordnance, defensive, utility, core) is doing: (held, used this frame,
@@ -177,6 +184,7 @@ pub fn offhand_viewmodels(
     let cockpit = *mode == CameraMode::Cockpit && *control == crate::pilotctl::Control::Titan;
     let dt = time.delta_secs();
     let mut hide_gun = false;
+    let mut left_arm = None;
     let mut redeploy = false;
     for inst in &mut o.insts {
         let slot = scripts.iter().position(|&s| s == inst.script);
@@ -254,6 +262,18 @@ pub fn offhand_viewmodels(
         if show && (!inst.def.keep_primary || inst.def.empty_hand) {
             hide_gun = true;
         }
+        // A keep-primary offhand animates only the left arm (its viewmodel parks the right one
+        // behind the camera) and the gun keeps the right hand, so BT shows two arms, not the
+        // gun's two plus the offhand's left. How the engine joins them isn't traced: the gun's
+        // arms take their left arm from the offhand's viewmodel (both hold BT's body in the
+        // same place under the camera) and the offhand's own arms are hidden.
+        let split = show && inst.def.keep_primary && !inst.def.empty_hand;
+        if split {
+            left_arm = Some(inst.actor);
+        }
+        if let Some((_, mut vis)) = inst.arms.and_then(|a| tfs.get_mut(a).ok()) {
+            *vis = if split { Visibility::Hidden } else { Visibility::Inherited };
+        }
         if let Ok((mut tf, mut vis)) = tfs.get_mut(inst.anchor) {
             *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
             if let Some((eye, rot)) = eye_frame {
@@ -264,6 +284,23 @@ pub fn offhand_viewmodels(
     }
     if redeploy {
         w.redeploy();
+    }
+    // The gun's arms follow the offhand for their left arm while one is up.
+    if let Some((_, gun)) = w.viewmodel {
+        for (e, to, has) in &merges {
+            if to.0 != gun {
+                continue;
+            }
+            match left_arm {
+                Some(leader) => {
+                    commands.entity(e).insert(BoneMergeSplit { leader, root: "def_l_clav" });
+                }
+                None if has => {
+                    commands.entity(e).remove::<BoneMergeSplit>();
+                }
+                None => {}
+            }
+        }
     }
     // An offhand that doesn't keep the primary in hand replaces the gun's viewmodel.
     if hide_gun {
