@@ -158,6 +158,7 @@ measurement; **C** = visuals and rendering.
 - *Likely cause:* the zoom applied while aiming, or the viewmodel lens during the zoom, is backwards for this gun. The railgun's `zoom_fov` may be read as a scale (or the other way round), or its `ads_fov_zoomfrac` keys mishandled.
 - *Research:* compare the railgun's `zoom_fov` and `ads_*` keys with other Titan guns, and check what our camera FOV does during its ADS (log it).
 - *Fix and verify:* FOV log and screenshots while zooming in.
+- *Shelved (findings so far):* the world zoom is right (`zoom_fov` 50). The gun shrinks because the railgun's own `ads_in_seq` slides the gun and arms straight forward, from 39 to 78 units ahead of `jx_c_camera` (nothing moves sideways or up; `idle_ads_anim` is empty, and the zoom callbacks only handle Threat Optics). The other Titan guns hold their hip pose, and Legion's Predator comes closer (73 to 33). One attempt, zooming the whole viewmodel lens with the world, kept the gun's size but also zoomed the cockpit off the screen, and the gun grew and shrank during the transition (the FOV eases with a smoothstep while the animation follows the zoom fraction). It was reverted. Open question for later: does the real game keep the railgun's on-screen size (A), or does it slide forward and shrink (B)? If A, zoom only the gun's lens (a separate camera or layer from the cockpit) and time it to the animation.
 
 **29. Titan projectile models point the wrong way** (A, high, added later)
 - *Likely cause:* since 82eb7bf, bolts carry their script's `projectilemodel`, all turned with one fixed rotation copied from the Archer's missile, which assumed the model's nose runs along +Z. Most Source models point along +X, so the Titan rockets and shells fly sideways or tail-first.
@@ -244,8 +245,8 @@ We work through these one at a time, and the next one starts only after the user
 3. ~~Tone's Sonar Pulse shows the Electric Smoke icon (24)~~ (fixed: icons from the scripts' hud_icon, kept at their own aspect)
 4. ~~Titan weapons lose their crosshair when zoomed (12)~~ (fixed: only Pilot guns fade theirs)
 5. ~~Titan projectile models point the wrong way (29)~~ (fixed: models placed by their bone pose, nose along +X)
-6. Northstar's railgun zooms out when aiming (28)
-7. Ion's tripwire beams are misaligned (27)
+6. Northstar's railgun zooms out when aiming (28) (shelved by the user; findings under item 28)
+7. ~~Ion's tripwire beams are misaligned (27)~~ (fixed: beams left to middle to right at the pylons' 45-unit rise, tower model, path particles reach the end)
 8. Tone's lock-on marks on enemy Titans (25)
 9. Legion right-click artifact on the weapon (13)
 10. On-foot muzzle flash stays behind in the world (14)

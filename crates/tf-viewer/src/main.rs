@@ -334,7 +334,7 @@ fn main() {
                     abilities::update_missiles,
                     titankit::kit_input,
                     targets::update_enemies,
-                    (titankit::kit_world, titankit::utility_world).chain(),
+                    (titankit::kit_world, titankit::utility_world, titankit::laser_towers).chain(),
                     targets::update_bolts,
                     targets::death_explosions,
                     combat::player_combat,

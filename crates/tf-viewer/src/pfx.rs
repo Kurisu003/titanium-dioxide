@@ -598,6 +598,16 @@ impl PfxTrail {
     }
 }
 
+/// Where particle `i` of a path sequence of `count` sits between the start (0) and end (1)
+/// control points (C_INIT_CreateSequentialPath, C_OP_MaintainSequentialPath): `count` points
+/// with both ends included, repeating after the last.
+fn path_frac(i: f32, count: f32) -> f32 {
+    if count <= 1.0 {
+        return 0.0;
+    }
+    (i % count) / (count - 1.0)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Compiled operators
 
@@ -1971,7 +1981,8 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 had_life = true;
             }
             Init::Path { start, end, sequential, count } => {
-                let k = if sequential { (index as f32 % count) / count } else { rand(rng) };
+                // Source steps 1 / (count - 1), so the sequence runs from start to end inclusive.
+                let k = if sequential { path_frac(index as f32, count) } else { rand(rng) };
                 p.pos = cps[start].pos.lerp(cps[end].pos, k);
             }
             Init::Yaw { initial, min, max, exp, flip } => {
@@ -2544,7 +2555,7 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                     }
                 }
                 Oper::KeepOnPath { start, end, count } => {
-                    let k = (p.id as f32 % count) / count;
+                    let k = path_frac(p.id as f32, count);
                     p.pos = cps[start].pos.lerp(cps[end].pos, k);
                 }
                 Oper::CpToColor { cp, imin, imax, omin, omax, scale } => {

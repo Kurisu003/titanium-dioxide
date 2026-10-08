@@ -88,9 +88,12 @@ const POWER_SHOT_CHARGE: f32 = 0.75;
 const LASER_TRIP_RADIUS: f32 = 400.0;
 /// The beam's box: 8 either side of the line between the pylons (LaserPylonSetThink).
 const LASER_TRIP_BEAM_HALF: f32 = 8.0;
-/// The pylon rises 45 units as it builds; its "center" attachment (the beam's ends) is taken
-/// as 40 above that.
-const LASER_TRIP_CENTER: f32 = 85.0;
+/// DeployLaserPylon: the hidden pylon rises 45 units above the planted point (straight up the
+/// upright tower) over the build time. Its model's "center" attachment, where the beams start
+/// and end, is at its origin.
+const LASER_TRIP_RISE: f32 = 45.0;
+/// The tower prop (LASER_TRIP_MODEL), which plays "trip_wire_closed_to_open" once planted.
+pub const LASER_TRIP_MODEL: &str = "models/weapons/titan_trip_wire/titan_trip_wire.mdl";
 /// Deployables fall under the projectile gravity (750 u/s² at scale 1).
 const DEPLOYABLE_GRAVITY: f32 = 750.0;
 /// Tether Trap (mp_titanability_tether_trap.nut / mp_weapon_tether.nut): in SP each use
@@ -196,8 +199,19 @@ pub struct LaserPylon {
     build: f32,
     life: f32,
     group: u32,
-    /// Its beam to the next pylon of the group has been put up.
-    beam: bool,
+    /// projectileID: 0 thrown left, 1 straight, 2 right. Each pylon beams to the next one.
+    id: u8,
+    /// The throw's heading (proj.savedAngles keeps only the yaw): the tower's.
+    yaw: f32,
+    /// The pylon this one beams to and that pylon's beam point, once connected.
+    link: Option<(Entity, Vec3)>,
+}
+
+/// The tower model under a planted pylon; `actor` is set once the model is spawned.
+#[derive(Component)]
+pub struct LaserTower {
+    age: f32,
+    actor: Option<Entity>,
 }
 
 /// Fly a thrown deployable until it lands (returns true once on the ground).
@@ -1567,14 +1581,25 @@ pub fn kit_input(
                 true
             }
             UtilKind::LaserTrip => {
-                // Three pylons: one straight (900 u/s), one each side (1200 u/s), thrown downward.
+                // OnWeaponPrimaryAttack_titanweapon_laser_trip: three deployables along the view
+                // minus, along and plus right = dir x up (as long as the view's level part, so
+                // the sides are always 45 degrees out), the view tipped down to at least z -0.2;
+                // 1200 u/s to the sides, 900 straight. ThrowDeployable aims each 8 degrees higher
+                // and throws up to three times harder looking down (GetDeployableThrowVelocity).
                 st.trip_group += 1;
                 let group = st.trip_group;
+                let side = dir.cross(Vec3::Z);
                 let mut d = dir;
                 d.z = d.z.min(-0.2);
-                for (k, power) in [(d - right, LASER_TRIP_DEPLOY_SIDE_POWER), (d, LASER_TRIP_DEPLOY_POWER), (d + right, LASER_TRIP_DEPLOY_SIDE_POWER)] {
+                for (id, (k, power)) in [(d - side, LASER_TRIP_DEPLOY_SIDE_POWER), (d, LASER_TRIP_DEPLOY_POWER), (d + side, LASER_TRIP_DEPLOY_SIDE_POWER)].into_iter().enumerate() {
+                    let yaw = k.y.atan2(k.x);
+                    let pitch = (-k.z).atan2(k.truncate().length()).to_degrees() - 8.0;
+                    let power = if pitch < 80.0 { power * (1.0 + 2.0 * (pitch / 80.0).clamp(0.0, 1.0)) } else { power };
+                    // The game throws from BT's TITAN_GRENADE attachment plus 50 along it; this
+                    // spot below and right of the eye stands in for it.
                     let p = eye + Vec3::Z * -15.0 + right * 25.0;
-                    commands.spawn((Transform::from_translation(to_bevy(p)), Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false), LaserPylon { pos: p, vel: k.normalize_or(dir) * power, landed: false, build: LASER_TRIP_BUILD_TIME, life: LASER_TRIP_LIFETIME, group, beam: false }));
+                    let vel = view_dir(yaw, pitch.to_radians()) * power;
+                    commands.spawn((Transform::from_translation(to_bevy(p)), Visibility::default(), Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false), LaserPylon { pos: p, vel, landed: false, build: LASER_TRIP_BUILD_TIME, life: LASER_TRIP_LIFETIME, group, id: id as u8, yaw, link: None }));
                 }
                 true
             }
@@ -2511,6 +2536,43 @@ pub fn kit_view(
 }
 
 
+/// Spawn the tower model under each newly planted Laser Tripwire pylon and play its opening
+/// ("trip_wire_closed_to_open", held on its last frame).
+#[allow(clippy::too_many_arguments)]
+pub fn laser_towers(
+    mut commands: Commands,
+    time: Res<Time>,
+    gd: Res<GameData>,
+    mut cache: ResMut<crate::convert::Cache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    mut towers: Query<(Entity, &mut LaserTower)>,
+    mut actors: Query<&mut crate::actor::Actor>,
+) {
+    for (id, mut t) in &mut towers {
+        t.age += time.delta_secs();
+        let Some(a) = t.actor else {
+            let spec = crate::actor::ActorSpec { path: LASER_TRIP_MODEL, sequences: &["trip_wire_closed_to_open"], grids: &[], body: &[] };
+            match crate::actor::spawn_actor(&mut commands, id, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                Ok(sp) => t.actor = Some(sp.entity),
+                Err(e) => {
+                    log::warn!("laser tripwire tower: {e:#}");
+                    commands.entity(id).remove::<LaserTower>();
+                }
+            }
+            continue;
+        };
+        let Ok(mut actor) = actors.get_mut(a) else { continue };
+        actor.autoplay = false;
+        if let Some(clip) = actor.clip("trip_wire_closed_to_open") {
+            let cycle = (t.age / actor.clips[clip].duration.max(1e-3)).min(0.999);
+            actor.layers = vec![crate::actor::Layer { clip, cycle, weight: 1.0 }];
+        }
+    }
+}
+
 /// Utility deployables: Electric Smoke clouds, Slow Trap gas and Laser Tripwire pylons.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn utility_world(
@@ -2634,13 +2696,16 @@ pub fn utility_world(
         }
         tf.translation = to_bevy(t.pos);
     }
-    // Laser Tripwire (mp_titanability_laser_trip.nut): pylons land, rise and arm; each armed
-    // pylon beams to the next of its group (P_wpn_lasertrip_beam). An enemy touching a beam
-    // destroys a pylon, and a destroyed pylon takes its whole group with it (OnThreadEnd destroys
-    // the projectile group); so does running out of time. Every pylon destroyed blows up:
-    // P_impact_exp_XLG_metal and 200 (1500 to heavy armour) within 400.
+    // Laser Tripwire (mp_titanability_laser_trip.nut): each deployable plants a tower (the
+    // trip wire model, opening) with a hidden pylon rising out of it. Once built, a pylon lights
+    // up (P_wpn_lasertrip_base) and beams (P_wpn_lasertrip_beam) to the group's next pylon
+    // (projectileID + 1) if that one has planted and the line between them is clear; so the beams
+    // run left to middle and middle to right. An enemy touching a beam destroys a pylon, and a
+    // destroyed pylon takes its whole group with it (OnThreadEnd destroys the projectile group);
+    // so does running out of time. Every pylon destroyed blows up: P_impact_exp_XLG_metal and 200
+    // (1500 to heavy armour) within 400.
     let old_fx = std::env::var_os("TF_OLD_FX").is_some();
-    let mut armed: Vec<(u32, Vec3, Entity)> = Vec::new();
+    let planted: Vec<(Entity, u32, u8, Vec3)> = pylons.iter().filter(|(_, p, _)| p.landed).map(|(id, p, _)| (id, p.group, p.id, p.pos)).collect();
     let mut blow: Vec<u32> = Vec::new();
     for (id, mut p, mut tf) in &mut pylons {
         if !p.landed {
@@ -2648,15 +2713,38 @@ pub fn utility_world(
             p.landed = fly_deployable(&world, &mut pos, &mut v, dt);
             p.pos = pos;
             p.vel = v;
-            if p.landed && !old_fx {
-                // PlayLoopFXOnEntity( LASER_TRIP_FX_ALL, pylon ).
-                commands.entity(id).with_child((Transform::default(), crate::pfx::PfxTrail::oriented("P_wpn_lasertrip_base")));
+            if p.landed {
+                log::debug!("laser pylon {} landed at ({:.0}, {:.0}, {:.0})", p.id, p.pos.x, p.pos.y, p.pos.z);
+                commands.entity(id).remove::<Glow>();
+                // The tower: upright, turned to the throw's heading, in game units.
+                let root = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
+                commands.entity(id).with_child((root.mul_transform(Transform::from_rotation(Quat::from_rotation_z(p.yaw))), Visibility::default(), LaserTower { age: 0.0, actor: None }));
             }
         } else if p.build > 0.0 {
             p.build -= dt;
+            if p.build <= 0.0 {
+                let head = p.pos + Vec3::Z * LASER_TRIP_RISE;
+                let local = to_bevy(head) - to_bevy(p.pos);
+                if !old_fx {
+                    // PlayLoopFXOnEntity( LASER_TRIP_FX_ALL, pylon ).
+                    commands.entity(id).with_child((Transform::from_translation(local).with_rotation(Quat::from_rotation_y(p.yaw)), crate::pfx::PfxTrail::oriented("P_wpn_lasertrip_base")));
+                }
+                let next = planted.iter().find(|n| n.1 == p.group && n.2 == p.id + 1);
+                if let Some(&(other, _, _, other_pos)) = next {
+                    let end = other_pos + Vec3::Z * LASER_TRIP_RISE;
+                    let to = end - head;
+                    let blocked = world.0.raycast(SVec3::from(head.to_array()), SVec3::from(to.normalize_or_zero().to_array()), to.length() * 0.99).is_some();
+                    if !blocked {
+                        p.link = Some((other, end));
+                        if !old_fx {
+                            commands.entity(id).with_child((Transform::from_translation(local), crate::pfx::PfxTrail::new("P_wpn_lasertrip_beam"), crate::pfx::PfxBeamEnd(to_bevy(end))));
+                        }
+                        log::debug!("laser pylon {} beams to pylon {}", p.id, p.id + 1);
+                    }
+                }
+            }
         } else {
             p.life -= dt;
-            armed.push((p.group, p.pos, id));
         }
         if p.life <= 0.0 && !blow.contains(&p.group) {
             blow.push(p.group);
@@ -2670,21 +2758,11 @@ pub fn utility_world(
             blow.push(oldest);
         }
     }
-    armed.sort_by_key(|a| a.0);
-    for w in armed.windows(2) {
-        let ((ga, a, ea), (gb, b, _)) = (w[0], w[1]);
-        if ga != gb {
-            continue;
-        }
-        let (a, b) = (a + Vec3::Z * LASER_TRIP_CENTER, b + Vec3::Z * LASER_TRIP_CENTER);
+    for (_, p, _) in pylons.iter() {
+        let Some((_, b)) = p.link else { continue };
+        let a = p.pos + Vec3::Z * LASER_TRIP_RISE;
         if old_fx {
             emit(&mut commands, Effect::Tracer { from: to_bevy(a), to: to_bevy(b), width: 0.08, color: Vec3::new(1.0, 2.5, 6.0) });
-        } else if let Ok((_, mut pa, _)) = pylons.get_mut(ea) {
-            if !pa.beam {
-                pa.beam = true;
-                let local = to_bevy(a) - to_bevy(pa.pos);
-                commands.entity(ea).with_child((Transform::from_translation(local), crate::pfx::PfxTrail::new("P_wpn_lasertrip_beam"), crate::pfx::PfxBeamEnd(to_bevy(b))));
-            }
         }
         let seg = b - a;
         let len = seg.length().max(1e-3);
@@ -2700,8 +2778,8 @@ pub fn utility_world(
             let horiz = (c - q).truncate().length();
             if horiz < e.radius + LASER_TRIP_BEAM_HALF && q.z > e.pos.z - LASER_TRIP_BEAM_HALF && q.z < e.pos.z + e.height + LASER_TRIP_BEAM_HALF {
                 log::info!("laser tripwire tripped by {}", if e.infantry { "a grunt" } else { "a titan" });
-                if !blow.contains(&ga) {
-                    blow.push(ga);
+                if !blow.contains(&p.group) {
+                    blow.push(p.group);
                 }
                 break;
             }
