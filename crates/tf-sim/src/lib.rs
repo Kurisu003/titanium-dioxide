@@ -99,11 +99,33 @@ mod tests {
         step(&mut s, &TitanInput { right: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
         assert_eq!(s.dashes, 1);
         assert!((s.power - 50.0).abs() < 0.5, "power {}", s.power);
-        assert!(s.vel.y < -600.0, "dashing right (-Y at yaw 0): {:?}", s.vel);
-        run(&mut s, TitanInput::default(), &w, 0.5);
-        assert!(s.horizontal_speed() <= 350.0, "speed clamped after dash");
-        run(&mut s, TitanInput::default(), &w, 2.0);
-        assert!(s.on_ground);
+        assert!((s.vel.y + 685.0).abs() < 1.0, "dashing right (-Y at yaw 0) at dodgeSpeed: {:?}", s.vel);
+        // Airborne for dodgeDuration, keeping the dash speed (no friction, no clamp).
+        run(&mut s, TitanInput::default(), &w, 0.25);
+        assert!(!s.on_ground && (s.horizontal_speed() - 685.0).abs() < 2.0, "dash holds: {}", s.horizontal_speed());
+        // dodgeInterval (0.2 s) after the first started, the second needs the other 50 power.
+        step(&mut s, &TitanInput { forward: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        assert_eq!(s.dashes, 2);
+        step(&mut s, &TitanInput { forward: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        assert_eq!(s.dashes, 2, "out of power");
+        // Not faster than the dash, the old velocity is replaced: 685 forward.
+        assert!((s.vel.x - 685.0).abs() < 5.0 && s.vel.y.abs() < 5.0, "second dash {:?}", s.vel);
+        // Then the ground brakes it at sprintDeceleration down to walk speed and to a stop.
+        run(&mut s, TitanInput::default(), &w, 4.0);
+        assert!(s.on_ground && s.horizontal_speed() < 1.0);
+    }
+
+    #[test]
+    fn dash_steers_with_keyboard_grace() {
+        // Dash forward, then hold right: within jump_keyboardgraceperiodmax the velocity turns
+        // toward the keys (the per-tick limit cuts the corner, so a sharp turn loses some speed).
+        let w = world();
+        let p = TitanParams::default();
+        let mut s = TitanState::new(Vec3::new(0.0, -1000.0, 0.0), 0.0);
+        run(&mut s, TitanInput::default(), &w, 0.2);
+        step(&mut s, &TitanInput { forward: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        run(&mut s, TitanInput { right: 1.0, ..Default::default() }, &w, 0.1);
+        assert!(s.vel.y < -500.0 && s.vel.x.abs() < 50.0, "turned right: {:?}", s.vel);
     }
 
     #[test]

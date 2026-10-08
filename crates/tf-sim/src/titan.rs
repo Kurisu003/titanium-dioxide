@@ -23,7 +23,14 @@ pub struct TitanParams {
     pub dash_interval: f32,
     pub dash_stop_speed: f32,
     pub dash_height: f32,
+    /// dodgeHeightMax: the dash's vertical speed is cut to reach at most this height.
+    pub dash_height_max: f32,
+    /// dodgeKeepSpeedFrac: fraction of the old speed kept on top of the dash.
+    pub dash_keep_frac: f32,
     pub dash_drain: f32,
+    /// airSpeed / airAcceleration (engine defaults; the titan .set files set neither).
+    pub air_speed: f32,
+    pub air_accel: f32,
     pub power_regen: f32,
     pub power_delay: f32,
     pub step_height: f32,
@@ -59,7 +66,11 @@ impl Default for TitanParams {
             dash_interval: 0.2,
             dash_stop_speed: 350.0,
             dash_height: 12.0,
+            dash_height_max: 25.0,
+            dash_keep_frac: 0.0,
             dash_drain: 50.0,
+            air_speed: 60.0,
+            air_accel: 500.0,
             power_regen: 12.0,
             power_delay: 0.2,
             step_height: 80.0,
@@ -104,8 +115,10 @@ pub struct TitanState {
     pub pitch: f32,
     pub on_ground: bool,
     pub sprinting: bool,
+    /// Time left in the dash (dodgeDuration): BT is airborne and the ground check is skipped.
     pub dash_time: f32,
-    pub dash_cooldown: f32,
+    /// Seconds since the last dash started (the dodgeInterval gate and the keyboard grace).
+    pub since_dash: f32,
     /// Dash power, 0..100.
     pub power: f32,
     pub power_delay: f32,
@@ -131,7 +144,7 @@ impl TitanState {
             on_ground: false,
             sprinting: false,
             dash_time: 0.0,
-            dash_cooldown: 0.0,
+            since_dash: f32::MAX,
             power: 100.0,
             power_delay: 0.0,
             dashes: 0,
@@ -192,6 +205,22 @@ pub fn walk_move(v: Vec2, wish: Vec2, max_speed: f32, accel: f32, decel: f32, dt
     v
 }
 
+/// Respawn's AirAccelerate (client.dll 0x1801f19a0): Source air acceleration toward the input
+/// up to `air_speed`; already faster along it, the velocity only turns toward the input at
+/// player_extraairaccelleration (2 u/s^2) without gaining speed.
+pub fn air_move(v: Vec2, wish: Vec2, air_speed: f32, accel: f32, dt: f32) -> Vec2 {
+    let dir = wish.normalize_or_zero();
+    let wish_speed = wish.length().min(1.0) * air_speed;
+    let add = wish_speed - v.dot(dir);
+    if add > 0.0 {
+        v + dir * (accel * dt).min(add)
+    } else {
+        let max_sq = v.length_squared().max(wish_speed * wish_speed);
+        let n = v + dir * dt * 2.0;
+        if n.length_squared() > max_sq { n * (max_sq / n.length_squared()).sqrt() } else { n }
+    }
+}
+
 fn approach(cur: Vec2, target: Vec2, rate: f32) -> Vec2 {
     let d = target - cur;
     let len = d.length();
@@ -242,7 +271,7 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
     let scale = if input.speed_scale > 0.0 { input.speed_scale } else { 1.0 };
 
     // Dash power.
-    s.dash_cooldown = (s.dash_cooldown - dt).max(0.0);
+    s.since_dash = (s.since_dash + dt).min(1e6);
     if s.power_delay > 0.0 {
         s.power_delay -= dt;
     } else {
@@ -250,33 +279,46 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
     }
 
     let mut hvel = Vec2::new(s.vel.x, s.vel.y);
-    if input.dash && s.dash_cooldown <= 0.0 && s.power >= p.dash_drain && s.dash_time <= 0.0 {
-        let dir = if wish.length() > 0.1 { wish.normalize() } else { fwd };
-        hvel = dir * p.dash_speed * scale;
+    // The dash (client.dll jump handler 0x180200200, dodge branch): allowed dodgeInterval after
+    // the last one started, with the power for it.
+    if input.dash && s.since_dash >= p.dash_interval && s.power >= p.dash_drain {
+        // Up along the ground normal by sqrt(2 g dodgeHeight), in the air too
+        // (dodge_vertical_in_air 1); dodgeHeightMax caps the result (from the setting's
+        // description, the clamp itself isn't traced).
+        s.vel.z = (s.vel.z + (2.0 * p.gravity * p.dash_height).sqrt()).min((2.0 * p.gravity * p.dash_height_max).sqrt());
+        s.on_ground = false;
+        // Along the input; with none, along the view (dodge_no_movement_forward_enable 1: the
+        // eye's forward vector, so looking up or down shortens it).
+        let dash = if wish.length_squared() > 1e-7 { wish.normalize() } else { fwd * s.pitch.cos() } * p.dash_speed * scale;
+        // Faster than the dash, the old velocity keeps what exceeds the dash speed
+        // (plus dodgeKeepSpeedFrac of the rest).
+        let cur = hvel.length();
+        let mut keep = if cur > dash.length() { 1.0 - dash.length() / cur } else { 0.0 };
+        keep += (1.0 - keep) * p.dash_keep_frac;
+        hvel = hvel * keep + dash;
         s.dash_time = p.dash_duration;
-        s.dash_cooldown = p.dash_duration + p.dash_interval;
+        s.since_dash = 0.0;
         s.power -= p.dash_drain;
         s.power_delay = p.power_delay;
         s.dashes += 1;
-        if s.on_ground {
-            s.vel.z = (2.0 * p.gravity * p.dash_height).sqrt();
-            s.on_ground = false;
-        }
         s.sprinting = false;
     }
-
+    // The dash ends after dodgeDuration, or early below dodgeStopSpeed (0x1801f53e0); nothing
+    // clamps the speed when it ends.
     if s.dash_time > 0.0 {
         s.dash_time -= dt;
-        if s.dash_time <= 0.0 && hvel.length() > p.dash_stop_speed {
-            hvel = hvel.normalize() * p.dash_stop_speed;
+        if hvel.length_squared() + s.vel.z * s.vel.z < p.dash_stop_speed * p.dash_stop_speed {
+            s.dash_time = 0.0;
         }
-    } else if let Some((_, limit)) = input.fly {
+    }
+
+    if let Some((_, limit)) = input.fly {
         // Hover (FlyerHovers): airSpeed 200 at airAcceleration 540, capped at limit.
         hvel = approach(hvel, wish * (limit - 50.0).max(0.0), 540.0 * dt);
         if hvel.length() > limit {
             hvel = hvel.normalize() * limit;
         }
-    } else if s.on_ground {
+    } else if s.on_ground && s.dash_time <= 0.0 {
         // Respawn's WalkMove (client.dll 0x18020d9e0): the stance's speed, acceleration and
         // deceleration (the crouch stance sets only those three: no low-speed boost and no
         // sprint rates).
@@ -302,8 +344,27 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
         };
         hvel = walk_move(hvel, wish, max_speed, accel, decel, dt);
     } else {
-        // Limited air control.
-        hvel = approach(hvel, wish * p.speed.max(hvel.length()), p.accel * 0.15 * dt);
+        hvel = air_move(hvel, wish, p.air_speed * scale, p.air_accel, dt);
+        // Keyboard grace (AirMove 0x1801f1d62): for jump_keyboardgraceperiodmax (0.5 s) after
+        // a jump or dash, the movement keys turn the horizontal velocity toward their direction
+        // at the same speed, by jump_keyboardgrace_strength (0.7) fading out from
+        // jump_keyboardgraceperiodmin (0.2 s), at most jump_keyboardgrace_max (0.7) x the
+        // sprint speed per tick.
+        let keys = fwd * input.forward.signum() * (input.forward.abs() > 0.01) as u8 as f32
+            + right * input.right.signum() * (input.right.abs() > 0.01) as u8 as f32;
+        if s.since_dash < 0.5 && keys != Vec2::ZERO {
+            let speed = hvel.length();
+            let frac = ((0.5 - s.since_dash) / 0.3).clamp(0.0, 1.0) * 0.7;
+            let cur = hvel / speed.max(1e-6);
+            let dir = cur + (keys.normalize() - cur) * frac;
+            let target = if dir.length() > 1e-4 { dir.normalize() * speed } else { dir };
+            let mut delta = target - hvel;
+            let max = p.sprint_speed * scale * 0.7;
+            if delta.length() > max {
+                delta = delta.normalize() * max;
+            }
+            hvel += delta;
+        }
     }
     s.vel.x = hvel.x;
     s.vel.y = hvel.y;
@@ -362,6 +423,13 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
         }
     }
     match ground {
+        // While dashing the ground check is skipped (CategorizePosition 0x1801f33dc): the floor
+        // still holds BT up, but he stays airborne until the dash ends.
+        Some(z) if s.vel.z <= 0.0 && s.dash_time > 0.0 => {
+            s.pos.z = z;
+            s.vel.z = 0.0;
+            s.on_ground = false;
+        }
         Some(z) if s.vel.z <= 0.0 => {
             if !was_on_ground {
                 s.landings += 1;
