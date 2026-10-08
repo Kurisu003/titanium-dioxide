@@ -250,7 +250,7 @@ We work through these one at a time, and the next one starts only after the user
 8. ~~Tone's lock-on marks on enemy Titans (25)~~ (done: the tracker ring on Titans, 60 s marks, Sonar Pulse marks and flies as an echo; the echo's flight path is pinned: the user finds it odd, cause not found yet)
 9. ~~Legion right-click artifact on the weapon (13)~~ (fixed: the barrel blur sleeve lay across fx_barrel's X instead of down its Z; it and every effect model drew a frame late. Follow-up: the sleeve is hidden behind the gun, as effect models draw in the world pass, and its vertex alpha and fade-in are missing)
 10. ~~On-foot muzzle flash stays behind in the world (14)~~ (fixed: FP muzzle flash and shell eject play on the viewmodel joints)
-11. Thunderbolt scope depends on looking up or down (15)
+11. ~~Thunderbolt scope depends on looking up or down (15)~~ (fixed: the walk layer played the Thunderbolt's 67-frame standing clip, which turns the gun 36 degrees for half its 2.2 s loop, at full weight while standing; the layer now fades in with speed)
 12. Scorch's gun can't light his gas canisters (26)
 13. Titan HUD moves far too much (1)
 14. BT slides too much when turning while holding forward (23)

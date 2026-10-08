@@ -1612,8 +1612,13 @@ pub fn pilot_viewmodel(
         // clips carry constant offsets from the rest pose (the gun 0.8 units off and the
         // clavicle turned 30 degrees even standing still; the ADS walk another 2.6 units),
         // which pulled the ADS sight off centre, so only each clip's motion is applied.
+        // The layer fades in with speed, like `run_layer_reload` (a guess at the engine's
+        // weighting): the Thunderbolt's standing clip (`walk_anim_static`, 67 frames where every
+        // other gun's has 25) turns the gun 36 degrees for frames 32-65, which played at full
+        // weight swung its ADS view to the side and back every 2.2 s while standing still.
         if let Some(d) = grid_dur(&actor, "walk_seq").filter(|_| !vm_off("walk")) {
-            grid_layers.push(GridLayer { grid: "walk_seq", x: speed.min(173.0), y: ads, cycle: (vl.clock / d).fract(), weight: still * vl.ground_blend, relative: true });
+            let moving = (speed / 173.0).min(1.0);
+            grid_layers.push(GridLayer { grid: "walk_seq", x: speed.min(173.0), y: ads, cycle: (vl.clock / d).fract(), weight: still * vl.ground_blend * moving, relative: true });
         }
     }
     if !reloading && switching.is_none() {
