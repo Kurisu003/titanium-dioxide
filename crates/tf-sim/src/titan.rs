@@ -160,6 +160,38 @@ impl TitanState {
     }
 }
 
+/// One tick of Respawn's ground movement (client.dll WalkMove): `wish` is the input direction
+/// (length up to 1), `max_speed` the stance (or sprint) speed.
+///
+/// Friction (0x1801f8090) keeps the part of the velocity along the wish direction, up to the
+/// wish speed (scaled by min(along * wish_speed / speed^2, 1)), and slows only the rest - the
+/// sideways part and any excess speed - by `decel` per second. Accelerate (0x1801f0ac0) then
+/// adds up to `accel` per second along the wish direction until the speed along it reaches the
+/// wish speed, never raising the total speed above the larger of the old speed and the wish
+/// speed. So turning while holding forward bends the path without the sideways slide a single
+/// rate toward the wanted velocity gives.
+pub fn walk_move(v: Vec2, wish: Vec2, max_speed: f32, accel: f32, decel: f32, dt: f32) -> Vec2 {
+    let dir = wish.normalize_or_zero();
+    let wish_speed = wish.length().min(1.0) * max_speed;
+
+    let along = v.dot(dir);
+    let keep = if along > 0.0 { dir * along * (along * wish_speed / v.length_squared()).min(1.0) } else { Vec2::ZERO };
+    let rest = v - keep;
+    let len = rest.length();
+    let rest = if len > 1e-6 { rest * ((len - decel * dt).max(0.0) / len) } else { rest };
+    let mut v = rest + keep;
+
+    let max_sq = v.length_squared().max(wish_speed * wish_speed);
+    let add = wish_speed - v.dot(dir);
+    if add > 0.0 {
+        v += dir * (accel * dt).min(add);
+        if v.length_squared() > max_sq {
+            v *= (max_sq / v.length_squared()).sqrt();
+        }
+    }
+    v
+}
+
 fn approach(cur: Vec2, target: Vec2, rate: f32) -> Vec2 {
     let d = target - cur;
     let len = d.length();
@@ -244,32 +276,31 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
         if hvel.length() > limit {
             hvel = hvel.normalize() * limit;
         }
-    } else if s.on_ground && s.crouched {
-        // The crouch stance's own speed, acceleration and deceleration (no low-speed boost:
-        // lowSpeed is set only in the stand block). Faster than crouch speed (crouching out of
-        // a sprint or a dash) slows at the crouch deceleration.
-        let target = wish * p.crouch_speed * scale;
-        let rate = if target.length() > hvel.length() { p.crouch_accel } else { p.crouch_decel };
-        hvel = approach(hvel, target, rate * dt);
     } else if s.on_ground {
-        let target_speed = if s.sprinting { p.sprint_speed } else { p.speed } * scale;
-        let target = wish * target_speed;
-        let cur = hvel.length();
-        let rate = if target.length() > cur {
-            // Above walking speed, sprint uses its own (slower) acceleration.
-            if cur >= p.speed - 1.0 && s.sprinting {
-                p.sprint_accel
-            } else if cur < p.low_speed {
-                p.low_accel.max(p.accel)
-            } else {
-                p.accel
-            }
-        } else if cur > p.speed + 1.0 {
-            p.sprint_decel
+        // Respawn's WalkMove (client.dll 0x18020d9e0): the stance's speed, acceleration and
+        // deceleration (the crouch stance sets only those three: no low-speed boost and no
+        // sprint rates).
+        let (speed, accel, decel, sprint_accel, sprint_decel, low_speed, low_accel) = if s.crouched {
+            (p.crouch_speed, p.crouch_accel, p.crouch_decel, None, None, None, None)
         } else {
-            p.decel
+            (p.speed, p.accel, p.decel, Some(p.sprint_accel), Some(p.sprint_decel), Some(p.low_speed), Some(p.low_accel))
         };
-        hvel = approach(hvel, target, rate * dt);
+        let walk_speed = speed * scale;
+        let max_speed = if s.sprinting { p.sprint_speed * scale } else { walk_speed };
+        let cur = hvel.length();
+        // GetAcceleration (0x1801fcbd0): sprintAcceleration above walk speed - 1, else
+        // lowAcceleration below lowSpeed, else acceleration.
+        let accel = match (sprint_accel, low_speed.zip(low_accel)) {
+            (Some(a), _) if cur > walk_speed - 1.0 => a,
+            (_, Some((ls, la))) if cur < ls * scale => la,
+            _ => accel,
+        };
+        // GetDeceleration (0x1801fcf10): sprintDeceleration above walk speed, else deceleration.
+        let decel = match sprint_decel {
+            Some(d) if cur > walk_speed => d,
+            _ => decel,
+        };
+        hvel = walk_move(hvel, wish, max_speed, accel, decel, dt);
     } else {
         // Limited air control.
         hvel = approach(hvel, wish * p.speed.max(hvel.length()), p.accel * 0.15 * dt);

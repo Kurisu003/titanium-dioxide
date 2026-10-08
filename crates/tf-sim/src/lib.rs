@@ -71,6 +71,26 @@ mod tests {
     }
 
     #[test]
+    fn turning_while_sprinting_bends_the_path() {
+        // Sprint, then turn holding forward for a second: friction slows only the sideways
+        // part, so the velocity follows the facing (one rate toward the wanted velocity lagged
+        // 26 degrees at 45 deg/s and slid nearly straight on at 180).
+        let w = world();
+        let p = TitanParams::default();
+        for (rate, max_lag) in [(45f32, 1.0f32), (180.0, 5.0)] {
+            let mut s = TitanState::new(Vec3::new(-2500.0, -2500.0, 0.0), 0.0);
+            run(&mut s, TitanInput { forward: 1.0, sprint: true, ..Default::default() }, &w, 3.0);
+            let mut yaw = 0.0f32;
+            for _ in 0..60 {
+                yaw += rate.to_radians() / 60.0;
+                step(&mut s, &TitanInput { forward: 1.0, sprint: true, yaw, ..Default::default() }, &p, &w, 1.0 / 60.0);
+            }
+            let lag = (yaw - s.vel.y.atan2(s.vel.x)).to_degrees();
+            assert!(lag.abs() < max_lag, "{rate} deg/s: facing vs movement lags {lag} degrees");
+        }
+    }
+
+    #[test]
     fn dash_uses_power() {
         let w = world();
         let mut s = TitanState::new(Vec3::new(0.0, -1000.0, 0.0), 0.0);
