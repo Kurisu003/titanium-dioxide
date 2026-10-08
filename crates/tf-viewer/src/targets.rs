@@ -492,6 +492,21 @@ impl Enemy {
         }
         self.damage_unblockable(amount, stops_regen)
     }
+    /// Radius damage (RadiusDamage: the Thermal Shield's burn, thermite): the Vortex, Thermal
+    /// Shield and Gun Shield only stop bullets and projectiles, so only Sword Block, facing the
+    /// attacker, reduces it.
+    pub fn damage_radius(&mut self, amount: f32, stops_regen: bool) -> Hit {
+        let mut amount = amount;
+        if self.defense.is_some_and(|d| self.defense_left > 0.0 && d.kind == DefenseKind::Block) {
+            let to = (self.threat - self.pos).truncate().normalize_or_zero();
+            let facing = Vec2::new(self.state.yaw.cos(), self.state.yaw.sin());
+            if to.dot(facing) >= 75.0f32.to_radians().cos() {
+                self.flash = 0.05;
+                amount *= BLOCK_DAMAGE_REDUCTION;
+            }
+        }
+        self.damage_unblockable(amount, stops_regen)
+    }
     /// Damage no defensive stops (melee, executions: `shouldPassThroughDamage`).
     pub fn damage_unblockable(&mut self, amount: f32, stops_regen: bool) -> Hit {
         if !self.alive() {
@@ -751,6 +766,13 @@ pub fn update_enemies(
         if e.held {
             continue;
         }
+        // TF_STATIC_TITAN (game.rs): the test Titan never goes down; it refills below 30%.
+        let static_titan = !e.infantry && std::env::var_os("TF_STATIC_TITAN").is_some();
+        if static_titan && (e.v.doomed.is_some() || e.v.health < e.v.max_health * 0.3) {
+            e.v.health = e.v.max_health;
+            e.v.shield = e.v.max_shield;
+            e.v.doomed = None;
+        }
 
         // --- Titanfall: ride the hotdrop's root motion down, impact, quickstand ---
         if e.drop.is_some() || e.stand.is_some() {
@@ -879,6 +901,11 @@ pub fn update_enemies(
                     input.right += side.dot(r);
                 }
             }
+        }
+        if static_titan {
+            input.forward = 0.0;
+            input.right = 0.0;
+            input.dash = false;
         }
         e.slow_t = (e.slow_t - dt).max(0.0);
         input.speed_scale = if e.slow_t > 0.0 { e.slow } else { 1.0 };
@@ -1235,7 +1262,8 @@ pub fn update_bolts(
             let facing = -dir.dot(view) >= (crate::combat::VORTEX_BULLET_FOV * 0.5).to_radians().cos();
             let oc = b.pos - eye;
             let half_b = oc.dot(dir);
-            let c = oc.length_squared() - crate::combat::VORTEX_RADIUS * crate::combat::VORTEX_RADIUS;
+            let r = vortex.sphere_radius();
+            let c = oc.length_squared() - r * r;
             let disc = half_b * half_b - c;
             if facing && disc >= 0.0 {
                 let t = -half_b - disc.sqrt();
@@ -1281,6 +1309,14 @@ pub fn update_bolts(
             log::debug!("shield {i} stopped a round at {at:.0}");
             walls.absorbed.push((i, falloff(b.travelled, w.npc_damage_near, w.npc_damage_far)));
             crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: to_bevy(at), normal: -to_bevy(dir).normalize_or(Vec3::Y), table: w.impact_table, surface: crate::particles::Surface::Shield, victim: false, scale: 1.0 });
+            continue;
+        }
+        if matches!(struck, Struck::Vortex) && vortex.mode == crate::combat::VortexMode::Heat {
+            // The Thermal Shield destroys rounds instead of holding them
+            // (OnWeaponVortexHitBullet/Projectile_titanweapon_heat_shield ->
+            // Vortex_SpawnHeatShieldPingFX: P_wpn_HeatShield_impact for 0.25 s and a stop sound).
+            crate::pfx::emit_named_cps(&mut commands, "P_wpn_HeatShield_impact", &[crate::pfx::Cp::facing(at, -dir)], Some(0.25));
+            audio::event_at(&mut commands, if k.projectile >= 30000.0 { "heat_shield_stop_bullet" } else { "heat_shield_stop_projectile" }, at);
             continue;
         }
         if matches!(struck, Struck::Vortex) {

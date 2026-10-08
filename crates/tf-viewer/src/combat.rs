@@ -34,10 +34,20 @@ const VORTEX_DIST_FP: f32 = VORTEX_RADIUS * 1.9;
 const HEAT_HOLD: f32 = 3.0;
 const HEAT_RECOVER: f32 = 8.0;
 const HEAT_DELAY: f32 = 1.0;
-const HEAT_RATE: f32 = 5.0;
-const HEAT_RANGE: f32 = 300.0; // damage_far_distance
-const HEAT_TITAN: f32 = 200.0; // damage_near_value_titanarmor
+/// HeatShieldDamage_Think: a RadiusDamage every 0.1 s (after a first 0.1 s "letting the weapon
+/// raise"), explosionradius 175 around the blocker's `muzzle_flash`, for damage_far_value(_titanarmor).
+const HEAT_TICK: f32 = 0.1;
+const HEAT_RADIUS: f32 = 175.0;
+const HEAT_TITAN: f32 = 200.0;
 const HEAT_PILOT: f32 = 25.0;
+/// ShouldHeatShieldDamage: only what lies within 70 degrees of the view, from the eye.
+const HEAT_CONE: f32 = 70.0;
+/// The blocker viewmodel's `muzzle_flash` (atpov_vortexblocker_scorch.mdl, ads_in_seq) from
+/// the camera bone: forward, left, up. The server reads the world model's attachment on the
+/// Titan's hand; the viewmodel's is used for it.
+const HEAT_MUZZLE: Vec3 = Vec3::new(105.0, 24.0, -20.0);
+/// StartHeatShield: CreateVortexSphere( weapon, false, false, 120, HEAT_SHIELD_FOV 120 ).
+const HEAT_SPHERE_RADIUS: f32 = 120.0;
 /// Ion's Vortex needs some energy to raise.
 const ION_VORTEX_MIN: f32 = 100.0;
 
@@ -152,6 +162,10 @@ impl Vortex {
     pub fn fraction(&self) -> f32 {
         self.charge / self.hold()
     }
+    /// The catch sphere's radius around the eye.
+    pub fn sphere_radius(&self) -> f32 {
+        if self.mode == VortexMode::Heat { HEAT_SPHERE_RADIUS } else { VORTEX_RADIUS }
+    }
 }
 
 #[derive(Component, Default)]
@@ -242,32 +256,46 @@ pub fn player_combat(
         vortex.active = true;
         vortex.caught = 0;
         vortex.absorbed = 0;
-        vortex.burn_timer = 0.0;
+        vortex.burn_timer = HEAT_TICK;
         audio::cue(&mut commands, Cue::VortexStart, None);
     }
     if vortex.active {
         if vortex.mode != VortexMode::Ion {
             vortex.charge -= dt;
         }
-        // Thermal Shield: burn everything close in front of BT at fire_rate.
+        // Thermal Shield (HeatShieldDamage_Think): every 0.1 s, everything within 175 of the
+        // blocker's muzzle and within 70 degrees of the view burns (HeatShield_DamagedEntity
+        // plays P_wpn_HeatSheild_burn_titan/_human and the burn sound on each victim).
         if vortex.mode == VortexMode::Heat {
             vortex.burn_timer -= dt;
             if vortex.burn_timer <= 0.0 {
-                vortex.burn_timer += 1.0 / HEAT_RATE;
-                let p = Vec3::from(titan.state.pos.to_array());
+                vortex.burn_timer += HEAT_TICK;
+                let rot = Quat::from_rotation_z(s.yaw) * Quat::from_rotation_y(s.pitch);
+                let muzzle = eye + rot * HEAT_MUZZLE;
                 for mut d in &mut dummies {
                     if !d.alive() {
                         continue;
                     }
-                    let to = d.pos - p;
-                    let dist = to.truncate().length() - d.radius;
-                    let ang = to.truncate().normalize_or_zero().dot(Vec2::new(titan.state.yaw.cos(), titan.state.yaw.sin()));
-                    if dist < HEAT_RANGE && ang > (VORTEX_BULLET_FOV * 0.5).to_radians().cos() {
+                    // Nearest point of the target's hull to the muzzle.
+                    let flat = (muzzle - d.pos).truncate();
+                    let side = (flat.length() - d.radius).max(0.0);
+                    let up = (d.pos.z - muzzle.z).max(muzzle.z - (d.pos.z + d.height)).max(0.0);
+                    let center = d.pos + Vec3::Z * d.height * 0.5;
+                    let facing = (center - eye).normalize_or_zero().dot(view) >= HEAT_CONE.to_radians().cos();
+                    if side.hypot(up) < HEAT_RADIUS && facing {
                         let amount = if d.infantry { HEAT_PILOT } else { HEAT_TITAN };
-                        let hit = d.damage(amount, false);
+                        let hit = d.damage_radius(amount, false);
                         if let Some(c) = core.as_mut() {
                             c.credit_inflicted(hit);
                         }
+                        // The titan's burn sits on exp_torso_front; a point up its front stands in.
+                        let (fx, sound, at) = if d.infantry {
+                            ("P_wpn_HeatSheild_burn_human", "heat_shield_burn_human_3p", d.pos)
+                        } else {
+                            ("P_wpn_HeatSheild_burn_titan", "heat_shield_burn_titan_3p", center + (eye - center).truncate().normalize_or_zero().extend(0.0) * d.radius * 0.8 + Vec3::Z * d.height * 0.15)
+                        };
+                        crate::pfx::emit_named(&mut commands, fx, to_bevy(at), to_bevy(eye - at).normalize_or(Vec3::Y));
+                        audio::event_at(&mut commands, sound, at);
                     }
                 }
             }

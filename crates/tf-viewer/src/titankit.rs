@@ -998,7 +998,13 @@ pub struct Thermite {
     radius: f32,
     /// Seconds to the next flame puff (TF_OLD_FX).
     flicker: f32,
+    /// An ignited Slow Trap's segment: the trap's centre, and the seconds to its next damage
+    /// tick (FireTrap_DamageAreaOverTime: a RadiusDamage, then wait 0.2).
+    trap: Option<(Vec3, f32)>,
 }
+
+/// FireTrap_DamageAreaOverTime's wait between a segment's damage ticks.
+const FIRE_TRAP_TICK: f32 = 0.2;
 
 /// A piece of the T-203's thermite (Proto_MeteorCreatesThermite, mp_titanweapon_meteor.nut):
 /// an invisible debris prop that falls, bounces and burns for its lifetime, dealing a meteor
@@ -1125,7 +1131,9 @@ pub fn meteor_thermite(
             let d = (e.pos - t.pos).truncate().length() - e.radius;
             if d < radius && t.pos.z > e.pos.z - radius && t.pos.z < e.pos.z + e.height + radius {
                 burned.push((t.shot, eid));
-                hurt(&mut e, tick_titan, tick_pilot, &mut core);
+                let amount = if e.infantry { tick_pilot } else { tick_titan };
+                let hit = e.damage_radius(amount, false);
+                core.credit_inflicted(hit);
             }
         }
     }
@@ -2090,7 +2098,7 @@ pub fn kit_world(
                 WaveKind::Firewall => {
                     if let Some(prev) = prev {
                         let life = if w.enemy { ENEMY_FIREWALL_THERMITE_SECS } else { n.thermite_life };
-                        let patch = commands.spawn((Transform::from_translation(at), Thermite { pos: w.pos, life, group: w.group, radius: w.radius, flicker: w.left as f32 * 0.13, enemy: w.enemy })).id();
+                        let patch = commands.spawn((Transform::from_translation(at), Thermite { pos: w.pos, life, group: w.group, radius: w.radius, flicker: w.left as f32 * 0.13, enemy: w.enemy, trap: w.trap.map(|o| (o, 0.0)) })).id();
                         // The effect runs from this segment back to the last one (control point
                         // 1); a Slow Trap line's runs from its end back to the trap once the line
                         // is laid (FlameOn). It goes with the patch.
@@ -2177,8 +2185,23 @@ pub fn kit_world(
             t.flicker += 0.35;
             emit(&mut commands, Effect::Explosion { at: to_bevy(t.pos + Vec3::Z * 40.0), scale: 0.4 });
         }
+        // A trap segment ticks every 0.2 s from when it lands; all of a trap's segments share
+        // one CreateOncePerTickDamageInflictorHelper, so a target takes one tick per server
+        // frame from the whole trap (keyed by its centre), and FireTrap_DamagedPlayerOrNPC
+        // zeroes damage farther than SLOW_TRAP_RADIUS (2D) from the trap.
         if !burn {
             continue;
+        }
+        let mut key = t.group;
+        let mut trap_center = None;
+        if let Some((center, wait)) = t.trap.as_mut() {
+            *wait -= SERVER_FRAME;
+            if *wait > -1e-3 {
+                continue;
+            }
+            *wait += FIRE_TRAP_TICK;
+            key = center.x.to_bits() ^ center.y.to_bits().rotate_left(13);
+            trap_center = Some(*center);
         }
         if t.enemy {
             // An enemy Scorch's fire: BT and the Pilot on foot take the thermite tick.
@@ -2204,13 +2227,19 @@ pub fn kit_world(
             continue;
         }
         for (eid, mut e) in enemies.iter_mut() {
-            if !e.alive() || burned.contains(&(t.group, eid)) {
+            if !e.alive() || burned.contains(&(key, eid)) {
+                continue;
+            }
+            if trap_center.is_some_and(|c| (e.pos - c).truncate().length() > SLOW_TRAP_RADIUS) {
                 continue;
             }
             let d = (e.pos - t.pos).truncate().length() - e.radius;
             if d < t.radius && (t.pos.z - e.pos.z) < e.height && (e.pos.z - t.pos.z) < 100.0 {
-                burned.push((t.group, eid));
-                hurt(&mut e, n.thermite_tick, n.thermite_tick_pilot, &mut core);
+                burned.push((key, eid));
+                // RadiusDamage: shields that catch rounds don't stop it.
+                let amount = if e.infantry { n.thermite_tick_pilot } else { n.thermite_tick };
+                let hit = e.damage_radius(amount, false);
+                core.credit_inflicted(hit);
             }
         }
     }
@@ -2673,7 +2702,9 @@ pub fn kit_view(
         (left, text)
     };
     (view.def_left, view.def_text) = match active.def {
-        DefKind::Vortex | DefKind::HeatShield => (1.0 - vortex.fraction(), if vortex.active { format!("{}", vortex.caught + vortex.absorbed) } else { String::new() }),
+        DefKind::Vortex => (1.0 - vortex.fraction(), if vortex.active { format!("{}", vortex.caught + vortex.absorbed) } else { String::new() }),
+        // The Thermal Shield keeps nothing to count.
+        DefKind::HeatShield => (1.0 - vortex.fraction(), String::new()),
         DefKind::IonVortex => (1.0 - st.energy / n.energy_max, if vortex.active { format!("{}", vortex.caught + vortex.absorbed) } else { String::new() }),
         DefKind::SwordBlock => (0.0, if st.blocking { "BLOCK".into() } else { String::new() }),
         DefKind::GunShield if st.gun_shield > 0.0 => (0.0, format!("{:.0}", st.gun_shield_hp.max(0.0))),

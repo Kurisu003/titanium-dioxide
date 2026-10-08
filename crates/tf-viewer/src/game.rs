@@ -164,8 +164,12 @@ fn spawn_wave(
         _ => titans.iter().next().map(|t| Vec3::from(t.0.state.pos.to_array())),
     }
     .unwrap_or(arena.player_spawn);
+    // TF_STATIC_TITAN: one enemy Titan and no grunts, standing still about 1200 out (a test
+    // target: it turns and shoots but never walks, and refills its health; targets.rs).
+    let static_titan = std::env::var_os("TF_STATIC_TITAN").is_some();
     // One more Titan every other wave: 1, 2, 2, 3, 3, 4...
-    let count = (1 + game.wave as usize / 2).clamp(1, MAX_ENEMIES_PER_WAVE);
+    let count = if static_titan { 1 } else { (1 + game.wave as usize / 2).clamp(1, MAX_ENEMIES_PER_WAVE) };
+    let range = if static_titan { 1200.0 } else { 2400.0 };
     // Prefer spots that can see the player, at a fair distance.
     let sees = |p: &Vec3| {
         let from = *p + Vec3::Z * 200.0;
@@ -174,7 +178,7 @@ fn spawn_wave(
         world.0.raycast(SVec3::from(from.to_array()), SVec3::from(d.normalize().to_array()), d.length() - 50.0).is_none()
     };
     let mut spots: Vec<Vec3> = arena.enemy_spots.clone();
-    spots.sort_by_key(|p| (!sees(p) as i64) * 100_000 + ((p.distance(player) - 2400.0).abs()) as i64);
+    spots.sort_by_key(|p| (!sees(p) as i64) * 100_000 + ((p.distance(player) - range).abs()) as i64);
     // Mix the classes: walk the pool starting at a class that rotates with the wave, so each
     // wave brings a different line-up and no class repeats until all have appeared.
     let (titans, grunts): (Vec<_>, Vec<_>) = enemies.iter_mut().partition(|e| !e.infantry);
@@ -198,7 +202,7 @@ fn spawn_wave(
         names.push(kit.name.clone());
     }
     // A squad of grunts with every wave, two more each wave, spread around the far spots.
-    let squad = (2 + game.wave as usize * 2).min(grunts.len());
+    let squad = if static_titan { 0 } else { (2 + game.wave as usize * 2).min(grunts.len()) };
     for (i, mut e) in grunts.into_iter().take(if spots.is_empty() { 0 } else { squad }).enumerate() {
         // Fire teams of three around the best spots, clear of the Titans standing on them.
         let mut spot = spots[(i / 3) % spots.len()];

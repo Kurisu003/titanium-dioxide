@@ -252,6 +252,7 @@ We work through these one at a time, and the next one starts only after the user
 10. ~~On-foot muzzle flash stays behind in the world (14)~~ (fixed: FP muzzle flash and shell eject play on the viewmodel joints)
 11. ~~Thunderbolt scope depends on looking up or down (15)~~ (fixed: the walk layer played the Thunderbolt's 67-frame standing clip, which turns the gun 36 degrees for half its 2.2 s loop, at full weight while standing; the layer now fades in with speed)
 12. ~~Scorch's gun can't light his gas canisters (26)~~ (fixed: the T-203 shell's blast and its new physics thermite (Proto_MeteorCreatesThermite) ignite the gas)
+12b. ~~Scorch's Thermal Shield catches rounds and its fire doesn't hurt shielded enemies (added later)~~ (fixed: it destroys rounds (P_wpn_HeatShield_impact), burns every 0.1 s within 175 of the hand and 70 degrees of the view; its burn, thermite and trap fire are radius damage that a Vortex/Thermal/Gun Shield doesn't stop; trap segments tick every 0.2 s within 240 of the canister. `TF_STATIC_TITAN=1` spawns one standing, unkillable test Titan)
 13. Titan HUD moves far too much (1)
 14. BT slides too much when turning while holding forward (23)
 15. Titan dash feels weird (4)
