@@ -814,10 +814,14 @@ fn wall_probe(world: &CollisionWorld, p: &PilotParams, origin: Vec3, n: Vec3) ->
     let side = Vec3::new(-n.y, n.x, 0.0) * p.radius * 0.9;
     let up = Vec3::Z * p.radius * 0.9;
     let reach = p.radius * 1.2929 + p.wallrun.allowed_wall_dist;
+    // One search of the trees for the nine rays (their boxes are padded by a unit or so).
+    let corner = side.abs() + up.abs() + Vec3::splat(4.0);
+    let (a, b) = (origin, origin - n * reach);
+    let region = world.region_moving(a.min(b) - corner, a.max(b) + corner, CLIP_PILOT);
     let mut best: Option<(f32, Vec3)> = None;
     for i in -1..=1 {
         for j in -1..=1 {
-            if let Some(h) = world.raycast_moving(origin + side * i as f32 + up * j as f32, -n, reach, CLIP_PILOT) {
+            if let Some(h) = region.raycast(origin + side * i as f32 + up * j as f32, -n, reach) {
                 if best.is_none_or(|b| h.t - p.radius < b.0) {
                     best = Some((h.t - p.radius, h.normal));
                 }
