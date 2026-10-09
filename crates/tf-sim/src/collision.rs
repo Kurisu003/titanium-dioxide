@@ -59,7 +59,7 @@ struct Node {
 /// (`raycast_median`). Its splits overlap a lot, so box queries and short rays don't walk it:
 /// they walk a binned-SAH tree over its leaves (`nodes`), which finds the same leaves with
 /// far fewer box tests, and short rays then replay the median-tree walk over the leaves they
-/// hit (`raycast_tris`).
+/// hit (`raycast_replay`).
 #[derive(Default)]
 struct Bvh {
     /// The search tree (none for `CollisionWorld::median_only`); its leaves are ranges of

@@ -1295,7 +1295,8 @@ the old nearest-first walk, with its shrinking limit, over the ones with hits (t
 longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the
 slab test pass any box), still walk the median tree. Offline on Angel City's collision (one
 core): Titan step 47.6 -> 19.8 us, Pilot step 27.4 -> 21.4 us, rays 6.7 -> 5.1 us, sphere
-pushes and box sweeps ~10% cheaper. The detail set (the props' render triangles, small and
+pushes and box sweeps ~10% cheaper. In game, wave 3 on Angel City (`--features profile`):
+`update_enemies` 2.4-2.9 -> 1.5-1.9 ms a frame on average. The detail set (the props' render triangles, small and
 even, so its median leaves are tight already) keeps walking its median tree: a search tree there
 didn't make its queries faster and cost ~0.3 s of load and ~130 MB.
 
