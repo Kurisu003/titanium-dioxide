@@ -1208,7 +1208,8 @@ Kodai is playable about 10 s after launch (6–15 s on other maps); Angel City's
   asset-free part (model, clips, grids, meshes, textures) on every core while the collision
   hierarchy builds (`actor::prefetch_actors`); spawning then only adds the assets.
 - The collision sets' BVHs building at the same time, their top levels split a level at a time
-  in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City).
+  in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City),
+  then each set's SAH search tree over its leaves, its top splits binned on every core.
 - The probed nav grids (MP maps) casting their cells and edges on every core (7-9 s → 0.5 s on
   Angel City), and the particle textures decoding in parallel.
 
@@ -1284,6 +1285,16 @@ built under the loading screen instead of on the first frame of play (a 430-590 
 Collision queries reject more work exactly (same results bit for bit): Titan steps ~35% and
 Pilot steps ~40% cheaper offline. With wave 3 enemies on Angel City: 58 -> 72 fps average at
 1920x1080 (noisy, shared machine).
+The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
+~3 triangles that actually touch it), but its leaves and walk order define the query results, so
+they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old
+results bit for bit. Box queries (sphere pushes, box sweeps, wall searches) put the leaves they
+find back into the old walk's order; rays up to 400 units find every leaf they reach and replay
+the old nearest-first walk, with its shrinking limit, over the ones with hits (ties included);
+longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the
+slab test pass any box), still walk the median tree. Offline on Angel City's collision (one
+core): Titan step 47.6 -> 19.8 us, Pilot step 27.4 -> 21.4 us, rays 6.7 -> 5.1 us, sphere
+pushes and box sweeps ~10% cheaper; the BVH takes ~0.3 s longer to build at load.
 
 The sky and world cameras don't copy their picture to the window (`CameraOutputMode::Skip`):
 the viewmodel camera draws last into the same HDR textures and its copy overwrites the whole

@@ -51,9 +51,11 @@ struct Node {
 /// Two trees. The median tree (centroid median splits, up to `LEAF_SIZE` triangles per leaf)
 /// defines what the queries see: a triangle is visited when its median-tree leaf's box passes
 /// the query's box test, box queries visit the leaves in that tree's depth-first order (right
-/// child first), which is descending `start`, and rays walk it. Its splits overlap a lot, so
-/// box queries don't walk it: they walk a binned-SAH tree over its leaves (`nodes`), which
-/// finds the same leaves with far fewer box tests.
+/// child first), which is descending `start`, and long rays walk it as they always did
+/// (`raycast_median`). Its splits overlap a lot, so box queries and short rays don't walk it:
+/// they walk a binned-SAH tree over its leaves (`nodes`), which finds the same leaves with
+/// far fewer box tests, and short rays then replay the median-tree walk over the leaves they
+/// hit (`raycast_tris`).
 #[derive(Default)]
 struct Bvh {
     /// The search tree; its leaves are ranges of `leaves`.
@@ -64,6 +66,8 @@ struct Bvh {
     median: Vec<Node>,
     /// Triangle indices, grouped by median-tree leaf.
     order: Vec<u32>,
+    /// The median-tree leaves' top heights (`max.z`, -0 as 0), sorted, for `raycast_replay`.
+    tops: Vec<f32>,
 }
 
 const LEAF_SIZE: usize = 4;
@@ -72,8 +76,38 @@ impl Bvh {
     fn build(tris: &[Tri]) -> Self {
         let (median, order) = Self::build_median(tris);
         let mut leaves: Vec<Node> = median.iter().copied().filter(|n| n.count > 0).collect();
-        let nodes = sah_build(&mut leaves);
-        Self { nodes, leaves, median, order }
+        let mut tops: Vec<f32> = leaves.iter().map(|l| l.max.z + 0.0).collect();
+        let nodes = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                tops.sort_unstable_by(f32::total_cmp);
+                tops.dedup();
+            });
+            sah_build(&mut leaves)
+        });
+        Self { nodes, leaves, median, order, tops }
+    }
+
+    /// Whether the median-tree ray walk (`raycast_median`: nearer child first, the left one
+    /// on a tie) reaches leaf `a` after leaf `b` (leaves by their starts; distinct). At their
+    /// lowest common ancestor the child entered later comes second.
+    fn ray_after(&self, o: Vec3, inv: Vec3, max_t: f32, a: u32, b: u32) -> bool {
+        let (mut ni, mut start, mut count) = (0usize, 0u32, self.order.len() as u32);
+        loop {
+            let n = self.median[ni];
+            // Distinct leaves part ways at an inner node before either is reached.
+            debug_assert!(n.count == 0);
+            let mid = start + count / 2;
+            let (a_left, b_left) = (a < mid, b < mid);
+            if a_left == b_left {
+                ni = (n.start + !a_left as u32) as usize;
+                (start, count) = if a_left { (start, count / 2) } else { (mid, count - count / 2) };
+                continue;
+            }
+            let (l, r) = (self.median[n.start as usize], self.median[n.start as usize + 1]);
+            let tl = ray_box(o, inv, l.min, l.max, max_t).unwrap_or(f32::MAX);
+            let tr = ray_box(o, inv, r.min, r.max, max_t).unwrap_or(f32::MAX);
+            return if tl <= tr { !a_left } else { a_left };
+        }
     }
 
     /// The median tree: its nodes (empty without triangles) and the triangle order.
@@ -499,6 +533,23 @@ fn ray_box(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> 
     (tmin <= tmax).then_some(tmin)
 }
 
+/// `ray_box` that doesn't miss a box containing one `ray_box` reaches (but see the level rays
+/// in `raycast_replay`): a slab the ray lies exactly on the face of (0 * inf) counts as passed.
+fn ray_box_wide(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> {
+    let t1 = (min - o) * inv;
+    let t2 = (max - o) * inv;
+    let on_face = t1.is_nan_mask() | t2.is_nan_mask();
+    let lo = Vec3::select(on_face, Vec3::NEG_INFINITY, t1.min(t2));
+    let hi = Vec3::select(on_face, Vec3::INFINITY, t1.max(t2));
+    let tmin = lo.max_element().max(0.0);
+    let tmax = hi.min_element().min(max_t);
+    (tmin <= tmax).then_some(tmin)
+}
+
+/// Rays up to this long (game units) replay the median-tree walk over the leaves they reach
+/// (`raycast_replay`); longer ones, which the walk's limit cuts short, walk the median tree.
+const SHORT_RAY: f32 = 400.0;
+
 /// A list kept on the stack while it is short.
 struct SmallBuf<T: Copy + Default, const N: usize> {
     first: [T; N],
@@ -509,6 +560,10 @@ struct SmallBuf<T: Copy + Default, const N: usize> {
 impl<T: Copy + Default, const N: usize> SmallBuf<T, N> {
     fn new() -> Self {
         Self { first: [T::default(); N], len: 0, rest: Vec::new() }
+    }
+
+    fn len(&self) -> usize {
+        self.len + self.rest.len()
     }
 
     fn push(&mut self, v: T) {
@@ -693,6 +748,107 @@ impl CollisionWorld {
         if bvh.nodes.is_empty() {
             return None;
         }
+        if dir.length() * max_t <= SHORT_RAY {
+            self.raycast_replay(bvh, origin, dir, max_t)
+        } else {
+            self.raycast_median(bvh, origin, dir, max_t)
+        }
+    }
+
+    /// `raycast_tris` for a short ray. The median-tree walk (`raycast_median`) visits a leaf
+    /// when `ray_box` reaches it at the limit of the time (its ancestors' boxes contain it, so
+    /// they pass too, unless the ray lies on a box face: see below) and takes each hit no
+    /// farther than the limit; leaves without hits change nothing. So this finds every leaf the
+    /// ray reaches within `max_t` and every hit in them, then visits the leaves with hits in
+    /// the walk's order (`ray_after`) keeping the limit as the walk does: the same result, ties
+    /// and hits a hair in front of their leaf's box included, without walking the median
+    /// tree's overlapping boxes.
+    fn raycast_replay(&self, bvh: &Bvh, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
+        let inv = Vec3::ONE / dir;
+        // `ray_box` is monotone in the box (a box containing one the ray reaches is reached
+        // too) except where a slab is 0 * inf: a ray that doesn't move along an axis and lies
+        // exactly on a face. glam's min and max then skip the NaN on x and y (the slab counts
+        // as passed: harmless, and leaves with hits that see it go to the walk below), but a
+        // NaN on z (a level ray at exactly a box's top) takes `max_element` and `min_element`
+        // with it, and the box passes wherever it is. Such rays walk the median tree.
+        if !(origin.is_finite() && dir.is_finite()) || (!inv.z.is_finite() && bvh.tops.binary_search_by(|z| z.total_cmp(&(origin.z + 0.0))).is_ok()) {
+            return self.raycast_median(bvh, origin, dir, max_t);
+        }
+        // Hit leaves (the leaf, its first hit, hit count) and the hits (position in `order`, t).
+        let mut leaves: SmallBuf<(Node, u32, u32), 16> = SmallBuf::new();
+        let mut hits: SmallBuf<(u32, f32), 32> = SmallBuf::new();
+        if ray_box_wide(origin, inv, bvh.nodes[0].min, bvh.nodes[0].max, max_t).is_some() {
+            let mut stack = [0u32; STACK];
+            let mut sp = 1;
+            while sp > 0 {
+                sp -= 1;
+                let n = bvh.nodes[stack[sp] as usize];
+                if n.count > 0 {
+                    for leaf in &bvh.leaves[n.start as usize..(n.start + n.count) as usize] {
+                        if ray_box(origin, inv, leaf.min, leaf.max, max_t).is_none() {
+                            continue;
+                        }
+                        let first = hits.len() as u32;
+                        for at in leaf.start..leaf.start + leaf.count {
+                            let tri = &self.tris[bvh.order[at as usize] as usize];
+                            if let Some(t) = ray_tri(origin, dir, tri) {
+                                if t <= max_t {
+                                    hits.push((at, t));
+                                }
+                            }
+                        }
+                        if hits.len() as u32 > first {
+                            // The ray lies on a face of this box (see above). Rare; let the
+                            // walk sort it out.
+                            if ((leaf.min - origin) * inv).is_nan() || ((leaf.max - origin) * inv).is_nan() {
+                                return self.raycast_median(bvh, origin, dir, max_t);
+                            }
+                            leaves.push((*leaf, first, hits.len() as u32 - first));
+                        }
+                    }
+                } else {
+                    for c in [n.start, n.start + 1] {
+                        let child = bvh.nodes[c as usize];
+                        if ray_box_wide(origin, inv, child.min, child.max, max_t).is_some() {
+                            stack[sp] = c;
+                            sp += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let leaves = leaves.as_mut_slice();
+        // Into walk order (insertion sort: there are seldom more than a few).
+        for i in 1..leaves.len() {
+            let mut j = i;
+            while j > 0 && bvh.ray_after(origin, inv, max_t, leaves[j - 1].0.start, leaves[j].0.start) {
+                leaves.swap(j - 1, j);
+                j -= 1;
+            }
+        }
+        let hits = hits.as_mut_slice();
+        let mut limit = max_t;
+        let mut best: Option<(u32, f32)> = None;
+        for (leaf, first, count) in leaves.iter() {
+            if ray_box(origin, inv, leaf.min, leaf.max, limit).is_none() {
+                continue;
+            }
+            for &(at, t) in &hits[*first as usize..(first + count) as usize] {
+                if t <= limit {
+                    limit = t;
+                    best = Some((at, t));
+                }
+            }
+        }
+        best.map(|(at, t)| {
+            let tri = &self.tris[bvh.order[at as usize] as usize];
+            let nrm = if tri.n.dot(dir) > 0.0 { -tri.n } else { tri.n };
+            Hit { t, point: origin + dir * t, normal: nrm }
+        })
+    }
+
+    /// `raycast_tris` by walking the median tree, nearer child first.
+    fn raycast_median(&self, bvh: &Bvh, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
         let inv = Vec3::ONE / dir;
         let mut best: Option<Hit> = None;
         let mut limit = max_t;
@@ -1187,6 +1343,61 @@ mod tests {
                 assert_eq!(a, b, "query {q} around {c}");
             }
         }
+    }
+
+    #[test]
+    fn short_rays_match_the_median_walk() {
+        // Near the origin (exact arithmetic, exact ties) and at map-like coordinates (rounding).
+        for at in [Vec3::ZERO, Vec3::new(-3061.25, 1517.5, -211.0)] {
+            short_rays_match_in(&awkward_world(3, 4000, at), at);
+        }
+    }
+
+    fn short_rays_match_in(w: &CollisionWorld, at: Vec3) {
+        let bvh = w.bvh();
+        let mut s = 99u32;
+        let mut r = move || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (s >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let bits = |h: Option<Hit>| h.map(|h| [h.t, h.point.x, h.point.y, h.point.z, h.normal.x, h.normal.y, h.normal.z].map(f32::to_bits));
+        let mut hits = 0;
+        for q in 0..100_000 {
+            // Origins on the grid's lines and corners, on its floors' heights, or anywhere.
+            let mut o = Vec3::new(r(), r(), r() * 0.25) * 800.0;
+            match q % 4 {
+                0 => o = (o / 16.0).round() * 16.0,
+                1 => o.x = (o.x / 64.0).round() * 64.0,
+                _ => {}
+            }
+            let o = o + at;
+            let axes = [Vec3::X, Vec3::Y, Vec3::Z, -Vec3::X, -Vec3::Y, -Vec3::Z, Vec3::new(0.0, 0.0, -1.0)];
+            let d = match q % 3 {
+                0 => axes[q / 3 % axes.len()],
+                // Level, at the walls.
+                1 => {
+                    let yaw = r() * std::f32::consts::TAU;
+                    Vec3::new(yaw.cos(), yaw.sin(), 0.0) * (0.5 + r())
+                }
+                _ => Vec3::new(r() - 0.5, r() - 0.5, r() - 0.5) * 2.0,
+            };
+            let max_t = [5.0, 50.0, 200.0, 1000.0][q % 4] * r();
+            let a = w.raycast_replay(bvh, o, d, max_t);
+            let b = w.raycast_median(bvh, o, d, max_t);
+            assert_eq!(bits(a), bits(b), "ray {q} from {o} along {d} up to {max_t}");
+            hits += a.is_some() as usize;
+        }
+        assert!(hits > 30_000, "too few hits to mean much: {hits}");
+    }
+
+    #[test]
+    fn level_ray_at_a_box_top_passes_any_box() {
+        // Why `raycast_replay` sends such rays to the median walk: z's slab is 0 * inf = NaN,
+        // which glam's `max_element` / `min_element` pass on, so `ray_box` reaches a box far
+        // off to the side.
+        let (o, d) = (Vec3::new(0.0, 0.0, 10.0), Vec3::X);
+        assert!(ray_box(o, Vec3::ONE / d, Vec3::new(500.0, 500.0, 0.0), Vec3::new(600.0, 600.0, 10.0), 100.0).is_some());
+        assert!(ray_box(o, Vec3::ONE / d, Vec3::new(500.0, 500.0, 0.0), Vec3::new(600.0, 600.0, 10.5), 100.0).is_none());
     }
 
     #[test]
