@@ -1123,30 +1123,6 @@ fn push_sphere_in<C: Cells + ?Sized>(worlds: &C, center: Vec3, radius: f32, max_
     (c - center, normals)
 }
 
-impl CollisionWorld {
-    /// Nearest steep surface (|normal.z| below `max_normal_z`) within `radius` of `center`.
-    /// Returns the outward normal (horizontal) and the distance.
-    pub fn nearest_wall(&self, center: Vec3, radius: f32, max_normal_z: f32) -> Option<(Vec3, f32)> {
-        let mut best: Option<(Vec3, f32)> = None;
-        let r = Vec3::splat(radius);
-        self.cells_in(center - r, center + r, |tri| {
-            if tri.n.z.abs() > max_normal_z || (center - tri.a).dot(tri.n).abs() > radius + PLANE_SLACK {
-                return;
-            }
-            let p = closest_point_on_tri(center, tri);
-            let d = center - p;
-            let dist = d.length();
-            if dist < radius && dist > 1e-4 && best.is_none_or(|b| dist < b.1) {
-                let n = Vec3::new(d.x, d.y, 0.0).normalize_or_zero();
-                if n != Vec3::ZERO {
-                    best = Some((n, dist));
-                }
-            }
-        });
-        best
-    }
-}
-
 /// A box swept through the world: the parts of the engine's trace_t that player movement reads.
 #[derive(Debug, Clone, Copy)]
 pub struct Trace {
