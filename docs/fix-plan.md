@@ -268,10 +268,10 @@ We work through these one at a time, and the next one starts only after the user
 21. ~~Wallrun start is unreliable (6)~~ (fixed from client.dll's CanWallrun: a run starts when the airborne move hits the wall, with no speed/input/view rule; knee and mid-hull probes within 13 units, one 0.07 s retry, a 0.5 s lockout after leaving the ground without jumping, the automantle exclusion, the same-wall rule against the last run's start height, upWallBoost along the wall's up direction; sweep test in tf-sim/tests/wallrun_sweep.rs)
 22. ~~Archer has no proper sight (16)~~ (fixed: its sight is client.dll's VGUI screen `vgui_pilot_launcher_screen` on the SCR_BL/SCR_TR attachments, not an RUI; rebuilt from the .res layout, the `vgui\hud\sram` art and the update at 0x1804dfe80: NO TARGET IN RANGE / LOCKING with spinning rings closing onto the Titan / LOCKED with the name, range and the red-white blink, fading in with the zoom. The other guns' RUI sights are still not drawn)
 23. ~~Sliding doesn't feel like TF2 (7)~~ (fixed from client.dll: slides need forward-ish input (slide_max_angle_dot against the view) and 200 u/s, not a sprint; forward input no longer cancels the slide's deceleration (only steering across it); jumping out keeps the speed instead of cutting it to 350, with the game's long jump (85-100% of 350 raised to 350) and boost refund for early jumps; the crouch view takes 0.4/0.2 s with Duck's smoothstep; the slide roll follows CalcViewRoll (velocity-perpendicular tilt vector, sign corrected); crouch/stand sounds)
-24. Grappling hook doesn't feel right (9)
+24. ~~Grappling hook doesn't feel right (9)~~ (fixed: the client.dll grapple: hook flight at 3000, 0.2 s pull delay, initial impulse, ramped pull with cross-cable decel and view steer, gravity fraction, the engine's detach rules and speed loss, power taken when the pull starts)
 25. Floor drawn over explosions and shields (18)
 26. Smoke and see-through effects look wrong (17)
-27. Falling through buildings (8)
+27. ~~Falling through buildings (8)~~ (fixed: the map's own collision (CM_PRIMITIVES tricoll meshes and brushes) is added where no render mesh covers it: TOOLSNODRAW floors and lids, glass, and player/titan clips that stop only movement)
 28. Lighting (21, parked until the user asks)
 
 ## Order of work (original grouping)

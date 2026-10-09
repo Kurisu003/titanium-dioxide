@@ -831,15 +831,27 @@ the constants in their `.nut` files:
   same, with `P_phase_shift_main_XO`); `TF_NO_PHASE_FX=1` keeps the old blue tint.
 - Cloak (`mp_ability_cloak`): 15 s during which enemies only see you within 400 units; 20 s.
 - Phase Shift (`mp_ability_shifter`): 2 s of being untouchable and unseen; 15 s.
-- Grapple (`mp_ability_grapple`): hooks a surface within `grapple_maxLength` (1100) and reels you
-  in (tf-sim's pilot movement, with `pilot_base.set`'s `grapple_*` gravity fraction, air control,
-  detach distance and hops; the reel-in uses `client.dll`'s convars: `grapple_accel_human` 1000
-  toward the hook, with the speed limit ramping from `grapple_speedRampMin_human` 50 to `Max` 800
-  over `grapple_speedRampTime_human` 1.5 s).
-  Q again or jumping lets go. A cable runs from the left hand to the hook while hooked. Slamming into a wall knocks the hook loose (with the arrival hop;
-  the impact speed, 150, is an estimate), and when the reel is stuck slow it lets go after
-  `grapple_detachLowSpeedTime` (1.5 s), `WallTime` (1.2 s) against a wall or `GroundTime` (0.7 s)
-  on the ground. Two hooks of 50 power, regenerating at 3/s (16.7 s per hook).
+- Grapple (`mp_ability_grapple`), as `client.dll` does it (CPlayer::Grapple and the grapple
+  movement code; the `grapple_*` convars and `pilot_base.set` keys): the hook flies from the eye
+  at `grapple_shootVel` 3000 up to `grapple_maxLength` 1100, sticks where it hits, or comes back
+  at `grapple_retractVel` 6000 (a miss costs no power). `grapple_pullDelay_human` 0.2 s after it
+  sticks the pull starts and takes `grapple_power_required` 50 of 100 power: the speed across the
+  cable keeps `grapple_initialSlowFrac` (1 horizontal, 0.4 vertical), `grapple_initialImpulse`
+  350 is added toward the hook (up to the ramp's 50), and on the ground it lifts off. Then
+  `grapple_accel_human` 1000 pulls toward `grapple_lift` 25 above the hook up to a limit ramping
+  from `grapple_speedRampMin_human` 50 to `Max` 800 over 1.5 s; speed across the cable bleeds off
+  at `grapple_decel_human` 425 except falling speed and what's along the view; gravity is scaled
+  between `grapple_gravityFracMin`/`Max` (0.25/0.7, full when the hook is steeply below);
+  steering uses `grapple_airSpeedMax` 420 / `grapple_airAccel` 650. It lets go at the hook (under
+  `grapple_detachLengthMin`/`Max`, with the 300 impact hop), when looking away from the hook,
+  moving away faster than 500 (200 hop), past the reach, when the cable is blocked, after
+  `grapple_detachLowSpeedTime` (1.5 s), `WallTime` (1.2 s) or `GroundTime` (0.7 s) slower than
+  250, or on Q again; letting go during the pull costs `grapple_detachSpeedLoss` 300 (not below
+  430). Jumping while pulled is a double jump and keeps the hook. Power regenerates at 3/s from
+  3 s after the pull started. A cable runs from the left hand to the hook while it's out. Not
+  matched: one of the looking-away checks compares against a move-data velocity that wasn't
+  identified (it always lets go here), the "push under the cable" gravity term reads the
+  forward input as a guess, and there's no hook model, rope wiggle or grapple arm animation.
 - Pulse Blade (`mp_weapon_grenade_sonar`): thrown at 3500 u/s, sticks, and marks every enemy
   within 1250 units through walls for 6 s; 100 damage on a direct hit; 25 s.
 - Holo Pilot (`mp_ability_holopilot`): a copy of you (your body model and gun) for 10 s, as
@@ -1289,7 +1301,15 @@ and the cockpit, F1 for a free camera. Movement tuning comes from the game's own
 `scripts/players/mp/titan_buddy.set` (walk 280, sprint 420, dash 685 for 0.3 s, 50 power per dash;
 acceleration 900, or `lowAcceleration` 1500 below `lowSpeed` 200, sprint acceleration 120).
 BT blends his walk/sprint animations by direction and speed, and the game's aim matrix layer
-follows your view pitch. Collision uses the map's render geometry plus solid static props.
+follows your view pitch. Collision uses the map's render geometry plus solid static props, plus
+the parts of the map's own collision (`CM_PRIMITIVES`: tricoll meshes and brushes) that nothing
+rendered covers: `TOOLSNODRAW` backing surfaces (Forwardbase Kodai has a hidden floor 32 units under
+its ground and lids over pits, which the Pilot used to fall through into the rooms under the map)
+and glass are solid; `TOOLSCLIP` and clip brushes stop only movement, the player clips the Pilot and
+the titan clips BT, not shots, the grapple or other traces. Contents bits are read from which
+surfaces carry them (0x800000 player, 0x400000 bullets, 0x200000 titans), as bsp_tool has no names
+for Titanfall 2's set. `TF_NO_MAP_COLLISION=1` leaves this out; `TF_COLLISION_SWEEP=1` (with it)
+logs where the map's collision would catch a fall the render meshes let through.
 
 For automated tests, `--script "0.5-3:fwd,2:dash,2-2.3:left,3-4:turn=-90,4.5:cockpit"` drives the
 input and `--shots "2.2:a.png,6:b.png"` saves frames and quits. `TF_WAVE=N` starts the first
@@ -1346,7 +1366,7 @@ the free camera at a position in game units; `--no-props` skips static props.
 - RPAK patch chains (`name(01).rpak`...) are not applied as deltas; base paks are used, plus each
   `common(NN).rpak` and `common_mp(NN).rpak` patch's own pages (newest first) for assets the base pak lacks (e.g. the R-101
   SFP's materials). Set `TF_NO_PATCH_PAKS=1` to skip that (~0.75 s at startup).
-- Collision uses render meshes, not the game's own collision lumps, so some decorative geometry blocks and some terrain may be missing.
+- Collision uses render meshes plus the map's collision where nothing rendered covers it (see Titan); render meshes the game doesn't collide with (wires, some decals) still block, wall-running and mantling ignore clip surfaces, and the 57 props on Kodai that are marked solid but have no collision primitive still block.
 - Screen-space particle effects are placed by a guessed mapping and drawn under the viewmodel;
   particle light sources are off by default (see
   Effects). Particle refraction approximates Source's Refract shader (see Effects); refracting

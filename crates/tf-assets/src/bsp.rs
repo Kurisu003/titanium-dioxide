@@ -28,6 +28,34 @@ pub mod lump {
     pub const CUBEMAPS: usize = 0x2A;
     pub const LIGHTPROBES: usize = 0x65;
     pub const LIGHTPROBE_REFERENCES: usize = 0x68;
+    pub const PLANES: usize = 0x01;
+    pub const TRICOLL_TRIANGLES: usize = 0x42;
+    pub const TRICOLL_HEADERS: usize = 0x45;
+    pub const CM_GRID: usize = 0x55;
+    pub const CM_PRIMITIVES: usize = 0x59;
+    pub const CM_UNIQUE_CONTENTS: usize = 0x5B;
+    pub const CM_BRUSHES: usize = 0x5C;
+    pub const CM_BRUSH_SIDE_PLANE_OFFSETS: usize = 0x5D;
+}
+
+/// Collision contents bits as the maps use them. Read from which surfaces carry them (bsp_tool
+/// has no names for Titanfall 2's set): every rendered solid has all three; `TOOLSCLIP` has
+/// PLAYER and TITAN but not BULLET, `TOOLSCLIP_TITAN` only TITAN, glass PLAYER, BULLET and
+/// TITAN, small props and railings PLAYER and BULLET (titans walk through them).
+pub mod contents {
+    pub const PLAYER: u32 = 0x80_0000;
+    pub const BULLET: u32 = 0x40_0000;
+    pub const TITAN: u32 = 0x20_0000;
+}
+
+/// One collision surface of the world (CM_PRIMITIVES): a tricoll mesh or a brush, as triangles.
+#[derive(Debug, Clone)]
+pub struct CollisionShape {
+    /// TEXTURE_DATA index (tricoll meshes; -1 for brushes).
+    pub texture_data: i16,
+    /// CM_UNIQUE_CONTENTS flags (see `contents`).
+    pub contents: u32,
+    pub tris: Vec<[[f32; 3]; 3]>,
 }
 
 pub mod mesh_flags {
@@ -149,6 +177,50 @@ fn vec3_at(b: &[u8], o: usize) -> [f32; 3] {
     [f32_at(b, o), f32_at(b, o + 4), f32_at(b, o + 8)]
 }
 
+/// The face of a convex brush on plane `i` (normal, distance; inside is `n . p <= d`), as a
+/// polygon: a big square on the plane clipped by every other plane.
+fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec<[f32; 3]> {
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let (n, d) = planes[i];
+    let up = if n[2].abs() < 0.9 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+    let u = cross(n, up);
+    let ul = dot(u, u).sqrt();
+    let u = u.map(|x| x / ul);
+    let v = cross(n, u);
+    let c = n.map(|x| x * d);
+    // Larger than the brush (`size` reaches from its centre past every corner).
+    let r = size * 2.0;
+    let at = |a: f32, b: f32| [c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b, c[2] + u[2] * a + v[2] * b];
+    let mut poly = vec![at(-r, -r), at(r, -r), at(r, r), at(-r, r)];
+    for (j, &(m, e)) in planes.iter().enumerate() {
+        if j == i || poly.is_empty() {
+            continue;
+        }
+        // The same plane twice (a bevel repeating an axial side) would clip the face away.
+        if dot(m, n) > 0.9999 && (e - d).abs() < 0.01 {
+            if j < i {
+                return Vec::new();
+            }
+            continue;
+        }
+        let mut out = Vec::with_capacity(poly.len() + 1);
+        for k in 0..poly.len() {
+            let (p, q) = (poly[k], poly[(k + 1) % poly.len()]);
+            let (dp, dq) = (dot(m, p) - e, dot(m, q) - e);
+            if dp <= 0.0 {
+                out.push(p);
+            }
+            if (dp < 0.0) != (dq < 0.0) && dp != dq {
+                let t = dp / (dp - dq);
+                out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t]);
+            }
+        }
+        poly = out;
+    }
+    poly
+}
+
 impl Bsp {
     /// Parse a map. `read_external` is asked for `<name>.bsp.XXXX.bsp_lump` files for lumps
     /// that are not stored inline.
@@ -253,6 +325,104 @@ impl Bsp {
                 }
             })
             .collect()
+    }
+
+    /// The world's collision as the game has it (CM_PRIMITIVES): tricoll meshes, which mostly
+    /// repeat the render meshes but also hold `TOOLSNODRAW` backing surfaces, clips and glass,
+    /// and brushes (all clips in the MP maps). Static props (primitive type 96) are left out.
+    /// Layouts from bsp_tool (branches/respawn/titanfall.py); a primitive is
+    /// type << 24 | index << 8 | unique contents index.
+    pub fn collision_shapes(&self) -> Vec<CollisionShape> {
+        let uc: Vec<u32> = self.lump(lump::CM_UNIQUE_CONTENTS).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        let verts = self.lump(lump::VERTICES);
+        let hdr = self.lump(lump::TRICOLL_HEADERS);
+        let tris = self.lump(lump::TRICOLL_TRIANGLES);
+        let brushes = self.lump(lump::CM_BRUSHES);
+        let offsets = self.lump(lump::CM_BRUSH_SIDE_PLANE_OFFSETS);
+        let planes = self.lump(lump::PLANES);
+        let grid = self.lump(lump::CM_GRID);
+        // CMGrid: scale, offset[2], count[2], num_straddle_groups, first_brush_plane.
+        let first_plane = if grid.len() >= 28 { i32_at(grid, 24).max(0) as usize } else { 0 };
+        let mut out = Vec::new();
+        for p in self.lump(lump::CM_PRIMITIVES).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())) {
+            let (kind, index) = (p >> 24, ((p >> 8) & 0xffff) as usize);
+            let contents = uc.get((p & 0xff) as usize).copied().unwrap_or(0);
+            match kind {
+                // TricollHeader (44 bytes): flags, texinfo flags, texdata, num verts, num tris,
+                // num bevel indices (i16 each), first vert, first tri, first node, first bevel
+                // index (i32), origin, scale. A triangle packs a (10 bits), b - a and c - a
+                // (7 bits each) and flags.
+                64 => {
+                    let o = index * 44;
+                    if o + 44 > hdr.len() {
+                        continue;
+                    }
+                    let (texture_data, num_verts, num_tris) = (i16_at(hdr, o + 4), i16_at(hdr, o + 6).max(0) as usize, i16_at(hdr, o + 8).max(0) as usize);
+                    let (first_vert, first_tri) = (i32_at(hdr, o + 12).max(0) as usize, i32_at(hdr, o + 16).max(0) as usize);
+                    let vert = |i: usize| (i < num_verts && (first_vert + i + 1) * 12 <= verts.len()).then(|| vec3_at(verts, (first_vert + i) * 12));
+                    let mut shape = CollisionShape { texture_data, contents, tris: Vec::with_capacity(num_tris) };
+                    for t in 0..num_tris {
+                        let Some(v) = tris.get((first_tri + t) * 4..(first_tri + t) * 4 + 4) else { break };
+                        let v = u32::from_le_bytes(v.try_into().unwrap()) as usize;
+                        let a = v & 0x3ff;
+                        if let (Some(pa), Some(pb), Some(pc)) = (vert(a), vert(a + ((v >> 10) & 0x7f)), vert(a + ((v >> 17) & 0x7f))) {
+                            shape.tris.push([pa, pb, pc]);
+                        }
+                    }
+                    out.push(shape);
+                }
+                // Brush (32 bytes): origin, num non-axial no-discard (u8), num plane offsets
+                // (u8), index (i16), extents, brush side offset (i32). Its sides are the box's
+                // six faces and the planes PLANES[first_brush_plane + k - plane_offset[k]] for
+                // k in side offset .. + num plane offsets.
+                0 => {
+                    let o = index * 32;
+                    if o + 32 > brushes.len() {
+                        continue;
+                    }
+                    let (org, ext) = (vec3_at(brushes, o), vec3_at(brushes, o + 16));
+                    let n_planes = brushes[o + 13] as usize;
+                    let side = i32_at(brushes, o + 28).max(0) as usize;
+                    let mut sides: Vec<([f32; 3], f32)> = vec![
+                        ([1.0, 0.0, 0.0], org[0] + ext[0]),
+                        ([-1.0, 0.0, 0.0], -(org[0] - ext[0])),
+                        ([0.0, 1.0, 0.0], org[1] + ext[1]),
+                        ([0.0, -1.0, 0.0], -(org[1] - ext[1])),
+                        ([0.0, 0.0, 1.0], org[2] + ext[2]),
+                        ([0.0, 0.0, -1.0], -(org[2] - ext[2])),
+                    ];
+                    for k in side..side + n_planes {
+                        let Some(off) = offsets.get(k * 2..k * 2 + 2) else { break };
+                        let pi = first_plane + k - (u16::from_le_bytes(off.try_into().unwrap()) as usize).min(k);
+                        if (pi + 1) * 16 <= planes.len() {
+                            sides.push((vec3_at(planes, pi * 16), f32_at(planes, pi * 16 + 12)));
+                        }
+                    }
+                    let mut shape = CollisionShape { texture_data: -1, contents, tris: Vec::new() };
+                    let size = (ext[0] * ext[0] + ext[1] * ext[1] + ext[2] * ext[2]).sqrt() + 1.0;
+                    // Clip about the brush centre (small numbers keep the clip precise).
+                    for s in sides.iter_mut() {
+                        s.1 -= s.0[0] * org[0] + s.0[1] * org[1] + s.0[2] * org[2];
+                    }
+                    for i in 0..sides.len() {
+                        let face = brush_face(&sides, i, size);
+                        let at = |p: [f32; 3]| [p[0] + org[0], p[1] + org[1], p[2] + org[2]];
+                        for k in 1..face.len().saturating_sub(1) {
+                            let (p, q, r) = (face[0], face[k], face[k + 1]);
+                            // Bevel planes only touch the brush along an edge: no area.
+                            let (u, v) = ([q[0] - p[0], q[1] - p[1], q[2] - p[2]], [r[0] - p[0], r[1] - p[1], r[2] - p[2]]);
+                            let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                            if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-2 {
+                                shape.tris.push([at(p), at(q), at(r)]);
+                            }
+                        }
+                    }
+                    out.push(shape);
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     pub fn mesh_indices(&self) -> Vec<u16> {
@@ -477,4 +647,32 @@ pub fn parse_entities(text: &str) -> Vec<Vec<(String, String)>> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::brush_face;
+
+    #[test]
+    fn brush_faces_of_a_bevelled_box() {
+        // A 2x2x2 box about the origin with one corner bevel plane that only touches an edge.
+        let r = 0.5f32.sqrt();
+        let planes = [
+            ([1.0, 0.0, 0.0], 1.0),
+            ([-1.0, 0.0, 0.0], 1.0),
+            ([0.0, 1.0, 0.0], 1.0),
+            ([0.0, -1.0, 0.0], 1.0),
+            ([0.0, 0.0, 1.0], 1.0),
+            ([0.0, 0.0, -1.0], 1.0),
+            ([r, r, 0.0], 2.0 * r),
+        ];
+        let mut top = brush_face(&planes, 4, 2.0);
+        // The bevel through the corner may leave repeated points (no-area triangles, dropped).
+        top.dedup_by(|a, b| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4));
+        assert_eq!(top.len(), 4, "{top:?}");
+        assert!(top.iter().all(|p| (p[2] - 1.0).abs() < 1e-4 && p[0].abs() <= 1.0001 && p[1].abs() <= 1.0001));
+        // The bevel's face shrinks to the box edge (no area).
+        let bevel = brush_face(&planes, 6, 2.0);
+        assert!(bevel.iter().all(|p| (p[0] - 1.0).abs() < 1e-3 && (p[1] - 1.0).abs() < 1e-3), "{bevel:?}");
+    }
 }

@@ -3,7 +3,7 @@
 //! player-settings defaults from client.dll (acceleration 2500, airSpeed 60, airAcceleration 500)
 //! and its convars (sv_friction 4, sv_stopspeed 100).
 
-use crate::collision::CollisionWorld;
+use crate::collision::{CollisionWorld, CLIP_PILOT};
 use glam::{Vec2, Vec3};
 
 #[derive(Debug, Clone)]
@@ -284,57 +284,126 @@ pub struct ZipRide {
 
 #[derive(Debug, Clone)]
 pub struct GrappleParams {
+    /// grapple_shootVel: the hook flies out this fast...
+    pub shoot_speed: f32,
+    /// ...and comes back at grapple_retractVel when it hit nothing, at grapple_forcedRetractVel
+    /// when the grapple ends or is cancelled.
+    pub retract_speed: f32,
+    pub release_retract_speed: f32,
+    /// grapple_pullDelay_human: seconds from the hook landing to the pull starting.
+    pub pull_delay: f32,
+    /// grapple_lift: the pull aims the eye this far above the hook.
+    pub lift: f32,
     /// grapple_accel_human: pull toward the hook.
     pub pull_accel: f32,
     /// grapple_speedRampMin/Max_human over grapple_speedRampTime_human: the reel-in speed
-    /// limit grows from min to max over that long after the hook lands.
+    /// limit grows from min to max over that long after the pull starts.
     pub pull_speed: (f32, f32),
     pub pull_ramp_time: f32,
-    /// grapple_gravityFracMin/Max: gravity while reeling, less when pulled upward.
+    /// grapple_decel_human: speed across the cable bleeds off this fast (per second).
+    pub decel: f32,
+    /// grapple_initialSlowFrac_human / grapple_initialSlowFracVert_human: when the pull starts,
+    /// the speed across the cable keeps these fractions (horizontal, vertical)...
+    pub initial_slow_frac: (f32, f32),
+    /// ...and grapple_initialImpulse_human (at least grapple_initialSpeedMin_human) is added
+    /// toward the hook, up to the ramp's starting speed.
+    pub initial_impulse: f32,
+    pub initial_speed_min: f32,
+    /// grapple_initialImpulseOffGround_human: lift off the ground when the pull starts there.
+    pub off_ground_impulse: f32,
+    /// grapple_letGravityHelpCosAngle: full gravity while the hook is this steeply below.
+    pub gravity_help_cos: f32,
+    /// grapple_gravityPushUnderContribution: how much pushing under the cable adds gravity.
+    pub push_under: f32,
+    /// grapple_gravityFracMin/Max: gravity while pulled; more when pulling away or under.
     pub gravity_frac: (f32, f32),
-    /// grapple_detachLengthMax: let go this close to the hook.
-    pub detach_length: f32,
+    /// grapple_detachLengthMin / Max: always let go this close to the hook / this close at full
+    /// speed.
+    pub detach_length: (f32, f32),
+    /// grapple_detachAwaySpeed: let go when moving away from the hook this fast.
+    pub detach_away_speed: f32,
     /// grapple_impactVerticalBoost / MaxSpeed: hop when arriving at the hook.
     pub impact_boost: f32,
     pub impact_max: f32,
-    /// grapple_detachVerticalBoost / MaxSpeed: hop when letting go early.
+    /// grapple_detachVerticalBoost / MaxSpeed: hop when letting go moving away from it.
     pub detach_boost: f32,
     pub detach_max: f32,
-    /// grapple_airSpeedMax / grapple_airAccel: steering while hooked.
+    /// grapple_detachSpeedLoss / grapple_detachSpeedLossMin: speed lost when it lets go, not
+    /// below the minimum.
+    pub speed_loss: f32,
+    pub speed_loss_min: f32,
+    /// grapple_airSpeedMax / grapple_airAccel: steering while pulled.
     pub air_speed: f32,
     pub air_accel: f32,
-    /// grapple_detachLowSpeedThreshold / Time / WallTime / GroundTime: give up when stuck
-    /// slow this long (in the air, against a wall, on the ground).
+    /// grapple_detachLowSpeedThreshold / Time / WallTime / GroundTime: let go after moving
+    /// toward the hook slower than the threshold this long (in the air, on a wall, on the
+    /// ground).
     pub low_speed: f32,
     pub low_speed_time: f32,
     pub low_speed_wall_time: f32,
     pub low_speed_ground_time: f32,
-    /// Speed lost into a wall that knocks the hook loose (estimate; the engine detaches on
-    /// impact).
-    pub wall_impact_speed: f32,
 }
 
 impl Default for GrappleParams {
     fn default() -> Self {
         Self {
+            shoot_speed: 3000.0,
+            retract_speed: 6000.0,
+            release_retract_speed: 3000.0,
+            pull_delay: 0.2,
+            lift: 25.0,
             pull_accel: 1000.0,
             pull_speed: (50.0, 800.0),
             pull_ramp_time: 1.5,
+            decel: 425.0,
+            initial_slow_frac: (1.0, 0.4),
+            initial_impulse: 350.0,
+            initial_speed_min: 0.0,
+            off_ground_impulse: 50.0,
+            gravity_help_cos: 0.8,
+            push_under: 2.0,
             gravity_frac: (0.25, 0.7),
-            detach_length: 50.0,
+            detach_length: (33.0, 50.0),
+            detach_away_speed: 500.0,
             impact_boost: 300.0,
             impact_max: 300.0,
             detach_boost: 200.0,
             detach_max: 200.0,
+            speed_loss: 300.0,
+            speed_loss_min: 430.0,
             air_speed: 420.0,
             air_accel: 650.0,
             low_speed: 250.0,
             low_speed_time: 1.5,
             low_speed_wall_time: 1.2,
             low_speed_ground_time: 0.7,
-            wall_impact_speed: 150.0,
         }
     }
+}
+
+/// The grapple hook while it flies out or comes back (not while it's stuck in a surface).
+#[derive(Debug, Clone, Copy)]
+pub struct Hook {
+    pub pos: Vec3,
+    /// Flying out: velocity. Coming back: unused.
+    pub vel: Vec3,
+    pub travelled: f32,
+    /// Reach (grapple_maxLength of the weapon).
+    pub max: f32,
+    /// Coming back at this speed.
+    pub back: Option<f32>,
+}
+
+/// What the grapple did this tick, for sounds, effects and power.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GrappleEvent {
+    Hooked { point: Vec3, normal: Vec3 },
+    /// Flew its full reach without hitting anything.
+    Missed,
+    /// The pull started (the engine takes the power now).
+    Pulling,
+    /// Let go (cancelled or detached).
+    Released,
 }
 
 impl Default for PilotParams {
@@ -483,12 +552,20 @@ pub struct PilotState {
     since_land: f32,
     land_speed: f32,
     pub jumps: u32,
-    /// Where the grapple hook is attached, while reeling in.
+    /// Where the grapple hook is stuck, from landing until it lets go.
     pub grapple: Option<Vec3>,
-    /// Seconds spent reeling below the low-speed threshold.
+    /// The hook while it flies out or comes back.
+    pub hook: Option<Hook>,
+    /// What the grapple did since the viewer last took these.
+    pub grapple_events: Vec<GrappleEvent>,
+    /// Seconds spent pulled slower than the low-speed threshold.
     grapple_slow: f32,
+    /// Seconds since the hook landed, and since the pull started (None: not pulling yet).
     grapple_time: f32,
-    /// What the reel is dragging against: 0 nothing, 1 a wall, 2 the ground.
+    grapple_pull: Option<f32>,
+    /// The reach of the hook that's out (grapple_maxLength).
+    grapple_reach: f32,
+    /// What the pull is dragging against: 0 nothing, 1 a wall, 2 the ground.
     grapple_touch: u8,
     /// Seconds since the last slide started (slide_boost_cooldown), the speed its boost added,
     /// and whether its long jump is still available.
@@ -531,8 +608,12 @@ impl PilotState {
             land_speed: 0.0,
             jumps: 0,
             grapple: None,
+            hook: None,
+            grapple_events: Vec::new(),
             grapple_slow: 0.0,
             grapple_time: 0.0,
+            grapple_pull: None,
+            grapple_reach: f32::MAX,
             grapple_touch: 0,
             since_slide: 99.0,
             slide_boost_given: 0.0,
@@ -548,21 +629,51 @@ impl PilotState {
     pub fn take_hard_landing(&mut self, p: &PilotParams) -> Option<f32> {
         self.landed.take().filter(|v| *v >= p.impact_speed)
     }
-    /// Hook onto `anchor` and start reeling in.
+    /// Fire the hook along `dir` (from the eye) with reach `max_len`, or let go if it's already
+    /// out (pressing the tactical again cancels, as the engine's Grapple() does). Returns true
+    /// when a hook was fired.
+    pub fn fire_grapple(&mut self, dir: Vec3, max_len: f32, p: &PilotParams) -> bool {
+        if self.grapple.is_some() || self.hook.is_some_and(|h| h.back.is_none()) {
+            self.release_grapple(p);
+            return false;
+        }
+        let dir = dir.normalize_or_zero();
+        self.grapple_reach = max_len;
+        self.hook = Some(Hook { pos: self.eye(p), vel: dir * p.grapple.shoot_speed, travelled: 0.0, max: max_len, back: None });
+        true
+    }
+    /// The hook's head: stuck in a surface or flying.
+    pub fn hook_pos(&self) -> Option<Vec3> {
+        self.grapple.or(self.hook.map(|h| h.pos))
+    }
+    /// Whether the pull has started (after grapple_pullDelay).
+    pub fn grapple_pulling(&self) -> bool {
+        self.grapple.is_some() && self.grapple_pull.is_some()
+    }
+    /// The hook lands on `anchor`; the pull starts grapple_pullDelay later.
     pub fn attach_grapple(&mut self, anchor: Vec3) {
         self.grapple = Some(anchor);
+        self.hook = None;
         self.grapple_slow = 0.0;
         self.grapple_time = 0.0;
-        if self.on_ground() || matches!(self.mode, PilotMove::WallRun { .. }) {
-            self.mode = PilotMove::Air;
-            self.pos.z += 2.0;
-        }
+        self.grapple_pull = None;
     }
-    /// Let go of the grapple early, with grapple_detachVerticalBoost.
+    /// Let go (cancelled): the hook comes back at grapple_forcedRetractVel, and if the pull had
+    /// started the speed drops by grapple_detachSpeedLoss (client.dll 0x1802c8710/0x1802c8870).
     pub fn release_grapple(&mut self, p: &PilotParams) {
-        if self.grapple.take().is_some() {
-            let g = &p.grapple;
-            self.vel.z = (self.vel.z + g.detach_boost).min(self.vel.z.max(g.detach_max));
+        let g = &p.grapple;
+        if let Some(anchor) = self.grapple.take() {
+            if self.grapple_pull.take().is_some() {
+                let sp = self.vel.length();
+                if sp > g.speed_loss_min {
+                    self.vel *= (sp - g.speed_loss).max(g.speed_loss_min) / sp;
+                }
+            }
+            self.hook = Some(Hook { pos: anchor, vel: Vec3::ZERO, travelled: 0.0, max: 0.0, back: Some(g.release_retract_speed) });
+            self.grapple_events.push(GrappleEvent::Released);
+        } else if let Some(h) = self.hook.as_mut().filter(|h| h.back.is_none()) {
+            h.back = Some(g.release_retract_speed);
+            self.grapple_events.push(GrappleEvent::Released);
         }
     }
     /// Grab a zipline: with the use key, one within zipline_use_range of the eye; in the air,
@@ -815,82 +926,11 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
         return;
     }
 
-    // Reeling in on the grapple replaces the normal movement modes.
-    if let Some(anchor) = s.grapple {
-        let g = &p.grapple;
-        let to = anchor - (s.pos + Vec3::Z * p.height * 0.5);
-        let dist = to.length();
-        if input.jump {
-            s.release_grapple(p);
-            s.double_jump_available = true;
-        } else if dist <= g.detach_length {
-            s.grapple = None;
-            s.vel.z = (s.vel.z + g.impact_boost).min(s.vel.z.max(g.impact_max));
-        } else {
-            let dir = to / dist;
-            // Pull toward the hook up to the reel speed, which ramps up after the hook lands.
-            s.grapple_time += dt;
-            let ramp = (s.grapple_time / g.pull_ramp_time.max(1e-3)).min(1.0);
-            let limit = g.pull_speed.0 + (g.pull_speed.1 - g.pull_speed.0) * ramp;
-            let along = s.vel.dot(dir);
-            if along < limit {
-                s.vel += dir * (g.pull_accel * dt).min(limit - along);
-            }
-            // Steering, capped like Source air control at grapple_airSpeedMax.
-            if wish != Vec2::ZERO {
-                let d = wish.normalize();
-                let add = g.air_speed * wish.length() - hv(s.vel).dot(d);
-                if add > 0.0 {
-                    let a = d * (g.air_accel * dt).min(add);
-                    s.vel.x += a.x;
-                    s.vel.y += a.y;
-                }
-            }
-            let up = dir.z.max(0.0);
-            let frac = g.gravity_frac.1 + (g.gravity_frac.0 - g.gravity_frac.1) * up;
-            s.vel.z -= p.gravity * frac * dt;
-            s.mode = PilotMove::Air;
-            // Stuck slow: let go sooner against a wall or on the ground
-            // (grapple_detachLowSpeedTime / WallTime / GroundTime).
-            if s.vel.length() < g.low_speed {
-                s.grapple_slow += dt;
-                let limit = if s.grapple_touch == 2 {
-                    g.low_speed_ground_time
-                } else if s.grapple_touch == 1 {
-                    g.low_speed_wall_time
-                } else {
-                    g.low_speed_time
-                };
-                if s.grapple_slow > limit {
-                    s.grapple = None;
-                }
-            } else {
-                s.grapple_slow = 0.0;
-            }
-        }
-        if s.grapple.is_some() {
-            let delta = s.vel * dt;
-            let steps = ((delta.length() / (p.radius * 0.5)).ceil() as usize).max(1);
-            let still = PilotInput { forward: 0.0, ..*input };
-            let mut impact = 0.0f32;
-            for _ in 0..steps {
-                impact = impact.max(move_once(s, p, world, delta / steps as f32, &still, dt / steps as f32));
-            }
-            s.grapple_touch = if s.on_ground() { 2 } else if impact > 0.0 { 1 } else { 0 };
-            // Slamming into a wall knocks the hook loose, like arriving at it; from there the
-            // normal modes take over (a wall-run if moving along the wall).
-            if impact > g.wall_impact_speed {
-                s.grapple = None;
-                s.grapple_slow = 0.0;
-                s.vel.z = (s.vel.z + g.impact_boost).min(s.vel.z.max(g.impact_max));
-                s.mode = PilotMove::Air;
-                return;
-            }
-            if s.grapple.is_some() {
-                s.mode = PilotMove::Air;
-            }
-            return;
-        }
+    // The grapple (client.dll: hook flight 0x1804f5ed0, detach rules 0x1804f7be0, pull
+    // 0x1804f43e0, gravity 0x1801fe9e0, steering 0x1801f1bd0).
+    update_hook(s, p, world, dt);
+    if s.grapple.is_some() && grapple_step(s, input, wish, p, world, dt) {
+        return;
     }
 
     match s.mode {
@@ -1201,7 +1241,8 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta:
     // The surface the hull ran into this move (full normal), for the wall-run start.
     let mut hit: Option<Vec3> = None;
     for z in [lo, hi] {
-        let (push, normals) = world.push_sphere(s.pos + Vec3::Z * z, r, 0.7);
+        // Player clips (invisible walls from the map's collision) stop the Pilot too.
+        let (push, normals) = world.push_sphere_moving(s.pos + Vec3::Z * z, r, 0.7, CLIP_PILOT);
         if push != Vec3::ZERO {
             hit = hit.or(Some(normals.normalize_or_zero()).filter(|n| *n != Vec3::ZERO));
             let mut push = push;
@@ -1229,7 +1270,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta:
     let reach_down = if on_ground_before { p.step_height } else { 1.0 };
     let mut ground: Option<(f32, f32)> = None;
     for off in [Vec3::ZERO, Vec3::X * r * 0.6, -Vec3::X * r * 0.6, Vec3::Y * r * 0.6, -Vec3::Y * r * 0.6] {
-        if let Some(hit) = world.raycast(s.pos + off + Vec3::Z * p.step_height, -Vec3::Z, p.step_height + reach_down) {
+        if let Some(hit) = world.raycast_moving(s.pos + off + Vec3::Z * p.step_height, -Vec3::Z, p.step_height + reach_down, CLIP_PILOT) {
             if hit.normal.z > 0.7 && ground.is_none_or(|g| hit.point.z > g.0) {
                 ground = Some((hit.point.z, hit.normal.z));
             }
@@ -1307,6 +1348,234 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta:
         }
     }
     wall_impact
+}
+
+/// Move the flying hook: out at grapple_shootVel until it hits something (it sticks there) or
+/// has flown its reach (it comes back at grapple_retractVel), back toward the eye.
+fn update_hook(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, dt: f32) {
+    let Some(mut h) = s.hook else { return };
+    let eye = s.eye(p);
+    match h.back {
+        None => {
+            let dir = h.vel.normalize_or_zero();
+            let reach = (h.vel.length() * dt).min((h.max - h.travelled).max(0.0));
+            if let Some(hit) = world.raycast(h.pos, dir, reach) {
+                s.attach_grapple(hit.point);
+                s.grapple_events.push(GrappleEvent::Hooked { point: hit.point, normal: hit.normal });
+                return;
+            }
+            h.pos += dir * reach;
+            h.travelled += reach;
+            if h.travelled >= h.max - 1e-3 {
+                h.back = Some(p.grapple.retract_speed);
+                s.grapple_events.push(GrappleEvent::Missed);
+            }
+        }
+        Some(speed) => {
+            let to = eye - h.pos;
+            let d = to.length();
+            if d <= speed * dt {
+                s.hook = None;
+                return;
+            }
+            h.pos += to / d * speed * dt;
+        }
+    }
+    s.hook = Some(h);
+}
+
+/// How the grapple lets go (client.dll 0x1804f7be0): plainly, with the impact hop at the hook,
+/// or with the detach hop when moving away from it.
+#[derive(Clone, Copy, PartialEq)]
+enum Detach {
+    Plain,
+    Impact,
+    Away,
+}
+
+/// One tick of a stuck hook. Returns true when the pull moved the Pilot (the normal movement
+/// modes are skipped then); before grapple_pullDelay and after letting go they run as usual.
+fn grapple_step(s: &mut PilotState, input: &PilotInput, wish: Vec2, p: &PilotParams, world: &CollisionWorld, dt: f32) -> bool {
+    let g = &p.grapple;
+    let Some(anchor) = s.grapple else { return false };
+    s.grapple_time += dt;
+    let eye = s.eye(p);
+    // The pull aims at grapple_lift above the hook, from the eye (EyePosition, client.dll
+    // 0x1804f5240).
+    let to = anchor - eye + Vec3::Z * g.lift;
+    let len = to.length().max(1e-3);
+    let dir = to / len;
+    // The engine measures the length as the nearer of the feet and the eye.
+    let dist = (anchor - s.pos).length().min((anchor - eye).length());
+    let along = s.vel.dot(dir);
+    let (sp, cp) = s.pitch.sin_cos();
+    let view = Vec3::new(cp * s.yaw.cos(), cp * s.yaw.sin(), -sp);
+    let flat = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
+    let pulling = s.grapple_pull.is_some();
+
+    let mut detach = None;
+    let (lmin, lmax) = g.detach_length;
+    if dist > s.grapple_reach + 50.0 {
+        // Past the weapon's reach (max of grapple_maxLength and grapple_maxLengthVert) + 50.
+        detach = Some(Detach::Plain);
+    } else if dist < lmax && (dist < lmin || lmin + 1.5 * (along / g.pull_speed.1) * (lmax - lmin) > dist) {
+        // At the hook: under detachLengthMin always, under detachLengthMax when fast.
+        detach = Some(if pulling { Detach::Impact } else { Detach::Plain });
+    } else if pulling {
+        // Looking away from the hook: the view points away from it; looking down, the flat
+        // view must point away from it as well. (The engine also keeps the hook when moving
+        // up more steeply than a velocity it keeps in the move data; that test is left out.)
+        let looking_away = if view.z >= 0.0 { to.dot(view) < 0.0 } else { to.dot(view) < 0.0 && to.dot(flat) < 0.0 && (anchor - eye).dot(flat) < 0.0 };
+        let moving_away = along < 0.0;
+        if moving_away && along * along > g.detach_away_speed * g.detach_away_speed {
+            detach = Some(Detach::Away);
+        } else if looking_away {
+            detach = Some(if moving_away { Detach::Away } else { Detach::Plain });
+        } else if along > g.low_speed {
+            s.grapple_slow = 0.0;
+        } else {
+            // Slow toward the hook for too long (grapple_detachLowSpeed*Time).
+            s.grapple_slow += dt;
+            let limit = match s.grapple_touch {
+                2 => g.low_speed_ground_time,
+                1 => g.low_speed_wall_time,
+                _ => g.low_speed_time,
+            };
+            if s.grapple_slow > limit {
+                detach = Some(Detach::Plain);
+            }
+        }
+        // The cable is cut when something comes between the eye and the hook
+        // (client.dll 0x1801fee10).
+        let d = (anchor - eye).length();
+        if detach.is_none() && d > 8.0 && world.raycast(eye, (anchor - eye) / d, d).is_some_and(|h| h.t < d - 4.0) {
+            detach = Some(Detach::Plain);
+        }
+    }
+    if let Some(kind) = detach {
+        let (boost, max) = match kind {
+            Detach::Impact => (g.impact_boost, g.impact_max),
+            Detach::Away => (g.detach_boost, g.detach_max),
+            Detach::Plain => (0.0, f32::MAX),
+        };
+        if kind != Detach::Plain && s.vel.z < max {
+            s.vel.z = (s.vel.z + boost).min(max);
+        }
+        s.release_grapple(p);
+        return false;
+    }
+
+    if !pulling {
+        if s.grapple_time < g.pull_delay {
+            return false;
+        }
+        // The pull starts (client.dll 0x1804f4a10): the speed across the cable keeps
+        // grapple_initialSlowFrac(Vert), and grapple_initialImpulse is added toward the hook
+        // up to the ramp's starting speed.
+        let a = along.max(0.0);
+        let (fh, fv) = g.initial_slow_frac;
+        s.vel = Vec3::new((s.vel.x - dir.x * a) * fh + dir.x * a, (s.vel.y - dir.y * a) * fh + dir.y * a, (s.vel.z - dir.z * a) * fv + dir.z * a);
+        let na = s.vel.dot(dir);
+        if g.pull_speed.0 > na {
+            let target = (na + g.initial_impulse).max(g.initial_speed_min).min(g.pull_speed.0);
+            s.vel += dir * (target - na);
+        }
+        // On the ground: off it, with grapple_initialImpulseOffGround (client.dll 0x1804f4d30).
+        if s.on_ground() {
+            s.vel.z = s.vel.z.max(0.0) + g.off_ground_impulse;
+            s.mode = PilotMove::Air;
+            s.pos.z += 2.0;
+        }
+        s.grapple_pull = Some(0.0);
+        s.grapple_slow = 0.0;
+        s.grapple_events.push(GrappleEvent::Pulling);
+    }
+    let t_pull = s.grapple_pull.map_or(0.0, |t| t + dt);
+    s.grapple_pull = Some(t_pull);
+
+    // Gravity, scaled (client.dll 0x1801fe9e0): full while the hook is steeply below (cos
+    // grapple_letGravityHelpCosAngle); otherwise gravityFracMin, rising toward gravityFracMax
+    // when steering away from the hook or holding forward while looking under the cable.
+    let (x, y, z) = (to.x, to.y, to.z);
+    let frac = if z < 0.0 && z * z / to.length_squared() > g.gravity_help_cos * g.gravity_help_cos {
+        1.0
+    } else {
+        let wish3 = Vec3::new(flat.x, flat.y, 0.0) * input.forward + Vec3::new(s.yaw.sin(), -s.yaw.cos(), 0.0) * input.right;
+        let away = -(x * wish3.x + y * wish3.y);
+        // u: perpendicular to the cable in its vertical plane, pointing up (|u| = |h| |to|).
+        let u = Vec3::new(-x * z, -y * z, x * x + y * y);
+        let fwd = input.forward;
+        let under = (-10.0 * fwd * view.z).clamp(0.0, 1.0) * (-fwd * u.dot(view));
+        if under <= 0.0 && away <= 0.0 {
+            g.gravity_frac.0
+        } else {
+            let h = (x * x + y * y).sqrt().max(1e-3);
+            let k = ((under.max(0.0) / u.length().max(1e-3)) * g.push_under).min(1.0).max(away.max(0.0) / h);
+            g.gravity_frac.0 + (g.gravity_frac.1 - g.gravity_frac.0) * k
+        }
+    };
+    s.vel.z -= p.gravity * frac * dt;
+
+    // The pull (client.dll 0x1804f43e0): split the velocity along and across the cable. Across
+    // it, falling speed (grapple_dontFightGravity) and the part along the view are kept; the
+    // rest bleeds off at grapple_decel. Along it, grapple_accel up to the ramped speed limit
+    // (never slowing what's faster). The pull never lowers the vertical speed.
+    let old_z = s.vel.z;
+    let along = s.vel.dot(dir);
+    let mut perp = s.vel - dir * along;
+    let fall = perp.z.min(0.0);
+    perp.z -= fall;
+    let d = view.dot(perp);
+    let keep = if d > 0.0 { view * d } else { Vec3::ZERO };
+    perp -= keep;
+    let pl = perp.length();
+    if pl > 1e-4 {
+        perp *= (pl - g.decel * dt).max(0.0) / pl;
+    }
+    let ramp = (t_pull / g.pull_ramp_time.max(1e-3)).min(1.0);
+    let limit = g.pull_speed.0 + (g.pull_speed.1 - g.pull_speed.0) * ramp;
+    let along = if along < limit { (along + g.pull_accel * dt).min(limit) } else { along };
+    s.vel = dir * along + perp + keep + Vec3::Z * fall;
+    s.vel.z = s.vel.z.max(old_z);
+
+    // Steering (client.dll 0x1801f19a0 with grapple_airSpeedMax / grapple_airAccel): toward
+    // the wish direction up to the max speed along it; past that the direction still turns
+    // (player_extraairaccelleration 2) without gaining speed.
+    if wish != Vec2::ZERO {
+        let w = wish.normalize();
+        let w3 = Vec3::new(w.x, w.y, 0.0);
+        let add = g.air_speed * wish.length().min(1.0) - s.vel.dot(w3);
+        if add > 0.0 {
+            s.vel += w3 * (g.air_accel * dt).min(add);
+        } else {
+            let before = s.vel.length().max(g.air_speed * wish.length().min(1.0));
+            s.vel += w3 * 2.0 * dt;
+            let now = s.vel.length();
+            if now > before {
+                s.vel *= before / now;
+            }
+        }
+    }
+    // Jumping while pulled is an ordinary (double) jump; the pull goes on (grapple_jumpFrac 1).
+    if input.jump && s.double_jump_available {
+        s.double_jump_available = false;
+        let keep = (s.vel.z.max(0.0).powi(2) + 2.0 * p.gravity * p.double_jump_height * p.double_jump_min_frac).sqrt();
+        s.vel.z = (2.0 * p.gravity * p.double_jump_height).sqrt().max(keep);
+        s.jumps += 1;
+    }
+    s.mode = PilotMove::Air;
+    s.crouched = false;
+
+    let delta = s.vel * dt;
+    let steps = ((delta.length() / (p.radius * 0.5)).ceil() as usize).max(1);
+    let still = PilotInput { forward: 0.0, ..*input };
+    let mut impact = 0.0f32;
+    for _ in 0..steps {
+        impact = impact.max(move_once(s, p, world, delta / steps as f32, &still, dt / steps as f32));
+    }
+    s.grapple_touch = if s.on_ground() { 2 } else if impact > 0.0 { 1 } else { 0 };
+    s.mode = PilotMove::Air;
+    true
 }
 
 /// A ledge in front of the player that can be mantled onto: a wall at chest height, a flat top

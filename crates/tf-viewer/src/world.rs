@@ -470,3 +470,119 @@ pub fn spawn_static_props(
         t.elapsed()
     );
 }
+
+/// Add the parts of the map's own collision (`Bsp::collision_shapes`) that the render meshes
+/// don't cover: `TOOLSNODRAW` backing surfaces (a floor under the terrain, the hidden faces
+/// of buildings), glass, and the invisible clip brushes. Without them the Pilot dropped
+/// through gaps in the render meshes and walked through clips. Solid shapes join the main
+/// world; clips (no BULLET contents) only stop movement (`CLIP_PILOT`, `CLIP_TITAN`).
+pub fn add_game_collision(bsp: &Bsp, collision: &mut CollisionWorld) {
+    use tf_assets::bsp::contents::{BULLET, PLAYER, TITAN};
+    use tf_sim::collision::{CLIP_PILOT, CLIP_TITAN};
+    // Texture data whose world meshes `spawn_world` already turned into collision.
+    let sorts = bsp.material_sorts();
+    let texdata = bsp.texture_data();
+    let skip = mesh_flags::SKY | mesh_flags::SKY_2D | mesh_flags::SKIP | mesh_flags::TRIGGER | mesh_flags::TRANSLUCENT;
+    let mut rendered = std::collections::HashSet::new();
+    let meshes = bsp.meshes();
+    if let Some(world) = bsp.models().first() {
+        for m in meshes.iter().skip(world.first_mesh as usize).take(world.num_meshes as usize) {
+            let td = sorts[m.material_sort as usize].texture_data;
+            let name = texdata.get(td as usize).map(|t| t.name.to_ascii_lowercase()).unwrap_or_default();
+            if m.flags & skip == 0 && !name.starts_with("tools") {
+                rendered.insert(td);
+            }
+        }
+    }
+    let v = |p: [f32; 3]| SVec3::from(p);
+    let (mut solid, mut pilot, mut titan) = (0usize, 0usize, 0usize);
+    for shape in bsp.collision_shapes() {
+        if shape.texture_data >= 0 && rendered.contains(&shape.texture_data) {
+            continue;
+        }
+        let sky = texdata.get(shape.texture_data.max(0) as usize).is_some_and(|t| shape.texture_data >= 0 && t.name.to_ascii_lowercase().contains("toolsskybox"));
+        let c = shape.contents;
+        for t in &shape.tris {
+            // The sky's box holds players in but isn't something to shoot or hook.
+            if c & BULLET != 0 && c & PLAYER != 0 && !sky {
+                collision.add(v(t[0]), v(t[1]), v(t[2]));
+                solid += 1;
+                continue;
+            }
+            if c & PLAYER != 0 {
+                collision.add_clip(CLIP_PILOT, v(t[0]), v(t[1]), v(t[2]));
+                pilot += 1;
+            }
+            if c & TITAN != 0 {
+                collision.add_clip(CLIP_TITAN, v(t[0]), v(t[1]), v(t[2]));
+                titan += 1;
+            }
+        }
+    }
+    log::info!("map collision: {solid} solid triangles the render meshes miss, {pilot} player clip and {titan} titan clip triangles");
+}
+
+/// Debug sweep (TF_COLLISION_SWEEP): drop rays on a 32-unit grid over `extra` (the map's own
+/// collision that the render meshes miss, player clips included) and log where it catches a fall that `world` lets
+/// through: a walkable hit of `extra` at least 16 units above `world`'s first hit, or with
+/// nothing below in `world` at all.
+pub fn collision_sweep(world: &CollisionWorld, extra: &CollisionWorld) {
+    let (mut lo, mut hi) = (SVec3::splat(f32::MAX), SVec3::splat(f32::MIN));
+    for t in extra.tris.iter().chain(extra.clips.iter().flatten().flat_map(|c| c.tris.iter())) {
+        lo = lo.min(t.a.min(t.b).min(t.c));
+        hi = hi.max(t.a.max(t.b).max(t.c));
+    }
+    if extra.tris.is_empty() {
+        log::info!("collision sweep: no extra solid triangles");
+        return;
+    }
+    let (mut caught, mut bottomless, mut rays) = (0usize, 0usize, 0usize);
+    let mut spots = Vec::new();
+    let step = 32.0;
+    let mut x = lo.x;
+    while x <= hi.x {
+        let mut y = lo.y;
+        while y <= hi.y {
+            rays += 1;
+            // Start under the sky's lid and the height-limit clips under it (they're in the
+            // player clips): from 10000 units down.
+            let top = SVec3::new(x, y, hi.z.min(10000.0));
+            let down = -SVec3::Z;
+            let len = hi.z - lo.z + 20000.0;
+            if let Some(e) = extra.raycast_moving(top, down, len, tf_sim::collision::CLIP_PILOT).filter(|h| h.normal.z > 0.7) {
+                let w = world.raycast(top, down, len);
+                let missed = match w {
+                    None => {
+                        bottomless += 1;
+                        true
+                    }
+                    Some(w) => w.point.z < e.point.z - 16.0,
+                };
+                if missed {
+                    caught += 1;
+                    if w.is_some() {
+                        spots.push((e.point, w.map(|w| w.point.z)));
+                    }
+                }
+            }
+            y += step;
+        }
+        x += step;
+    }
+    log::info!("collision sweep: {rays} rays, the map's collision catches {caught} falls the render meshes miss ({bottomless} with nothing below)");
+    // Group the catches into 512-unit cells (one line each, highest catch first).
+    let mut cells: HashMap<(i32, i32), (usize, SVec3, f32)> = HashMap::new();
+    for (p, below) in &spots {
+        let e = cells.entry(((p.x / 512.0).floor() as i32, (p.y / 512.0).floor() as i32)).or_insert((0, *p, below.unwrap_or(0.0)));
+        e.0 += 1;
+        if p.z > e.1.z {
+            e.1 = *p;
+            e.2 = below.unwrap_or(0.0);
+        }
+    }
+    let mut cells: Vec<_> = cells.into_values().collect();
+    cells.sort_by(|a, b| b.0.cmp(&a.0));
+    for (n, p, below) in cells.iter().take(60) {
+        log::info!("  {n} catches near {:.0} {:.0} {:.0} (render collision {below:.0})", p.x, p.y, p.z);
+    }
+}

@@ -42,7 +42,7 @@ use crate::ui::UiAssets;
 use bevy::prelude::*;
 use tf_assets::settings::PlayerSettings;
 use tf_sim::glam::Vec3 as SVec3;
-use tf_sim::pilot::PilotMove;
+use tf_sim::pilot::{GrappleEvent, PilotMove};
 
 /// Stim's speed boost (STIM_EFFECT_SEVERITY with movement_speedboost_extraScale 2.0).
 const STIM_SPEED: f32 = 1.4;
@@ -134,6 +134,9 @@ pub struct TacticalDef {
     pub charges: u32,
     /// Throw speed (Pulse Blade, A-Wall) or grapple reach.
     pub speed: f32,
+    /// Grapple: seconds from the pull starting to the power regenerating
+    /// (grapple_power_regen_delay).
+    pub regen_delay: f32,
     /// Thrown tacticals (Pulse Blade, A-Wall): `viewmodel`, `toss_pullout_time`, `toss_time`.
     pub viewmodel: String,
     pub pullout: f32,
@@ -237,6 +240,7 @@ impl PilotAbilityDefs {
                     cooldown: cooldown(&s, 15.0),
                     charges: charges(&s),
                     speed: mp(&s, "projectile_launch_speed", 1100.0),
+                    regen_delay: 0.0,
                     viewmodel: if thrown { s.get(".viewmodel").unwrap_or("").trim().to_string() } else { String::new() },
                     pullout: mp(&s, "toss_pullout_time", 0.2),
                     toss: mp(&s, "toss_time", 0.3),
@@ -245,11 +249,13 @@ impl PilotAbilityDefs {
                 };
                 match t.0 {
                     Tactical::Grapple => {
-                        // Grapple power, not ammo: each shot needs grapple_power_required of 100.
+                        // Grapple power, not ammo: each pull takes grapple_power_required of 100
+                        // (shown as charges of that size).
                         let need = mp(&s, "grapple_power_required", 50.0).max(1.0);
-                        let rate = pilot.f32(".grapple_power_regen_rate", 3.0).max(0.1);
+                        let rate = pilot.f32("global.grapple_power_regen_rate", 3.0).max(0.1);
                         d.charges = (100.0 / need) as u32;
                         d.cooldown = need / rate;
+                        d.regen_delay = pilot.f32("global.grapple_power_regen_delay", 3.0);
                         d.duration = 0.0;
                         d.speed = mp(&s, "grapple_maxLength", 1100.0);
                     }
@@ -465,6 +471,9 @@ pub struct PilotStatus {
     pub tac_charges: u32,
     /// Seconds until the next tactical charge.
     pub tac_cooldown: f32,
+    /// Grapple power (0-100) and seconds since the last pull started.
+    pub grapple_power: f32,
+    pub grapple_regen: f32,
     /// Index into ORDNANCE.
     pub ordnance: usize,
     pub ord_charges: u32,
@@ -482,6 +491,8 @@ impl PilotStatus {
     pub fn refill(&mut self, defs: &PilotAbilityDefs) {
         self.tac_charges = defs.tactical[self.tactical].charges;
         self.tac_cooldown = 0.0;
+        self.grapple_power = 100.0;
+        self.grapple_regen = f32::MAX;
         self.ord_charges = defs.ordnance[self.ordnance].charges;
         self.ord_cooldown = 0.0;
         self.active = 0.0;
@@ -722,7 +733,6 @@ pub fn pilot_abilities(
     control: Res<Control>,
     defs: Res<PilotAbilityDefs>,
     settings: Res<crate::pilotctl::PilotSettings>,
-    world: Res<Collision>,
     kit: Option<Res<PilotKitAssets>>,
     mut status: ResMut<PilotStatus>,
     mut shields: ResMut<Shields>,
@@ -760,15 +770,28 @@ pub fn pilot_abilities(
             crate::audio::loop_stop(&mut commands, "tactical", end);
         }
     }
-    // Charges refill one at a time (not while a timed tactical runs).
-    if status.tac_charges < def.charges && status.active <= 0.0 {
+    // Grapple power regenerates grapple_power_regen_rate per second from
+    // grapple_power_regen_delay after the last pull started (client.dll 0x1802ce140); the HUD
+    // shows it as charges of grapple_power_required.
+    let need = 100.0 / def.charges.max(1) as f32;
+    if TACTICALS[ti].0 == Tactical::Grapple {
+        let rate = need / def.cooldown.max(0.1);
+        status.grapple_regen = (status.grapple_regen + dt).min(1e6);
+        if status.grapple_power < 100.0 && status.grapple_regen >= def.regen_delay {
+            status.grapple_power = (status.grapple_power + rate * dt).min(100.0);
+            if status.grapple_power >= 100.0 {
+                crate::audio::event(&mut commands, "pilot_grapple_ready");
+            }
+        }
+        status.tac_charges = ((status.grapple_power + 1e-3) / need) as u32;
+        let next = need * (status.tac_charges + 1) as f32 - status.grapple_power;
+        status.tac_cooldown = if status.tac_charges < def.charges { next / rate + (def.regen_delay - status.grapple_regen).max(0.0) } else { 0.0 };
+    } else if status.tac_charges < def.charges && status.active <= 0.0 {
+        // Charges refill one at a time (not while a timed tactical runs).
         status.tac_cooldown -= dt;
         if status.tac_cooldown <= 0.0 {
             status.tac_charges += 1;
             status.tac_cooldown = if status.tac_charges < def.charges { def.cooldown } else { 0.0 };
-            if status.tac_charges == def.charges && TACTICALS[ti].0 == Tactical::Grapple {
-                crate::audio::event(&mut commands, "pilot_grapple_ready");
-            }
         }
     }
     if status.ord_charges < odef.charges {
@@ -802,7 +825,26 @@ pub fn pilot_abilities(
     let Ok((mut pilot, mut health)) = pilots.single_mut() else { return };
     if *control != Control::Pilot || health.dead() {
         pilot.state.grapple = None;
+        pilot.state.hook = None;
+        pilot.state.grapple_events.clear();
         return;
+    }
+    // What the grapple did in the movement step: the pull starting takes the power
+    // (client.dll 0x1802cdec0); a miss costs nothing.
+    for ev in std::mem::take(&mut pilot.state.grapple_events) {
+        match ev {
+            GrappleEvent::Hooked { point, normal } => {
+                let at = Vec3::from(point.to_array());
+                log::info!("grapple hooked {:.0} units away", (at - Vec3::from(pilot.state.eye(&settings.0).to_array())).length());
+                crate::audio::event_at(&mut commands, "default_grapple_impact_1p_vs_3p", at);
+                emit(&mut commands, Effect::Impact { at: to_bevy(at), normal: to_bevy(Vec3::from(normal.to_array())), scale: 0.5, energy: false });
+            }
+            GrappleEvent::Pulling => {
+                status.grapple_power = (status.grapple_power - need).max(0.0);
+                status.grapple_regen = 0.0;
+            }
+            GrappleEvent::Missed | GrappleEvent::Released => crate::audio::event(&mut commands, "pilot_grapple_retract_1p"),
+        }
     }
     if status.is(Tactical::Stim) {
         health.health = (health.health + STIM_REGEN * dt).min(PILOT_HEALTH);
@@ -863,27 +905,22 @@ pub fn pilot_abilities(
     }
     if tactical {
         let kind = TACTICALS[ti].0;
-        if kind == Tactical::Grapple && pilot.state.grapple.is_some() {
+        if kind == Tactical::Grapple && (pilot.state.grapple.is_some() || pilot.state.hook.is_some_and(|h| h.back.is_none())) {
+            // Pressing again while the hook is out lets go (CPlayer::Grapple, client.dll
+            // 0x1802c8600).
             pilot.state.release_grapple(&settings.0);
-            crate::audio::event(&mut commands, "pilot_grapple_retract_1p");
         } else if status.tac_charges > 0 && status.active <= 0.0 {
-            spend(&mut status);
+            if kind != Tactical::Grapple {
+                spend(&mut status);
+            }
             crate::audio::event(&mut commands, TACTICALS[ti].4);
             log::info!("tactical: {kind:?}");
             match kind {
                 Tactical::Stim | Tactical::Cloak | Tactical::PhaseShift => status.active = def.duration,
+                // The hook flies out from the eye at grapple_shootVel up to grapple_maxLength
+                // (tf-sim moves it and reports where it lands).
                 Tactical::Grapple => {
-                    match world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(look.to_array()), def.speed) {
-                        Some(h) => {
-                            let at = Vec3::from(h.point.to_array());
-                            log::info!("grapple hooked {:.0} units away", h.t);
-                            pilot.state.attach_grapple(SVec3::from(at.to_array()));
-                            crate::audio::event_at(&mut commands, "default_grapple_impact_1p_vs_3p", at);
-                            emit(&mut commands, Effect::Impact { at: to_bevy(at), normal: to_bevy(Vec3::from(h.normal.to_array())), scale: 0.5, energy: false });
-                        }
-                        // Out of reach: the hook comes straight back.
-                        None => crate::audio::event(&mut commands, "pilot_grapple_retract_1p"),
-                    }
+                    pilot.state.fire_grapple(SVec3::from(look.to_array()), def.speed, &settings.0);
                 }
                 Tactical::PulseBlade => {
                     let dir = view_dir(&pilot.state, 2.0);
@@ -1460,7 +1497,7 @@ pub fn update_pulse_markers(
     }
 }
 
-/// The grapple's cable while hooked: a thin line from the left hand (beside and below the view)
+/// The grapple's cable while the hook is out (flying, stuck or coming back): a thin line from the left hand (beside and below the view)
 /// to the hook, placed after the camera moves so it doesn't trail a frame behind.
 #[allow(clippy::type_complexity)]
 pub fn grapple_cable(
@@ -1472,7 +1509,7 @@ pub fn grapple_cable(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let hook = pilots.single().ok().and_then(|p| p.state.grapple).filter(|_| *control == Control::Pilot);
+    let hook = pilots.single().ok().and_then(|p| p.state.hook_pos()).filter(|_| *control == Control::Pilot);
     let Ok((mut tf, mut vis)) = cables.single_mut() else {
         let mesh = meshes.add(Cylinder::new(1.0, 1.0));
         let mat = materials.add(StandardMaterial { base_color: Color::srgb(0.1, 0.1, 0.11), metallic: 0.2, perceptual_roughness: 0.6, ..default() });
