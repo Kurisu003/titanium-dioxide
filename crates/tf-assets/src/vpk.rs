@@ -174,10 +174,11 @@ impl Vpk {
         let e = self.entries.get(&key).with_context(|| format!("{path} not in vpk"))?;
         let mut out = Vec::with_capacity(e.size() as usize);
         out.extend_from_slice(&e.preload);
-        // Each part is compressed on its own, so large entries (a map's .bsp is ~200 MB) are
-        // read and decompressed on every core.
+        // Each part is compressed on its own, so entries of more than one part (parts are mostly
+        // 1 MB; a map's .bsp is ~200 MB, the larger models a few MB to 24 MB) are read and
+        // decompressed on several cores.
         let parts: Vec<&_> = e.parts.iter().filter(|p| p.len_uncompressed != 0).collect();
-        let threads = if parts.len() >= 8 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16) } else { 1 };
+        let threads = if parts.len() >= 2 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16).min(parts.len()) } else { 1 };
         let next = std::sync::atomic::AtomicUsize::new(0);
         let mut chunks: Vec<(usize, Result<Vec<u8>>)> = std::thread::scope(|scope| {
             let workers: Vec<_> = (0..threads)
