@@ -1,7 +1,7 @@
 //! Titan movement: walk, sprint, dash and gravity against a [`CollisionWorld`].
 //! Units are the game's (inches, seconds); Z is up; yaw 0 faces +X.
 
-use crate::collision::CollisionWorld;
+use crate::collision::{CollisionWorld, CLIP_TITAN};
 use glam::{Vec2, Vec3};
 
 /// Tuning, normally filled from `titan_*.set` player settings.
@@ -393,7 +393,8 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
     let lo = p.step_height + r;
     let hi = (s.height(p) - r).max(lo);
     for z in [lo, (lo + hi) * 0.5, hi] {
-        let (push, normals) = world.push_sphere(s.pos + Vec3::Z * z, r, 0.7);
+        // Titan clips (the map's TOOLSCLIP_TITAN and player clip brushes) hold BT in too.
+        let (push, normals) = world.push_sphere_moving(s.pos + Vec3::Z * z, r, 0.7, CLIP_TITAN);
         if push != Vec3::ZERO {
             let mut push = push;
             // Hitting a ceiling while rising stops the climb; otherwise push sideways only.
@@ -416,7 +417,7 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
     let probe = r * 0.6;
     for off in [Vec3::ZERO, Vec3::X * probe, -Vec3::X * probe, Vec3::Y * probe, -Vec3::Y * probe] {
         let origin = s.pos + off + Vec3::Z * p.step_height;
-        if let Some(hit) = world.raycast(origin, -Vec3::Z, p.step_height + reach_down) {
+        if let Some(hit) = world.raycast_moving(origin, -Vec3::Z, p.step_height + reach_down, CLIP_TITAN) {
             if hit.normal.z > 0.7 {
                 ground = Some(ground.map_or(hit.point.z, |g: f32| g.max(hit.point.z)));
             }

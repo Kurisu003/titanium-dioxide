@@ -3,7 +3,7 @@
 //! player-settings defaults from client.dll (acceleration 2500, airSpeed 60, airAcceleration 500)
 //! and its convars (sv_friction 4, sv_stopspeed 100).
 
-use crate::collision::CollisionWorld;
+use crate::collision::{CollisionWorld, CLIP_PILOT};
 use glam::{Vec2, Vec3};
 
 #[derive(Debug, Clone)]
@@ -999,7 +999,8 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta:
     let hi = (height - r).max(lo);
     let mut wall: Option<Vec3> = None;
     for z in [lo, hi] {
-        let (push, normals) = world.push_sphere(s.pos + Vec3::Z * z, r, 0.7);
+        // Player clips (invisible walls from the map's collision) stop the Pilot too.
+        let (push, normals) = world.push_sphere_moving(s.pos + Vec3::Z * z, r, 0.7, CLIP_PILOT);
         if push != Vec3::ZERO {
             let mut push = push;
             if push.z < 0.0 && s.vel.z > 0.0 {
@@ -1024,7 +1025,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, delta:
     let reach_down = if on_ground_before { p.step_height } else { 1.0 };
     let mut ground: Option<(f32, f32)> = None;
     for off in [Vec3::ZERO, Vec3::X * r * 0.6, -Vec3::X * r * 0.6, Vec3::Y * r * 0.6, -Vec3::Y * r * 0.6] {
-        if let Some(hit) = world.raycast(s.pos + off + Vec3::Z * p.step_height, -Vec3::Z, p.step_height + reach_down) {
+        if let Some(hit) = world.raycast_moving(s.pos + off + Vec3::Z * p.step_height, -Vec3::Z, p.step_height + reach_down, CLIP_PILOT) {
             if hit.normal.z > 0.7 && ground.is_none_or(|g| hit.point.z > g.0) {
                 ground = Some((hit.point.z, hit.normal.z));
             }

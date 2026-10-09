@@ -271,7 +271,7 @@ We work through these one at a time, and the next one starts only after the user
 24. Grappling hook doesn't feel right (9)
 25. Floor drawn over explosions and shields (18)
 26. Smoke and see-through effects look wrong (17)
-27. Falling through buildings (8)
+27. ~~Falling through buildings (8)~~ (fixed: the map's own collision (CM_PRIMITIVES tricoll meshes and brushes) is added where no render mesh covers it: TOOLSNODRAW floors and lids, glass, and player/titan clips that stop only movement)
 28. Lighting (21, parked until the user asks)
 
 ## Order of work (original grouping)

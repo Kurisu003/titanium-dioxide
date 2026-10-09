@@ -619,9 +619,20 @@ fn setup(
 
     let mut cache = convert::Cache::default();
     let mut collision = CollisionWorld::default();
+    let mut sweep: Option<CollisionWorld> = None;
     match gd.read_map(&args.map) {
         Ok(bsp) => {
             world::spawn_world(&mut commands, root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
+            if std::env::var_os("TF_NO_MAP_COLLISION").is_none() {
+                world::add_game_collision(&bsp, &mut collision);
+            }
+            // TF_COLLISION_SWEEP=1 (with TF_NO_MAP_COLLISION=1): where would the map's own
+            // collision catch a fall the render meshes let through? Logged after the build.
+            if std::env::var_os("TF_COLLISION_SWEEP").is_some() {
+                let mut extra = CollisionWorld::default();
+                world::add_game_collision(&bsp, &mut extra);
+                sweep = Some(extra);
+            }
             if args.props {
                 world::spawn_static_props(&mut commands, root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
                 sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
@@ -639,6 +650,9 @@ fn setup(
     let tb = std::time::Instant::now();
     collision.finish();
     log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+    if let Some(extra) = sweep {
+        world::collision_sweep(&collision, &extra);
+    }
 
     let (mut bt_pos, bt_yaw, placements) = match titan_spawn(&gd, &args.map) {
         Some((p, y)) => (p, y, Vec::new()),

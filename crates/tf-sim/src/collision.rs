@@ -16,7 +16,14 @@ pub struct Tri {
 pub struct CollisionWorld {
     pub tris: Vec<Tri>,
     bvh: OnceLock<Bvh>,
+    /// Invisible clip surfaces from the map's own collision (`CLIP_PILOT`, `CLIP_TITAN`): they
+    /// stop movement (`push_sphere_moving`, `raycast_moving`) but not shots or other traces.
+    pub clips: [Option<Box<CollisionWorld>>; 2],
 }
+
+/// Clip surfaces that stop the Pilot (player clips) and BT (titan clips).
+pub const CLIP_PILOT: usize = 0;
+pub const CLIP_TITAN: usize = 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Hit {
@@ -203,6 +210,34 @@ impl CollisionWorld {
     /// Build the acceleration structure now instead of on the first query.
     pub fn finish(&self) {
         self.bvh();
+        for c in self.clips.iter().flatten() {
+            c.bvh();
+        }
+    }
+
+    /// Add a triangle to clip set `which` (`CLIP_PILOT` or `CLIP_TITAN`).
+    pub fn add_clip(&mut self, which: usize, a: Vec3, b: Vec3, c: Vec3) {
+        self.clips[which].get_or_insert_with(Default::default).add(a, b, c);
+    }
+
+    /// This world and clip set `which`, for movement queries.
+    fn with_clip(&self, which: usize) -> [Option<&CollisionWorld>; 2] {
+        [Some(self), self.clips.get(which).and_then(|c| c.as_deref())]
+    }
+
+    /// `raycast` that also hits clip set `which` (movement: ground checks).
+    pub fn raycast_moving(&self, origin: Vec3, dir: Vec3, max_t: f32, which: usize) -> Option<Hit> {
+        let [_, clip] = self.with_clip(which);
+        let hit = self.raycast(origin, dir, max_t);
+        match (hit, clip.and_then(|c| c.raycast(origin, dir, max_t))) {
+            (Some(a), Some(b)) => Some(if b.t < a.t { b } else { a }),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// `push_sphere` that also pushes out of clip set `which`.
+    pub fn push_sphere_moving(&self, center: Vec3, radius: f32, max_normal_z: f32, which: usize) -> (Vec3, Vec3) {
+        push_sphere_in(&self.with_clip(which), center, radius, max_normal_z)
     }
 
     /// Visit every triangle whose bounds overlap the box.
@@ -277,37 +312,45 @@ impl CollisionWorld {
     /// has z above `max_normal_z` (floors are handled by ground snapping).
     /// Returns the total correction and the summed contact normals.
     pub fn push_sphere(&self, center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
-        let mut c = center;
-        let mut normals = Vec3::ZERO;
-        for _ in 0..4 {
-            let mut push = Vec3::ZERO;
-            let r = Vec3::splat(radius);
-            self.cells_in(c - r, c + r, |tri| {
-                let p = closest_point_on_tri(c, tri);
-                let d = c - p;
-                let dist = d.length();
-                if dist >= radius || dist < 1e-4 {
-                    return;
-                }
-                let n = d / dist;
-                if n.z > max_normal_z {
-                    return;
-                }
-                // Only add the part of this contact's depth not already resolved by
-                // pushes from other triangles.
-                let needed = (radius - dist) - push.dot(n);
-                if needed > 0.0 {
-                    push += n * needed;
-                }
-                normals += n;
-            });
-            if push.length_squared() < 1e-4 {
-                break;
-            }
-            c += push;
-        }
-        (c - center, normals)
+        push_sphere_in(&[Some(self), None], center, radius, max_normal_z)
     }
+}
+
+/// `CollisionWorld::push_sphere` against several worlds at once.
+fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
+    let mut c = center;
+    let mut normals = Vec3::ZERO;
+    for _ in 0..4 {
+        let mut push = Vec3::ZERO;
+        let r = Vec3::splat(radius);
+        let mut visit = |tri: &Tri| {
+            let p = closest_point_on_tri(c, tri);
+            let d = c - p;
+            let dist = d.length();
+            if dist >= radius || dist < 1e-4 {
+                return;
+            }
+            let n = d / dist;
+            if n.z > max_normal_z {
+                return;
+            }
+            // Only add the part of this contact's depth not already resolved by
+            // pushes from other triangles.
+            let needed = (radius - dist) - push.dot(n);
+            if needed > 0.0 {
+                push += n * needed;
+            }
+            normals += n;
+        };
+        for w in worlds.iter().flatten() {
+            w.cells_in(c - r, c + r, &mut visit);
+        }
+        if push.length_squared() < 1e-4 {
+            break;
+        }
+        c += push;
+    }
+    (c - center, normals)
 }
 
 impl CollisionWorld {
@@ -394,4 +437,24 @@ pub fn closest_point_on_tri(p: Vec3, t: &Tri) -> Vec3 {
     }
     let denom = 1.0 / (va + vb + vc);
     a + ab * (vb * denom) + ac * (vc * denom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clips_stop_movement_queries_only() {
+        let mut w = CollisionWorld::default();
+        // A wall in the pilot clips at x = 10.
+        w.add_clip(CLIP_PILOT, Vec3::new(10.0, -50.0, -50.0), Vec3::new(10.0, 50.0, -50.0), Vec3::new(10.0, 0.0, 50.0));
+        w.finish();
+        assert!(w.raycast(Vec3::ZERO, Vec3::X, 100.0).is_none(), "shots pass clips");
+        assert!(w.raycast_moving(Vec3::ZERO, Vec3::X, 100.0, CLIP_TITAN).is_none(), "titan ignores player clips");
+        let hit = w.raycast_moving(Vec3::ZERO, Vec3::X, 100.0, CLIP_PILOT).expect("pilot hits the clip");
+        assert!((hit.t - 10.0).abs() < 1e-3);
+        let (push, _) = w.push_sphere_moving(Vec3::new(5.0, 0.0, 0.0), 8.0, 0.7, CLIP_PILOT);
+        assert!((push.x + 3.0).abs() < 1e-3, "pushed out of the clip: {push}");
+        assert_eq!(w.push_sphere(Vec3::new(5.0, 0.0, 0.0), 8.0, 0.7).0, Vec3::ZERO);
+    }
 }

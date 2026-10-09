@@ -1236,7 +1236,15 @@ and the cockpit, F1 for a free camera. Movement tuning comes from the game's own
 `scripts/players/mp/titan_buddy.set` (walk 280, sprint 420, dash 685 for 0.3 s, 50 power per dash;
 acceleration 900, or `lowAcceleration` 1500 below `lowSpeed` 200, sprint acceleration 120).
 BT blends his walk/sprint animations by direction and speed, and the game's aim matrix layer
-follows your view pitch. Collision uses the map's render geometry plus solid static props.
+follows your view pitch. Collision uses the map's render geometry plus solid static props, plus
+the parts of the map's own collision (`CM_PRIMITIVES`: tricoll meshes and brushes) that nothing
+rendered covers: `TOOLSNODRAW` backing surfaces (Forwardbase Kodai has a hidden floor 32 units under
+its ground and lids over pits, which the Pilot used to fall through into the rooms under the map)
+and glass are solid; `TOOLSCLIP` and clip brushes stop only movement, the player clips the Pilot and
+the titan clips BT, not shots, the grapple or other traces. Contents bits are read from which
+surfaces carry them (0x800000 player, 0x400000 bullets, 0x200000 titans), as bsp_tool has no names
+for Titanfall 2's set. `TF_NO_MAP_COLLISION=1` leaves this out; `TF_COLLISION_SWEEP=1` (with it)
+logs where the map's collision would catch a fall the render meshes let through.
 
 For automated tests, `--script "0.5-3:fwd,2:dash,2-2.3:left,3-4:turn=-90,4.5:cockpit"` drives the
 input and `--shots "2.2:a.png,6:b.png"` saves frames and quits. `TF_WAVE=N` starts the first
@@ -1293,7 +1301,7 @@ the free camera at a position in game units; `--no-props` skips static props.
 - RPAK patch chains (`name(01).rpak`...) are not applied as deltas; base paks are used, plus each
   `common(NN).rpak` and `common_mp(NN).rpak` patch's own pages (newest first) for assets the base pak lacks (e.g. the R-101
   SFP's materials). Set `TF_NO_PATCH_PAKS=1` to skip that (~0.75 s at startup).
-- Collision uses render meshes, not the game's own collision lumps, so some decorative geometry blocks and some terrain may be missing.
+- Collision uses render meshes plus the map's collision where nothing rendered covers it (see Titan); render meshes the game doesn't collide with (wires, some decals) still block, wall-running and mantling ignore clip surfaces, and the 57 props on Kodai that are marked solid but have no collision primitive still block.
 - Screen-space particle effects are placed by a guessed mapping and drawn under the viewmodel;
   particle light sources are off by default (see
   Effects). Particle refraction approximates Source's Refract shader (see Effects); refracting
