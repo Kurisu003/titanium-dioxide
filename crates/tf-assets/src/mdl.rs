@@ -432,6 +432,141 @@ impl Model {
         self.meshes_lod(body, 0)
     }
 
+    /// The static prop collision mesh ("per tri" collision, v53 header 0x198), as model-space
+    /// triangles with their surface index; empty when the model has none. This is what the
+    /// game traces static props against: engine.dll's static prop trace (0x1801b7cf0, reached
+    /// from the CM_PRIMITIVES type 3 handler 0x1801288e0) tests the trace's contents mask
+    /// against studiohdr+0x150 and calls IStudioRender (VStudioRender026) vtable +0x108,
+    /// studiorender.dll 0x18000f6e0 -> 0x18000e570, which walks this BVH ("Unsupported per tri
+    /// version %d ... missing the $staticprop key" when the version isn't 2).
+    ///
+    /// Layout (from 0x18000e570): at the offset, u16 version (2), u16, f32 min[3], f32 max[3];
+    /// the data starts 0x3C in: header 0x19C interior nodes of 20 bytes (u16 box[6], i32
+    /// child[2]; a negative child is !leaf), header 0x1A0 leaves of 0x70 bytes (u16 box[6], u32
+    /// first vertex, 12 triangles of u16 a, b, c, surface; a == b ends the leaf), header 0x1A4
+    /// vertices of u16[3]. Boxes and vertices are quantized: min + q * (max - min) / 65535.
+    pub fn collision_tris(&self) -> Vec<([[f32; 3]; 3], u16)> {
+        let r = R(&self.raw);
+        let off = r.i32(0x198);
+        let (interior, leaves, verts) = (r.i32(0x19C).max(0) as usize, r.i32(0x1A0).max(0) as usize, r.i32(0x1A4).max(0) as usize);
+        if off <= 0 || leaves == 0 {
+            return Vec::new();
+        }
+        let off = off as usize;
+        let data = off + 0x3C;
+        let leaf0 = data + interior * 20;
+        let vert0 = leaf0 + leaves * 0x70;
+        if vert0 + verts * 6 > self.raw.len() || r.u16(off) != 2 {
+            return Vec::new();
+        }
+        let (min, max) = (r.v3(off + 4), r.v3(off + 0x10));
+        let scale = [0, 1, 2].map(|k| (max[k] - min[k]) * (1.0 / 65535.0));
+        let vert = |i: usize| (i < verts).then(|| [0, 1, 2].map(|k| min[k] + r.u16(vert0 + i * 6 + k * 2) as f32 * scale[k]));
+        let mut out = Vec::new();
+        for l in 0..leaves {
+            let o = leaf0 + l * 0x70;
+            let first = r.i32(o + 0xC).max(0) as usize;
+            for t in 0..12 {
+                let to = o + 0x10 + t * 8;
+                let (a, b, c) = (r.u16(to) as usize, r.u16(to + 2) as usize, r.u16(to + 4) as usize);
+                if a == b {
+                    break;
+                }
+                if let (Some(pa), Some(pb), Some(pc)) = (vert(first + a), vert(first + b), vert(first + c)) {
+                    out.push(([pa, pb, pc], r.u16(to + 6)));
+                }
+            }
+        }
+        out
+    }
+
+    /// The model's contents flags (v53 header 0x150), which engine.dll's static prop trace
+    /// tests against the trace mask before anything else (0x1801b7d45).
+    pub fn contents(&self) -> i32 {
+        R(&self.raw).i32(0x150)
+    }
+
+    /// The static prop's convex collision hulls (the `$collisionmodel`, v53 header 0x1CC
+    /// offset / 0x1D0 count), each as its face planes (normal, distance; inside is
+    /// `n . p <= d`) in model space. Movement traces hit static props as these: engine.dll's
+    /// static prop trace (0x1801b7cf0) only uses the per-triangle mesh (`collision_tris`) for
+    /// traces at TRACEDETAILLEVEL_HIGH, bullets ("pertrianglecollision" 1: "Enables
+    /// per-triangle collision with TRACEDETAILLEVEL_HIGH (i.e., bullets) on static models"),
+    /// or at the medium level near the prop; every other trace, the player's hull traces
+    /// included (client.dll's Ray_t init 0x1800abec0 leaves the level at 0), goes to
+    /// 0x18014a1a0, which sweeps the ray against each hull (0x1801491e0). A model without hulls
+    /// stops no movement at all.
+    ///
+    /// Each hull is 20 bytes (0x1801491e0): i32 face planes, planes (faces then bevels, which
+    /// box sweeps add), edges, vertices, and the offset of its planes (16 bytes each) from the
+    /// hull's own record.
+    pub fn collision_hulls(&self) -> Vec<Vec<([f32; 3], f32)>> {
+        let r = R(&self.raw);
+        let (off, n) = (r.i32(0x1CC), r.i32(0x1D0));
+        if off <= 0 || n <= 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for h in 0..n as usize {
+            let o = off as usize + h * 20;
+            if o + 20 > self.raw.len() {
+                break;
+            }
+            let (faces, planes) = (r.i32(o).max(0) as usize, r.i32(o + 0x10).max(0) as usize);
+            let p0 = o + planes;
+            if faces == 0 || p0 + faces * 16 > self.raw.len() {
+                continue;
+            }
+            out.push((0..faces).map(|k| (r.v3(p0 + k * 16), r.f32(p0 + k * 16 + 12))).collect());
+        }
+        out
+    }
+
+    /// `collision_hulls` as triangles (each hull's faces fanned).
+    pub fn collision_hull_tris(&self) -> Vec<[[f32; 3]; 3]> {
+        let mut out = Vec::new();
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        for planes in self.collision_hulls() {
+            // A rough pass finds the hull's centre and size; the faces are then clipped about
+            // the centre (small numbers keep the clip precise), as `Bsp::collision_shapes` does
+            // for brushes.
+            let rough: Vec<[f32; 3]> = (0..planes.len()).flat_map(|i| crate::bsp::brush_face(&planes, i, 16384.0)).collect();
+            if rough.is_empty() {
+                continue;
+            }
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for p in &rough {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+            let c = [0, 1, 2].map(|k| (lo[k] + hi[k]) * 0.5);
+            let size = [0, 1, 2].map(|k| hi[k] - c[k]).iter().map(|e| e * e).sum::<f32>().sqrt() + 1.0;
+            let local: Vec<([f32; 3], f32)> = planes.iter().map(|&(n, d)| (n, d - dot(n, c))).collect();
+            let at = |p: [f32; 3]| [p[0] + c[0], p[1] + c[1], p[2] + c[2]];
+            for i in 0..local.len() {
+                // Corners where several planes meet come out more than once: drop the repeats
+                // (their slivers would carry made-up normals).
+                let mut face = crate::bsp::brush_face(&local, i, size);
+                let near = |a: [f32; 3], b: [f32; 3]| (0..3).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum::<f32>() < 1e-4;
+                face.dedup_by(|b, a| near(*a, *b));
+                while face.len() > 1 && near(face[0], face[face.len() - 1]) {
+                    face.pop();
+                }
+                for k in 1..face.len().saturating_sub(1) {
+                    let (p, q, s) = (at(face[0]), at(face[k]), at(face[k + 1]));
+                    let (u, v) = ([q[0] - p[0], q[1] - p[1], q[2] - p[2]], [s[0] - p[0], s[1] - p[1], s[2] - p[2]]);
+                    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                    if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-2 {
+                        out.push([p, q, s]);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The model's LOD switch points (VTX `switchPoint`, first body part's first model), one
     /// per LOD; empty if the model has no VTX.
     pub fn lod_switch_points(&self) -> Vec<f32> {
@@ -1005,5 +1140,123 @@ pub mod screen_cull {
                 md.indices.chunks_exact(3).map(|t| count.get(&comp[t[0] as usize]).is_some_and(|&(h, n)| h * 2 > n)).collect()
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod collision_tests {
+    use super::*;
+
+    fn model(raw: Vec<u8>) -> Model {
+        Model {
+            name: String::new(),
+            raw,
+            bones: Vec::new(),
+            textures: Vec::new(),
+            cd_textures: Vec::new(),
+            skin_families: Vec::new(),
+            bodyparts: Vec::new(),
+            include_models: Vec::new(),
+            sequences: Vec::new(),
+            num_anims: 0,
+            surface_prop: String::new(),
+            hull: ([0.0; 3], [0.0; 3]),
+            hitboxes: Vec::new(),
+            pose_params: Vec::new(),
+            attachments: Vec::new(),
+            rui_meshes: Vec::new(),
+        }
+    }
+
+    fn put_i32(raw: &mut [u8], o: usize, v: i32) {
+        raw[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    fn put_f32(raw: &mut [u8], o: usize, v: f32) {
+        raw[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    fn put_u16(raw: &mut [u8], o: usize, v: u16) {
+        raw[o..o + 2].copy_from_slice(&v.to_le_bytes());
+    }
+
+    #[test]
+    fn hull_planes_become_a_closed_box() {
+        // One hull: a box 10..30 x -5..5 x 0..40 as six planes (plus two bevels after them,
+        // which only box sweeps use).
+        let mut raw = vec![0u8; 0x400];
+        put_i32(&mut raw, 0x1CC, 0x300);
+        put_i32(&mut raw, 0x1D0, 1);
+        let planes: [([f32; 3], f32); 8] = [
+            ([1.0, 0.0, 0.0], 30.0),
+            ([-1.0, 0.0, 0.0], -10.0),
+            ([0.0, 1.0, 0.0], 5.0),
+            ([0.0, -1.0, 0.0], 5.0),
+            ([0.0, 0.0, 1.0], 40.0),
+            ([0.0, 0.0, -1.0], 0.0),
+            ([0.7071, 0.7071, 0.0], 0.0),
+            ([0.7071, -0.7071, 0.0], 0.0),
+        ];
+        for (o, v) in [(0, 6), (4, 8), (8, 12), (12, 8), (16, 20)] {
+            put_i32(&mut raw, 0x300 + o, v);
+        }
+        for (k, (n, d)) in planes.iter().enumerate() {
+            let o = 0x314 + k * 16;
+            for j in 0..3 {
+                put_f32(&mut raw, o + j * 4, n[j]);
+            }
+            put_f32(&mut raw, o + 12, *d);
+        }
+        let m = model(raw);
+        assert_eq!(m.collision_hulls().len(), 1);
+        assert_eq!(m.collision_hulls()[0].len(), 6, "bevel planes are not faces");
+        let tris = m.collision_hull_tris();
+        assert_eq!(tris.len(), 12);
+        let area: f32 = tris
+            .iter()
+            .map(|t| {
+                let (u, v) = ([t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]);
+                let c = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt() * 0.5
+            })
+            .sum();
+        let want = 2.0 * (20.0 * 10.0 + 20.0 * 40.0 + 10.0 * 40.0);
+        assert!((area - want).abs() < 0.5, "surface {area} vs {want}");
+        for p in tris.iter().flatten() {
+            assert!(p[0] > 9.99 && p[0] < 30.01 && p[1].abs() < 5.01 && p[2] > -0.01 && p[2] < 40.01, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn per_tri_mesh_dequantizes() {
+        // No interior nodes, one leaf with one triangle (then a == b ends it), three vertices,
+        // bounds -10..10 on every axis.
+        let mut raw = vec![0u8; 0x400];
+        let off = 0x200;
+        put_i32(&mut raw, 0x198, off as i32);
+        put_i32(&mut raw, 0x19C, 0);
+        put_i32(&mut raw, 0x1A0, 1);
+        put_i32(&mut raw, 0x1A4, 3);
+        put_u16(&mut raw, off, 2);
+        for k in 0..3 {
+            put_f32(&mut raw, off + 4 + k * 4, -10.0);
+            put_f32(&mut raw, off + 0x10 + k * 4, 10.0);
+        }
+        let leaf = off + 0x3C;
+        put_i32(&mut raw, leaf + 0xC, 0);
+        for (k, v) in [0u16, 1, 2, 7].iter().enumerate() {
+            put_u16(&mut raw, leaf + 0x10 + k * 2, *v);
+        }
+        let verts = leaf + 0x70;
+        for (i, q) in [[0u16, 0, 0], [65535, 0, 0], [0, 65535, 32768]].iter().enumerate() {
+            for k in 0..3 {
+                put_u16(&mut raw, verts + i * 6 + k * 2, q[k]);
+            }
+        }
+        let tris = model(raw).collision_tris();
+        assert_eq!(tris.len(), 1);
+        let (t, surf) = tris[0];
+        assert_eq!(surf, 7);
+        assert_eq!(t[0], [-10.0, -10.0, -10.0]);
+        assert_eq!(t[1], [10.0, -10.0, -10.0]);
+        assert!((t[2][1] - 10.0).abs() < 1e-4 && t[2][2].abs() < 1e-3, "{:?}", t[2]);
     }
 }

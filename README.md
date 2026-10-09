@@ -354,6 +354,14 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     acceleration x 0.6 = 1500 u/s^2 (GetDeceleration 0x1801fcf10); Accelerate (0x1801f0ac0) adds
     up to 2500 u/s^2 along the input. sv_friction and sv_stopspeed aren't used. So a sprint stops in
     0.17 s over 22 units, top speed is reached in about 0.1 s, and turning keeps the speed.
+    When the input pushes into the surface the previous move ran into (the move trace's plane,
+    which WalkMove and AirMove keep at player+0x2b70 when the blocked handler didn't get
+    through: 0x18020e226, 0x1801f25f9), Friction keeps the velocity along the input turned onto
+    that surface (plus 1/128 of its normal, 0x1801f81bf), so running into a wall slides along it
+    at the wish speed's share along the wall (260 x cos 66 = 106 u/s at 66 degrees; below about
+    53 degrees the acceleration's share beats the braking and the slide keeps the sprint speed).
+    Without it the slide was braked down to about 10 u/s. BT's WalkMove is the same code, with
+    the wall his collision pushed him off last.
   - Collision and steps follow client.dll's movement code. The Pilot is a box (`pilot_base.set`:
     -16 -16 0 to 16 16 72, 47 high crouched), swept against the world's triangles. On the
     ground the move is turned along the floor (0x18020dd06) and traced; a blocked move goes to
@@ -372,15 +380,39 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     1 s climb. Not modelled or guessed: the slow-fall case's flag (0x2b7c) is ignored, the
     `boostEnabled` air step-up doubling (boost Pilot classes only) is left out, the step's
     view offset is our camera's own smoothing, ties between a triangle's face and its edges are
-    resolved toward the face, getting unstuck from inside geometry (small nudges) is ours, and
-    props collide with their render triangles, not their collision models. The game finds no
-    floor in quadrants as Source's TryTouchGroundInQuadrants does, and neither do we.
+    resolved toward the face, and getting unstuck from inside geometry (small nudges) is ours.
+    The game finds no floor in quadrants as Source's TryTouchGroundInQuadrants does, and
+    neither do we.
     `tf-sim/tests/step_sweep.rs` checks ledges, curbs, stairs, ramps, a wall slide, an air step
     and staying crouched under a low ceiling. `TF_COLLISION_DUMP=<file>` makes the viewer save
     the map's collision when it quits; `cargo run --release -p tf-sim --example pilotscan` runs
     the Pilot over a saved dump (sprints in all directions from many spots, reporting stops,
-    hitches and ground mantles), and `tf-assets --example cmdump` writes the map's own
-    `CM_PRIMITIVES` collision in the same format for comparison.
+    hitches and ground mantles; `compare` runs the same sprints over two dumps, `replays` reruns
+    listed spots, `walls` finds wall-slide test spots, `uncovered` lists solid triangles the
+    map's own collision lacks), and `tf-assets --example cmdump` writes the map's own
+    `CM_PRIMITIVES` collision in the same format for comparison. `tf-assets --example propcoll` prints each prop model's collision
+    data (CM contents, hulls, the per-triangle mesh against LOD 0).
+  - Static props collide as engine.dll traces them. Only the props the map lists in
+    `CM_PRIMITIVES` (type 3, by static prop index: 11656 of Angel City's 19458) are traced at
+    all, each with its contents there (the handler 0x1801288e0 calls the static prop trace
+    0x1801b7cf0). That trace has two shapes per model. Traces at TRACEDETAILLEVEL_HIGH, which
+    is bullets (ConVar `pertrianglecollision` 1: "Enables per-triangle collision with
+    TRACEDETAILLEVEL_HIGH (i.e., bullets) on static models"), go to studiorender.dll's
+    per-triangle BVH (v53 header 0x198, walked by 0x18000e570), which is LOD 0's render
+    triangles (exactly so for 839 of Angel City's 854 prop models; trees and plants leave their
+    leaf cards out). Every other trace, the player's hull traces and wall-run probes included
+    (client.dll's Ray_t init 0x1800abec0 leaves the level at 0), sweeps against the model's
+    convex collision hulls (header 0x1CC / 0x1D0, 0x18014a1a0 / 0x1801491e0: face planes, then
+    bevel planes for box sweeps). So the Pilot and BT hit the hulls (in the movement-only clip
+    sets: `CLIP_PILOT` for props with PLAYER contents, `CLIP_TITAN` for TITAN, so BT walks
+    through small props and railings), and shots and other sight traces hit the per-triangle
+    mesh (the collision world's `detail` set, which movement queries skip). The Pilot's wall-run
+    probes and mantle checks use the movement view too, as the game's take the player's own
+    mask (0x18020e3cd), so they now also see player clips. Models without hulls (3291 instances
+    on Angel City: rugs and floor mats, posted papers, wires, bottles, manhole covers) stop
+    shots only. Before this, every prop's render triangles (9.8 million on Angel City) stopped
+    movement, so bolts, trims and sandbag folds stopped the Pilot. The models' embedded `.phy`
+    (vphysics) data is not what these traces use.
   - Jumps take off at sqrt(2 x sv_gravity x height) (jump handler 0x180200cf9) while gravity in
     flight is sv_gravity x gravityscale (0x1801f74b3): a 60-unit jump takes off at 300 u/s and
     goes 75 units high for 1 s. The double jump (0x1802007ba) replaces the vertical speed with a

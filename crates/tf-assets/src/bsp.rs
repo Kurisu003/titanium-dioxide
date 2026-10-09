@@ -180,7 +180,7 @@ fn vec3_at(b: &[u8], o: usize) -> [f32; 3] {
 
 /// The face of a convex brush on plane `i` (normal, distance; inside is `n . p <= d`), as a
 /// polygon: a big square on the plane clipped by every other plane.
-fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec<[f32; 3]> {
+pub(crate) fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec<[f32; 3]> {
     let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
     let (n, d) = planes[i];
@@ -330,7 +330,8 @@ impl Bsp {
 
     /// The world's collision as the game has it (CM_PRIMITIVES): tricoll meshes, which mostly
     /// repeat the render meshes but also hold `TOOLSNODRAW` backing surfaces, clips and glass,
-    /// and brushes (all clips in the MP maps). Static props (primitive type 96) are left out.
+    /// and brushes (all clips in the MP maps). Static props (primitive type 96) are left out
+    /// (`static_prop_contents`).
     /// Layouts from bsp_tool (branches/respawn/titanfall.py); a primitive is
     /// type << 24 | index << 8 | unique contents index.
     pub fn collision_shapes(&self) -> Vec<CollisionShape> {
@@ -424,6 +425,19 @@ impl Bsp {
             }
         }
         out
+    }
+
+    /// The static props in the map's collision (CM_PRIMITIVES type 3, `index << 8` over 21
+    /// bits as engine.dll's handler 0x1801288e0 reads it), with their CM_UNIQUE_CONTENTS
+    /// flags, by static prop index. Props not listed are never traced, whatever their `solid`.
+    pub fn static_prop_contents(&self) -> std::collections::HashMap<usize, u32> {
+        let uc: Vec<u32> = self.lump(lump::CM_UNIQUE_CONTENTS).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        self.lump(lump::CM_PRIMITIVES)
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .filter(|p| p >> 29 == 3)
+            .map(|p| (((p >> 8) & 0x1f_ffff) as usize, uc.get((p & 0xff) as usize).copied().unwrap_or(0)))
+            .collect()
     }
 
     pub fn mesh_indices(&self) -> Vec<u16> {

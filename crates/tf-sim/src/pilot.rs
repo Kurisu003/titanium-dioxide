@@ -608,6 +608,10 @@ pub struct PilotState {
     zip_cooldown: f32,
     /// The normal of the floor stood on (CategorizePosition's trace).
     ground_normal: Vec3,
+    /// What the last ground or air move ran into and didn't get past (its trace's plane
+    /// normal, zero if nothing): Friction keeps the velocity along it when the input pushes
+    /// into it (`walk_move`).
+    block_normal: Vec3,
 }
 
 impl PilotState {
@@ -652,6 +656,7 @@ impl PilotState {
             zipline: None,
             zip_cooldown: 0.0,
             ground_normal: Vec3::Z,
+            block_normal: Vec3::ZERO,
         }
     }
     /// The latest landing, if it was a hard one (faster than impactSpeed): its speed.
@@ -785,7 +790,8 @@ fn wish_of(yaw: f32, input: &PilotInput) -> Vec2 {
 /// One of CanWallrun's wall probes (client.dll 0x18020e2b0): from `origin` toward the wall
 /// (along the flattened -`n`), how far the wall is from the hull's face, and its normal. The
 /// game traces a cube of the hull's half-width; a 3x3 grid of rays across that cube's face
-/// stands in for it here.
+/// stands in for it here. The trace takes the player's own solid mask (0x18020e3cd) at the
+/// default detail level, so it sees what movement sees: player clips and prop hulls.
 fn wall_probe(world: &CollisionWorld, p: &PilotParams, origin: Vec3, n: Vec3) -> Option<(f32, Vec3)> {
     let n = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
     if n == Vec3::ZERO {
@@ -797,7 +803,7 @@ fn wall_probe(world: &CollisionWorld, p: &PilotParams, origin: Vec3, n: Vec3) ->
     let mut best: Option<(f32, Vec3)> = None;
     for i in -1..=1 {
         for j in -1..=1 {
-            if let Some(h) = world.raycast(origin + side * i as f32 + up * j as f32, -n, reach) {
+            if let Some(h) = world.raycast_moving(origin + side * i as f32 + up * j as f32, -n, reach, CLIP_PILOT) {
                 if best.is_none_or(|b| h.t - p.radius < b.0) {
                     best = Some((h.t - p.radius, h.normal));
                 }
@@ -1114,7 +1120,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 // (1500 u/s^2, linear: no sv_friction/sv_stopspeed); Accelerate adds up to the
                 // acceleration along the input. The pilot settings set no sprintAcceleration,
                 // lowAcceleration or sprintDeceleration, so the same two rates hold at any speed.
-                h = crate::titan::walk_move(h, wish, max, p.ground_accel, p.ground_decel, dt);
+                h = crate::titan::walk_move(h, wish, max, p.ground_accel, p.ground_decel, s.block_normal, dt);
             }
             s.vel.x = h.x;
             s.vel.y = h.y;
@@ -1611,6 +1617,9 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
         }
     }
     let wall_impact = wall.map_or(0.0, |n| (-vel_before.dot(Vec3::new(n.x, n.y, 0.0).normalize_or_zero())).max(0.0));
+    // WalkMove and AirMove clear the stored blocking normal before their trace and keep the
+    // plane they ran into (client.dll 0x18020defe / 0x18020e226, 0x1801f2148 / 0x1801f25f9).
+    s.block_normal = wall.unwrap_or(Vec3::ZERO);
 
     // CategorizePosition: a floor within the step height (2 units when airborne) and not rising
     // faster than NON_JUMP_VELOCITY is ground.
@@ -1899,26 +1908,28 @@ fn grapple_step(s: &mut PilotState, input: &PilotInput, wish: Vec2, p: &PilotPar
 }
 
 /// A ledge in front of the player that can be mantled onto: a wall at chest height, a flat top
-/// no higher than a little above the head, and room to stand there.
+/// no higher than a little above the head, and room to stand there. Movement rays: player
+/// clips and prop hulls, not props' render triangles.
 fn mantle_target(s: &PilotState, p: &PilotParams, world: &CollisionWorld, fwd: Vec2) -> Option<Vec3> {
+    let ray = |o: Vec3, d: Vec3, t: f32| world.raycast_moving(o, d, t, CLIP_PILOT);
     let f = Vec3::new(fwd.x, fwd.y, 0.0);
     let chest = s.pos + Vec3::Z * (p.height * 0.55);
     // Something blocking right in front.
-    world.raycast(chest, f, p.radius + 14.0)?;
+    ray(chest, f, p.radius + 14.0)?;
     // Look down onto the top from above the reach height, just past the wall.
     let reach = p.height + 26.0;
     let probe = s.pos + f * (p.radius + 18.0) + Vec3::Z * (reach + 4.0);
-    let hit = world.raycast(probe, -Vec3::Z, reach)?;
+    let hit = ray(probe, -Vec3::Z, reach)?;
     let rise = hit.point.z - s.pos.z;
     if hit.normal.z < 0.7 || rise < p.step_height + 4.0 || rise > reach {
         return None;
     }
     // Head room on top, and a clear path over the edge.
     let top = Vec3::new(probe.x, probe.y, hit.point.z);
-    if world.raycast(top + Vec3::Z * 2.0, Vec3::Z, p.height - 4.0).is_some() {
+    if ray(top + Vec3::Z * 2.0, Vec3::Z, p.height - 4.0).is_some() {
         return None;
     }
-    if world.raycast(s.pos + Vec3::Z * (rise + 6.0), f, p.radius + 18.0).is_some() {
+    if ray(s.pos + Vec3::Z * (rise + 6.0), f, p.radius + 18.0).is_some() {
         return None;
     }
     Some(top)

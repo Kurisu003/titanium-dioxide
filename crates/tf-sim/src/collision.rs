@@ -19,6 +19,11 @@ pub struct CollisionWorld {
     /// Invisible clip surfaces from the map's own collision (`CLIP_PILOT`, `CLIP_TITAN`): they
     /// stop movement (`push_sphere_moving`, `raycast_moving`) but not shots or other traces.
     pub clips: [Option<Box<CollisionWorld>>; 2],
+    /// Surfaces only shots and other non-movement traces hit (`raycast`, `push_sphere`), not
+    /// movement (`trace_box`, `raycast_moving`, `push_sphere_moving`): static props' render
+    /// triangles, which the game traces only at TRACEDETAILLEVEL_HIGH (bullets); movement hits
+    /// their collision hulls, which go in the clip sets.
+    pub detail: Option<Box<CollisionWorld>>,
 }
 
 /// Clip surfaces that stop the Pilot (player clips) and BT (titan clips).
@@ -207,11 +212,11 @@ impl CollisionWorld {
         self.bvh.get_or_init(|| Bvh::build(&self.tris))
     }
 
-    /// Write the triangles and clip sets to `path` (testing: `TF_COLLISION_DUMP`), for offline
-    /// movement tests with [`CollisionWorld::load`].
+    /// Write the triangles, clip sets and detail set to `path` (testing: `TF_COLLISION_DUMP`),
+    /// for offline movement tests with [`CollisionWorld::load`].
     pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let mut out = b"TFCW1".to_vec();
-        for set in [Some(self), self.clips[0].as_deref(), self.clips[1].as_deref()] {
+        let mut out = b"TFCW2".to_vec();
+        for set in [Some(self), self.clips[0].as_deref(), self.clips[1].as_deref(), self.detail.as_deref()] {
             let tris = set.map_or(&[][..], |w| &w.tris[..]);
             out.extend_from_slice(&(tris.len() as u32).to_le_bytes());
             for t in tris {
@@ -225,13 +230,16 @@ impl CollisionWorld {
         std::fs::write(path, out)
     }
 
-    /// Read a world written by [`CollisionWorld::save`].
+    /// Read a world written by [`CollisionWorld::save`] (or an older TFCW1 dump, which has no
+    /// detail set).
     pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
         let data = std::fs::read(path)?;
-        let bad = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not a TFCW1 collision dump");
-        if !data.starts_with(b"TFCW1") {
-            return Err(bad());
-        }
+        let bad = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not a TFCW1/TFCW2 collision dump");
+        let sets = match data.get(..5) {
+            Some(b"TFCW1") => 3,
+            Some(b"TFCW2") => 4,
+            _ => return Err(bad()),
+        };
         let mut o = 5;
         let mut f = || -> std::io::Result<f32> {
             let b = data.get(o..o + 4).ok_or_else(bad)?;
@@ -239,7 +247,7 @@ impl CollisionWorld {
             Ok(f32::from_le_bytes(b.try_into().unwrap()))
         };
         let mut w = CollisionWorld::default();
-        for set in 0..3 {
+        for set in 0..sets {
             let n = f()?.to_bits() as usize;
             for _ in 0..n {
                 let mut v = [Vec3::ZERO; 3];
@@ -248,6 +256,7 @@ impl CollisionWorld {
                 }
                 match set {
                     0 => w.add(v[0], v[1], v[2]),
+                    3 => w.add_detail(v[0], v[1], v[2]),
                     s => w.add_clip(s - 1, v[0], v[1], v[2]),
                 }
             }
@@ -258,9 +267,14 @@ impl CollisionWorld {
     /// Build the acceleration structure now instead of on the first query.
     pub fn finish(&self) {
         self.bvh();
-        for c in self.clips.iter().flatten() {
+        for c in self.clips.iter().flatten().chain(self.detail.iter()) {
             c.bvh();
         }
+    }
+
+    /// Add a triangle that only shots and other non-movement traces hit (`detail`).
+    pub fn add_detail(&mut self, a: Vec3, b: Vec3, c: Vec3) {
+        self.detail.get_or_insert_with(Default::default).add(a, b, c);
     }
 
     /// Add a triangle to clip set `which` (`CLIP_PILOT` or `CLIP_TITAN`).
@@ -273,14 +287,11 @@ impl CollisionWorld {
         [Some(self), self.clips.get(which).and_then(|c| c.as_deref())]
     }
 
-    /// `raycast` that also hits clip set `which` (movement: ground checks).
+    /// A movement ray (ground checks, wall probes): this world's solid triangles and clip set
+    /// `which`, not the `detail` set.
     pub fn raycast_moving(&self, origin: Vec3, dir: Vec3, max_t: f32, which: usize) -> Option<Hit> {
         let [_, clip] = self.with_clip(which);
-        let hit = self.raycast(origin, dir, max_t);
-        match (hit, clip.and_then(|c| c.raycast(origin, dir, max_t))) {
-            (Some(a), Some(b)) => Some(if b.t < a.t { b } else { a }),
-            (a, b) => a.or(b),
-        }
+        nearer(self.raycast_tris(origin, dir, max_t), clip.and_then(|c| c.raycast_tris(origin, dir, max_t)))
     }
 
     /// `push_sphere` that also pushes out of clip set `which`.
@@ -314,8 +325,14 @@ impl CollisionWorld {
         }
     }
 
-    /// Ray cast against both triangle sides. `dir` need not be normalized; `t` is in units of `dir`.
+    /// Ray cast against both triangle sides, `detail` included (shots, sight lines; clips are
+    /// not hit). `dir` need not be normalized; `t` is in units of `dir`.
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
+        nearer(self.raycast_tris(origin, dir, max_t), self.detail.as_ref().and_then(|d| d.raycast_tris(origin, dir, max_t)))
+    }
+
+    /// `raycast` against this world's own triangles only.
+    fn raycast_tris(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
         let bvh = self.bvh();
         if bvh.nodes.is_empty() {
             return None;
@@ -360,7 +377,15 @@ impl CollisionWorld {
     /// has z above `max_normal_z` (floors are handled by ground snapping).
     /// Returns the total correction and the summed contact normals.
     pub fn push_sphere(&self, center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
-        push_sphere_in(&[Some(self), None], center, radius, max_normal_z)
+        push_sphere_in(&[Some(self), self.detail.as_deref()], center, radius, max_normal_z)
+    }
+}
+
+/// The nearer of two ray hits.
+fn nearer(a: Option<Hit>, b: Option<Hit>) -> Option<Hit> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if b.t < a.t { b } else { a }),
+        (a, b) => a.or(b),
     }
 }
 
@@ -660,5 +685,31 @@ mod tests {
         let (push, _) = w.push_sphere_moving(Vec3::new(5.0, 0.0, 0.0), 8.0, 0.7, CLIP_PILOT);
         assert!((push.x + 3.0).abs() < 1e-3, "pushed out of the clip: {push}");
         assert_eq!(w.push_sphere(Vec3::new(5.0, 0.0, 0.0), 8.0, 0.7).0, Vec3::ZERO);
+    }
+
+    #[test]
+    fn detail_stops_shots_only() {
+        let mut w = CollisionWorld::default();
+        // A prop's render triangle at x = 10 (detail) and its hull face at x = 12 (pilot clip).
+        w.add_detail(Vec3::new(10.0, -50.0, -50.0), Vec3::new(10.0, 50.0, -50.0), Vec3::new(10.0, 0.0, 50.0));
+        w.add_clip(CLIP_PILOT, Vec3::new(12.0, -50.0, -50.0), Vec3::new(12.0, 50.0, -50.0), Vec3::new(12.0, 0.0, 50.0));
+        w.finish();
+        let shot = w.raycast(Vec3::ZERO, Vec3::X, 100.0).expect("shots hit the render triangles");
+        assert!((shot.t - 10.0).abs() < 1e-3);
+        let walk = w.raycast_moving(Vec3::ZERO, Vec3::X, 100.0, CLIP_PILOT).expect("movement hits the hull");
+        assert!((walk.t - 12.0).abs() < 1e-3);
+        assert!(w.raycast_moving(Vec3::ZERO, Vec3::X, 100.0, CLIP_TITAN).is_none());
+        let tr = w.trace_box(Vec3::ZERO, Vec3::new(40.0, 0.0, 0.0), Vec3::splat(-1.0), Vec3::splat(1.0), CLIP_PILOT);
+        assert!((tr.end.x - (11.0 - DIST_EPSILON)).abs() < 1e-3, "box stops at the hull: {}", tr.end);
+        assert!(w.push_sphere(Vec3::new(5.0, 0.0, 0.0), 8.0, 0.7).0.x < -2.9, "non-moving pushes see detail");
+        assert_eq!(w.push_sphere_moving(Vec3::new(5.0, 0.0, 0.0), 6.0, 0.7, CLIP_PILOT).0, Vec3::ZERO);
+        // The dump keeps the sets apart.
+        let path = std::env::temp_dir().join(format!("tfcw_detail_{}.tfcw", std::process::id()));
+        w.save(&path).unwrap();
+        let back = CollisionWorld::load(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(back.tris.is_empty());
+        assert_eq!(back.detail.as_ref().map(|d| d.tris.len()), Some(1));
+        assert_eq!(back.clips[CLIP_PILOT].as_ref().map(|d| d.tris.len()), Some(1));
     }
 }

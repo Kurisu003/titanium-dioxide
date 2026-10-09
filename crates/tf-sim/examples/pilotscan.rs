@@ -4,6 +4,13 @@
 //! `pilotscan <dump> run <x> <y> <z> <yaw deg> <secs> [sprint|walk|crouch|jump]` prints a sprint
 //! (or walk, crouch walk, bunny hop) from a spot, every 0.05 s.
 //!
+//! `pilotscan <dump> compare <dump B> <x0> <y0> <x1> <y1> <samples> [seed]` runs the same
+//! sprints (spots clear in both) over two dumps, e.g. before and after a collision change, and
+//! lists the runs that stop in only one of them. Also: `replays <file>` (spots to rerun),
+//! `walls x0 y0 x1 y1 [angle]` (wall-slide test spots), `uncovered <cm dump>` (solid triangles
+//! the map's own collision lacks), `withcm <cm dump> <out>` (a dump moving on the map's own
+//! collision).
+//!
 //! `pilotscan <dump> scan <x0> <y0> <x1> <y1> <samples> [seed]` drops the Pilot on random
 //! walkable spots in that area, sprints a second in a random direction and lists where the
 //! sprint stopped dead against an obstacle no higher than 30 units in front of the feet (the
@@ -57,6 +64,47 @@ fn ground_at(w: &CollisionWorld, x: f32, y: f32, z: f32) -> Option<Vec3> {
     (h.normal.z > 0.7).then_some(h.point)
 }
 
+/// A clear spot to start a scan sprint from at `x y`, dropping from `z`: room to stand and
+/// nothing within 48 units ahead at chest or knee height.
+fn scan_start(w: &CollisionWorld, p: &PilotParams, x: f32, y: f32, z: f32, dir: Vec3) -> Option<Vec3> {
+    let g = ground_at(w, x, y, z)?;
+    if w.raycast_moving(g + Vec3::Z * 2.0, Vec3::Z, p.height + 4.0, CLIP_PILOT).is_some() {
+        return None;
+    }
+    if [40.0, 24.0].iter().any(|&h| w.raycast_moving(g + Vec3::Z * h, dir, 48.0, CLIP_PILOT).is_some()) {
+        return None;
+    }
+    Some(g)
+}
+
+/// A one-second scan sprint from sprint speed: where it stopped dead (if it did), whether the
+/// hull fits a step further there (a snag), whether it hitched, and the distance covered.
+fn scan_sprint(w: &CollisionWorld, p: &PilotParams, g: Vec3, yaw: f32) -> (Option<Vec3>, bool, bool, f32) {
+    let dir = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+    let mut s = PilotState::new(g + Vec3::Z * 0.5, yaw);
+    s.mode = PilotMove::Ground;
+    s.vel = dir * p.sprint_speed;
+    let start = s.pos;
+    let (mut was_fast, mut hitch, mut stop, mut snag) = (0, false, None, false);
+    for _ in 0..120 {
+        let before = s.pos;
+        step(&mut s, &input(yaw, Gait::Sprint, 1), p, w, DT);
+        let moved = (s.pos - before).truncate().dot(dir.truncate()) / DT;
+        if moved > 200.0 {
+            was_fast += 1;
+        }
+        if was_fast >= 3 && moved < 60.0 && s.on_ground() {
+            stop = Some(s.pos);
+            snag = passable(w, p, s.pos, dir);
+            break;
+        }
+        if was_fast >= 3 && moved < 0.6 * p.sprint_speed && moved >= 60.0 && s.on_ground() && passable(w, p, s.pos, dir) {
+            hitch = true;
+        }
+    }
+    (stop, snag, hitch, (s.pos - start).truncate().length())
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Gait {
     Sprint,
@@ -104,6 +152,61 @@ fn main() {
                 if i % 6 == 0 {
                     println!("t {:5.2} pos {:8.1} {:8.1} {:7.1} hspeed {:5.0} vz {:5.0} {:?}", i as f32 * DT, s.pos.x, s.pos.y, s.pos.z, s.horizontal_speed(), s.vel.z, s.mode);
                 }
+            }
+        }
+        "compare" => {
+            let t = std::time::Instant::now();
+            let wb = CollisionWorld::load(std::path::Path::new(&a[3])).expect("second collision dump");
+            wb.finish();
+            eprintln!("loaded B: {} triangles in {:?}", wb.tris.len(), t.elapsed());
+            let g = |i: usize| a[i + 1].parse::<f32>().unwrap();
+            let (x0, y0, x1, y1) = (g(3), g(4), g(5), g(6));
+            let n: usize = a[8].parse().unwrap();
+            let mut seed: u64 = a.get(9).and_then(|s| s.parse().ok()).unwrap_or(12345) | 1;
+            let mut runs = 0;
+            // Per dump: stops, snags, hitches, distance.
+            let mut tally = [(0, 0, 0, 0.0f32); 2];
+            for _ in 0..n {
+                let (x, y) = (x0 + (x1 - x0) * rng(&mut seed), y0 + (y1 - y0) * rng(&mut seed));
+                let yaw = rng(&mut seed) * std::f32::consts::TAU;
+                let z = 4000.0 * rng(&mut seed) - 500.0;
+                let dir = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+                let (Some(ga), Some(gb)) = (scan_start(&w, &p, x, y, z, dir), scan_start(&wb, &p, x, y, z, dir)) else { continue };
+                if (ga.z - gb.z).abs() > 1.0 {
+                    continue;
+                }
+                runs += 1;
+                let r = [scan_sprint(&w, &p, ga, yaw), scan_sprint(&wb, &p, ga, yaw)];
+                for (k, (stop, snag, hitch, d)) in r.iter().enumerate() {
+                    tally[k].0 += stop.is_some() as usize;
+                    tally[k].1 += *snag as usize;
+                    tally[k].2 += *hitch as usize;
+                    tally[k].3 += d;
+                }
+                for (k, name) in [(0, "A"), (1, "B")] {
+                    if let (Some(at), None) = (r[k].0, r[1 - k].0) {
+                        println!(
+                            "{name} only: stop at {:.0} {:.0} {:.0} yaw {:.0}, obstacle top {:?} (TF_PILOT_TP=\"{:.0} {:.0} {:.0} {:.0}\") from {:.1} {:.1} {:.2} {:.1}",
+                            at.x,
+                            at.y,
+                            at.z,
+                            yaw.to_degrees(),
+                            obstacle_height(if k == 0 { &w } else { &wb }, &p, at, dir),
+                            at.x - dir.x * 150.0,
+                            at.y - dir.y * 150.0,
+                            at.z + 20.0,
+                            yaw.to_degrees(),
+                            ga.x,
+                            ga.y,
+                            ga.z + 0.5,
+                            yaw.to_degrees()
+                        );
+                    }
+                }
+            }
+            for (k, name) in [(0, "A"), (1, "B")] {
+                let (stops, snags, hitches, d) = tally[k];
+                println!("{name}: {runs} runs, stopped {stops}, snags {snags}, hitches {hitches}, mean distance in 1 s {:.0}", d / runs.max(1) as f32);
             }
         }
         "scan" => {
@@ -247,6 +350,115 @@ fn main() {
                 }
             }
             println!("travelled {:.0}", (s.pos - pos).truncate().length());
+        }
+        "replays" => {
+            // `replays <file>`: `replay` for every "x y z yaw" line of a file (the start spots a
+            // scan prints after "from"), printing the distance each covers.
+            let text = std::fs::read_to_string(&a[3]).expect("spots file");
+            for line in text.lines() {
+                let v: Vec<f32> = line.split_whitespace().take(4).filter_map(|x| x.parse().ok()).collect();
+                if v.len() < 4 {
+                    continue;
+                }
+                let (stop, snag, _, d) = scan_sprint(&w, &p, Vec3::new(v[0], v[1], v[2] - 0.5), v[3].to_radians());
+                println!("{:.1} {:.1} {:.2} {:.1} | travelled {d:.0}{}", v[0], v[1], v[2], v[3], if stop.is_some() { if snag { " (snag)" } else { " (stop)" } } else { "" });
+            }
+        }
+        "withcm" => {
+            // `withcm <cm dump> <out>`: this dump with its solid triangles swapped for the map's
+            // own collision (movement as the game has it), the old ones kept as detail.
+            let cm = CollisionWorld::load(std::path::Path::new(&a[3])).expect("cm dump");
+            let mut out = CollisionWorld::default();
+            for t in &cm.tris {
+                out.add(t.a, t.b, t.c);
+            }
+            for t in w.tris.iter().chain(w.detail.iter().flat_map(|d| d.tris.iter())) {
+                out.add_detail(t.a, t.b, t.c);
+            }
+            for k in [CLIP_PILOT, 1] {
+                for t in w.clips[k].iter().flat_map(|c| c.tris.iter()) {
+                    out.add_clip(k, t.a, t.b, t.c);
+                }
+            }
+            out.save(std::path::Path::new(&a[4])).expect("write");
+        }
+        "walls" => {
+            // `walls x0 y0 x1 y1 [angle]`: long straight walls with open floor along them (a wall
+            // slide test): runs a sprint `angle` degrees (default 66) into each candidate and
+            // lists the ones it slides along for 2 s, with the speed along the wall.
+            let (x0, y0, x1, y1) = (f(3), f(4), f(5), f(6));
+            let angle = a.get(7).map_or(66.0, |s| s.parse::<f32>().unwrap()).to_radians();
+            let mut found = 0;
+            for t in &w.tris {
+                let c = (t.a + t.b + t.c) / 3.0;
+                let span = t.a.max(t.b).max(t.c) - t.a.min(t.b).min(t.c);
+                if t.n.z.abs() > 0.01 || c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1 || span.truncate().length() < 300.0 || span.z < 100.0 {
+                    continue;
+                }
+                let n = Vec3::new(t.n.x, t.n.y, 0.0).normalize();
+                let base = t.a.min(t.b).min(t.c).z;
+                for side in [1.0f32, -1.0] {
+                    let n = n * side;
+                    let along = Vec3::new(-n.y, n.x, 0.0);
+                    let start = Vec3::new(c.x, c.y, base + 40.0) + n * 60.0 - along * 120.0;
+                    let Some(g) = ground_at(&w, start.x, start.y, start.z) else { continue };
+                    if (g.z - base).abs() > 2.0 {
+                        continue;
+                    }
+                    let dir = along * angle.cos() - n * angle.sin();
+                    let yaw = dir.y.atan2(dir.x);
+                    let mut s = PilotState::new(g + Vec3::Z * 0.5, yaw);
+                    s.mode = PilotMove::Ground;
+                    for _ in 0..60 {
+                        step(&mut s, &input(yaw, Gait::Sprint, 1), &p, &w, DT);
+                    }
+                    let mid = s.pos;
+                    for _ in 0..120 {
+                        step(&mut s, &input(yaw, Gait::Sprint, 1), &p, &w, DT);
+                    }
+                    let slid = (s.pos - mid).dot(along);
+                    let at_wall = w.raycast_moving(s.pos + Vec3::Z * 36.0, -n, p.radius + 2.0, CLIP_PILOT).is_some();
+                    if at_wall && (s.pos.z - g.z).abs() < 1.0 && slid > 0.0 {
+                        println!("wall at {:.0} {:.0} {:.0}: {:.0} u/s along it (TF_PILOT_TP=\"{:.0} {:.0} {:.0} {:.0}\")", c.x, c.y, base, slid / 1.0, g.x, g.y, g.z + 20.0, yaw.to_degrees());
+                        found += 1;
+                    }
+                }
+                if found >= 20 {
+                    break;
+                }
+            }
+        }
+        "uncovered" => {
+            // `uncovered <cm dump> [x0 y0 x1 y1]`: this dump's solid triangles with no triangle of the map's
+            // own collision (a `cmdump` file: solid and player clips) within 1 unit of their
+            // centre: render-only surfaces that the game's movement doesn't collide with.
+            let cm = CollisionWorld::load(std::path::Path::new(&a[3])).expect("cm dump");
+            cm.finish();
+            let (mut n, mut area, mut steep) = (0usize, 0.0f32, 0usize);
+            let mut cells: std::collections::HashMap<(i32, i32, i32), (usize, f32)> = Default::default();
+            for t in &w.tris {
+                let c = (t.a + t.b + t.c) / 3.0;
+                if cm.push_sphere_moving(c, 1.0, 2.0, CLIP_PILOT).1 != Vec3::ZERO {
+                    continue;
+                }
+                let ar = (t.b - t.a).cross(t.c - t.a).length() * 0.5;
+                // Only the playable middle of the map (optional box: x0 y0 x1 y1).
+                if a.len() >= 8 && !(c.x >= f(4) && c.y >= f(5) && c.x <= f(6) && c.y <= f(7)) {
+                    continue;
+                }
+                n += 1;
+                area += ar;
+                steep += (t.n.z.abs() < 0.7) as usize;
+                let e = cells.entry(((c.x / 256.0).floor() as i32, (c.y / 256.0).floor() as i32, (c.z / 256.0).floor() as i32)).or_default();
+                e.0 += 1;
+                e.1 += ar;
+            }
+            println!("{n} of {} solid triangles have no map collision within 1 unit ({steep} steep), {:.0} square units", w.tris.len(), area);
+            let mut cells: Vec<_> = cells.into_iter().collect();
+            cells.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            for ((x, y, z), (k, ar)) in cells.iter().take(40) {
+                println!("  cell {} {} {}: {k} triangles, {ar:.0} sq units", x * 256 + 128, y * 256 + 128, z * 256 + 128);
+            }
         }
         "probe" => {
             // What is in front of the feet at a spot: per height, the nearest hit ahead.
