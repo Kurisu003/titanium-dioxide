@@ -71,6 +71,9 @@ struct Bvh {
     median: Vec<Node>,
     /// Triangle indices, grouped by median-tree leaf.
     order: Vec<u32>,
+    /// The triangles in that order, with the search tree (not for `median_only`, whose sets are
+    /// big): queries read a leaf's triangles side by side instead of through `order`.
+    sorted: Vec<Tri>,
     /// The median-tree leaves' top heights (`max.z`, -0 as 0), sorted, for `raycast_replay`.
     tops: Vec<f32>,
 }
@@ -85,14 +88,24 @@ impl Bvh {
         }
         let mut leaves: Vec<Node> = median.iter().copied().filter(|n| n.count > 0).collect();
         let mut tops: Vec<f32> = leaves.iter().map(|l| l.max.z + 0.0).collect();
+        let mut sorted = Vec::new();
         let nodes = std::thread::scope(|scope| {
             scope.spawn(|| {
                 tops.sort_unstable_by(f32::total_cmp);
                 tops.dedup();
+                sorted = order.iter().map(|&i| tris[i as usize]).collect();
             });
             sah_build(&mut leaves)
         });
-        Self { nodes, leaves, median, order, tops }
+        Self { nodes, leaves, median, order, sorted, tops }
+    }
+
+    /// The triangle at position `at` of `order`.
+    fn tri<'a>(&'a self, tris: &'a [Tri], at: u32) -> &'a Tri {
+        match self.sorted.get(at as usize) {
+            Some(t) => t,
+            None => &tris[self.order[at as usize] as usize],
+        }
     }
 
     /// Whether the median-tree ray walk (`raycast_median`: nearer child first, the left one
@@ -729,8 +742,8 @@ impl CollisionWorld {
         let found = found.as_mut_slice();
         found.sort_unstable_by_key(|&(start, _)| std::cmp::Reverse(start));
         for &(start, count) in found.iter() {
-            for &i in &bvh.order[start as usize..(start + count) as usize] {
-                f(&self.tris[i as usize]);
+            for tri in &bvh.sorted[start as usize..(start + count) as usize] {
+                f(tri);
             }
         }
     }
@@ -749,8 +762,8 @@ impl CollisionWorld {
                 continue;
             }
             if n.count > 0 {
-                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
-                    f(&self.tris[i as usize]);
+                for at in n.start..n.start + n.count {
+                    f(bvh.tri(&self.tris, at));
                 }
             } else if sp + 2 <= stack.len() {
                 stack[sp] = n.start;
@@ -823,7 +836,7 @@ impl CollisionWorld {
                         }
                         let first = hits.len() as u32;
                         for at in leaf.start..leaf.start + leaf.count {
-                            let tri = &self.tris[bvh.order[at as usize] as usize];
+                            let tri = &bvh.sorted[at as usize];
                             if let Some(t) = ray_tri(origin, dir, tri) {
                                 if t <= max_t {
                                     hits.push((at, t));
@@ -873,7 +886,7 @@ impl CollisionWorld {
             }
         }
         best.map(|(at, t)| {
-            let tri = &self.tris[bvh.order[at as usize] as usize];
+            let tri = &bvh.sorted[at as usize];
             let nrm = if tri.n.dot(dir) > 0.0 { -tri.n } else { tri.n };
             Hit { t, point: origin + dir * t, normal: nrm }
         })
@@ -899,8 +912,8 @@ impl CollisionWorld {
             }
             let n = bvh.median[ni as usize];
             if n.count > 0 {
-                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
-                    let tri = &self.tris[i as usize];
+                for at in n.start..n.start + n.count {
+                    let tri = bvh.tri(&self.tris, at);
                     if let Some(t) = ray_tri(origin, dir, tri) {
                         if t <= limit {
                             limit = t;
@@ -1342,14 +1355,19 @@ mod tests {
                 s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 (s >> 8) as f32 / (1u32 << 24) as f32
             };
-            let base = w.tris.as_ptr();
+            // Triangles by their index in `w.tris`.
+            let bvh = w.bvh();
+            let index = |t: &Tri| match bvh.sorted.as_ptr_range().contains(&(t as *const Tri)) {
+                true => bvh.order[unsafe { (t as *const Tri).offset_from(bvh.sorted.as_ptr()) } as usize] as isize,
+                false => unsafe { (t as *const Tri).offset_from(w.tris.as_ptr()) },
+            };
             let queries = if random > 10_000 { 300 } else { 3000 };
             for q in 0..queries {
                 let c = if q % 3 == 0 { Vec3::new((r() * 12.0).floor() * 64.0, (r() * 12.0).floor() * 64.0, 16.0) } else { Vec3::new(r(), r(), r() * 0.3) * 800.0 };
                 let e = Vec3::new(r(), r(), r()) * if q % 5 == 0 { 200.0 } else { 40.0 };
                 let (mut a, mut b) = (Vec::new(), Vec::new());
-                w.cells_in(c - e, c + e, |t| a.push(unsafe { (t as *const Tri).offset_from(base) }));
-                w.cells_in_median(w.bvh(), c - e, c + e, |t| b.push(unsafe { (t as *const Tri).offset_from(base) }));
+                w.cells_in(c - e, c + e, |t| a.push(index(t)));
+                w.cells_in_median(bvh, c - e, c + e, |t| b.push(index(t)));
                 assert_eq!(a, b, "query {q} around {c}");
             }
         }
