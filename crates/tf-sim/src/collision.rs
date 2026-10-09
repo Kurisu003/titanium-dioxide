@@ -1120,12 +1120,8 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
     let tie = 0.01 / d.length().max(1e-6);
     let mut inside = true;
     let (mut depth, mut mtv) = (f32::INFINITY, Vec3::ZERO);
-    let mut test = |axis: Vec3, is_face: bool| -> bool {
-        let len2 = axis.length_squared();
-        if len2 < 1e-10 {
-            return true;
-        }
-        let l = axis / len2.sqrt();
+    // Separation along the unit axis `l`.
+    let mut test = |l: Vec3, is_face: bool| -> bool {
         let (p0, p1, p2) = (v[0].dot(l), v[1].dot(l), v[2].dot(l));
         let r = e.x * l.x.abs() + e.y * l.y.abs() + e.z * l.z.abs();
         // The box's centre at t is s = t * dl along l; it overlaps while lo < s < hi.
@@ -1161,13 +1157,19 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
         }
         true
     };
+    // An axis too short to have a direction separates nothing. (The box's own axes are unit
+    // length already: normalizing them would change nothing.)
+    let unit = |axis: Vec3| {
+        let len2 = axis.length_squared();
+        (len2 >= 1e-10).then(|| axis / len2.sqrt())
+    };
     let n = (v[1] - v[0]).cross(v[2] - v[0]);
-    if !(test(Vec3::X, true) && test(Vec3::Y, true) && test(Vec3::Z, true) && test(n, true)) {
+    if !(test(Vec3::X, true) && test(Vec3::Y, true) && test(Vec3::Z, true) && unit(n).is_none_or(|l| test(l, true))) {
         return Sweep::Miss;
     }
     for ed in edges {
         for ax in [Vec3::X, Vec3::Y, Vec3::Z] {
-            if !test(ax.cross(ed), false) {
+            if !unit(ax.cross(ed)).is_none_or(|l| test(l, false)) {
                 return Sweep::Miss;
             }
         }
