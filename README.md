@@ -1270,6 +1270,13 @@ high made a new buffer (and a 5 ms rebuild, ~15 times a minute on foot); they no
 again (rebuilds on the Angel City run: 146 -> 8).
 Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
 
+Bevy draws each shadow cascade in one batch set per material (200-540 per cascade on Angel
+City), but an opaque material's shadow pipeline has no fragment shader and never reads the
+material. `shadowbatch.rs` queues those meshes in one set per pipeline instead (60-150 sets
+remain per cascade, mostly alpha-tested materials, which keep theirs): about 2.3-3.6 -> 0.9-1.4 ms
+of CPU per cascade. The depth written is the same (screenshots with time frozen, flipping between
+the two every 4 s, match bit for bit). `TF_SHADOW_BY_MATERIAL=1` turns it off.
+
 The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
