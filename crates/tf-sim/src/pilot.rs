@@ -1574,8 +1574,8 @@ fn stay_on_ground(h: &Hull, pos: &mut Vec3) {
 }
 
 /// One tick of movement with collision: client.dll's ground move (0x18020cc30) or AirMove
-/// (0x1801f1bd0), then CategorizePosition (0x1801f3160). Returns the fastest speed lost into a
-/// wall (0 if none).
+/// (0x1801f1bd0), then CategorizePosition (0x1801f3160). Returns the speed the move had into
+/// the wall that blocked it (along the wall's flattened normal; 0 if none).
 fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, dt: f32) -> f32 {
     let h = Hull::new(world, p, s.crouched);
     h.unstick(&mut s.pos);

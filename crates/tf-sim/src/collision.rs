@@ -4,6 +4,7 @@
 use glam::Vec3;
 use std::sync::OnceLock;
 
+/// A triangle and its unit normal (along `(b - a) x (c - a)`).
 #[derive(Clone, Copy)]
 pub struct Tri {
     pub a: Vec3,
@@ -12,12 +13,15 @@ pub struct Tri {
     pub n: Vec3,
 }
 
+/// A map's collision: solid triangles, and the clip and detail sets.
 #[derive(Default)]
 pub struct CollisionWorld {
+    /// Solid triangles: every query hits them.
     pub tris: Vec<Tri>,
     bvh: OnceLock<Bvh>,
     /// Invisible clip surfaces from the map's own collision (`CLIP_PILOT`, `CLIP_TITAN`): they
-    /// stop movement (`push_sphere_moving`, `raycast_moving`) but not shots or other traces.
+    /// stop movement (`trace_box`, `push_sphere_moving`, `raycast_moving`) but not shots or
+    /// other traces.
     pub clips: [Option<Box<CollisionWorld>>; 2],
     /// Surfaces only shots and other non-movement traces hit (`raycast`, `push_sphere`), not
     /// movement (`trace_box`, `raycast_moving`, `push_sphere_moving`): static props' render
@@ -34,6 +38,8 @@ pub struct CollisionWorld {
 pub const CLIP_PILOT: usize = 0;
 pub const CLIP_TITAN: usize = 1;
 
+/// A ray's hit: how far along it (in units of its direction), where, and the surface normal
+/// facing the ray.
 #[derive(Debug, Clone, Copy)]
 pub struct Hit {
     pub t: f32,
@@ -1137,6 +1143,7 @@ pub struct Trace {
 }
 
 impl Trace {
+    /// Something was in the way.
     pub fn hit(&self) -> bool {
         self.fraction < 1.0
     }
