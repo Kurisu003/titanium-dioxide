@@ -133,8 +133,8 @@ pub fn update_damage_arcs(
         let (f, r) = (to.dot(fwd.with_y(0.0).normalize_or_zero()), to.dot(right.with_y(0.0).normalize_or_zero()));
         let a = r.atan2(f);
         let radius = 15.0;
-        node.left = vh(a.sin() * radius);
-        node.top = vh(-a.cos() * radius);
+        set(&mut node, |n| &mut n.left, vh(a.sin() * radius));
+        set(&mut node, |n| &mut n.top, vh(-a.cos() * radius));
         tf.rotation = Rot2::radians(a);
         vis.set_if_neq(Visibility::Inherited);
         let alpha = (t / DAMAGE_ARC_TIME).min(1.0).powf(0.7);
@@ -157,6 +157,17 @@ pub struct ChargePip(usize);
 pub struct ChargePipFill(usize);
 const CHARGE_PIPS: usize = 6;
 const CHARGE_WIDTH: f32 = 12.0;
+
+/// Set one field of a component, marking the component changed only when the value differs.
+/// Writing a field marks it changed even with the same value, and a changed UI `Node` is laid
+/// out again with its ancestors; most HUD values are the same from one frame to the next.
+pub fn set<C, T: PartialEq>(c: &mut Mut<C>, field: impl FnOnce(&mut C) -> &mut T, v: T) {
+    let slot = field(c.bypass_change_detection());
+    if *slot != v {
+        *slot = v;
+        c.set_changed();
+    }
+}
 
 fn vh(v: f32) -> Val {
     Val::Vh(v)
@@ -483,7 +494,7 @@ pub fn update_hud(
         let per = crate::pilotctl::PILOT_HEALTH / PILOT_SEGMENTS as f32;
         for (seg, mut node, mut bg) in &mut pilot_segs {
             let fill = ((ph.health - seg.0 as f32 * per) / per).clamp(0.0, 1.0);
-            node.width = percent(fill * 100.0);
+            set(&mut node, |n| &mut n.width, percent(fill * 100.0));
             bg.0 = if ph.hurt > 0.0 { Color::srgb(1.0, 0.55, 0.45) } else { WHITE };
         }
     }
@@ -493,19 +504,19 @@ pub fn update_hud(
     let doomed = health.v.doomed.is_some();
     for (seg, mut node, mut bg) in &mut segs {
         let fill = if doomed { 0.0 } else { ((health.v.health - seg.0 as f32 * crate::combat::SEGMENT) / crate::combat::SEGMENT).clamp(0.0, 1.0) };
-        node.width = percent(fill * 100.0);
+        set(&mut node, |n| &mut n.width, percent(fill * 100.0));
         bg.0 = if health.hurt > 0.0 { Color::srgb(1.0, 0.55, 0.45) } else { WHITE };
     }
     if let Ok(mut n) = shield.single_mut() {
-        n.width = percent(health.v.shield / health.v.max_shield.max(1.0) * 100.0);
+        set(&mut n, |n| &mut n.width, percent(health.v.shield / health.v.max_shield.max(1.0) * 100.0));
     }
     if let Ok((mut n, mut v)) = doom.single_mut() {
         v.set_if_neq(if doomed { Visibility::Inherited } else { Visibility::Hidden });
-        n.width = percent(health.v.fraction() * 100.0);
+        set(&mut n, |n| &mut n.width, percent(health.v.fraction() * 100.0));
     }
     for (pip, mut node, mut bg) in &mut pips {
         let fill = ((titan.state.power - pip.0 as f32 * 50.0) / 50.0).clamp(0.0, 1.0);
-        node.width = percent(fill * 100.0);
+        set(&mut node, |n| &mut n.width, percent(fill * 100.0));
         bg.0 = if fill >= 1.0 { WHITE } else { DIM };
     }
     // Cooldowns: the shade covers what is still recharging.
@@ -518,7 +529,7 @@ pub fn update_hud(
             (Slot::Ordnance, None) => if ord.ready() || ord.charging { 0.0 } else { 1.0 - ord.fraction() },
             (Slot::Defensive, None) => 1.0 - vortex.fraction(),
         };
-        node.height = percent(left.clamp(0.0, 1.0) * 100.0);
+        set(&mut node, |n| &mut n.height, percent(left.clamp(0.0, 1.0) * 100.0));
     }
     let alive = enemies.iter().filter(|e| e.alive() && !e.infantry).count();
     for (mut t, mut col, slot, core_t, wname, count, clip, wave_title, wave_sub, banner, prompt) in &mut texts {
@@ -688,12 +699,12 @@ pub fn update_hud_state(
         let n = def.levels.clamp(1, CHARGE_PIPS as u32) as usize;
         let full = c.frac >= 1.0;
         for (pip, mut node) in &mut charge_pips {
-            node.display = if pip.0 < n { Display::Flex } else { Display::None };
-            node.width = vh(CHARGE_WIDTH / n as f32);
+            set(&mut node, |n| &mut n.display, if pip.0 < n { Display::Flex } else { Display::None });
+            set(&mut node, |n| &mut n.width, vh(CHARGE_WIDTH / n as f32));
         }
         for (fill, mut node, mut bg) in &mut charge_fills {
             let f = (c.frac * n as f32 - fill.0 as f32).clamp(0.0, 1.0);
-            node.width = percent(f * 100.0);
+            set(&mut node, |n| &mut n.width, percent(f * 100.0));
             bg.0 = if full { AMBER } else if f >= 1.0 { WHITE } else { DIM };
         }
     }
@@ -1139,8 +1150,8 @@ pub fn lost_health_flash(
             bg.0 = Color::NONE;
             continue;
         }
-        node.left = percent((a - lo) / crate::combat::SEGMENT * 100.0);
-        node.width = percent((b - a) / crate::combat::SEGMENT * 100.0);
+        set(&mut node, |n| &mut n.left, percent((a - lo) / crate::combat::SEGMENT * 100.0));
+        set(&mut node, |n| &mut n.width, percent((b - a) / crate::combat::SEGMENT * 100.0));
         let alpha = if t < HOLD { 1.0 } else { 1.0 - (t - HOLD) / FADE };
         bg.0 = Color::srgba(1.0, 0.35, 0.25, alpha.clamp(0.0, 1.0));
     }

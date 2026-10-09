@@ -1753,12 +1753,14 @@ pub fn update_health_bars(
         match camera.world_to_viewport(cam_tf, top) {
             Ok(p) if e.alive() && !hidden.0 => {
                 vis.set_if_neq(Visibility::Inherited);
-                node.left = px(p.x);
-                node.top = px(p.y);
+                crate::hud::set(&mut node, |n| &mut n.left, px(p.x));
+                crate::hud::set(&mut node, |n| &mut n.top, px(p.y));
                 // Centre on the point (13vh wide).
-                node.margin = UiRect::left(Val::Vh(-6.5));
+                crate::hud::set(&mut node, |n| &mut n.margin, UiRect::left(Val::Vh(-6.5)));
             }
-            _ => *vis = Visibility::Hidden,
+            _ => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
         }
         if let Ok((mut t, mut c)) = labels.get_mut(bar.label) {
             let name = kits.0.get(e.kit).map(|k| k.name.as_str()).unwrap_or("TITAN");
@@ -1769,10 +1771,10 @@ pub fn update_health_bars(
             c.0 = if locks > 0 { Color::srgb(1.0, 0.8, 0.25) } else { Color::srgb(1.0, 0.36, 0.26) };
         }
         if let Ok((mut n, _)) = fills.get_mut(bar.shield) {
-            n.width = percent(e.v.shield / e.v.max_shield.max(1.0) * 100.0);
+            crate::hud::set(&mut n, |n| &mut n.width, percent(e.v.shield / e.v.max_shield.max(1.0) * 100.0));
         }
         if let Ok((mut n, mut bg)) = fills.get_mut(bar.health) {
-            n.width = percent(e.v.fraction() * 100.0);
+            crate::hud::set(&mut n, |n| &mut n.width, percent(e.v.fraction() * 100.0));
             bg.0 = if e.flash > 0.0 {
                 Color::WHITE
             } else if e.doomed() {
