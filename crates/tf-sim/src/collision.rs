@@ -399,14 +399,20 @@ impl CollisionWorld {
         let inv = Vec3::ONE / dir;
         let mut best: Option<Hit> = None;
         let mut limit = max_t;
-        let mut stack = [0u32; 64];
+        // Each entry keeps its box's entry distance from when it was pushed: whether the ray
+        // reaches a box depends on the limit only through `entry <= limit` (`ray_box`), so the
+        // box needn't be tested again when it is popped.
+        let Some(t_root) = ray_box(origin, inv, bvh.nodes[0].min, bvh.nodes[0].max, limit) else { return None };
+        let mut stack = [(0u32, 0f32); 64];
+        stack[0] = (0, t_root);
         let mut sp = 1;
         while sp > 0 {
             sp -= 1;
-            let n = bvh.nodes[stack[sp] as usize];
-            if ray_box(origin, inv, n.min, n.max, limit).is_none() {
+            let (ni, entry) = stack[sp];
+            if entry > limit {
                 continue;
             }
+            let n = bvh.nodes[ni as usize];
             if n.count > 0 {
                 for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
                     let tri = &self.tris[i as usize];
@@ -423,10 +429,15 @@ impl CollisionWorld {
                 let (a, b) = (bvh.nodes[n.start as usize], bvh.nodes[n.start as usize + 1]);
                 let ta = ray_box(origin, inv, a.min, a.max, limit);
                 let tb = ray_box(origin, inv, b.min, b.max, limit);
-                let (first, second) = if ta.unwrap_or(f32::MAX) <= tb.unwrap_or(f32::MAX) { (n.start, n.start + 1) } else { (n.start + 1, n.start) };
-                stack[sp] = second;
-                stack[sp + 1] = first;
-                sp += 2;
+                let (first, second) = if ta.unwrap_or(f32::MAX) <= tb.unwrap_or(f32::MAX) { ((n.start, ta), (n.start + 1, tb)) } else { ((n.start + 1, tb), (n.start, ta)) };
+                // A child the ray misses now misses at any later (smaller) limit too: don't
+                // push it (the visiting order of the rest is unchanged).
+                for (i, t) in [second, first] {
+                    if let Some(t) = t {
+                        stack[sp] = (i, t);
+                        sp += 1;
+                    }
+                }
             }
         }
         best
@@ -448,6 +459,11 @@ fn nearer(a: Option<Hit>, b: Option<Hit>) -> Option<Hit> {
     }
 }
 
+/// Margin (game units) on the plane-distance test that skips triangles before the exact
+/// distance check: far above the rounding in `closest_point_on_tri` at map coordinates, so
+/// every triangle the exact test would accept still reaches it.
+const PLANE_SLACK: f32 = 0.25;
+
 /// `CollisionWorld::push_sphere` against several worlds at once.
 fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
     let mut c = center;
@@ -456,6 +472,11 @@ fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32,
         let mut push = Vec3::ZERO;
         let r = Vec3::splat(radius);
         let mut visit = |tri: &Tri| {
+            // Farther from the triangle's plane than the radius (with room for rounding in
+            // the closest point): no contact, skip the closest-point search.
+            if (c - tri.a).dot(tri.n).abs() > radius + PLANE_SLACK {
+                return;
+            }
             let p = closest_point_on_tri(c, tri);
             let d = c - p;
             let dist = d.length();
@@ -492,7 +513,7 @@ impl CollisionWorld {
         let mut best: Option<(Vec3, f32)> = None;
         let r = Vec3::splat(radius);
         self.cells_in(center - r, center + r, |tri| {
-            if tri.n.z.abs() > max_normal_z {
+            if tri.n.z.abs() > max_normal_z || (center - tri.a).dot(tri.n).abs() > radius + PLANE_SLACK {
                 return;
             }
             let p = closest_point_on_tri(center, tri);
@@ -553,7 +574,7 @@ impl CollisionWorld {
         let tie = 0.01 / d.length().max(1e-6);
         let mut solid: Option<Vec3> = None;
         for w in self.with_clip(which).iter().flatten() {
-            w.cells_in(lo, hi, |tri| match sweep_box_tri(c0, half, d, tri) {
+            w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tri, lo, hi) {
                 Sweep::Miss => {}
                 Sweep::Inside(mtv) => {
                     if d.dot(mtv) < 0.0 || d == Vec3::ZERO {
@@ -589,6 +610,16 @@ enum Sweep {
     Hit(f32, Vec3, bool),
     /// Overlapping at the start; the shortest way out.
     Inside(Vec3),
+}
+
+/// `sweep_box_tri` for a triangle that may lie outside `lo..hi`, the swept box's bounds
+/// padded by a unit: one entirely outside them (the leaf's box overlapped, the triangle doesn't)
+/// misses on that world axis, so the full test is skipped.
+fn sweep_box_tri_in(c: Vec3, e: Vec3, d: Vec3, t: &Tri, lo: Vec3, hi: Vec3) -> Sweep {
+    if t.a.max(t.b).max(t.c).cmplt(lo).any() || t.a.min(t.b).min(t.c).cmpgt(hi).any() {
+        return Sweep::Miss;
+    }
+    sweep_box_tri(c, e, d, t)
 }
 
 /// Separating-axis sweep of a box (centre `c`, half extents `e`, moving by `d`) against a

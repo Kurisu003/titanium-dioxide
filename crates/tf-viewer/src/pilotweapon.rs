@@ -1346,7 +1346,7 @@ pub fn pilot_viewmodel(
     let swinging = melee.t.filter(|&t| t < crate::executions::MELEE_ANIM_SECS);
     if let Some((anchor, vm)) = lo.melee_vm {
         if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-            *v = if show && swinging.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+            v.set_if_neq(if show && swinging.is_some() { Visibility::Inherited } else { Visibility::Hidden });
         }
         if let Ok(mut a) = actors.get_mut(vm) {
             a.event_sounds = show && swinging.is_some();
@@ -1372,7 +1372,7 @@ pub fn pilot_viewmodel(
         let Some((idx, anchor, vm)) = slot else { continue };
         let mine = throwing.is_some() && throw.tactical == which;
         if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-            *v = if show && mine { Visibility::Inherited } else { Visibility::Hidden };
+            v.set_if_neq(if show && mine { Visibility::Inherited } else { Visibility::Hidden });
         }
         if !mine {
             continue;
@@ -1401,7 +1401,7 @@ pub fn pilot_viewmodel(
     for (i, g) in lo.guns.iter().enumerate() {
         if let Some((anchor, vm)) = g.viewmodel {
             if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-                *v = if show && i == active && swinging.is_none() && throwing.is_none() && !mantling { Visibility::Inherited } else { Visibility::Hidden };
+                v.set_if_neq(if show && i == active && swinging.is_none() && throwing.is_none() && !mantling { Visibility::Inherited } else { Visibility::Hidden });
             }
             // Only the gun in your hands plays its animation sounds.
             if let Ok(mut a) = actors.get_mut(vm) {
@@ -1434,7 +1434,7 @@ pub fn pilot_viewmodel(
                 let offset = a.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
                 place.0.push((arms.anchor, Transform::from_translation(-offset)));
                 if let Ok((_, mut v)) = tfs.get_mut(arms.anchor) {
-                    *v = Visibility::Inherited;
+                    v.set_if_neq(Visibility::Inherited);
                 }
             }
         }
@@ -1666,7 +1666,7 @@ pub fn pilot_viewmodel(
                 continue;
             }
             let on = if p.0 == part { show_scope } else { !only_scope };
-            *v = if on { Visibility::Inherited } else { Visibility::Hidden };
+            v.set_if_neq(if on { Visibility::Inherited } else { Visibility::Hidden });
         }
     }
     // Sway and bob turn the viewmodel about its sway pivot (SWAY_ROTATE on the weapon bone;

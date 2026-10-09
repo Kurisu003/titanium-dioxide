@@ -79,7 +79,7 @@ pub fn update_pilot_body(
     let s = &pilot.state;
     let pos = Vec3::from(s.pos.to_array());
     if let Ok((mut tf, mut vis)) = tfs.get_mut(body.anchor) {
-        *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+        vis.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
         tf.translation = pos;
         tf.rotation = Quat::from_rotation_z(s.yaw);
     }
