@@ -835,6 +835,11 @@ impl Model {
         }
         let mut frames = Vec::with_capacity(num_frames);
         let mut animated = vec![false; self.bones.len()];
+        // Bones without a track in a frame keep this pose (identity for delta animations).
+        let rest: Vec<([f32; 3], [f32; 4])> = self.bones.iter().map(|b| if delta { ([0.0; 3], [0.0, 0.0, 0.0, 1.0]) } else { (b.pos, b.quat) }).collect();
+        // Per bone, the last Euler angles (as bits) decoded and their quaternion: tracks often
+        // hold a value for many frames, and the same angles give the same quaternion.
+        let mut last_rot: Vec<Option<([u32; 3], [f32; 4])>> = vec![None; self.bones.len()];
         for frame in 0..num_frames {
             // Locate the RLE block for this frame (pAnimdataNoStall).
             let mut local = frame;
@@ -850,11 +855,7 @@ impl Model {
                 };
                 data = r.i32(ad + section_index + section * 4) as usize;
             }
-            let mut pose: Vec<([f32; 3], [f32; 4])> = self
-                .bones
-                .iter()
-                .map(|b| if delta { ([0.0; 3], [0.0, 0.0, 0.0, 1.0]) } else { (b.pos, b.quat) })
-                .collect();
+            let mut pose = rest.clone();
             if data != 0 {
                 let mut p = ad + data;
                 loop {
@@ -864,7 +865,7 @@ impl Model {
                     let bone = self.raw[p + 4] as usize;
                     let bflags = self.raw[p + 5];
                     if bone < self.bones.len() {
-                        pose[bone] = self.decode_bone(p, bone, bflags, local, delta);
+                        pose[bone] = self.decode_bone(p, bone, bflags, local, delta, &mut last_rot[bone]);
                         animated[bone] = true;
                     }
                     let next = r.i32(p + 28);
@@ -879,7 +880,9 @@ impl Model {
         Ok(Animation { name, fps, flags, num_frames, frames, animated, movement })
     }
 
-    fn decode_bone(&self, p: usize, bone: usize, flags: u8, frame: usize, delta: bool) -> ([f32; 3], [f32; 4]) {
+    /// One bone's local transform at `frame`. `last_rot` caches the bone's previous Euler ->
+    /// quaternion conversion (within one animation, so `delta` is the same).
+    fn decode_bone(&self, p: usize, bone: usize, flags: u8, frame: usize, delta: bool, last_rot: &mut Option<([u32; 3], [f32; 4])>) -> ([f32; 3], [f32; 4]) {
         const RAWPOS: u8 = 0x02;
         const RAWROT: u8 = 0x04;
         const NOROT: u8 = 0x10;
@@ -899,14 +902,21 @@ impl Model {
                     *ek += b.rot[k];
                 }
             }
-            let mut q = angle_quaternion(e);
-            if !delta && (b.flags & 0x100000) != 0 {
-                let a = b.q_alignment;
-                if a[0] * q[0] + a[1] * q[1] + a[2] * q[2] + a[3] * q[3] < 0.0 {
-                    q = [-q[0], -q[1], -q[2], -q[3]];
+            let bits = e.map(f32::to_bits);
+            match *last_rot {
+                Some((k, q)) if k == bits => q,
+                _ => {
+                    let mut q = angle_quaternion(e);
+                    if !delta && (b.flags & 0x100000) != 0 {
+                        let a = b.q_alignment;
+                        if a[0] * q[0] + a[1] * q[1] + a[2] * q[2] + a[3] * q[3] < 0.0 {
+                            q = [-q[0], -q[1], -q[2], -q[3]];
+                        }
+                    }
+                    *last_rot = Some((bits, q));
+                    q
                 }
             }
-            q
         };
 
         let pos = if flags & RAWPOS != 0 {
@@ -999,7 +1009,7 @@ fn half(h: u16) -> f32 {
     let e = ((h >> 10) & 0x1F) as i32;
     let m = (h & 0x3FF) as f32;
     s * match e {
-        0 => m * 2f32.powi(-24),
+        0 => m * pow2(-24),
         31 => {
             if m == 0.0 {
                 f32::INFINITY
@@ -1007,8 +1017,14 @@ fn half(h: u16) -> f32 {
                 f32::NAN
             }
         }
-        _ => (1.0 + m / 1024.0) * 2f32.powi(e - 15),
+        _ => (1.0 + m / 1024.0) * pow2(e - 15),
     }
+}
+
+/// 2^n for a normal-range exponent (-126..=127): the exact value `2f32.powi(n)` gives, built
+/// from its bits instead of a runtime `powi` call.
+fn pow2(n: i32) -> f32 {
+    f32::from_bits(((n + 127) as u32) << 23)
 }
 
 /// A cockpit's main screen (`*_int_screen`) shows a camera feed in the game, hiding whatever
@@ -1260,6 +1276,33 @@ mod collision_tests {
         assert!((area - want).abs() < 0.5, "surface {area} vs {want}");
         for p in tris.iter().flatten() {
             assert!(p[0] > 9.99 && p[0] < 30.01 && p[1].abs() < 5.01 && p[2] > -0.01 && p[2] < 40.01, "{p:?}");
+        }
+    }
+
+    /// `half` (with `pow2`) gives the same bits as with `powi` for every half float.
+    #[test]
+    fn half_matches_powi() {
+        let reference = |h: u16| -> f32 {
+            let s = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+            let e = ((h >> 10) & 0x1F) as i32;
+            let m = (h & 0x3FF) as f32;
+            s * match e {
+                0 => m * 2f32.powi(-24),
+                31 => {
+                    if m == 0.0 {
+                        f32::INFINITY
+                    } else {
+                        f32::NAN
+                    }
+                }
+                _ => (1.0 + m / 1024.0) * 2f32.powi(e - 15),
+            }
+        };
+        for h in 0..=u16::MAX {
+            assert_eq!(half(h).to_bits(), reference(h).to_bits(), "{h:#06x}");
+        }
+        for n in -126..=127 {
+            assert_eq!(pow2(n), 2f32.powi(n), "{n}");
         }
     }
 
