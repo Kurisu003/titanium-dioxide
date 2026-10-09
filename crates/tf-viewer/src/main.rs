@@ -47,11 +47,13 @@ mod pfx;
 mod propbatch;
 mod player;
 mod ruiscreen;
+mod shadowbatch;
 mod sky;
 mod spread;
 mod smartammo;
 mod targets;
 mod titankit;
+mod transparentpass;
 mod uber;
 mod fxuber;
 mod ui;
@@ -273,7 +275,7 @@ fn main() {
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)
-        .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin))
+        .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin, shadowbatch::ShadowBatchPlugin, transparentpass::ParallelTransparentPlugin))
         .add_systems(Update, (perf_log, fps_overlay, weapons::shimmer_shields))
         .insert_resource(args)
         .insert_resource(script)

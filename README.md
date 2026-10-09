@@ -1294,6 +1294,25 @@ high made a new buffer (and a 5 ms rebuild, ~15 times a minute on foot); they no
 again (rebuilds on the Angel City run: 146 -> 8).
 Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
 
+Bevy draws each shadow cascade in one batch set per material (200-540 per cascade on Angel
+City), but an opaque material's shadow pipeline has no fragment shader and never reads the
+material. `shadowbatch.rs` queues those meshes in one set per pipeline instead (60-150 sets
+remain per cascade, mostly alpha-tested materials, which keep theirs): about 2.3-3.6 -> 0.9-1.4 ms
+of CPU per cascade. The depth written is the same (screenshots with time frozen, flipping between
+the two every 4 s, match bit for bit). `TF_SHADOW_BY_MATERIAL=1` turns it off.
+
+The render thread walks the render graph one node at a time, and with wgpu 27 a pass's commands
+are only validated and encoded when its command encoder is finished. Bevy's opaque, prepass,
+shadow and bloom passes are encoded on worker threads, but its transparent pass went into the
+graph's own encoder, so every sorted translucent draw was encoded serially. `transparentpass.rs`
+puts it in a worker task like the others (same commands, submitted in the same order): the graph
+walk went from about 4.0 to 3.1 ms. `TF_SERIAL_TRANSPARENT=1` keeps Bevy's node.
+
+The guns' ammo counters (`ruiscreen.rs`) render through small UI cameras into textures. Those
+cameras now render only for 30 frames after a counter's text changes (and until it is laid
+out); the texture keeps the last picture. Drawing the same digits every frame cost the render
+thread about 1 ms (two cameras' graph, UI preparation and command buffers).
+
 The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
