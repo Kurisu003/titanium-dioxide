@@ -304,19 +304,19 @@ impl GridNav {
         let n = ((radius * 2.0) / agent.cell).ceil() as i32;
         let origin = Vec2::new(center.x - radius, center.y - radius);
         let top = center.z + 1500.0;
-        let mut layers = vec![Vec::new(); (n * n) as usize];
-        let mut walkable = 0usize;
         let dirs: Vec<SVec3> = (0..8).map(|k| {
             let a = k as f32 / 8.0 * std::f32::consts::TAU;
             SVec3::new(a.cos(), a.sin(), 0.0)
         }).collect();
-        for cy in 0..n {
-            for cx in 0..n {
+        // Every cell's probes are independent: one row of cells per job, on every core.
+        let rows: Vec<i32> = (0..n).collect();
+        let probed = crate::world::parallel_map(&rows, |&cy| {
+            (0..n).map(|cx| {
                 let x = origin.x + (cx as f32 + 0.5) * agent.cell;
                 let y = origin.y + (cy as f32 + 0.5) * agent.cell;
                 let mut from = SVec3::new(x, y, top);
                 let mut remaining = top - (center.z - 3000.0);
-                let list = &mut layers[(cy * n + cx) as usize];
+                let mut list = Vec::new();
                 while remaining > 0.0 {
                     let Some(h) = world.raycast(from, -SVec3::Z, remaining) else { break };
                     let z = h.point.z;
@@ -330,13 +330,15 @@ impl GridNav {
                         });
                     if ok {
                         list.push(z);
-                        walkable += 1;
                     }
                     remaining -= h.t + 2.0;
                     from = SVec3::new(x, y, z - 2.0);
                 }
-            }
-        }
+                list
+            }).collect::<Vec<Vec<f32>>>()
+        });
+        let layers: Vec<Vec<f32>> = probed.into_iter().flat_map(|row| row.expect("nav grid worker")).collect();
+        let walkable: usize = layers.iter().map(Vec::len).sum();
         log::info!("nav grid: {n}x{n} cells of {} around {:.0}, {walkable} walkable surfaces in {:?}", agent.cell, center, t.elapsed());
         let mut grid = Self { origin, n, agent, layers, connected: HashMap::new(), blocked: HashMap::new() };
         let t = std::time::Instant::now();
@@ -362,36 +364,44 @@ impl GridNav {
     /// Cast between neighbouring cell centres at step and chest height: the radial probes
     /// miss thin walls that sit between two centres.
     fn probe_edges(&mut self, world: &tf_sim::collision::CollisionWorld) {
-        let mut blocked = HashMap::new();
-        let mut edges = 0usize;
-        for cy in 0..self.n {
-            for cx in 0..self.n {
-                for l in 0..self.layers[(cy * self.n + cx) as usize].len().min(16) {
-                    let id = self.node(cx, cy, l);
-                    let c = self.center(id);
+        // One row of cells per job, on every core.
+        let rows: Vec<i32> = (0..self.n).collect();
+        let this = &*self;
+        let probed = crate::world::parallel_map(&rows, |&cy| {
+            let mut out: Vec<(u32, u8)> = Vec::new();
+            for cx in 0..this.n {
+                for l in 0..this.layers[(cy * this.n + cx) as usize].len().min(16) {
+                    let id = this.node(cx, cy, l);
+                    let c = this.center(id);
                     let mut mask = 0u8;
                     for (k, &(dx, dy)) in DIRS.iter().enumerate() {
-                        if self.step_to(cx + dx, cy + dy, c.z).is_none() {
+                        if this.step_to(cx + dx, cy + dy, c.z).is_none() {
                             continue;
                         }
                         let d = SVec3::new(dx as f32, dy as f32, 0.0);
-                        let len = d.length() * self.agent.cell;
+                        let len = d.length() * this.agent.cell;
                         let d = d / d.length();
                         // Three rays abreast, as wide as the hull, at two heights.
-                        let side = SVec3::new(-d.y, d.x, 0.0) * self.agent.radius * 0.8;
-                        let hit = [self.agent.step_up + 10.0, self.agent.height * 0.5].iter().any(|&h| {
+                        let side = SVec3::new(-d.y, d.x, 0.0) * this.agent.radius * 0.8;
+                        let hit = [this.agent.step_up + 10.0, this.agent.height * 0.5].iter().any(|&h| {
                             [-1.0, 0.0, 1.0].iter().any(|&k| world.raycast(SVec3::new(c.x, c.y, c.z + h) + side * k, d, len).is_some())
                         });
                         if hit {
                             mask |= 1 << k;
-                            edges += 1;
                         }
                     }
                     if mask != 0 {
-                        blocked.insert(id, mask);
+                        out.push((id, mask));
                     }
                 }
             }
+            out
+        });
+        let mut blocked = HashMap::new();
+        let mut edges = 0usize;
+        for (id, mask) in probed.into_iter().flat_map(|row| row.expect("nav edge worker")) {
+            edges += mask.count_ones() as usize;
+            blocked.insert(id, mask);
         }
         log::debug!("nav grid: {edges} blocked edges");
         self.blocked = blocked;
