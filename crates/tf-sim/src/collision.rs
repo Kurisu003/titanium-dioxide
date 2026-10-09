@@ -75,8 +75,8 @@ impl Bvh {
         while pending.len() < threads * 4 {
             let mut next = Vec::new();
             let mut split_any = false;
-            for &ni in &pending {
-                match ctx.split(&mut nodes, &mut order, ni) {
+            for (&ni, split) in pending.iter().zip(ctx.split_level(&mut nodes, &mut order, &pending)) {
+                match split {
                     Some(left) => {
                         next.push(left);
                         next.push(left + 1);
@@ -164,6 +164,62 @@ impl BuildCtx<'_> {
         nodes.push(Node { min: rlo, max: rhi, start: start + mid as u32, count: (c - mid) as u32 });
         nodes[ni] = Node { min, max, start: left as u32, count: 0 };
         Some(left)
+    }
+
+    /// `split` every node of `pending` (disjoint ranges of `order`), partitioning their
+    /// triangles in parallel; the nodes are appended in `pending` order, exactly as splitting
+    /// them one after another would.
+    fn split_level(&self, nodes: &mut Vec<Node>, order: &mut [u32], pending: &[usize]) -> Vec<Option<usize>> {
+        let mut by_start: Vec<usize> = (0..pending.len()).collect();
+        by_start.sort_by_key(|&i| nodes[pending[i]].start);
+        let mut slices: Vec<Option<&mut [u32]>> = (0..pending.len()).map(|_| None).collect();
+        let mut rest: &mut [u32] = order;
+        let mut consumed = 0u32;
+        for &i in &by_start {
+            let Node { start, count, .. } = nodes[pending[i]];
+            let tail = std::mem::take(&mut rest);
+            let (_, tail) = tail.split_at_mut((start - consumed) as usize);
+            let (mine, tail) = tail.split_at_mut(count as usize);
+            rest = tail;
+            consumed = start + count;
+            slices[i] = Some(mine);
+        }
+        // Per node: the left half's size and both halves' bounds (None for a leaf).
+        type Halves = Option<(usize, (Vec3, Vec3), (Vec3, Vec3))>;
+        let halves: Vec<Halves> = std::thread::scope(|scope| {
+            let handles: Vec<_> = pending
+                .iter()
+                .zip(slices)
+                .map(|(&ni, slice)| {
+                    let Node { count, min, max, .. } = nodes[ni];
+                    let slice = slice.expect("every pending node has a range");
+                    scope.spawn(move || -> Halves {
+                        if (count as usize) <= LEAF_SIZE {
+                            return None;
+                        }
+                        let ext = max - min;
+                        let axis = if ext.x >= ext.y && ext.x >= ext.z { 0 } else if ext.y >= ext.z { 1 } else { 2 };
+                        let mid = count as usize / 2;
+                        slice.select_nth_unstable_by(mid, |&a, &b| self.centroids[a as usize][axis].total_cmp(&self.centroids[b as usize][axis]));
+                        Some((mid, self.bounds(&slice[..mid]), self.bounds(&slice[mid..])))
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().expect("bvh worker")).collect()
+        });
+        pending
+            .iter()
+            .zip(halves)
+            .map(|(&ni, h)| {
+                let (mid, (llo, lhi), (rlo, rhi)) = h?;
+                let Node { start, count, min, max } = nodes[ni];
+                let left = nodes.len();
+                nodes.push(Node { min: llo, max: lhi, start, count: mid as u32 });
+                nodes.push(Node { min: rlo, max: rhi, start: start + mid as u32, count: count - mid as u32 });
+                nodes[ni] = Node { min, max, start: left as u32, count: 0 };
+                Some(left)
+            })
+            .collect()
     }
 
     /// Build the subtree under `root` (whose triangles are `slice`, starting at `base` in the
@@ -266,10 +322,13 @@ impl CollisionWorld {
 
     /// Build the acceleration structure now instead of on the first query.
     pub fn finish(&self) {
-        self.bvh();
-        for c in self.clips.iter().flatten().chain(self.detail.iter()) {
-            c.bvh();
-        }
+        // The sets' hierarchies are independent: build them at the same time.
+        std::thread::scope(|scope| {
+            for c in self.clips.iter().flatten().chain(self.detail.iter()) {
+                scope.spawn(|| c.bvh());
+            }
+            self.bvh();
+        });
     }
 
     /// Add a triangle that only shots and other non-movement traces hit (`detail`).
@@ -671,6 +730,37 @@ pub fn closest_point_on_tri(p: Vec3, t: &Tri) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_split_level_matches_serial_splits() {
+        // Pseudo-random triangles; the top levels split node by node (as before) and level by
+        // level in parallel must give the same nodes and order.
+        let mut seed = 0x1234_5678u32;
+        let mut r = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 1000.0
+        };
+        let tris: Vec<Tri> = (0..5000).map(|_| {
+            let a = Vec3::new(r(), r(), r());
+            Tri { a, b: a + Vec3::new(r(), r(), r()) * 0.01, c: a + Vec3::new(r(), r(), r()) * 0.01, n: Vec3::Z }
+        }).collect();
+        let boxes: Vec<(Vec3, Vec3)> = tris.iter().map(|t| (t.a.min(t.b).min(t.c), t.a.max(t.b).max(t.c))).collect();
+        let centroids: Vec<Vec3> = boxes.iter().map(|(lo, hi)| (*lo + *hi) * 0.5).collect();
+        let ctx = BuildCtx { boxes: &boxes, centroids: &centroids };
+        let run = |parallel: bool| {
+            let mut order: Vec<u32> = (0..tris.len() as u32).collect();
+            let (lo, hi) = ctx.bounds(&order);
+            let mut nodes = vec![Node { min: lo, max: hi, start: 0, count: tris.len() as u32 }];
+            let mut pending = vec![0usize];
+            for _ in 0..8 {
+                let splits: Vec<Option<usize>> = if parallel { ctx.split_level(&mut nodes, &mut order, &pending) } else { pending.iter().map(|&ni| ctx.split(&mut nodes, &mut order, ni)).collect() };
+                pending = pending.iter().zip(splits).flat_map(|(&ni, s)| s.map_or(vec![ni], |l| vec![l, l + 1])).collect();
+            }
+            let flat: Vec<[u32; 8]> = nodes.iter().map(|n| [n.min.x, n.min.y, n.min.z, n.max.x, n.max.y, n.max.z].map(f32::to_bits).iter().copied().chain([n.start, n.count]).collect::<Vec<_>>().try_into().unwrap()).collect();
+            (flat, order)
+        };
+        assert!(run(false) == run(true));
+    }
 
     #[test]
     fn clips_stop_movement_queries_only() {
