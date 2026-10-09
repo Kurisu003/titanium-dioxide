@@ -1349,6 +1349,19 @@ impl<'a> Hull<'a> {
     }
 }
 
+/// The last steep plane (a wall, |normal.z| up to `WALKABLE_Z`) a move's traces ran into: what
+/// a wall-run touches.
+#[derive(Default)]
+struct Touched(Option<Vec3>);
+
+impl Touched {
+    fn push(&mut self, n: Vec3) {
+        if n.z.abs() <= WALKABLE_Z {
+            self.0 = Some(n);
+        }
+    }
+}
+
 /// TryPlayerMove (client.dll 0x1801fa310): move along `vel` for `time`, sliding along what is
 /// hit. Up to 8 traces. Each blocking plane takes the velocity's part into it away (from the
 /// velocity at the last plane reset) and adds 1/128 unit/s of push-out; a second plane makes it
@@ -1357,8 +1370,8 @@ impl<'a> Hull<'a> {
 /// velocity. Each new destination is first kept out of the planes already hit (to 0.001 in
 /// front of them), and the planes are forgotten once the hull has moved more than a unit since
 /// they were last reset. `first` is a trace already made from `pos` for the first try. The
-/// normals hit go to `hits`.
-fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Option<Trace>, hits: &mut Vec<Vec3>) {
+/// planes hit go to `hits`.
+fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Option<Trace>, hits: &mut Touched) {
     let primal = *vel;
     let mut orig = *vel;
     let mut planes = [Vec3::ZERO; 2];
@@ -1451,7 +1464,7 @@ fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: O
 /// curb, are ignored), or when that spot is not much higher than where the plain move ended
 /// (at most about 45 degrees up from it, 0.49 = sin^2), with the first landing no more than
 /// twice as high (at least a tenth of the step) as that spot. Returns the height stepped up.
-fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Trace, hits: &mut Vec<Vec3>) -> f32 {
+fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Trace, hits: &mut Touched) -> f32 {
     if *vel == Vec3::ZERO {
         return 0.0;
     }
@@ -1463,7 +1476,7 @@ fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f3
     let tr = h.trace(start, start + Vec3::Z * lift);
     let (top, lifted) = if tr.start_solid { (start, 0.0) } else { (tr.end, tr.fraction * lift) };
     let (mut up, mut up_vel) = (top, v0);
-    try_player_move(h, &mut up, &mut up_vel, time, None, &mut Vec::new());
+    try_player_move(h, &mut up, &mut up_vel, time, None, &mut Touched::default());
     if planar(down, start) >= planar(up, start) * 0.999 {
         return 0.0;
     }
@@ -1477,7 +1490,7 @@ fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f3
         }
         let (spot, nz, tested) = if gap < p.step_test_dist * p.step_test_dist {
             let (mut q, mut qv) = (top, Vec3::new(v0.x, v0.y, v0.z.max(0.0)));
-            try_player_move(h, &mut q, &mut qv, p.step_test_dist / v0.length(), None, &mut Vec::new());
+            try_player_move(h, &mut q, &mut qv, p.step_test_dist / v0.length(), None, &mut Touched::default());
             let t2 = h.trace(q, q - Vec3::Z * drop);
             (t2.end, t2.normal.z, true)
         } else {
@@ -1503,7 +1516,7 @@ fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f3
 /// speed along the slope; in the air keeping the horizontal velocity (the speed at most).
 /// Anything else, or a second hit, goes to StepMove, which also climbs in the air. Returns
 /// whether the turned move got through, and the height stepped up.
-fn handle_blocked(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f32, tr: Trace, on_ground: bool, hits: &mut Vec<Vec3>) -> (bool, f32) {
+fn handle_blocked(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f32, tr: Trace, on_ground: bool, hits: &mut Touched) -> (bool, f32) {
     let n = tr.normal;
     if n.z > WALKABLE_Z && !tr.start_solid {
         let left = (1.0 - tr.fraction) * time;
@@ -1548,7 +1561,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
     let h = Hull::new(world, p, s.crouched);
     h.unstick(&mut s.pos);
     let vel_before = s.vel;
-    let mut hits = Vec::new();
+    let mut hits = Touched::default();
     // The surface the hull ran into (blocked, not stepped over), for the wall-run start.
     let mut wall: Option<Vec3> = None;
     let on_ground_before = s.on_ground();
@@ -1660,7 +1673,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
     } else if let PilotMove::WallRun { normal, time } = s.mode {
         // A running wall is followed by the knee-height probe (wallrun_allowed_wall_dist from
         // the hull's face, 0x18020e9e0); losing it drops the Pilot off.
-        let touched = hits.iter().rev().find(|n| n.z.abs() <= WALKABLE_Z).map(|n| Vec3::new(n.x, n.y, 0.0).normalize_or_zero());
+        let touched = hits.0.map(|n| Vec3::new(n.x, n.y, 0.0).normalize_or_zero());
         let sensed = wall_probe(world, p, s.pos + Vec3::Z * 16.0, normal)
             .filter(|(d, n)| *d <= p.wallrun.allowed_wall_dist && n.z.abs() <= 0.7)
             .map(|(_, n)| Vec3::new(n.x, n.y, 0.0).normalize_or_zero())
