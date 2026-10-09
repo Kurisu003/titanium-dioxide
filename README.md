@@ -1240,6 +1240,10 @@ alternate between frames) and reuses one while the instance, skin and morph buff
 lightmap slabs are unchanged; a lightmap slot being filled or freed rebuilds for a few frames.
 Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
 
+The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
+for every camera the light reaches, but first-person models are within a few metres of the eye
+and never sample the others, so three shadow passes of the whole map per frame were wasted.
+
 Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs

@@ -84,7 +84,7 @@ fn watch_lightmaps(
     }
     if touched {
         // Bevy fills a slot once its image is on the GPU (normally the same frame).
-        cache.dirty = 8;
+        cache.dirty = 3;
     }
 }
 

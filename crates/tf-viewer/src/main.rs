@@ -286,6 +286,12 @@ fn main() {
         .add_systems(Update, settings::apply_fov.after(player::update_camera).after(pilotctl::pilot_camera).run_if(ui::loaded))
         .add_systems(Update, pilotctl::cockpit_boot.run_if(ui::loaded))
         .add_systems(First, ui::log_hitches)
+        .add_systems(
+            PostUpdate,
+            vmcam::one_shadow_cascade
+                .after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
+                .before(bevy::light::SimulationLightSystems::UpdateLightFrusta),
+        )
         .add_systems(Update, (zipline::zipline_cables, zipline::zipline_sounds).run_if(ui::loaded))
         .add_systems(Update, pilotability::grapple_cable.after(pilotctl::pilot_camera).run_if(ui::loaded))
         .add_systems(Update, pilotctl::bt_sequence_sounds.after(pilotctl::control_transitions).run_if(ui::loaded))
