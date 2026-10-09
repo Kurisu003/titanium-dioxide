@@ -1128,7 +1128,42 @@ impl Plugin for GpuTimesPlugin {
             app.add_plugins((
                 bevy::render::diagnostic::RenderDiagnosticsPlugin,
                 bevy::diagnostic::LogDiagnosticsPlugin { wait_duration: std::time::Duration::from_secs(4), ..default() },
-            ));
+            ))
+            .add_systems(Update, gpu_frame_log);
         }
+    }
+}
+
+/// With TF_GPU_TIMES: every two seconds, the GPU time per frame of each render pass summed over
+/// all the cameras that run it (Bevy's own log averages a pass name over its cameras), split
+/// into the cameras' runs (largest first), and the frame's total.
+fn gpu_frame_log(store: Res<bevy::diagnostic::DiagnosticsStore>, mut last: Local<Option<std::time::Instant>>, mut acc: Local<(u32, f32, std::collections::BTreeMap<String, Vec<f64>>)>, time: Res<Time<Real>>) {
+    // All of one frame's render diagnostics are stored with the same instant.
+    let Some(newest) = store.iter().filter(|d| d.path().as_str().starts_with("render/")).filter_map(|d| d.measurement().map(|m| m.time)).max() else { return };
+    if *last == Some(newest) {
+        return;
+    }
+    *last = Some(newest);
+    acc.0 += 1;
+    for d in store.iter() {
+        let Some(pass) = d.path().as_str().strip_prefix("render/").and_then(|p| p.strip_suffix("/elapsed_gpu")) else { continue };
+        // Each camera's run, largest first.
+        let mut runs: Vec<f64> = d.measurements().filter(|m| m.time == newest).map(|m| m.value).collect();
+        runs.sort_by(|a, b| b.total_cmp(a));
+        let e = acc.2.entry(pass.to_string()).or_default();
+        e.resize(e.len().max(runs.len()), 0.0);
+        for (s, v) in e.iter_mut().zip(runs) {
+            *s += v;
+        }
+    }
+    acc.1 += time.delta_secs();
+    if acc.1 >= 2.0 {
+        let frames = acc.0 as f64;
+        let mut rows: Vec<_> = acc.2.iter().map(|(k, runs)| (k.clone(), runs.iter().sum::<f64>() / frames, runs.iter().map(|v| format!("{:.3}", v / frames)).collect::<Vec<_>>().join("+"))).collect();
+        rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let total: f64 = rows.iter().map(|r| r.1).sum();
+        let list: Vec<String> = rows.iter().filter(|r| r.1 >= 0.005).map(|r| format!("{} {}", r.0, r.2)).collect();
+        log::info!("gpu: {total:.2} ms/frame over {} frames: {}", acc.0, list.join(", "));
+        *acc = (0, 0.0, Default::default());
     }
 }

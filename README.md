@@ -1248,7 +1248,10 @@ Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over 
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs
 Bevy's render diagnostics every four seconds: CPU and GPU time (timestamp queries) and pipeline
-statistics of every render pass.
+statistics of every render pass. Bevy averages a pass name over the cameras that run it, so
+`TF_GPU_TIMES` also logs a `gpu:` line every two seconds with each pass's GPU time per frame
+summed over the cameras, split into the cameras' runs (largest first; the sky, world and
+viewmodel cameras each run their own opaque pass and tonemapping), and the frame's total.
 
 ### Campaign maps
 
