@@ -3502,7 +3502,7 @@ pub fn update_pfx(
                 _ => Vec::new(),
             };
             let n = &mut fx.nodes[ni];
-            let sheet = n.layer.and_then(|l| layers.get(l)).map(|l| l.sheet.clone()).unwrap_or_default();
+            let sheet: &[Sequence] = n.layer.and_then(|l| layers.get(l)).map_or(&[], |l| &l.sheet[..]);
             let sheet_len = |s: u16| sheet.get(s as usize).map(|q| q.frames.len() as f32).unwrap_or(1.0);
             if recap {
                 let sys = n.sys.clone();
