@@ -24,6 +24,10 @@ pub struct CollisionWorld {
     /// triangles, which the game traces only at TRACEDETAILLEVEL_HIGH (bullets); movement hits
     /// their collision hulls, which go in the clip sets.
     pub detail: Option<Box<CollisionWorld>>,
+    /// Queries walk the median tree itself, without a search tree (see `Bvh`): set for
+    /// `detail`, whose small, even prop triangles make tight median-tree leaves (on Angel City
+    /// a search tree didn't speed its queries up but took ~0.3 s and ~130 MB more).
+    median_only: bool,
 }
 
 /// Clip surfaces that stop the Pilot (player clips) and BT (titan clips).
@@ -58,7 +62,8 @@ struct Node {
 /// hit (`raycast_tris`).
 #[derive(Default)]
 struct Bvh {
-    /// The search tree; its leaves are ranges of `leaves`.
+    /// The search tree (none for `CollisionWorld::median_only`); its leaves are ranges of
+    /// `leaves`.
     nodes: Vec<Node>,
     /// The median tree's leaves (their boxes and ranges of `order`), in search tree order.
     leaves: Vec<Node>,
@@ -73,8 +78,11 @@ struct Bvh {
 const LEAF_SIZE: usize = 4;
 
 impl Bvh {
-    fn build(tris: &[Tri]) -> Self {
+    fn build(tris: &[Tri], search: bool) -> Self {
         let (median, order) = Self::build_median(tris);
+        if !search {
+            return Self { median, order, ..Default::default() };
+        }
         let mut leaves: Vec<Node> = median.iter().copied().filter(|n| n.count > 0).collect();
         let mut tops: Vec<f32> = leaves.iter().map(|l| l.max.z + 0.0).collect();
         let nodes = std::thread::scope(|scope| {
@@ -604,7 +612,7 @@ impl CollisionWorld {
     }
 
     fn bvh(&self) -> &Bvh {
-        self.bvh.get_or_init(|| Bvh::build(&self.tris))
+        self.bvh.get_or_init(|| Bvh::build(&self.tris, !self.median_only))
     }
 
     /// Write the triangles, clip sets and detail set to `path` (testing: `TF_COLLISION_DUMP`),
@@ -672,7 +680,7 @@ impl CollisionWorld {
 
     /// Add a triangle that only shots and other non-movement traces hit (`detail`).
     pub fn add_detail(&mut self, a: Vec3, b: Vec3, c: Vec3) {
-        self.detail.get_or_insert_with(Default::default).add(a, b, c);
+        self.detail.get_or_insert_with(|| Box::new(CollisionWorld { median_only: true, ..Default::default() })).add(a, b, c);
     }
 
     /// Add a triangle to clip set `which` (`CLIP_PILOT` or `CLIP_TITAN`).
@@ -701,7 +709,10 @@ impl CollisionWorld {
     /// tree's depth-first order (see `Bvh`).
     fn cells_in(&self, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
         let bvh = self.bvh();
-        if bvh.nodes.is_empty() || !overlaps(&bvh.nodes[0], min, max) {
+        if bvh.nodes.is_empty() {
+            return self.cells_in_median(bvh, min, max, f);
+        }
+        if !overlaps(&bvh.nodes[0], min, max) {
             return;
         }
         // The overlapping leaves' (start, count) ranges of `order`.
@@ -736,6 +747,31 @@ impl CollisionWorld {
         }
     }
 
+    /// `cells_in` by walking the median tree, right child first.
+    fn cells_in_median(&self, bvh: &Bvh, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
+        if bvh.median.is_empty() {
+            return;
+        }
+        let mut stack = [0u32; 64];
+        let mut sp = 1;
+        while sp > 0 {
+            sp -= 1;
+            let n = bvh.median[stack[sp] as usize];
+            if !overlaps(&n, min, max) {
+                continue;
+            }
+            if n.count > 0 {
+                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
+                    f(&self.tris[i as usize]);
+                }
+            } else if sp + 2 <= stack.len() {
+                stack[sp] = n.start;
+                stack[sp + 1] = n.start + 1;
+                sp += 2;
+            }
+        }
+    }
+
     /// Ray cast against both triangle sides, `detail` included (shots, sight lines; clips are
     /// not hit). `dir` need not be normalized; `t` is in units of `dir`.
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
@@ -745,10 +781,10 @@ impl CollisionWorld {
     /// `raycast` against this world's own triangles only.
     fn raycast_tris(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
         let bvh = self.bvh();
-        if bvh.nodes.is_empty() {
+        if bvh.median.is_empty() {
             return None;
         }
-        if dir.length() * max_t <= SHORT_RAY {
+        if !bvh.nodes.is_empty() && dir.length() * max_t <= SHORT_RAY {
             self.raycast_replay(bvh, origin, dir, max_t)
         } else {
             self.raycast_median(bvh, origin, dir, max_t)
@@ -1299,29 +1335,6 @@ mod tests {
         w
     }
 
-    /// The box query walk the search tree replaced: the median tree, right child first.
-    fn cells_in_median(w: &CollisionWorld, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
-        let bvh = w.bvh();
-        if bvh.median.is_empty() {
-            return;
-        }
-        let mut stack = vec![0u32];
-        while let Some(ni) = stack.pop() {
-            let n = bvh.median[ni as usize];
-            if !overlaps(&n, min, max) {
-                continue;
-            }
-            if n.count > 0 {
-                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
-                    f(&w.tris[i as usize]);
-                }
-            } else {
-                stack.push(n.start);
-                stack.push(n.start + 1);
-            }
-        }
-    }
-
     #[test]
     fn box_queries_visit_what_the_median_walk_did() {
         // The second world has enough median-tree leaves to bin its top splits on threads.
@@ -1339,7 +1352,7 @@ mod tests {
                 let e = Vec3::new(r(), r(), r()) * if q % 5 == 0 { 200.0 } else { 40.0 };
                 let (mut a, mut b) = (Vec::new(), Vec::new());
                 w.cells_in(c - e, c + e, |t| a.push(unsafe { (t as *const Tri).offset_from(base) }));
-                cells_in_median(&w, c - e, c + e, |t| b.push(unsafe { (t as *const Tri).offset_from(base) }));
+                w.cells_in_median(w.bvh(), c - e, c + e, |t| b.push(unsafe { (t as *const Tri).offset_from(base) }));
                 assert_eq!(a, b, "query {q} around {c}");
             }
         }

@@ -1209,7 +1209,8 @@ Kodai is playable about 10 s after launch (6–15 s on other maps); Angel City's
   hierarchy builds (`actor::prefetch_actors`); spawning then only adds the assets.
 - The collision sets' BVHs building at the same time, their top levels split a level at a time
   in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City),
-  then each set's SAH search tree over its leaves, its top splits binned on every core.
+  then the SAH search trees over their leaves (not for the detail set), the top splits binned on
+  every core.
 - The probed nav grids (MP maps) casting their cells and edges on every core (7-9 s → 0.5 s on
   Angel City), and the particle textures decoding in parallel.
 
@@ -1294,7 +1295,9 @@ the old nearest-first walk, with its shrinking limit, over the ones with hits (t
 longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the
 slab test pass any box), still walk the median tree. Offline on Angel City's collision (one
 core): Titan step 47.6 -> 19.8 us, Pilot step 27.4 -> 21.4 us, rays 6.7 -> 5.1 us, sphere
-pushes and box sweeps ~10% cheaper; the BVH takes ~0.3 s longer to build at load.
+pushes and box sweeps ~10% cheaper. The detail set (the props' render triangles, small and
+even, so its median leaves are tight already) keeps walking its median tree: a search tree there
+didn't make its queries faster and cost ~0.3 s of load and ~130 MB.
 
 The sky and world cameras don't copy their picture to the window (`CameraOutputMode::Skip`):
 the viewmodel camera draws last into the same HDR textures and its copy overwrites the whole
