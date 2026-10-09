@@ -12,4 +12,4 @@ log = "0.4"
 
 [features]
 # Per-system timing traces (Chrome trace JSON in the working directory): `--features profile`.
-profile = ["bevy/trace_chrome"]
+profile = ["bevy/trace_chrome", "bevy/debug"]

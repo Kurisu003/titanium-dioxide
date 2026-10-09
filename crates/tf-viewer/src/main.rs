@@ -252,7 +252,8 @@ fn main() {
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)
-        .add_systems(Update, (perf_log, weapons::shimmer_shields))
+        .add_plugins(GpuTimesPlugin)
+        .add_systems(Update, (perf_log, fps_overlay, weapons::shimmer_shields))
         .insert_resource(args)
         .insert_resource(script)
         .insert_resource(mode)
@@ -1043,12 +1044,61 @@ fn screenshots(
     }
 }
 
-/// Log the average frame time every two seconds (RUST_LOG=tf_viewer=info shows it).
-fn perf_log(time: Res<Time>, mut acc: Local<(f32, u32)>) {
-    acc.0 += time.delta_secs();
+/// Log the average frame rate every two seconds, with the slowest frame in that time
+/// (RUST_LOG=tf_viewer=info shows it).
+fn perf_log(time: Res<Time<Real>>, mut acc: Local<(f32, u32, f32)>) {
+    let dt = time.delta_secs();
+    acc.0 += dt;
     acc.1 += 1;
+    acc.2 = acc.2.max(dt);
     if acc.0 >= 2.0 {
-        log::info!("perf: {:.1} fps ({:.1} ms/frame)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32);
-        *acc = (0.0, 0);
+        log::info!("perf: {:.1} fps ({:.1} ms/frame, slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
+        *acc = (0.0, 0, 0.0);
+    }
+}
+
+/// TF_FPS=1 shows the frame rate in the top-left corner: the average over the last half
+/// second, its frame time, and the slowest frame in it.
+#[derive(Component)]
+struct FpsText;
+
+fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&mut Text, With<FpsText>>, mut acc: Local<(f32, u32, f32)>) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("TF_FPS").is_some_and(|v| v != "0")) {
+        return;
+    }
+    let Ok(mut text) = text.single_mut() else {
+        commands.spawn((
+            Text::new(""),
+            TextFont { font_size: 18.0, ..default() },
+            TextColor(Color::srgb(1.0, 1.0, 0.3)),
+            Node { position_type: PositionType::Absolute, left: px(8), top: px(6), ..default() },
+            GlobalZIndex(200),
+            FpsText,
+        ));
+        return;
+    };
+    let dt = time.delta_secs();
+    acc.0 += dt;
+    acc.1 += 1;
+    acc.2 = acc.2.max(dt);
+    if acc.0 >= 0.5 {
+        text.0 = format!("{:.0} fps  {:.1} ms  (slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
+        *acc = (0.0, 0, 0.0);
+    }
+}
+
+/// TF_GPU_TIMES=1 logs the CPU and GPU time of every render pass (Bevy's render diagnostics,
+/// timestamp queries) every few seconds: for finding what the frame spends its time on.
+struct GpuTimesPlugin;
+
+impl Plugin for GpuTimesPlugin {
+    fn build(&self, app: &mut App) {
+        if std::env::var_os("TF_GPU_TIMES").is_some() {
+            app.add_plugins((
+                bevy::render::diagnostic::RenderDiagnosticsPlugin,
+                bevy::diagnostic::LogDiagnosticsPlugin { wait_duration: std::time::Duration::from_secs(4), ..default() },
+            ));
+        }
     }
 }

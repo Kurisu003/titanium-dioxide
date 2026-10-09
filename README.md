@@ -1217,7 +1217,14 @@ carry no fade distances on the maps checked (-1), so these limits are our own.
 
 On Forwardbase Kodai at 3414x1357 this takes BT's spawn view from about 65 fps to about 90 fps.
 `TF_PROP_LOD=0`, `TF_PROP_CULL=0`, `TF_PROP_SHADOWS=all` and `TF_PROP_RADII=N` switch the
-parts off for comparisons, and `--features profile` writes a Chrome trace of every system.
+parts off for comparisons, and `--features profile` writes a Chrome trace of every system (with
+system names).
+
+Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
+its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
+with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs
+Bevy's render diagnostics every four seconds: CPU and GPU time (timestamp queries) and pipeline
+statistics of every render pass.
 
 ### Campaign maps
 
