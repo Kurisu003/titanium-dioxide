@@ -658,13 +658,23 @@ fn setup(
             Visibility::default(),
         ))
         .id();
+    // The map's static geometry (world meshes, props, probes) hangs under its own root with the
+    // same transform. Bevy skips a hierarchy nothing in has moved, but recomputes every direct
+    // child of a root whose tree changed: under `root`, with BT and everything that moves,
+    // that was ~47k prop and world entities every frame (2-4 ms on one thread).
+    let static_root = commands
+        .spawn((
+            Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT)),
+            Visibility::default(),
+        ))
+        .id();
 
     let mut cache = convert::Cache::default();
     let mut collision = CollisionWorld::default();
     let mut sweep: Option<CollisionWorld> = None;
     match gd.read_map(&args.map) {
         Ok(bsp) => {
-            world::spawn_world(&mut commands, root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
+            world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
             if std::env::var_os("TF_NO_MAP_COLLISION").is_none() {
                 world::add_game_collision(&bsp, &mut collision);
             }
@@ -676,15 +686,15 @@ fn setup(
                 sweep = Some(extra);
             }
             if args.props {
-                world::spawn_static_props(&mut commands, root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
+                world::spawn_static_props(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
                 sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
             }
             // Baked probes replace the flat ambient term for everything without a lightmap.
-            if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, root, &bsp, &mut images) {
+            if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images) {
                 commands.insert_resource(GlobalAmbientLight { brightness: 0.0, ..map_env.ambient() });
             }
             let reflections = env::Reflections::load(&bsp, &mut images);
-            reflections.spawn_probes(&mut commands, root);
+            reflections.spawn_probes(&mut commands, static_root);
             commands.insert_resource(reflections);
             commands.insert_resource(pfx::ParticleLight::load(&bsp));
         }
