@@ -718,10 +718,20 @@ pub fn update_enemies(
     }
     let (cone0, focus_time) = difficulty.aim_cone_focus();
 
+    // Each enemy's move (its decisions and its movement) touches only that enemy and reads the
+    // world, so the moves are worked out in parallel (`flush_moves`), and the attacks that follow
+    // them, which change BT, the Pilot and the command queue, run one enemy at a time in order.
+    // Anything else here that touches what an attack changes waits for the earlier enemies'
+    // attacks first (`flush!`), so everything happens as it would one enemy at a time.
+    let cx = MoveCx { dt, kits: &kits, world: &world, status: &status, rodeo: &rodeo, target, bt_target, positions: &positions, difficulty: &difficulty, fx: &fx, pilot, proficiency, cone0, focus_time };
+    let mut pending = Vec::new();
+    macro_rules! flush {
+        () => {
+            flush_moves(&mut pending, &cx, &mut commands, &mut actors, &mut damage_from, &mut pilot_health, &mut bt_health, &mut core)
+        };
+    }
     for (id, mut e, mut tf, mut vis) in &mut enemies {
         let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
-        let params = &kit.params;
-        let w = &kit.weapon;
         e.flash = (e.flash - dt).max(0.0);
         e.since_hit += dt;
         e.melee_cooldown -= dt;
@@ -739,6 +749,9 @@ pub fn update_enemies(
         let period = kit.dodge_period;
         e.dodges.retain(|d| *d < period);
         e.v.tick(dt);
+        if e.bar.is_none() && !e.infantry {
+            flush!();
+        }
         ensure_health_bar(&mut commands, &ui, id, &mut e);
         if !e.active {
             vis.set_if_neq(Visibility::Hidden);
@@ -746,11 +759,15 @@ pub fn update_enemies(
         }
         vis.set_if_neq(Visibility::Inherited);
         // BT crushes grunts he walks into (on his own too).
-        if e.infantry && e.alive() && bt_health.dead_for.is_none() {
+        if e.infantry && e.alive() {
             let tp = Vec3::from(titan.state.pos.to_array());
             let moving = Vec2::new(titan.state.vel.x, titan.state.vel.y).length() > 40.0;
             if moving && (tp - e.pos).truncate().length() < settings.0.radius + e.radius + 10.0 && (e.pos.z - tp.z).abs() < 100.0 {
-                e.damage(10_000.0, false);
+                // Whether BT is still alive depends on the earlier enemies' attacks.
+                flush!();
+                if bt_health.dead_for.is_none() {
+                    e.damage(10_000.0, false);
+                }
             }
         }
         if !e.alive() {
@@ -776,9 +793,57 @@ pub fn update_enemies(
 
         // --- Titanfall: ride the hotdrop's root motion down, impact, quickstand ---
         if e.drop.is_some() || e.stand.is_some() {
+            flush!();
             enemy_titanfall(&mut commands, &mut actors, &mut e, &mut tf, &mut vis, dt);
             continue;
         }
+        pending.push((id, e, tf, static_titan));
+    }
+    flush!();
+}
+
+/// What an enemy's move and attack read besides the enemy (`update_enemies`).
+#[derive(Clone, Copy)]
+struct MoveCx<'a> {
+    dt: f32,
+    kits: &'a EnemyKits,
+    world: &'a Collision,
+    status: &'a crate::pilotability::PilotStatus,
+    rodeo: &'a crate::rodeo::Rodeo,
+    /// The player's body and, on foot, BT's (`player_target`).
+    target: Option<(Vec3, f32, f32, bool)>,
+    bt_target: Option<(Vec3, f32, f32, bool)>,
+    /// Where the living enemies were at the start of the frame.
+    positions: &'a [(Entity, Vec3, bool)],
+    difficulty: &'a Difficulty,
+    fx: &'a FxAssets,
+    pilot: &'a PlayerPilot,
+    proficiency: crate::vitals::Proficiency,
+    cone0: f32,
+    focus_time: f32,
+}
+
+/// Move the enemies in `pending` (each on its own, in parallel: steering, routes and the
+/// movement steps read only the enemy and the world), then let each attack in order.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn flush_moves(
+    pending: &mut Vec<(Entity, Mut<Enemy>, Mut<Transform>, bool)>,
+    cx: &MoveCx,
+    mut commands: &mut Commands,
+    mut actors: &mut Query<&mut Actor>,
+    damage_from: &mut ResMut<crate::hud::DamageFrom>,
+    pilot_health: &mut Mut<PilotHealth>,
+    bt_health: &mut Mut<TitanHealth>,
+    core: &mut Option<Mut<TitanCore>>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let MoveCx { dt, kits, world, status, rodeo, target, bt_target, positions, difficulty, fx, pilot, proficiency, cone0, focus_time } = *cx;
+    let decide = |id: Entity, e: &mut Enemy, static_titan: bool| {
+        let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
+        let params = &kit.params;
+        let w = &kit.weapon;
         let base = match (target, bt_target) {
             (Some(p), Some(b)) if (e.pos - b.0).length() < (e.pos - p.0).length() => Some(b),
             _ => target,
@@ -890,7 +955,7 @@ pub fn update_enemies(
         }
         // Keep apart from others of the same kind on the same level (a Titan is not steered
         // by grunts, and nothing below a deck pushes what stands on it).
-        for &(other, p, infantry) in &positions {
+        for &(other, p, infantry) in positions {
             if other != id && infantry == e.infantry && (p.z - e.pos.z).abs() < 150.0 {
                 let away = (e.pos - p).truncate();
                 if away.length() < if e.infantry { 80.0 } else { 300.0 } {
@@ -917,6 +982,21 @@ pub fn update_enemies(
             step_input.dash = input.dash && i == 0;
             titan::step(&mut e.state, &step_input, params, &world.0, dt / n as f32);
         }
+        (target, at_decoy)
+    };
+    let moves: Vec<(Option<(Vec3, f32, f32, bool)>, bool)> = if pending.len() > 1 {
+        bevy::tasks::ComputeTaskPool::get().scope(|s| {
+            for (id, e, _, static_titan) in pending.iter_mut() {
+                let decide = &decide;
+                s.spawn(async move { decide(*id, &mut **e, *static_titan) });
+            }
+        })
+    } else {
+        pending.iter_mut().map(|(id, e, _, static_titan)| decide(*id, &mut **e, *static_titan)).collect()
+    };
+    for ((_, mut e, mut tf, _), (target, at_decoy)) in pending.drain(..).zip(moves) {
+        let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
+        let w = &kit.weapon;
         e.pos = Vec3::from(e.state.pos.to_array());
         tf.translation = e.pos;
         tf.rotation = Quat::from_rotation_z(e.state.yaw);
