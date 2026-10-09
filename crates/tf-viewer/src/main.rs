@@ -606,16 +606,8 @@ fn setup(
             log::warn!("vpk {v}: {e:#}");
         }
     }
-    for p in [format!("{}.rpak", args.map), "common.rpak".to_string()] {
-        if let Err(e) = gd.add_rpak(&p) {
-            log::warn!("rpak {p}: {e:#}");
-        }
-    }
-    if std::env::var_os("TF_NO_PATCH_PAKS").is_none() {
-        for stem in ["common", "common_mp"] {
-            gd.add_rpak_patches(stem);
-        }
-    }
+    let patch_stems: &[&str] = if std::env::var_os("TF_NO_PATCH_PAKS").is_none() { &["common", "common_mp"] } else { &[] };
+    gd.add_rpaks(&[format!("{}.rpak", args.map), "common.rpak".to_string()], patch_stems);
     ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());

@@ -38,71 +38,95 @@ impl GameData {
         Ok(())
     }
 
-    /// Open `r2/paks/Win64/<file>` and index its materials.
-    pub fn add_rpak(&mut self, file: &str) -> Result<()> {
+    /// Open `r2/paks/Win64/<file>` for each of `files` and index their materials, then (for
+    /// each of `patch_stems`) the patch chain of `<stem>.rpak` (`<stem>(NN).rpak` with a patch
+    /// header), newest first, for the assets stored in each patch's own pages (the R-101 SFP's
+    /// textures live there). Patch commands on older pages aren't applied, so assets that
+    /// point into them are skipped; materials already indexed from the base paks win.
+    ///
+    /// The paks are decompressed and their names read on every core, then indexed here in
+    /// that order, as opening them one after another would.
+    pub fn add_rpaks(&mut self, files: &[String], patch_stems: &[&str]) {
         let dir = self.root.join("r2/paks/Win64");
-        let p = tf_assets::rpak::resolve(&dir, file).unwrap_or_else(|| dir.join(file));
         let t = std::time::Instant::now();
-        let pak = Rpak::open(&p)?;
-        let idx = self.paks.len();
-        let mut n = 0;
-        for (ai, a) in pak.assets.iter().enumerate() {
-            if &a.kind != b"matl" {
-                continue;
-            }
-            if let Ok(m) = material::load(&pak, a) {
-                self.materials.entry(normalize_name(&m.name)).or_insert((idx, ai));
-                n += 1;
+        // (path, patch stem): the base paks, then each stem's patches newest first.
+        let mut jobs: Vec<(PathBuf, Option<&str>)> = files.iter().map(|f| (tf_assets::rpak::resolve(&dir, f).unwrap_or_else(|| dir.join(f)), None)).collect();
+        for &stem in patch_stems {
+            for n in (1..=99).rev() {
+                let p = dir.join(format!("{stem}({n:02}).rpak"));
+                let Ok(mut f) = std::fs::File::open(&p) else { continue };
+                // A numbered pak with no patch header is self-contained (common_mp(06)); read it too.
+                let mut h = [0u8; 0x40];
+                if std::io::Read::read_exact(&mut f, &mut h).is_err() {
+                    continue;
+                }
+                jobs.push((p, Some(stem)));
             }
         }
-        log::info!("opened {} ({} materials) in {:?}", p.display(), n, t.elapsed());
-        self.paks.push(pak);
-        Ok(())
-    }
-
-    /// Open the patch chain of `<stem>.rpak` (`<stem>(NN).rpak` with a patch header), newest
-    /// first, for the assets stored in each patch's own pages (the R-101 SFP's textures live
-    /// there). Patch commands on older pages aren't applied, so assets that point into them are
-    /// skipped; materials already indexed from the base pak win.
-    pub fn add_rpak_patches(&mut self, stem: &str) {
-        let dir = self.root.join("r2/paks/Win64");
-        let t = std::time::Instant::now();
-        let (mut mats, mut texs, mut opened) = (0, 0, 0);
-        for n in (1..=99).rev() {
-            let p = dir.join(format!("{stem}({n:02}).rpak"));
-            let Ok(mut f) = std::fs::File::open(&p) else { continue };
-            // A numbered pak with no patch header is self-contained (common_mp(06)); read it too.
-            let mut h = [0u8; 0x40];
-            if std::io::Read::read_exact(&mut f, &mut h).is_err() {
-                continue;
-            }
-            let Ok(pak) = Rpak::open(&p) else { continue };
-            let idx = self.paks.len();
+        enum Name {
+            Material(String),
+            Texture(String),
+        }
+        let opened = crate::world::parallel_map(&jobs, |(p, patch)| -> Result<(Rpak, Vec<(usize, Name)>, std::time::Duration)> {
+            let t = std::time::Instant::now();
+            let pak = Rpak::open(p)?;
+            let mut names = Vec::new();
             for (ai, a) in pak.assets.iter().enumerate() {
                 match &a.kind {
                     b"matl" => {
                         if let Ok(m) = material::load(&pak, a) {
-                            if let std::collections::hash_map::Entry::Vacant(e) = self.materials.entry(normalize_name(&m.name)) {
-                                e.insert((idx, ai));
-                                mats += 1;
-                            }
+                            names.push((ai, Name::Material(normalize_name(&m.name))));
                         }
                     }
-                    b"txtr" => {
+                    b"txtr" if patch.is_some() => {
                         if let Some(name) = tf_assets::texture::info(&pak, a).ok().and_then(|i| i.name) {
-                            if let std::collections::hash_map::Entry::Vacant(e) = self.textures.entry(normalize_name(&name)) {
-                                e.insert((idx, ai));
-                                texs += 1;
-                            }
+                            names.push((ai, Name::Texture(normalize_name(&name))));
                         }
                     }
                     _ => {}
                 }
             }
-            self.paks.push(pak);
-            opened += 1;
+            Ok((pak, names, t.elapsed()))
+        });
+        let mut patches: Vec<(&str, usize, usize, usize)> = patch_stems.iter().map(|&s| (s, 0, 0, 0)).collect();
+        for ((p, patch), r) in jobs.iter().zip(opened) {
+            let r = r.unwrap_or_else(|| Err(anyhow::anyhow!("worker panicked")));
+            let idx = self.paks.len();
+            match (patch, r) {
+                (None, Ok((pak, names, took))) => {
+                    let mut n = 0;
+                    for (ai, name) in names {
+                        if let Name::Material(name) = name {
+                            self.materials.entry(name).or_insert((idx, ai));
+                            n += 1;
+                        }
+                    }
+                    log::info!("opened {} ({} materials) in {:?}", p.display(), n, took);
+                    self.paks.push(pak);
+                }
+                (None, Err(e)) => log::warn!("rpak {}: {e:#}", p.display()),
+                (Some(stem), Ok((pak, names, _))) => {
+                    let Some(counts) = patches.iter_mut().find(|c| c.0 == *stem) else { continue };
+                    for (ai, name) in names {
+                        let (map, n) = match name {
+                            Name::Material(name) => (self.materials.entry(name), &mut counts.1),
+                            Name::Texture(name) => (self.textures.entry(name), &mut counts.2),
+                        };
+                        if let std::collections::hash_map::Entry::Vacant(e) = map {
+                            e.insert((idx, ai));
+                            *n += 1;
+                        }
+                    }
+                    counts.3 += 1;
+                    self.paks.push(pak);
+                }
+                (Some(_), Err(_)) => {}
+            }
         }
-        log::info!("{stem} patches: {opened} paks, {mats} new materials, {texs} named textures in {:?}", t.elapsed());
+        for (stem, mats, texs, opened) in patches {
+            log::info!("{stem} patches: {opened} paks, {mats} new materials, {texs} named textures");
+        }
+        log::info!("{} rpaks opened in {:?}", self.paks.len(), t.elapsed());
     }
 
     /// A texture from the patch paks by name: (pak, guid).
