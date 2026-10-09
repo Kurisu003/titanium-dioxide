@@ -1247,6 +1247,17 @@ The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy 
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
 
+The game's own per-frame systems avoid change-detection churn: `animate_actors` reuses an
+actor's last pose while its inputs (layers, aim, grids, overlays, offsets) are bit-identical and
+writes only bones that moved (of ~5400 bone transforms written per frame, ~2800 were unchanged,
+mostly pooled enemies waiting hidden); Visibility is set only when it changes; empty particle
+layer meshes are no longer re-marked modified every frame (`Assets::get_mut` alone does that:
+~39 mesh re-uploads a frame on foot). BT's mirrored clips and the kit's offhand viewmodels are
+built under the loading screen instead of on the first frame of play (a 430-590 ms hitch).
+Collision queries reject more work exactly (same results bit for bit): Titan steps ~35% and
+Pilot steps ~40% cheaper offline. With wave 3 enemies on Angel City: 58 -> 72 fps average at
+1920x1080 (noisy, shared machine).
+
 Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs
