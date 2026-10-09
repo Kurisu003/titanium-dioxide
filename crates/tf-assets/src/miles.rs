@@ -32,14 +32,17 @@
 //!   and 0x64 f32 the distance at which it is silent (rifle fire 200, footsteps 400,
 //!   explosions 1500), both read as feet; 0 on 2D sounds.
 
+use crate::bytes::{f32_at, u16_at, u32_at, u64_at};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+/// One audio source of the bank (see the module docs for the entry layout).
 #[derive(Clone, Debug)]
 pub struct Source {
+    /// Lowercase source name.
     pub name: String,
     pub sample_rate: u32,
     pub channels: u32,
@@ -47,7 +50,9 @@ pub struct Source {
     pub header_size: u32,
     pub data_offset: u64,
     pub data_size: u32,
+    /// -1 for language-independent sources, 0 for English.
     pub language: i16,
+    /// Which `.mstr` patch bank holds the stream.
     pub patch: u16,
 }
 
@@ -70,23 +75,16 @@ pub struct EventInfo {
     pub max_distance: Option<f32>,
 }
 
+/// The opened sound bank: sources, events and the stream banks holding the audio.
 pub struct MilesBank {
+    /// mbnk version (12 or 13).
     pub version: u32,
+    /// Shared sources followed by the English ones.
     pub sources: Vec<Source>,
     by_name: std::collections::BTreeMap<String, usize>,
     /// Sound event name (lowercase) -> what it plays.
     events: HashMap<String, EventInfo>,
     streams: HashMap<(i16, u16), StreamBank>,
-}
-
-fn u16_at(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([b[o], b[o + 1]])
-}
-fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn u64_at(b: &[u8], o: usize) -> u64 {
-    u64::from_le_bytes(b[o..o + 8].try_into().unwrap())
 }
 
 impl MilesBank {
@@ -160,6 +158,7 @@ impl MilesBank {
         self.events.get(&name.to_ascii_lowercase()).filter(|v| !v.sources.is_empty())
     }
 
+    /// Number of sound events in the bank.
     pub fn event_count(&self) -> usize {
         self.events.len()
     }
@@ -202,6 +201,7 @@ impl MilesBank {
         self.by_name.get(&e).map(|&i| vec![i]).unwrap_or_default()
     }
 
+    /// The source named `name` (any case).
     pub fn find(&self, name: &str) -> Option<&Source> {
         self.by_name.get(&name.to_ascii_lowercase()).map(|&i| &self.sources[i])
     }
@@ -232,10 +232,6 @@ impl MilesBank {
 fn cstr_at(b: &[u8], o: usize) -> Option<String> {
     let end = b.get(o..)?.iter().position(|&c| c == 0)?;
     Some(String::from_utf8_lossy(&b[o..o + end]).to_ascii_lowercase())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
 
 /// A float field that holds a plausible value (not an offset or index read as a float).
