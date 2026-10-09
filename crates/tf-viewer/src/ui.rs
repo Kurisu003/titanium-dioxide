@@ -74,7 +74,8 @@ impl LoadedAt {
     }
 }
 
-/// TF_FIXED_DT=N (testing): every frame advances the game clock by exactly 1/N s and the
+/// TF_FIXED_DT=N (testing): every frame after loading advances the game clock by exactly 1/N s
+/// (it stands still while loading, which takes a different number of frames each run), and the
 /// script and screenshot clock counts frames from the end of loading, so a scripted run plays
 /// out the same frame by frame whatever the frame rate (comparing `TF_RECORD` logs).
 pub fn fixed_dt() -> Option<f64> {
@@ -85,10 +86,13 @@ pub fn fixed_dt() -> Option<f64> {
 /// Frames since loading finished (the TF_FIXED_DT clock).
 static FIXED_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Count a frame of the TF_FIXED_DT clock.
-pub fn fixed_clock(loaded: Option<Res<LoadedAt>>) {
+/// Count a frame of the TF_FIXED_DT clock, and start the game clock once loading is done.
+pub fn fixed_clock(loaded: Option<Res<LoadedAt>>, mut step: ResMut<bevy::time::TimeUpdateStrategy>) {
     if loaded.is_some() {
-        FIXED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if FIXED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+            let dt = fixed_dt().unwrap_or(0.0);
+            *step = bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(dt));
+        }
     }
 }
 
