@@ -34,14 +34,26 @@ impl Bits<'_> {
     fn left(&self) -> isize {
         (self.data.len() * 8) as isize - self.pos as isize
     }
+    /// The next `n` (at most 32) bits; past the end of the data they read as 0.
     fn get(&mut self, n: u32) -> u32 {
-        let mut v = 0u32;
-        for i in 0..n {
-            let byte = self.data.get(self.pos >> 3).copied().unwrap_or(0);
-            v |= (((byte >> (self.pos & 7)) & 1) as u32) << i;
-            self.pos += 1;
+        debug_assert!(n <= 32);
+        if n == 0 {
+            return 0;
         }
-        v
+        // The 8 bytes from the current one hold all n bits (shift <= 7, n <= 32).
+        let byte = self.pos >> 3;
+        let mut w = [0u8; 8];
+        match self.data.get(byte..byte + 8) {
+            Some(b) => w.copy_from_slice(b),
+            None => {
+                for (i, v) in w.iter_mut().enumerate() {
+                    *v = self.data.get(byte + i).copied().unwrap_or(0);
+                }
+            }
+        }
+        let v = (u64::from_le_bytes(w) >> (self.pos & 7)) & ((1u64 << n) - 1);
+        self.pos += n as usize;
+        v as u32
     }
     fn float(&mut self) -> f32 {
         let power = self.get(5) as i32;
@@ -64,6 +76,9 @@ struct Decoder {
     previous: Vec<Vec<f32>>,
     first: bool,
     dct: std::sync::Arc<dyn rustdct::TransformType2And3<f32>>,
+    /// Reused per channel: the DCT coefficients and the DCT's scratch space.
+    coeffs: Vec<f32>,
+    scratch: Vec<f32>,
 }
 
 impl Decoder {
@@ -85,7 +100,8 @@ impl Decoder {
         }
         bands[num_bands] = frame_len;
         let dct = DctPlanner::new().plan_dct3(frame_len);
-        Self { frame_len, overlap_len, num_bands, root, bands, quant_table, previous: vec![vec![0.0; overlap_len]; channels], first: true, dct }
+        let scratch = vec![0.0; dct.get_scratch_len()];
+        Self { frame_len, overlap_len, num_bands, root, bands, quant_table, previous: vec![vec![0.0; overlap_len]; channels], first: true, dct, coeffs: vec![0.0; frame_len], scratch }
     }
 
     /// One block for `count` channels starting at `offset`; writes frame_len samples each.
@@ -96,7 +112,8 @@ impl Decoder {
             if gb.left() < 58 {
                 bail!("truncated block");
             }
-            let mut coeffs = vec![0f32; n];
+            let coeffs = &mut self.coeffs;
+            coeffs.fill(0.0);
             coeffs[0] = gb.float() * self.root;
             coeffs[1] = gb.float() * self.root;
             if gb.left() < self.num_bands as isize * 8 {
@@ -135,10 +152,12 @@ impl Decoder {
             // FFmpeg: coeffs[0] /= 0.5, then an inverse DCT (DCT-III). rustdct's unnormalized
             // DCT-III times 2/frame_len matches FFmpeg's output.
             coeffs[0] /= 0.5;
-            self.dct.process_dct3(&mut coeffs);
+            // (`process_dct3` would allocate zeroed scratch space on every call.)
+            self.scratch.fill(0.0);
+            self.dct.process_dct3_with_scratch(coeffs, &mut self.scratch);
             let scale = 2.0 / n as f32;
             let o = &mut out[offset + ch];
-            for (dst, c) in o.iter_mut().zip(&coeffs) {
+            for (dst, c) in o.iter_mut().zip(coeffs.iter()) {
                 *dst = c * scale;
             }
         }
@@ -208,4 +227,29 @@ pub fn decode(file: &[u8]) -> Result<Pcm> {
     }
     samples.truncate(total_samples * channels);
     Ok(Pcm { channels, sample_rate, samples })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Bits;
+
+    /// `Bits::get` against reading one bit at a time, for every width, across the end.
+    #[test]
+    fn bit_reader_matches_bitwise_reads() {
+        let data: Vec<u8> = (0..23u32).map(|i| (i.wrapping_mul(0x9E37_79B9) >> 13) as u8).collect();
+        let bitwise = |pos: usize, n: u32| -> u32 {
+            (0..n).fold(0, |v, i| {
+                let p = pos + i as usize;
+                let byte = data.get(p >> 3).copied().unwrap_or(0);
+                v | ((((byte >> (p & 7)) & 1) as u32) << i)
+            })
+        };
+        for n in 0..=32 {
+            for start in 0..data.len() * 8 + 40 {
+                let mut gb = Bits { data: &data, pos: start };
+                assert_eq!(gb.get(n), bitwise(start, n), "n {n} at bit {start}");
+                assert_eq!(gb.pos, start + n as usize);
+            }
+        }
+    }
 }
