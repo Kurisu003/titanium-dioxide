@@ -542,19 +542,6 @@ fn ray_box(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> 
     (tmin <= tmax).then_some(tmin)
 }
 
-/// `ray_box` that doesn't miss a box containing one `ray_box` reaches (but see the level rays
-/// in `raycast_replay`): a slab the ray lies exactly on the face of (0 * inf) counts as passed.
-fn ray_box_wide(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> {
-    let t1 = (min - o) * inv;
-    let t2 = (max - o) * inv;
-    let on_face = t1.is_nan_mask() | t2.is_nan_mask();
-    let lo = Vec3::select(on_face, Vec3::NEG_INFINITY, t1.min(t2));
-    let hi = Vec3::select(on_face, Vec3::INFINITY, t1.max(t2));
-    let tmin = lo.max_element().max(0.0);
-    let tmax = hi.min_element().min(max_t);
-    (tmin <= tmax).then_some(tmin)
-}
-
 /// Rays up to this long (game units) replay the median-tree walk over the leaves they reach
 /// (`raycast_replay`); longer ones, which the walk's limit cuts short, walk the median tree.
 const SHORT_RAY: f32 = 400.0;
@@ -811,10 +798,19 @@ impl CollisionWorld {
         if !(origin.is_finite() && dir.is_finite()) || (!inv.z.is_finite() && bvh.tops.binary_search_by(|z| z.total_cmp(&(origin.z + 0.0))).is_ok()) {
             return self.raycast_median(bvh, origin, dir, max_t);
         }
+        // The search tree is walked, and its leaves screened before `ray_box`, with the ray's
+        // box padded: every box `ray_box` reaches overlaps it, so the cheaper test drops none of
+        // them. Off the padded range on an axis, `ray_box` misses: behind the origin both slab
+        // distances are negative, beyond the end the nearer one exceeds `max_t` by far more
+        // than a ray this short can round, and a ray that doesn't move along the axis lies
+        // within the slab or misses it (the 0 * inf slabs above are on a face, within range).
+        let end = origin + dir * max_t;
+        let pad = Vec3::splat(1.0 + 1e-5 * origin.abs().max_element());
+        let (lo, hi) = (origin.min(end) - pad, origin.max(end) + pad);
         // Hit leaves (the leaf, its first hit, hit count) and the hits (position in `order`, t).
         let mut leaves: SmallBuf<(Node, u32, u32), 16> = SmallBuf::new();
         let mut hits: SmallBuf<(u32, f32), 32> = SmallBuf::new();
-        if ray_box_wide(origin, inv, bvh.nodes[0].min, bvh.nodes[0].max, max_t).is_some() {
+        if overlaps(&bvh.nodes[0], lo, hi) {
             let mut stack = [0u32; STACK];
             let mut sp = 1;
             while sp > 0 {
@@ -822,7 +818,7 @@ impl CollisionWorld {
                 let n = bvh.nodes[stack[sp] as usize];
                 if n.count > 0 {
                     for leaf in &bvh.leaves[n.start as usize..(n.start + n.count) as usize] {
-                        if ray_box(origin, inv, leaf.min, leaf.max, max_t).is_none() {
+                        if !overlaps(leaf, lo, hi) || ray_box(origin, inv, leaf.min, leaf.max, max_t).is_none() {
                             continue;
                         }
                         let first = hits.len() as u32;
@@ -845,8 +841,7 @@ impl CollisionWorld {
                     }
                 } else {
                     for c in [n.start, n.start + 1] {
-                        let child = bvh.nodes[c as usize];
-                        if ray_box_wide(origin, inv, child.min, child.max, max_t).is_some() {
+                        if overlaps(&bvh.nodes[c as usize], lo, hi) {
                             stack[sp] = c;
                             sp += 1;
                         }
