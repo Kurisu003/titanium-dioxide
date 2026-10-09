@@ -3873,13 +3873,17 @@ pub fn update_pfx(
                 *v = want;
             }
         }
-        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         if b.quads.is_empty() {
-            if mesh.count_vertices() != 3 {
-                *mesh = empty_mesh();
+            // Only touch a mesh that isn't empty yet: `get_mut` alone marks the asset modified,
+            // which re-uploads it (and re-checks every entity using it) the next frame.
+            if meshes.get(&layer.mesh).is_some_and(|m| m.count_vertices() != 3) {
+                if let Some(mesh) = meshes.get_mut(&layer.mesh) {
+                    *mesh = empty_mesh();
+                }
             }
             continue;
         }
+        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         if !layer.additive {
             b.quads.sort_by(|a, c| c.0.total_cmp(&a.0));
         }
