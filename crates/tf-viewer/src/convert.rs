@@ -469,6 +469,55 @@ pub fn blend_material(
     Some(blends.add(BlendMaterial { base, extension: BlendLayer { layer_b: image(gd, cache, images, pi, col_b), mask: image(gd, cache, images, pi, mask) } }))
 }
 
+/// Where a translucent mesh goes in the transparent phase: added to its sort distance (view
+/// depth in metres, drawn far to near). Bevy adds a material's `depth_bias` to that distance as
+/// well as to the depth test, so the 256 that keeps overlays off the surface under them
+/// (`material`) put every translucent world surface 256 m nearer in the order than it is, and
+/// the BSP batches' centres say nothing about where they are anyway (one batch spans the map).
+/// The ground's dirt overlays (`world/stone/dirt_pathway_to_transparent_bm` covers much of
+/// Forwardbase Kodai's floor), grime decals and glass then drew over explosions, smoke and
+/// shields wherever they lay. The BSP's translucent surfaces and the particle decals take
+/// `WORLD` and draw before every other translucent thing, as surface detail drawn with the
+/// level (the cost: an effect behind a translucent window draws over the glass).
+#[derive(Component, Clone, Copy, Debug)]
+pub struct TransparentOrder(pub f32);
+
+impl TransparentOrder {
+    pub const WORLD: TransparentOrder = TransparentOrder(-1.0e6);
+}
+
+impl bevy::render::extract_component::ExtractComponent for TransparentOrder {
+    type QueryData = &'static TransparentOrder;
+    type QueryFilter = ();
+    type Out = TransparentOrder;
+    fn extract_component(o: bevy::ecs::query::QueryItem<'_, '_, Self::QueryData>) -> Option<Self::Out> {
+        Some(*o)
+    }
+}
+
+/// Render world: apply each mesh's `TransparentOrder` before the phase is sorted.
+fn apply_transparent_order(mut phases: ResMut<bevy::render::render_phase::ViewSortedRenderPhases<bevy::core_pipeline::core_3d::Transparent3d>>, order: Query<&TransparentOrder>) {
+    for phase in phases.values_mut() {
+        for item in &mut phase.items {
+            if let Ok(o) = order.get(item.entity.0) {
+                item.distance += o.0;
+            }
+        }
+    }
+}
+
+pub struct TransparentOrderPlugin;
+
+impl Plugin for TransparentOrderPlugin {
+    fn build(&self, app: &mut App) {
+        use bevy::render::{Render, RenderApp, RenderSystems};
+        app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<TransparentOrder>::default());
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(Render, apply_transparent_order.in_set(RenderSystems::QueueSweep));
+        }
+    }
+}
+
 pub struct BlendMaterialPlugin;
 
 impl Plugin for BlendMaterialPlugin {

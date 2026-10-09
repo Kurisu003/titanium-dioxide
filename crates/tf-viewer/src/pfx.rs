@@ -476,17 +476,22 @@ pub struct PfxRequest {
 }
 
 /// TF_PFX_TEST=<system>: the script action `pfxtest` plays it on the ground 300 units in front
-/// of the camera, facing up (for checking an effect in isolation).
-pub fn pfx_test(mut commands: Commands, mut input: ResMut<crate::player::PlayerInput>, cams: Query<&GlobalTransform, With<crate::player::MainCamera>>) {
+/// of the camera (TF_PFX_TEST_DIST=units changes that), facing up (for checking an effect in
+/// isolation). The ground is found by a trace down from there, so it works from BT's
+/// cockpit and a free camera too.
+pub fn pfx_test(mut commands: Commands, mut input: ResMut<crate::player::PlayerInput>, cams: Query<&GlobalTransform, With<crate::player::MainCamera>>, world: Option<Res<crate::player::Collision>>) {
     if !std::mem::take(&mut input.pfx_test) {
         return;
     }
     let Some(name) = std::env::var("TF_PFX_TEST").ok() else { return };
     let Ok(cam) = cams.single() else { return };
+    let dist = std::env::var("TF_PFX_TEST_DIST").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(300.0);
     let mut f = cam.forward().as_vec3();
     f.y = 0.0;
-    let at = cam.translation() + f.normalize_or(Vec3::NEG_Z) * 300.0 * crate::player::UNIT - Vec3::Y * 60.0 * crate::player::UNIT;
-    log::info!("pfx test {name}");
+    let above = to_game(cam.translation() + f.normalize_or(Vec3::NEG_Z) * dist * UNIT);
+    let down = world.and_then(|w| w.0.raycast(SVec3::new(above.x, above.y, above.z), SVec3::NEG_Z, 4000.0)).map_or(60.0, |h| h.t);
+    let at = to_bevy(above - Vec3::Z * down);
+    log::info!("pfx test {name} at {:.0}", above - Vec3::Z * down);
     emit_named(&mut commands, &name, at, Vec3::Y);
 }
 
@@ -682,15 +687,152 @@ fn v3(a: [f32; 3]) -> Vec3 {
     Vec3::from(a)
 }
 
-/// A system's 0-255 colour as linear RGB: the game tints its sRGB textures in gamma space,
-/// which is the texture's linear colour times the tint's linear value (taken as linear, a
+/// A system's 0-255 colour as linear RGB: Respawn squares it (client.dll's `Color Random`
+/// setup at 0x180706700 stores (byte / 255)^2 for both colours; 0x180706ed0 does the same
+/// for its other colour initializer), its approximation of gamma 2.2 (taken as linear, a
 /// 73-grey smoke drew as a light haze).
 fn col(c: [u8; 4]) -> Vec3 {
+    let v = Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) / 255.0;
     if std::env::var_os("TF_PFX_GAMMA_COLORS").is_some() {
-        return Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32) / 255.0;
+        return v;
     }
-    let l = Color::srgb_u8(c[0], c[1], c[2]).to_linear();
-    Vec3::new(l.red, l.green, l.blue)
+    v * v
+}
+
+/// `Color Random`'s lighting tint (client.dll 0x1806fa030): with `tint_perc` set, the light at
+/// the tint control point (`GetLightingAtPoint`, cached per system until the point moves
+/// `tint update movement threshold` units) times `light amplification amount` blends into the
+/// random colour by the `tint blend mode`, and the result is lerped from the colour by
+/// `tint_perc`. Half the game's `Color Random`s (2365 of 4768) use it: smoke and dust are lit
+/// by where they are, so the Titan dash's grey dust (61-165 grey, multiplied by twice the
+/// light at 50%) is pale in sunlight and the plain colours alone drew it as dark blobs.
+#[derive(Clone, Copy, Debug)]
+struct Tint {
+    perc: f32,
+    cp: usize,
+    threshold: f32,
+    mode: i32,
+    amp: f32,
+    sky: f32,
+}
+
+impl Tint {
+    /// The tinted colour, or None for modes past 4, which write nothing (the particle keeps
+    /// the colour it had).
+    fn apply(&self, c: Vec3, light: Vec3) -> Option<Vec3> {
+        let t = light * self.amp;
+        let overlay = |c: f32, t: f32| if t < 0.5 { 2.0 * c * t } else { 1.0 - 2.0 * (1.0 - c) * (1.0 - t) };
+        let b = match self.mode {
+            0 => t,
+            1 => Vec3::new(overlay(c.x, t.x), overlay(c.y, t.y), overlay(c.z, t.z)),
+            2 => c.min(t),
+            3 => c.max(t),
+            4 => c * t,
+            _ => return None,
+        };
+        Some(c + (b - c) * self.perc)
+    }
+}
+
+/// The light at a point for particle tints, the way engine.dll's `GetLightForPoint` lights
+/// a point without a normal (0x180175ea3): the nearest light probe's L0 (int16 / 8192) plus
+/// the sun's intensity times a quarter of the probe's sun visibility, plus the sky ambient's
+/// times a quarter of |v| (|v| + 1) for the probe's sky visibility vector v scaled by the
+/// system's `light sky scale`. Left out: the probe's static and dynamic local lights, and two
+/// engine scalars and a colour on the sun term (taken as 1). The engine finds the probe through
+/// the map's probe tree; the nearest one stands in.
+#[derive(Clone, Copy, Debug)]
+struct LightSample {
+    dc: Vec3,
+    sky_len: f32,
+    sun_vis: f32,
+    sun: Vec3,
+    sky: Vec3,
+}
+
+impl LightSample {
+    /// No lighting available: the engine's (1, 1, 1).
+    const NONE: LightSample = LightSample { dc: Vec3::ONE, sky_len: 0.0, sun_vis: 0.0, sun: Vec3::ZERO, sky: Vec3::ZERO };
+
+    fn at(&self, sky_scale: f32) -> Vec3 {
+        let v = self.sky_len * sky_scale;
+        self.dc + self.sun * (0.25 * self.sun_vis) + self.sky * (0.25 * v * (v + 1.0))
+    }
+}
+
+/// The map's light probes and environment lights, for particle tints (`LightSample`).
+#[derive(Resource, Default)]
+pub struct ParticleLight {
+    cells: HashMap<(i32, i32, i32), Vec<(Vec3, u32)>>,
+    /// Per probe: L0 (RGB), |sky vector|, sun visibility.
+    probes: Vec<(Vec3, f32, f32)>,
+    sun: Vec3,
+    sky: Vec3,
+}
+
+/// Probe grid cell (game units).
+const PROBE_CELL: f32 = 256.0;
+
+impl ParticleLight {
+    pub fn load(bsp: &tf_assets::bsp::Bsp) -> Self {
+        let sh = bsp.light_probes();
+        let sky = bsp.light_probe_sky();
+        let k = 1.0 / 8192.0;
+        let probes: Vec<(Vec3, f32, f32)> = sh
+            .iter()
+            .zip(&sky)
+            .map(|(p, s)| (Vec3::new(p[0][3] as f32, p[1][3] as f32, p[2][3] as f32) * k, Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32).length() * k, s[3] as f32 * k))
+            .collect();
+        let mut cells: HashMap<(i32, i32, i32), Vec<(Vec3, u32)>> = HashMap::new();
+        for (o, i) in bsp.light_probe_refs() {
+            if (i as usize) < probes.len() {
+                let p = Vec3::from(o);
+                cells.entry(Self::cell(p)).or_default().push((p, i));
+            }
+        }
+        // The level's environment lights: the last sun and sky ambient (a map's first set
+        // lights its intro skybox, as env.rs picks the last light_environment).
+        let lights = bsp.world_lights();
+        let last = |ty: i32| lights.iter().rev().find(|l| l.0 == ty).map_or(Vec3::ZERO, |l| Vec3::from(l.2));
+        let (sun, sky) = (last(3), last(5));
+        log::info!("particle lighting: {} probes, sun {sun:.2}, sky {sky:.2}", probes.len());
+        ParticleLight { cells, probes, sun, sky }
+    }
+
+    fn cell(p: Vec3) -> (i32, i32, i32) {
+        let c = (p / PROBE_CELL).floor();
+        (c.x as i32, c.y as i32, c.z as i32)
+    }
+
+    /// The light at `p` (game units) from the nearest probe within eight cells.
+    fn sample(&self, p: Vec3) -> LightSample {
+        let (cx, cy, cz) = Self::cell(p);
+        let mut best: Option<(f32, u32)> = None;
+        for r in 0..=8i32 {
+            for x in cx - r..=cx + r {
+                for y in cy - r..=cy + r {
+                    for z in cz - r..=cz + r {
+                        if (x - cx).abs().max((y - cy).abs()).max((z - cz).abs()) != r {
+                            continue;
+                        }
+                        for &(q, i) in self.cells.get(&(x, y, z)).into_iter().flatten() {
+                            let d = q.distance_squared(p);
+                            if best.is_none_or(|b| d < b.0) {
+                                best = Some((d, i));
+                            }
+                        }
+                    }
+                }
+            }
+            // Anything in a further ring is at least r cells away.
+            if best.is_some_and(|b| b.0 <= (r as f32 * PROBE_CELL).powi(2)) {
+                break;
+            }
+        }
+        let Some((_, i)) = best else { return LightSample::NONE };
+        let (dc, sky_len, sun_vis) = self.probes[i as usize];
+        LightSample { dc, sky_len, sun_vis, sun: self.sun, sky: self.sky }
+    }
 }
 
 /// Back to sRGB (for the model path, whose materials take sRGB tints).
@@ -712,7 +854,7 @@ enum Init {
     LifetimeFromSequence { fps: f32 },
     Radius { min: f32, max: f32, exp: f32 },
     Alpha { min: f32, max: f32, exp: f32 },
-    Color { c1: Vec3, c2: Vec3 },
+    Color { c1: Vec3, c2: Vec3, tint: Option<Tint> },
     Sphere { cp: usize, dmin: f32, dmax: f32, bias: Vec3, abs: Vec3, local_bias: bool, smin: f32, smax: f32, sexp: f32, lmin: Vec3, lmax: Vec3 },
     Box { cp: usize, min: Vec3, max: Vec3 },
     Ring { cp: usize, radius: f32, thickness: f32, smin: f32, smax: f32, xy: bool },
@@ -912,7 +1054,19 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
             "Lifetime From Sequence" | "lifetime from sequence" => Init::LifetimeFromSequence { fps: o.f("Frames Per Second", 30.0) },
             "Radius Random" => Init::Radius { min: o.f("radius_min", 1.0), max: o.f("radius_max", 1.0), exp: o.f("radius_random_exponent", 1.0) },
             "Alpha Random" => Init::Alpha { min: o.f("alpha_min", 255.0) / 255.0, max: o.f("alpha_max", 255.0) / 255.0, exp: o.f("alpha_random_exponent", 1.0) },
-            "Color Random" | "Color Lit Per Particle" => Init::Color { c1: col(o.color("color1", [255; 4])), c2: col(o.color("color2", [255; 4])) },
+            // `Color Lit Per Particle` (lit per particle, mostly campaign ambience) keeps its plain colours.
+            "Color Random" | "Color Lit Per Particle" => Init::Color {
+                c1: col(o.color("color1", [255; 4])),
+                c2: col(o.color("color2", [255; 4])),
+                tint: (o.function == "Color Random" && o.f("tint_perc", 0.0) != 0.0 && std::env::var_os("TF_PFX_NO_TINT").is_none()).then(|| Tint {
+                    perc: o.f("tint_perc", 0.0),
+                    cp: cpn(o, "tint control point"),
+                    threshold: o.f("tint update movement threshold", 32.0),
+                    mode: o.i("tint blend mode", 0),
+                    amp: o.f("light amplification amount", 1.0),
+                    sky: o.f("light sky scale", 1.0),
+                }),
+            },
             "Position Within Sphere Random" => Init::Sphere {
                 cp: cpn(o, "control_point_number"),
                 dmin: o.f("distance_min", 0.0),
@@ -1430,6 +1584,8 @@ struct Effect {
     cps: [Cp; NCP],
     cp_prev: [Vec3; NCP],
     cp_vel: [Vec3; NCP],
+    /// The light at the control points tints read (`Color Random`), and where it was taken.
+    light: [Option<(Vec3, LightSample)>; NCP],
     /// Last frame's control points (Normal Lock to Control Point turns normals with them).
     cp_frame_prev: [Cp; NCP],
     /// Control points that hold a value (given by the caller or set by an operator): the
@@ -1473,6 +1629,14 @@ fn collect_under(lib: &mut Library, root: usize, delay: f32, depth: u32, parent:
         return;
     }
     for (c, d, end_cap) in children {
+        // TF_PFX_SKIP=a,b leaves out child systems whose name contains one of the parts (for
+        // finding which child of an effect draws something).
+        if let Ok(skip) = std::env::var("TF_PFX_SKIP") {
+            let name = lib.defs[c].name.to_ascii_lowercase();
+            if skip.split(',').any(|s| !s.is_empty() && name.contains(&s.to_ascii_lowercase())) {
+                continue;
+            }
+        }
         if end_cap {
             end_caps.push((c, d));
         } else {
@@ -1589,7 +1753,7 @@ impl Pfx {
         let id = self.next_id;
         let stop_at = stop_after.unwrap_or(if attached.is_some() { f32::INFINITY } else { DEFAULT_STOP });
         let cp_set = (1u32 << cps.len().clamp(1, NCP)) - 1;
-        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: all, cp_set, age: 0.0, stop_at, stopped: false, stopped_at: f32::INFINITY, capped: false, attached, end_caps, vm: false, overlay: false, screen: false });
+        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], light: [None; NCP], cp_frame_prev: all, cp_set, age: 0.0, stop_at, stopped: false, stopped_at: f32::INFINITY, capped: false, attached, end_caps, vm: false, overlay: false, screen: false });
         Some(id)
     }
 
@@ -1860,7 +2024,7 @@ fn cap_active(cap: i8, emitting: bool) -> bool {
 /// (state 1) on a living particle when its effect is stopped, the way the gun shield picks up
 /// its 5 s lifetime and fade only once it is dropped.
 #[allow(clippy::too_many_arguments)]
-fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool, recap: bool) {
+fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], light: &[LightSample; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool, recap: bool) {
     let mut had_life = false;
     for (i, cap) in sys.init.iter().zip(&sys.init_cap) {
         if if recap { *cap != 1 } else { !cap_active(*cap, emitting) } {
@@ -1877,7 +2041,12 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
             }
             Init::Radius { min, max, exp } => p.base_radius = rexp(rng, min, max, exp),
             Init::Alpha { min, max, exp } => p.base_alpha = rexp(rng, min, max, exp),
-            Init::Color { c1, c2 } => p.base_color = c1.lerp(c2, rand(rng)) * sys.hdr,
+            Init::Color { c1, c2, tint } => {
+                let c = c1.lerp(c2, rand(rng));
+                if let Some(c) = tint.map_or(Some(c), |t| t.apply(c, light[t.cp].at(t.sky))) {
+                    p.base_color = c * sys.hdr;
+                }
+            }
             Init::Sphere { cp, dmin, dmax, bias, abs, local_bias, smin, smax, sexp, lmin, lmax } => {
                 let c = &cps[cp];
                 let mut d = unit(rng) * bias;
@@ -2062,7 +2231,7 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
 }
 
 #[allow(clippy::too_many_arguments)]
-fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool) -> P {
+fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], light: &[LightSample; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool) -> P {
     let mut p = P {
         pos: cps[0].pos,
         radius: sys.radius,
@@ -2078,7 +2247,7 @@ fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], cp_set: 
         id: index,
         ..Default::default()
     };
-    apply_inits(sys, &mut p, cps, cp_vel, cp_set, parent, sheet_len, rng, index, emitting, false);
+    apply_inits(sys, &mut p, cps, cp_vel, light, cp_set, parent, sheet_len, rng, index, emitting, false);
     p.radius = p.base_radius;
     p.alpha = p.base_alpha;
     p.color = p.base_color;
@@ -2193,6 +2362,8 @@ struct StepCtx<'a> {
     /// This frame's control point movement and velocity.
     cp_delta: &'a [Vec3; NCP],
     cp_vel: &'a [Vec3; NCP],
+    /// The light at each control point (for `Color Random`'s tint).
+    light: &'a [LightSample; NCP],
     /// Last frame's control points.
     cp_prev: &'a [Cp; NCP],
     /// Control points holding a value (see `Effect::cp_set`); operators that set one add it.
@@ -2208,7 +2379,7 @@ struct StepCtx<'a> {
 /// Advance one node by `dt`.
 #[allow(clippy::too_many_arguments)]
 fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: bool, dt: f32, rng: &mut u64, world: Option<&crate::player::Collision>, budget: &mut usize, sheet_len: &dyn Fn(u16) -> f32) {
-    let (cp_delta, cp_vel, player, parent) = (ctx.cp_delta, ctx.cp_vel, ctx.player, ctx.parent);
+    let (cp_delta, cp_vel, light, player, parent) = (ctx.cp_delta, ctx.cp_vel, ctx.light, ctx.player, ctx.parent);
     if n.delay > 0.0 {
         n.delay -= dt;
         return;
@@ -2319,7 +2490,7 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
     for _ in 0..new {
         let id = n.next_id;
         n.next_id += 1;
-        let p = init_particle(&sys, cps, cp_vel, cp_set, parent, sheet_len, rng, id, emitting);
+        let p = init_particle(&sys, cps, cp_vel, light, cp_set, parent, sheet_len, rng, id, emitting);
         n.particles.push(p);
     }
     // Simulate.
@@ -3055,7 +3226,7 @@ pub fn update_pfx(
     mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>),
-    mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>),
+    mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>, Option<Res<ParticleLight>>),
     mut vis: Query<&mut Visibility>,
     mut lights: Query<(&mut PointLight, &mut Transform)>,
     old: Option<ResMut<crate::particles::Particles>>,
@@ -3198,7 +3369,7 @@ pub fn update_pfx(
                 collect_nodes(lib, sys, delay, 0, &mut nodes, &mut more);
                 pfx.next_id += 1;
                 let id = pfx.next_id;
-                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], cp_frame_prev: cps, cp_set, age: 0.0, stop_at: DEFAULT_STOP, stopped: false, stopped_at: f32::INFINITY, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false, screen });
+                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], light: [None; NCP], cp_frame_prev: cps, cp_set, age: 0.0, stop_at: DEFAULT_STOP, stopped: false, stopped_at: f32::INFINITY, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false, screen });
             }
         }
     }
@@ -3273,6 +3444,18 @@ pub fn update_pfx(
             fx.cp_vel[k] = if dt > 0.0 { delta[k] / dt } else { Vec3::ZERO };
             fx.cp_prev[k] = fx.cps[k].pos;
         }
+        // The light where tints look (re-read once their point has moved far enough).
+        for n in &fx.nodes {
+            for i in &n.sys.init {
+                if let Init::Color { tint: Some(t), .. } = i {
+                    let at = fx.cps[t.cp].pos;
+                    if !fx.light[t.cp].is_some_and(|(was, _)| was.distance(at) < t.threshold) {
+                        fx.light[t.cp] = Some((at, model_res.2.as_ref().map_or(LightSample::NONE, |l| l.sample(at))));
+                    }
+                }
+            }
+        }
+        let light = fx.light.map(|l| l.map_or(LightSample::NONE, |l| l.1));
         let emitting = !fx.stopped;
         let cp_vel = fx.cp_vel;
         let recap = fx.stopped && !fx.capped;
@@ -3293,7 +3476,7 @@ pub fn update_pfx(
                 let sys = n.sys.clone();
                 for p in n.particles.iter_mut() {
                     let id = p.id;
-                    apply_inits(&sys, p, &fx.cps, &cp_vel, fx.cp_set, &[], &sheet_len, &mut rng, id, false, true);
+                    apply_inits(&sys, p, &fx.cps, &cp_vel, &light, fx.cp_set, &[], &sheet_len, &mut rng, id, false, true);
                 }
             }
             // A Stop Effect after Duration on a system stops its children's emission as well
@@ -3307,7 +3490,7 @@ pub fn update_pfx(
                 }
                 stopped
             };
-            let mut ctx = StepCtx { cp_delta: &delta, cp_vel: &cp_vel, cp_prev: &cp_frame_prev, cp_set: fx.cp_set, since_stop, player, parent: &parent };
+            let mut ctx = StepCtx { cp_delta: &delta, cp_vel: &cp_vel, light: &light, cp_prev: &cp_frame_prev, cp_set: fx.cp_set, since_stop, player, parent: &parent };
             step_node(n, &mut fx.cps, &mut ctx, emitting && !parent_stopped, dt, &mut rng, world, &mut budget, &sheet_len);
             stopped_by_op[ni] = n.op_stopped;
             fx.cp_set = ctx.cp_set;
@@ -3357,7 +3540,8 @@ pub fn update_pfx(
                     rotation: Quat::from_rotation_arc(Vec3::Z, normal) * Quat::from_rotation_z(spin),
                     scale: Vec3::splat(DECAL_SIZE),
                 };
-                let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), tf, NotShadowCaster)).id();
+                // Drawn with the world's translucent surfaces, before the effects.
+                let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), tf, NotShadowCaster, crate::convert::TransparentOrder::WORLD)).id();
                 commands.entity(root.0).add_child(e);
                 decals.push_back(e);
                 while decals.len() > MAX_DECALS {
@@ -3371,7 +3555,7 @@ pub fn update_pfx(
     // Model renderers: an entity per particle (per renderer), pooled per node, under the world
     // root in game units.
     {
-        let (mut cache, root) = model_res;
+        let (mut cache, root, _) = model_res;
         let Pfx { effects, model_cache, .. } = &mut *pfx;
         let eye_game = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
         for fx in effects.iter_mut() {
@@ -3714,6 +3898,19 @@ mod tests {
         assert_eq!(b.fx[1]["C"], "tracer_sparks");
         assert_eq!(b.victim.len(), 1);
         assert_eq!(b.victim[0]["E"], "impact_victim");
+    }
+
+    #[test]
+    fn tint_modes() {
+        // Kodai's dash dust: 0.25 grey, twice the light at 50% multiply.
+        let t = |mode| Tint { perc: 0.5, cp: 0, threshold: 32.0, mode, amp: 2.0, sky: 1.0 };
+        let c = Vec3::splat(0.25);
+        assert!((t(4).apply(c, Vec3::splat(1.5)).unwrap() - Vec3::splat(0.25 * (0.5 + 1.5))).length() < 1e-5);
+        assert!((t(0).apply(c, Vec3::splat(0.5)).unwrap() - Vec3::splat(0.625)).length() < 1e-5);
+        assert!((t(2).apply(c, Vec3::splat(0.05)).unwrap() - Vec3::splat(0.175)).length() < 1e-5);
+        assert!(t(5).apply(c, Vec3::ONE).is_none());
+        // No lighting: the engine's (1, 1, 1).
+        assert_eq!(LightSample::NONE.at(1.0), Vec3::ONE);
     }
 
     #[test]

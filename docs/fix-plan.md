@@ -269,8 +269,8 @@ We work through these one at a time, and the next one starts only after the user
 22. Archer has no proper sight (16)
 23. Sliding doesn't feel like TF2 (7)
 24. Grappling hook doesn't feel right (9)
-25. Floor drawn over explosions and shields (18)
-26. Smoke and see-through effects look wrong (17)
+25. ~~Floor drawn over explosions and shields (18)~~ (fixed: the BSP's translucent surfaces (ground dirt overlays, decals, glass) sorted 256 m nearer, as Bevy adds the overlays' depth bias to the transparent sort; they and particle decals now draw before all other translucent things)
+26. Smoke and see-through effects look wrong (17) (partly fixed: dash dust and other smoke take `Color Random`'s lighting tint from client.dll/engine.dll with the map's probes and sun, and colours are squared as client.dll does; shields and the rest of item 17 not done)
 27. Falling through buildings (8)
 28. Lighting (21, parked until the user asks)
 
