@@ -3690,7 +3690,16 @@ pub fn update_pfx(
                     }
                 }
                 for e in &n.models[used..] {
-                    commands.entity(*e).insert(Visibility::Hidden);
+                    // Re-inserting it every frame marked every idle instance changed (and sent
+                    // its hierarchy through visibility propagation).
+                    match vis.get_mut(*e) {
+                        Ok(mut v) => {
+                            v.set_if_neq(Visibility::Hidden);
+                        }
+                        Err(_) => {
+                            commands.entity(*e).insert(Visibility::Hidden);
+                        }
+                    }
                 }
             }
         }
