@@ -268,7 +268,7 @@ We work through these one at a time, and the next one starts only after the user
 21. Wallrun start is unreliable (6)
 22. Archer has no proper sight (16)
 23. Sliding doesn't feel like TF2 (7)
-24. Grappling hook doesn't feel right (9)
+24. ~~Grappling hook doesn't feel right (9)~~ (fixed: the client.dll grapple: hook flight at 3000, 0.2 s pull delay, initial impulse, ramped pull with cross-cable decel and view steer, gravity fraction, the engine's detach rules and speed loss, power taken when the pull starts)
 25. Floor drawn over explosions and shields (18)
 26. Smoke and see-through effects look wrong (17)
 27. ~~Falling through buildings (8)~~ (fixed: the map's own collision (CM_PRIMITIVES tricoll meshes and brushes) is added where no render mesh covers it: TOOLSNODRAW floors and lids, glass, and player/titan clips that stop only movement)

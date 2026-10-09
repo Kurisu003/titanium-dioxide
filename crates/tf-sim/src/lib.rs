@@ -252,33 +252,73 @@ mod tests {
         #[test]
         fn grapple_reels_in_to_the_hook() {
             let w = arena();
-            let mut s = PilotState::new(Vec3::new(0.0, -600.0, 0.0), 0.0);
-            run(&mut s, PilotInput::default(), &w, 0.2);
-            assert!(s.on_ground());
-            // Hook the wall 900 units away, 300 up.
-            let anchor = Vec3::new(0.0, 299.0, 300.0);
-            s.attach_grapple(anchor);
             let p = PilotParams::default();
+            let look = PilotInput { yaw: std::f32::consts::FRAC_PI_2, pitch: -0.3, ..Default::default() };
+            let mut s = PilotState::new(Vec3::new(0.0, -600.0, 0.0), look.yaw);
+            run(&mut s, look, &w, 0.2);
+            assert!(s.on_ground());
+            // Fire at the wall 900 units away: the hook flies at grapple_shootVel (3000), so
+            // it lands after about 0.3 s, and the pull waits grapple_pullDelay (0.2 s) more.
+            let dir = Vec3::new(0.0, 0.3f32.cos(), 0.3f32.sin());
+            assert!(s.fire_grapple(dir, 1100.0, &p));
+            let mut ticks = 0;
+            while s.grapple.is_none() {
+                step(&mut s, &look, &p, &w, 1.0 / 120.0);
+                ticks += 1;
+                assert!(ticks < 60, "the hook should land");
+            }
+            assert!((30..=40).contains(&ticks), "flight time {ticks}");
+            assert!(matches!(s.grapple_events[0], GrappleEvent::Hooked { .. }));
+            let start = s.pos;
+            run(&mut s, look, &w, 0.15);
+            assert!(!s.grapple_pulling() && (s.pos - start).length() < 1.0, "no pull before the delay");
             let mut arrived = false;
             for _ in 0..(3.0 * 120.0) as usize {
-                step(&mut s, &PilotInput::default(), &p, &w, 1.0 / 120.0);
+                step(&mut s, &look, &p, &w, 1.0 / 120.0);
                 if s.grapple.is_none() {
                     arrived = true;
                     break;
                 }
             }
             assert!(arrived, "should reach the hook: {:?} {:?}", s.pos, s.vel);
-            // The pull slams into the wall below the hook, which knocks it loose.
-            assert!(s.pos.y > 250.0 && s.pos.z > 50.0, "pulled to the wall: {:?}", s.pos);
+            assert!(s.grapple_events.contains(&GrappleEvent::Pulling) && s.grapple_events.contains(&GrappleEvent::Released));
+            assert!(s.pos.y > 200.0 && s.pos.z > 100.0, "pulled to the wall: {:?}", s.pos);
             assert!(s.vel.z > 0.0, "impact hop: {:?}", s.vel);
-            // Jumping lets go early.
-            let mut s = PilotState::new(Vec3::new(0.0, -600.0, 0.0), 0.0);
-            run(&mut s, PilotInput::default(), &w, 0.2);
-            s.attach_grapple(anchor);
-            run(&mut s, PilotInput::default(), &w, 0.2);
-            assert!(s.grapple.is_some());
-            step(&mut s, &PilotInput { jump: true, ..Default::default() }, &p, &w, 1.0 / 120.0);
-            assert!(s.grapple.is_none() && s.mode == PilotMove::Air);
+            // The released hook comes back to the eye.
+            run(&mut s, look, &w, 0.5);
+            assert!(s.hook.is_none());
+
+            // Jumping while pulled is a double jump; the grapple holds.
+            let mut s = PilotState::new(Vec3::new(0.0, -600.0, 0.0), look.yaw);
+            run(&mut s, look, &w, 0.2);
+            s.attach_grapple(Vec3::new(0.0, 299.0, 300.0));
+            run(&mut s, look, &w, 0.4);
+            assert!(s.grapple_pulling());
+            step(&mut s, &PilotInput { jump: true, ..look }, &p, &w, 1.0 / 120.0);
+            assert!(s.grapple.is_some() && !s.double_jump_available);
+            // Turning around lets go.
+            step(&mut s, &PilotInput { yaw: -std::f32::consts::FRAC_PI_2, ..look }, &p, &w, 1.0 / 120.0);
+            assert!(s.grapple.is_none());
+        }
+
+        /// A hook that hits nothing flies its reach and comes back; firing again while it's
+        /// stuck lets go.
+        #[test]
+        fn grapple_misses_and_cancels() {
+            let w = arena();
+            let p = PilotParams::default();
+            let away = PilotInput { yaw: -std::f32::consts::FRAC_PI_2, ..Default::default() };
+            let mut s = PilotState::new(Vec3::new(0.0, -600.0, 0.0), away.yaw);
+            run(&mut s, away, &w, 0.2);
+            assert!(s.fire_grapple(Vec3::new(0.0, -1.0, 0.2), 1100.0, &p));
+            run(&mut s, away, &w, 0.4);
+            assert_eq!(s.grapple_events, vec![GrappleEvent::Missed]);
+            assert!(s.hook.is_some_and(|h| h.back.is_some()));
+            run(&mut s, away, &w, 0.3);
+            assert!(s.hook.is_none() && s.grapple.is_none());
+            s.attach_grapple(Vec3::new(0.0, 299.0, 300.0));
+            assert!(!s.fire_grapple(Vec3::Y, 1100.0, &p));
+            assert!(s.grapple.is_none() && s.hook.is_some());
         }
 
         /// Jumping on the tick you land skips friction, so a chain of hops keeps its speed;

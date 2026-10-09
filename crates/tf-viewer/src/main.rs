@@ -478,6 +478,25 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
             cooldown: s.f32("global.useziplinecooldown", d.zipline.cooldown),
             ..d.zipline.clone()
         },
+        // The grapple's .set keys (pilot_base.set global); the rest are client.dll convars.
+        grapple: tf_sim::pilot::GrappleParams {
+            detach_length: (s.f32("global.grapple_detachlengthmin", d.grapple.detach_length.0), s.f32("global.grapple_detachlengthmax", d.grapple.detach_length.1)),
+            detach_away_speed: s.f32("global.grapple_detachawayspeed", d.grapple.detach_away_speed),
+            gravity_frac: (s.f32("global.grapple_gravityfracmin", d.grapple.gravity_frac.0), s.f32("global.grapple_gravityfracmax", d.grapple.gravity_frac.1)),
+            detach_boost: s.f32("global.grapple_detachverticalboost", d.grapple.detach_boost),
+            detach_max: s.f32("global.grapple_detachverticalmaxspeed", d.grapple.detach_max),
+            speed_loss: s.f32("global.grapple_detachspeedloss", d.grapple.speed_loss),
+            speed_loss_min: s.f32("global.grapple_detachspeedlossmin", d.grapple.speed_loss_min),
+            low_speed: s.f32("global.grapple_detachlowspeedthreshold", d.grapple.low_speed),
+            low_speed_time: s.f32("global.grapple_detachlowspeedtime", d.grapple.low_speed_time),
+            low_speed_wall_time: s.f32("global.grapple_detachlowspeedwalltime", d.grapple.low_speed_wall_time),
+            low_speed_ground_time: s.f32("global.grapple_detachlowspeedgroundtime", d.grapple.low_speed_ground_time),
+            impact_boost: s.f32("global.grapple_impactverticalboost", d.grapple.impact_boost),
+            impact_max: s.f32("global.grapple_impactverticalmaxspeed", d.grapple.impact_max),
+            air_speed: s.f32("global.grapple_airspeedmax", d.grapple.air_speed),
+            air_accel: s.f32("global.grapple_airaccel", d.grapple.air_accel),
+            ..d.grapple.clone()
+        },
         ..d
     }
 }
