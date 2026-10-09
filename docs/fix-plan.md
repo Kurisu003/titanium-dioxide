@@ -266,7 +266,7 @@ We work through these one at a time, and the next one starts only after the user
 19. ADS animation is weird (3) (shelved by the user for now)
 20. ~~Holo Pilot moves weirdly (20)~~ (fixed: it played Run_forward_mp's first blend cell, a run turned 90 degrees right; single-clip sequences now take a grid's neutral cell, which also straightens the enemy Titans' walk. The decoy follows server.dll's CPlayerDecoy: state copied from the player, root-motion movement, walls, ledges, landing, slide and wallrun, carrying the player's gun. The third-person wallrun clips were swapped: they're named for the lean)
 21. Wallrun start is unreliable (6)
-22. Archer has no proper sight (16)
+22. ~~Archer has no proper sight (16)~~ (fixed: its sight is client.dll's VGUI screen `vgui_pilot_launcher_screen` on the SCR_BL/SCR_TR attachments, not an RUI; rebuilt from the .res layout, the `vgui\hud\sram` art and the update at 0x1804dfe80: NO TARGET IN RANGE / LOCKING with spinning rings closing onto the Titan / LOCKED with the name, range and the red-white blink, fading in with the zoom. The other guns' RUI sights are still not drawn)
 23. Sliding doesn't feel like TF2 (7)
 24. Grappling hook doesn't feel right (9)
 25. Floor drawn over explosions and shields (18)

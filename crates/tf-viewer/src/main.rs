@@ -24,6 +24,7 @@ mod gamedata;
 mod inputrec;
 mod hitbox;
 mod hud;
+mod launcherscreen;
 mod executions;
 mod music;
 mod nav;
@@ -315,6 +316,7 @@ fn main() {
         .add_systems(Update, (ui::loading_tick, ui::scale_ui, screenshots, env::nearest_reflection, uber::swap_materials, vmcam::tag_meshes))
         .add_systems(Update, (ui::sync_menu, ui::menu_input, ui::menu_visuals, ui::mission_images, ui::apply_quality, pilotweapon::build_loadout, pilotweapon::ordnance_viewmodel, weapons::switch_titan_weapon, titankit::apply_kit, weapons::prepare_weapon_models, pilotability::preload_grenade_models).chain().run_if(ui::world_ready).before(player::gather_input))
         .add_systems(Update, ruiscreen::weapon_screens.run_if(ui::loaded).after(pilotweapon::pilot_weapon_fire))
+        .add_systems(Update, launcherscreen::update.run_if(ui::loaded).after(pilotweapon::pilot_weapon_fire))
         .add_systems(
             Update,
             (

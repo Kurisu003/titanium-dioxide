@@ -80,6 +80,9 @@ pub struct SmartDef {
     pub locked_sound: String,
     /// The crosshair shows the search cone (`smart_ammo_hud_type` smart_pistol).
     pub hud_circle: bool,
+    /// client.dll's `rocket_launcher` smart HUD (`smart_ammo_hud_type`, or by class name when
+    /// unset, 0x1804dc580): the Archer's sight screen (launcherscreen.rs) and no marks on screen.
+    pub launcher_screen: bool,
 }
 
 impl SmartDef {
@@ -122,6 +125,10 @@ impl SmartDef {
             acquiring_sound: text("smart_ammo_looping_sound_acquiring"),
             locked_sound: text("smart_ammo_looping_sound_locked"),
             hud_circle: get("smart_ammo_hud_type").is_some_and(|t| t.eq_ignore_ascii_case("smart_pistol")),
+            launcher_screen: match get("smart_ammo_hud_type").map(str::trim).filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none")) {
+                Some(t) => t.eq_ignore_ascii_case("rocket_launcher"),
+                None => name == "mp_weapon_rocket_launcher",
+            },
         })
     }
 

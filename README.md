@@ -311,7 +311,9 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     (the SP numbers in `OnWeaponActivate_weapon_rocket_launcher`), and fires unlocked in SP.
   - HUD (the game's is engine RUI, so recreated with its art): the Smart Pistol's search circle
     around the crosshair, `smart_ammo_corner` brackets closing on each target as the lock forms
-    and the lock count beside it. Lock sounds are the script's events.
+    and the lock count beside it. Lock sounds are the script's events. The Archer's locks show
+    only on its sight screen (below), as client.dll's `rocket_launcher` smart HUD draws nothing
+    else.
   - Sprinting lowers the gun; after it stops, `raise_time` passes before it can fire.
     `zoom_time_out` is used when leaving ADS.
 - **Maps:** every multiplayer map loads.
@@ -639,6 +641,28 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   ring of faces would chop them). Sights and reticles (`r101_sights`, `hcog_upper`, ...) aren't
   drawn.
   `TF_NO_WEAPON_SCREENS=1` turns them off.
+- **The Archer's sight** (`launcherscreen.rs`) is not an RUI but client.dll's VGUI screen
+  `vgui_pilot_launcher_screen` (1403x998, `scripts/screens/vgui_pilot_launcher.res`), spanning
+  the viewmodel's SCR_BL to SCR_TR attachments on the flip-up sight; the smart ammo HUD's
+  `rocket_launcher` type (the class name picks it when `smart_ammo_hud_type` is unset,
+  0x1804dc580) runs its update (0x1804dfe80), rebuilt here with the `vgui\hud\sram\*` art from
+  common.rpak, rendered into a texture on a quad between the attachments:
+  - No lock: "NO TARGET IN RANGE", the tickers along the top, six rocket icons and the small
+    targeting circle in blue-white (177 213 227).
+  - Locking (lock fraction / 0.9 between 0 and 1): "LOCKING", "SCANNING..." over a random range,
+    in orange (238 146 8), tickers hidden; two spinning rings (the ring VMTs' LinearRamp, -375
+    and 325 degrees/s) close from three times their 337 px size onto the target and fade in over
+    the first fifth.
+  - Locked: "LOCKED", the target's AI title ("Ion:") and range ("0040m", 0.0254 m per unit),
+    still rings; tickers and circle red (205 72 59), rings, text and icons blinking red 0.15 s /
+    white 0.4 s.
+  - The circle and rings sit where the eye's ray to a tracked point cuts the panel; the point
+    eases (SmoothCD, omega 8) toward the lock point relative to the target, or 500 units ahead.
+  - All of it fades in over the last 35% of the zoom.
+  - Our choices: the ray is rescaled to the viewmodel FOV so the rings stay over the target
+    while the world is zoomed (the game cuts the world-space ray); all six rocket icons show,
+    as this game keeps no stockpile; the spin direction of the rings is a guess (the VMTs give
+    the rate only as a texture rotation, and TF2 ships those VMTs only in the VPKs).
 - **Scopes:** snipers with `bodygroup_ads_scope_name/set` show that part (a funnel with the
   reticle and a glowing ring) in front of the eye from `zoom_scope_frac_start`, and only it
   from `zoom_scope_frac_end`, when the scope model would block the view. The scope sits where

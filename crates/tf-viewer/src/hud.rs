@@ -781,7 +781,8 @@ pub fn update_smart_hud(
 ) {
     let Ok((camera, cam_tf, projection)) = cameras.single() else { return };
     let gun = loadouts.single().ok().and_then(|l| l.active()).filter(|_| *control == Control::Pilot && *mode != CameraMode::Free);
-    let smart = gun.and_then(|g| g.def.smart.as_ref().map(|sd| (sd, g.smart.view())));
+    // The Archer's locks show on its sight screen only (launcherscreen.rs).
+    let smart = gun.and_then(|g| g.def.smart.as_ref().filter(|sd| !sd.launcher_screen).map(|sd| (sd, g.smart.view())));
     let view_h = camera.logical_viewport_size().map(|v| v.y).unwrap_or(1080.0);
     let fov = match projection {
         Projection::Perspective(p) => p.fov,

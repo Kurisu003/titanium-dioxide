@@ -295,6 +295,8 @@ pub struct PilotWeapon {
     pub fx_atts: [Option<(String, Transform)>; 2],
     /// The viewmodel's screens its script's RUIs draw on (ruiscreen.rs).
     pub screens: Vec<crate::ruiscreen::ScreenMesh>,
+    /// The sight screen client.dll draws for the `rocket_launcher` smart HUD (launcherscreen.rs).
+    pub sight: Option<crate::launcherscreen::Panel>,
     /// Not drawn yet: the first draw plays `drawfirst_seq` over `deployfirst_time`.
     pub first_draw: bool,
     /// The viewmodel's sequences by activity and modifier.
@@ -332,6 +334,7 @@ impl PilotWeapon {
             ads_scope: None,
             fx_atts: [None, None],
             screens: Vec::new(),
+            sight: None,
             first_draw: true,
             seqs: Default::default(),
         }
@@ -515,6 +518,9 @@ pub fn build_loadout(
             vm_model.as_ref().and_then(|m| model_attachment(m, if gun.def.fx.shell_attach.is_empty() { "shell" } else { &gun.def.fx.shell_attach })),
         ];
         gun.screens = vm_model.as_ref().map(|m| crate::ruiscreen::screens_for(m, &gun.def.rui)).unwrap_or_default();
+        if gun.def.smart.as_ref().is_some_and(|s| s.launcher_screen) {
+            gun.sight = vm_model.as_ref().and_then(|m| crate::launcherscreen::panel_for(m));
+        }
         log::debug!("{}: body {:?}, ads scope {:?} ({:?}), screens {:?}", gun.def.name, body, ads_scope, gun.def.ads_scope, gun.screens.iter().map(|s| &s.ui).collect::<Vec<_>>());
         loadout.guns.push(gun);
     }
