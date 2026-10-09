@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 const MAGIC: &[u8] = b"VFONT1";
 const TRICK: u32 = 167;
 
+/// Decode a `.vfont` file to the font file it hides.
 pub fn decode(data: &[u8]) -> Result<Vec<u8>> {
     if data.len() < MAGIC.len() + 1 || &data[data.len() - MAGIC.len()..] != MAGIC {
         bail!("not a VFONT1 file");

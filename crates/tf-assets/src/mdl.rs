@@ -4,6 +4,7 @@
 //! Struct layouts follow r-ex/rsx (studio_r2.h, optimize.h). All values here are in the
 //! game's coordinate system: Z up, inches.
 
+use crate::bytes;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
@@ -11,16 +12,16 @@ struct R<'a>(&'a [u8]);
 
 impl R<'_> {
     fn i32(&self, o: usize) -> i32 {
-        i32::from_le_bytes(self.0[o..o + 4].try_into().unwrap())
+        bytes::i32_at(self.0, o)
     }
     fn u16(&self, o: usize) -> u16 {
-        u16::from_le_bytes(self.0[o..o + 2].try_into().unwrap())
+        bytes::u16_at(self.0, o)
     }
     fn i16(&self, o: usize) -> i16 {
-        self.u16(o) as i16
+        bytes::i16_at(self.0, o)
     }
     fn f32(&self, o: usize) -> f32 {
-        f32::from_le_bytes(self.0[o..o + 4].try_into().unwrap())
+        bytes::f32_at(self.0, o)
     }
     fn v3(&self, o: usize) -> [f32; 3] {
         [self.f32(o), self.f32(o + 4), self.f32(o + 8)]
@@ -37,13 +38,16 @@ impl R<'_> {
     }
 }
 
+/// A skeleton bone (mstudiobone_t, 0xF4 bytes) and its rest pose relative to its parent.
 #[derive(Debug, Clone)]
 pub struct Bone {
     pub name: String,
+    /// Parent bone index (-1 for a root).
     pub parent: i32,
     pub pos: [f32; 3],
     /// x, y, z, w
     pub quat: [f32; 4],
+    /// Rest rotation as RadianEuler, and the quantisation scale of animated rotation tracks.
     pub rot: [f32; 3],
     pub rot_scale: [f32; 3],
     /// Rest scale, and the quantisation scale of animated scale tracks.
@@ -51,6 +55,7 @@ pub struct Bone {
     pub scale_scale: [f32; 3],
     /// Row-major 3x4 matrix taking model-space positions into bone space (inverse bind).
     pub pose_to_bone: [[f32; 4]; 3],
+    /// Hemisphere decoded rotations are flipped into (bone flag 0x100000).
     pub q_alignment: [f32; 4],
     pub flags: i32,
 }
@@ -60,17 +65,22 @@ pub struct Bone {
 pub struct MeshData {
     /// Index into the skin reference table (map through [`Model::skin_families`]).
     pub material: usize,
+    /// The body part the mesh came from.
     pub bodypart: usize,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    /// Up to three bone indices per vertex (unused slots 0).
     pub joints: Vec<[u16; 4]>,
+    /// The matching weights, normalised to sum to 1.
     pub weights: Vec<[f32; 4]>,
     /// Vertex colours (RGBA8) from the model's embedded VVC block, empty when it has none.
     pub colors: Vec<[u8; 4]>,
+    /// Triangle list into the vertex arrays.
     pub indices: Vec<u32>,
 }
 
+/// A body part (a body group): `num_models` alternatives, one of which is drawn.
 #[derive(Debug, Clone)]
 pub struct BodyPart {
     pub name: String,
@@ -84,7 +94,7 @@ pub struct Animation {
     pub fps: f32,
     pub flags: i32,
     pub num_frames: usize,
-    /// frames[frame][bone] = (position, quaternion xyzw), bones of the owning model.
+    /// `frames[frame][bone]` = (position, quaternion xyzw), bones of the owning model.
     pub frames: Vec<Vec<([f32; 3], [f32; 4])>>,
     /// Bones that have a track in at least one frame (others hold the rest pose).
     pub animated: Vec<bool>,
@@ -105,13 +115,16 @@ impl Animation {
     }
 }
 
+/// A sequence (mstudioseqdesc_t, 0xE8 bytes): a named, possibly blended, use of animations.
 #[derive(Debug, Clone)]
 pub struct Sequence {
     pub label: String,
+    /// Activity name (`ACT_...`), empty if none.
     pub activity: String,
     pub flags: i32,
     /// Indices into the owning model's animation descriptors (blend grid, row-major).
     pub anims: Vec<usize>,
+    /// Blend grid size (`groupsize`; `anims` holds `group_size[0] * group_size[1]`).
     pub group_size: [i32; 2],
     /// Pose parameter index driving each grid axis (-1 = none) and the parameter range the
     /// axis spans (`paramindex`, `paramstart`, `paramend`).
@@ -131,28 +144,38 @@ pub struct Sequence {
     pub fade_in: f32,
 }
 
-/// mstudioevent_t (v53, 0x50 bytes: cycle, event, type, options[64], name index): fires `name` with `options` when the cycle passes `cycle`.
+/// mstudioevent_t (v53, 0x50 bytes: cycle, event, type, `options[64]`, name index): fires `name` with `options` when the cycle passes `cycle`.
 #[derive(Debug, Clone)]
 pub struct Event {
+    /// When it fires, as a fraction of the sequence (0..1).
     pub cycle: f32,
+    /// The record's event number (the events used here go by `name`).
     pub event: i32,
     pub name: String,
     pub options: String,
 }
 
+/// A parsed studio model. Geometry and animations are decoded on demand from `raw`.
 pub struct Model {
+    /// The name stored in the header (`models/...mdl` path).
     pub name: String,
+    /// The whole .mdl file.
     pub raw: Vec<u8>,
     pub bones: Vec<Bone>,
+    /// Material names, indexed by the skin tables.
     pub textures: Vec<String>,
+    /// Material search directories.
     pub cd_textures: Vec<String>,
-    /// skin_families[family][skinref] -> texture index
+    /// `skin_families[family][skinref]` -> texture index
     pub skin_families: Vec<Vec<u16>>,
     pub bodyparts: Vec<BodyPart>,
+    /// Models whose sequences and animations this one shares (`$includemodel`).
     pub include_models: Vec<String>,
     pub sequences: Vec<Sequence>,
+    /// Number of animation descriptors (see [`Model::animation`]).
     pub num_anims: usize,
     pub surface_prop: String,
+    /// Movement hull (min, max).
     pub hull: ([f32; 3], [f32; 3]),
     /// The default hitbox set (set 0).
     pub hitboxes: Vec<Hitbox>,
@@ -177,15 +200,18 @@ pub struct RuiMesh {
     pub faces: Vec<RuiFace>,
 }
 
+/// One quad of an [`RuiMesh`].
 #[derive(Debug, Clone)]
 pub struct RuiFace {
     /// Bone of the first corner.
     pub bone: usize,
     /// The four corners in that bone's space.
     pub corners: [[f32; 3]; 4],
+    /// UVs of the four corners.
     pub uvs: [[f32; 2]; 4],
 }
 
+/// A named attachment point (muzzles, eyes, sockets) on a bone.
 #[derive(Debug, Clone)]
 pub struct Attachment {
     pub name: String,
@@ -194,11 +220,13 @@ pub struct Attachment {
     pub local: [[f32; 4]; 3],
 }
 
+/// A pose parameter (mstudioposeparamdesc_t): a named blend axis and its range.
 #[derive(Debug, Clone)]
 pub struct PoseParam {
     pub name: String,
     pub start: f32,
     pub end: f32,
+    /// The range a looping parameter wraps over (0 if it doesn't loop).
     pub looping: f32,
 }
 
@@ -208,7 +236,9 @@ pub struct PoseParam {
 #[derive(Debug, Clone, Copy)]
 pub struct Hitbox {
     pub bone: usize,
+    /// Hit group (see above).
     pub group: i32,
+    /// The box in the bone's space.
     pub min: [f32; 3],
     pub max: [f32; 3],
     pub crit: bool,
@@ -217,6 +247,7 @@ pub struct Hitbox {
 const HDR_SIZE: usize = 0x2CC;
 const BONE_SIZE: usize = 0xF4;
 const ANIMDESC_SIZE: usize = 0x5C;
+/// Size of a v53 sequence descriptor (mstudioseqdesc_t).
 pub const SEQDESC_SIZE: usize = 0xE8;
 const VERTEX_SIZE: usize = 48;
 
@@ -258,6 +289,8 @@ impl Model {
         out
     }
 
+    /// Parse a version 53 .mdl file (bones, materials, body parts, sequences, hitboxes,
+    /// attachments, pose parameters, RUI meshes).
     pub fn parse(raw: Vec<u8>) -> Result<Self> {
         if raw.len() < HDR_SIZE || &raw[0..4] != b"IDST" {
             bail!("not a studio model");
@@ -422,6 +455,7 @@ impl Model {
         })
     }
 
+    /// The index of the bone named `name` (ignoring ASCII case).
     pub fn bone_index(&self, name: &str) -> Option<usize> {
         self.bones.iter().position(|b| b.name.eq_ignore_ascii_case(name))
     }
@@ -440,11 +474,11 @@ impl Model {
     /// studiorender.dll 0x18000f6e0 -> 0x18000e570, which walks this BVH ("Unsupported per tri
     /// version %d ... missing the $staticprop key" when the version isn't 2).
     ///
-    /// Layout (from 0x18000e570): at the offset, u16 version (2), u16, f32 min[3], f32 max[3];
-    /// the data starts 0x3C in: header 0x19C interior nodes of 20 bytes (u16 box[6], i32
-    /// child[2]; a negative child is !leaf), header 0x1A0 leaves of 0x70 bytes (u16 box[6], u32
+    /// Layout (from 0x18000e570): at the offset, u16 version (2), u16, f32 `min[3]`, f32 `max[3]`;
+    /// the data starts 0x3C in: header 0x19C interior nodes of 20 bytes (u16 `box[6]`, i32
+    /// `child[2]`; a negative child is !leaf), header 0x1A0 leaves of 0x70 bytes (u16 `box[6]`, u32
     /// first vertex, 12 triangles of u16 a, b, c, surface; a == b ends the leaf), header 0x1A4
-    /// vertices of u16[3]. Boxes and vertices are quantized: min + q * (max - min) / 65535.
+    /// vertices of `u16[3]`. Boxes and vertices are quantized: min + q * (max - min) / 65535.
     pub fn collision_tris(&self) -> Vec<([[f32; 3]; 3], u16)> {
         let r = R(&self.raw);
         let off = r.i32(0x198);
@@ -661,7 +695,9 @@ impl Model {
                 let num_sg = r.i32(vmesh) as usize;
                 let sg_base = vmesh + r.i32(vmesh + 4) as usize;
                 let mut md = MeshData { material, bodypart: bpi, ..Default::default() };
-                let mut remap: HashMap<usize, u32> = HashMap::new();
+                // Output vertex of each of the mesh's VVD vertices (by its u16 index from
+                // `mesh_vertex_base`), u32::MAX until first used.
+                let mut remap: Vec<u32> = Vec::new();
                 for sgi in 0..num_sg {
                     let sg = sg_base + sgi * 33;
                     let sg_verts = sg + r.i32(sg + 4) as usize;
@@ -680,10 +716,12 @@ impl Model {
                             let vi = r.u16(sg_indices + (idx_off + k) * 2) as usize;
                             let vtx_vert = sg_verts + vi * 9;
                             let orig = r.u16(vtx_vert + 4) as usize;
-                            let global = mesh_vertex_base + orig;
-                            let next = md.positions.len() as u32;
-                            let id = *remap.entry(global).or_insert_with(|| {
-                                let v = &vertices[global.min(vertices.len() - 1)];
+                            if orig >= remap.len() {
+                                remap.resize(orig + 1, u32::MAX);
+                            }
+                            if remap[orig] == u32::MAX {
+                                remap[orig] = md.positions.len() as u32;
+                                let v = &vertices[(mesh_vertex_base + orig).min(vertices.len() - 1)];
                                 md.positions.push(v.pos);
                                 md.normals.push(v.normal);
                                 md.uvs.push(v.uv);
@@ -692,9 +730,8 @@ impl Model {
                                 if let Some(c) = v.color {
                                     md.colors.push(c);
                                 }
-                                next
-                            });
-                            md.indices.push(id);
+                            }
+                            md.indices.push(remap[orig]);
                         }
                     }
                 }
@@ -798,6 +835,11 @@ impl Model {
         }
         let mut frames = Vec::with_capacity(num_frames);
         let mut animated = vec![false; self.bones.len()];
+        // Bones without a track in a frame keep this pose (identity for delta animations).
+        let rest: Vec<([f32; 3], [f32; 4])> = self.bones.iter().map(|b| if delta { ([0.0; 3], [0.0, 0.0, 0.0, 1.0]) } else { (b.pos, b.quat) }).collect();
+        // Per bone, the last Euler angles (as bits) decoded and their quaternion: tracks often
+        // hold a value for many frames, and the same angles give the same quaternion.
+        let mut last_rot: Vec<Option<([u32; 3], [f32; 4])>> = vec![None; self.bones.len()];
         for frame in 0..num_frames {
             // Locate the RLE block for this frame (pAnimdataNoStall).
             let mut local = frame;
@@ -813,11 +855,7 @@ impl Model {
                 };
                 data = r.i32(ad + section_index + section * 4) as usize;
             }
-            let mut pose: Vec<([f32; 3], [f32; 4])> = self
-                .bones
-                .iter()
-                .map(|b| if delta { ([0.0; 3], [0.0, 0.0, 0.0, 1.0]) } else { (b.pos, b.quat) })
-                .collect();
+            let mut pose = rest.clone();
             if data != 0 {
                 let mut p = ad + data;
                 loop {
@@ -827,7 +865,7 @@ impl Model {
                     let bone = self.raw[p + 4] as usize;
                     let bflags = self.raw[p + 5];
                     if bone < self.bones.len() {
-                        pose[bone] = self.decode_bone(p, bone, bflags, local, delta);
+                        pose[bone] = self.decode_bone(p, bone, bflags, local, delta, &mut last_rot[bone]);
                         animated[bone] = true;
                     }
                     let next = r.i32(p + 28);
@@ -842,7 +880,9 @@ impl Model {
         Ok(Animation { name, fps, flags, num_frames, frames, animated, movement })
     }
 
-    fn decode_bone(&self, p: usize, bone: usize, flags: u8, frame: usize, delta: bool) -> ([f32; 3], [f32; 4]) {
+    /// One bone's local transform at `frame`. `last_rot` caches the bone's previous Euler ->
+    /// quaternion conversion (within one animation, so `delta` is the same).
+    fn decode_bone(&self, p: usize, bone: usize, flags: u8, frame: usize, delta: bool, last_rot: &mut Option<([u32; 3], [f32; 4])>) -> ([f32; 3], [f32; 4]) {
         const RAWPOS: u8 = 0x02;
         const RAWROT: u8 = 0x04;
         const NOROT: u8 = 0x10;
@@ -862,14 +902,21 @@ impl Model {
                     *ek += b.rot[k];
                 }
             }
-            let mut q = angle_quaternion(e);
-            if !delta && (b.flags & 0x100000) != 0 {
-                let a = b.q_alignment;
-                if a[0] * q[0] + a[1] * q[1] + a[2] * q[2] + a[3] * q[3] < 0.0 {
-                    q = [-q[0], -q[1], -q[2], -q[3]];
+            let bits = e.map(f32::to_bits);
+            match *last_rot {
+                Some((k, q)) if k == bits => q,
+                _ => {
+                    let mut q = angle_quaternion(e);
+                    if !delta && (b.flags & 0x100000) != 0 {
+                        let a = b.q_alignment;
+                        if a[0] * q[0] + a[1] * q[1] + a[2] * q[2] + a[3] * q[3] < 0.0 {
+                            q = [-q[0], -q[1], -q[2], -q[3]];
+                        }
+                    }
+                    *last_rot = Some((bits, q));
+                    q
                 }
             }
-            q
         };
 
         let pos = if flags & RAWPOS != 0 {
@@ -962,7 +1009,7 @@ fn half(h: u16) -> f32 {
     let e = ((h >> 10) & 0x1F) as i32;
     let m = (h & 0x3FF) as f32;
     s * match e {
-        0 => m * 2f32.powi(-24),
+        0 => m * pow2(-24),
         31 => {
             if m == 0.0 {
                 f32::INFINITY
@@ -970,8 +1017,14 @@ fn half(h: u16) -> f32 {
                 f32::NAN
             }
         }
-        _ => (1.0 + m / 1024.0) * 2f32.powi(e - 15),
+        _ => (1.0 + m / 1024.0) * pow2(e - 15),
     }
+}
+
+/// 2^n for a normal-range exponent (-126..=127): the exact value `2f32.powi(n)` gives, built
+/// from its bits instead of a runtime `powi` call.
+fn pow2(n: i32) -> f32 {
+    f32::from_bits(((n + 127) as u32) << 23)
 }
 
 /// A cockpit's main screen (`*_int_screen`) shows a camera feed in the game, hiding whatever
@@ -1179,6 +1232,7 @@ mod collision_tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // the bevel normals are written as a file would round them
     fn hull_planes_become_a_closed_box() {
         // One hull: a box 10..30 x -5..5 x 0..40 as six planes (plus two bevels after them,
         // which only box sweeps use).
@@ -1200,8 +1254,8 @@ mod collision_tests {
         }
         for (k, (n, d)) in planes.iter().enumerate() {
             let o = 0x314 + k * 16;
-            for j in 0..3 {
-                put_f32(&mut raw, o + j * 4, n[j]);
+            for (j, &nj) in n.iter().enumerate() {
+                put_f32(&mut raw, o + j * 4, nj);
             }
             put_f32(&mut raw, o + 12, *d);
         }
@@ -1222,6 +1276,33 @@ mod collision_tests {
         assert!((area - want).abs() < 0.5, "surface {area} vs {want}");
         for p in tris.iter().flatten() {
             assert!(p[0] > 9.99 && p[0] < 30.01 && p[1].abs() < 5.01 && p[2] > -0.01 && p[2] < 40.01, "{p:?}");
+        }
+    }
+
+    /// `half` (with `pow2`) gives the same bits as with `powi` for every half float.
+    #[test]
+    fn half_matches_powi() {
+        let reference = |h: u16| -> f32 {
+            let s = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+            let e = ((h >> 10) & 0x1F) as i32;
+            let m = (h & 0x3FF) as f32;
+            s * match e {
+                0 => m * 2f32.powi(-24),
+                31 => {
+                    if m == 0.0 {
+                        f32::INFINITY
+                    } else {
+                        f32::NAN
+                    }
+                }
+                _ => (1.0 + m / 1024.0) * 2f32.powi(e - 15),
+            }
+        };
+        for h in 0..=u16::MAX {
+            assert_eq!(half(h).to_bits(), reference(h).to_bits(), "{h:#06x}");
+        }
+        for n in -126..=127 {
+            assert_eq!(pow2(n), 2f32.powi(n), "{n}");
         }
     }
 
@@ -1247,8 +1328,8 @@ mod collision_tests {
         }
         let verts = leaf + 0x70;
         for (i, q) in [[0u16, 0, 0], [65535, 0, 0], [0, 65535, 32768]].iter().enumerate() {
-            for k in 0..3 {
-                put_u16(&mut raw, verts + i * 6 + k * 2, q[k]);
+            for (k, &qk) in q.iter().enumerate() {
+                put_u16(&mut raw, verts + i * 6 + k * 2, qk);
             }
         }
         let tris = model(raw).collision_tris();

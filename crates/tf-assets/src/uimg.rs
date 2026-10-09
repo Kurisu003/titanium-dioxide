@@ -4,6 +4,7 @@
 use crate::rpak::{Asset, Rpak};
 use anyhow::{Context, Result};
 
+/// One named image of an atlas.
 #[derive(Debug, Clone)]
 pub struct UiImage {
     /// RTech::StringToUIMGHash of the image path (e.g. "rui/menu/main_menu/title").
@@ -15,10 +16,13 @@ pub struct UiImage {
     pub h: u32,
 }
 
+/// A UI image atlas: its texture and the images in it.
 #[derive(Debug, Clone)]
 pub struct UiAtlas {
     pub guid: u64,
+    /// GUID of the atlas texture (`txtr`).
     pub texture: u64,
+    /// Atlas size in pixels.
     pub width: u32,
     pub height: u32,
     pub images: Vec<UiImage>,
@@ -30,6 +34,7 @@ pub fn path_hash(path: &str) -> u32 {
     (g as u32) ^ ((g >> 32) as u32)
 }
 
+/// Read a `uimg` asset.
 pub fn load(pak: &Rpak, a: &Asset) -> Result<UiAtlas> {
     let h = a.head.context("uimg without header")?;
     let width = pak.u16(h + 8) as u32;

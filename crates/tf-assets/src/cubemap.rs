@@ -6,12 +6,15 @@
 //! Image data runs from the smallest mip to the largest; within a mip, frame then face.
 
 use crate::bc6h;
+use crate::bytes::{i32_at, u16_at, u32_at};
 use anyhow::{bail, Context, Result};
 
+/// Every baked cubemap of a map (BC6H data, decoded per face on demand).
 pub struct CubemapSet {
     /// Face width/height of mip 0.
     pub size: u32,
     pub mips: u32,
+    /// Number of cubemaps (VTF frames).
     pub count: usize,
     data: Vec<u8>,
 }
@@ -24,17 +27,18 @@ fn face_bytes(size: u32, mip: u32) -> usize {
 }
 
 impl CubemapSet {
+    /// Read `cubemaps.hdr.vtf`.
     pub fn parse(vtf: &[u8]) -> Result<Self> {
         if vtf.len() < 80 || &vtf[0..4] != b"VTF\0" {
             bail!("not a VTF");
         }
-        let u32_at = |o: usize| u32::from_le_bytes(vtf[o..o + 4].try_into().unwrap());
-        let u16_at = |o: usize| u16::from_le_bytes([vtf[o], vtf[o + 1]]);
+        let u32_at = |o: usize| u32_at(vtf, o);
+        let u16_at = |o: usize| u16_at(vtf, o);
         let minor = u32_at(8);
         let header = u32_at(12) as usize;
         let (w, h) = (u16_at(16) as u32, u16_at(18) as u32);
         let frames = u16_at(24) as usize;
-        let format = i32::from_le_bytes(vtf[52..56].try_into().unwrap());
+        let format = i32_at(vtf, 52);
         let mips = vtf[56] as u32;
         if format != VTF_FORMAT_BC6H || w != h || w == 0 {
             bail!("unsupported cubemap VTF (format {format}, {w}x{h})");
@@ -70,10 +74,10 @@ impl CubemapSet {
         for (bi, chunk) in self.data[o..o + fb].chunks_exact(16).enumerate() {
             bc6h::decode_block(chunk, &mut block, false);
             let (bx, by) = (bi % bw * 4, bi / bw * 4);
-            for k in 0..16 {
+            for (k, &texel) in block.iter().enumerate() {
                 let (x, y) = (bx + k % 4, by + k / 4);
                 if x < s && y < s {
-                    out[y * s + x] = block[k];
+                    out[y * s + x] = texel;
                 }
             }
         }

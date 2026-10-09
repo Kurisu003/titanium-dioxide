@@ -8,6 +8,7 @@
 
 use crate::rpak::Rpak;
 
+/// One cell value. Strings and asset names are both `Str`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cell {
     Bool(bool),
@@ -18,6 +19,7 @@ pub enum Cell {
 }
 
 impl Cell {
+    /// The value as text (a vector as `x y z`).
     pub fn text(&self) -> String {
         match self {
             Cell::Bool(b) => b.to_string(),
@@ -29,6 +31,7 @@ impl Cell {
     }
 }
 
+/// A loaded datatable: column names and rows of cells in column order.
 #[derive(Debug, Clone)]
 pub struct DataTable {
     pub columns: Vec<String>,
@@ -76,6 +79,7 @@ impl DataTable {
         Some(Self { columns, rows: out })
     }
 
+    /// The index of the column named `name` (ignoring ASCII case).
     pub fn column(&self, name: &str) -> Option<usize> {
         self.columns.iter().position(|c| c.eq_ignore_ascii_case(name))
     }

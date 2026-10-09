@@ -1208,7 +1208,9 @@ Kodai is playable about 10 s after launch (6–15 s on other maps); Angel City's
   asset-free part (model, clips, grids, meshes, textures) on every core while the collision
   hierarchy builds (`actor::prefetch_actors`); spawning then only adds the assets.
 - The collision sets' BVHs building at the same time, their top levels split a level at a time
-  in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City).
+  in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City),
+  then the SAH search trees over their leaves (not for the detail set), the top splits binned on
+  every core.
 - The probed nav grids (MP maps) casting their cells and edges on every core (7-9 s → 0.5 s on
   Angel City), and the particle textures decoding in parallel.
 
@@ -1239,6 +1241,28 @@ On Forwardbase Kodai at 3414x1357 this takes BT's spawn view from about 65 fps t
 `TF_PROP_LOD=0`, `TF_PROP_CULL=0`, `TF_PROP_SHADOWS=all` and `TF_PROP_RADII=N` switch the
 parts off for comparisons, and `--features profile` writes a Chrome trace of every system (with
 system names).
+
+Small props (the ones that cast no real-time shadows) are drawn from batch meshes
+(`propbatch.rs`): one entity per 2048-unit cell, material and LOD instead of one per prop, mesh
+part and LOD. Angel City goes from 46 235 prop entities to 4 943 plus 4 157 batches (Bevy runs
+its visibility, bounds and specialization passes over every entity every frame, drawn or not).
+A batch mesh only lists (prop, model vertex) pairs; its vertex shader (`propbatch.wgsl`) reads
+the model's vertices and the prop's transform and draw range from two storage buffers and does
+per prop what Bevy does per entity, with the same functions: the draw range test from the
+prop's origin, the dithered LOD and distance crossfade, and the vertex transforms.
+StandardMaterial's own fragment shaders shade it, and a batch's own range and bounds enclose its
+props', so Bevy only culls a batch when all its props would have been culled. Shadow casters,
+translucent materials and effect materials keep their own entities. Free-camera screenshots
+(7 spots on Angel City, 5 on Kodai) match the per-prop version bit for bit with `TF_NO_UBER=1`,
+except ~770 pixels (0.04%) of one Angel City overview on a coplanar strip whose z-fighting winner
+depends on draw order (registering the batch material alone flips some of them) and 11 pixels on
+Kodai. With the haze cards on, their scrolling follows the time since launch, which shifts with
+the (shorter) load time. The collision dump is identical. Angel City on foot at 1920x1080,
+uncapped, three interleaved runs each: 85 -> 98 fps average; main thread PostUpdate 7.3 ->
+5.7 ms (profile build), GPU +0.15 ms per frame (vertices of out-of-range props in a drawn batch
+still run the vertex shader). Loading Bevy's prepass for these meshes logs "The default normal
+prepass expects the mesh to have vertex normal attributes" a few times: the batch material
+supplies them itself. `TF_PROP_BATCH=0` gives every prop its own entities again.
 
 Materials are bound one bind group per material, not through Bevy's bindless material slabs
 (the `BUFFER_BINDING_ARRAY` feature is turned off; lightmaps and light probes don't need it and
@@ -1303,6 +1327,19 @@ built under the loading screen instead of on the first frame of play (a 430-590 
 Collision queries reject more work exactly (same results bit for bit): Titan steps ~35% and
 Pilot steps ~40% cheaper offline. With wave 3 enemies on Angel City: 58 -> 72 fps average at
 1920x1080 (noisy, shared machine).
+The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
+~3 triangles that actually touch it), but its leaves and walk order define the query results, so
+they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old
+results bit for bit. Box queries (sphere pushes, box sweeps, wall searches) put the leaves they
+find back into the old walk's order; rays up to 400 units find every leaf they reach and replay
+the old nearest-first walk, with its shrinking limit, over the ones with hits (ties included);
+longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the
+slab test pass any box), still walk the median tree. Offline on Angel City's collision (one
+core): Titan step 47.6 -> 19.8 us, Pilot step 27.4 -> 21.4 us, rays 6.7 -> 5.1 us, sphere
+pushes and box sweeps ~10% cheaper. In game, wave 3 on Angel City (`--features profile`):
+`update_enemies` 2.4-2.9 -> 1.5-1.9 ms a frame on average. The detail set (the props' render triangles, small and
+even, so its median leaves are tight already) keeps walking its median tree: a search tree there
+didn't make its queries faster and cost ~0.3 s of load and ~130 MB.
 
 The sky and world cameras don't copy their picture to the window (`CameraOutputMode::Skip`):
 the viewmodel camera draws last into the same HDR textures and its copy overwrites the whole

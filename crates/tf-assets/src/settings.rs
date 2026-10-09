@@ -95,7 +95,7 @@ impl PlayerSettings {
                 for section in ["", "sp_base", "mp_base"] {
                     let full = format!("{section}.{key}");
                     let base = out.values.get(&full).cloned();
-                    if section != "" && base.is_none() {
+                    if !section.is_empty() && base.is_none() {
                         continue;
                     }
                     if let Some(new) = apply_mod(base.as_deref(), &v) {
@@ -107,14 +107,17 @@ impl PlayerSettings {
         out
     }
 
+    /// The value of `section.key` (any case; top-level keys are `.key`).
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values.get(&key.to_ascii_lowercase()).map(String::as_str)
     }
 
+    /// [`PlayerSettings::get`] as a number, or `default`.
     pub fn f32(&self, key: &str, default: f32) -> f32 {
         self.get(key).and_then(|v| v.parse().ok()).unwrap_or(default)
     }
 
+    /// [`PlayerSettings::get`] as three space-separated numbers.
     pub fn vec3(&self, key: &str) -> Option<[f32; 3]> {
         let v: Vec<f32> = self.get(key)?.split_whitespace().filter_map(|x| x.parse().ok()).collect();
         (v.len() == 3).then(|| [v[0], v[1], v[2]])
