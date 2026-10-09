@@ -232,6 +232,56 @@ impl Actor {
         self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name)).map(|i| self.joints[i])
     }
 
+    /// Everything [`Actor::evaluate`] reads, as bits: the same key gives the same pose.
+    pub fn pose_key(&self) -> Vec<u32> {
+        let mut k = Vec::with_capacity(32);
+        let f = |k: &mut Vec<u32>, x: f32| k.push(x.to_bits());
+        let s = |k: &mut Vec<u32>, t: &str| {
+            k.push(t.len() as u32);
+            k.extend(t.bytes().map(u32::from));
+        };
+        let ptr = |k: &mut Vec<u32>, p: usize| k.extend([p as u32, (p as u64 >> 32) as u32]);
+        ptr(&mut k, Arc::as_ptr(&self.clips) as usize);
+        ptr(&mut k, Arc::as_ptr(&self.grids) as usize);
+        k.push(self.rest.len() as u32);
+        for (p, q) in &self.rest {
+            k.extend(p.to_array().map(f32::to_bits));
+            k.extend(q.to_array().map(f32::to_bits));
+        }
+        for list in [&self.layers, &self.overlays, &self.additive] {
+            k.push(list.len() as u32);
+            for l in list.iter() {
+                k.push(l.clip as u32);
+                f(&mut k, l.cycle);
+                f(&mut k, l.weight);
+            }
+        }
+        match &self.aim {
+            Some(a) => {
+                k.push(1);
+                s(&mut k, &a.grid);
+                for x in [a.yaw, a.pitch, a.weight] {
+                    f(&mut k, x);
+                }
+            }
+            None => k.push(0),
+        }
+        k.push(self.grid_layers.len() as u32);
+        for l in &self.grid_layers {
+            s(&mut k, l.grid);
+            for x in [l.x, l.y, l.cycle, l.weight] {
+                f(&mut k, x);
+            }
+            k.push(l.relative as u32);
+        }
+        k.push(self.root_offsets.len() as u32);
+        for &(b, off) in &self.root_offsets {
+            k.push(b as u32);
+            k.extend(off.to_array().map(f32::to_bits));
+        }
+        k
+    }
+
     /// Model-space transform of a bone in the current pose.
     pub fn bone_model_transform(&self, name: &str) -> Option<Transform> {
         let target = self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name))?;
@@ -920,9 +970,18 @@ fn build_template(
     })
 }
 
-pub fn animate_actors(time: Res<Time>, mut actors: Query<&mut Actor>, mut transforms: Query<&mut Transform>) {
+/// The last pose evaluated for each actor, with the inputs it came from ([`Actor::pose_key`]).
+#[derive(Default)]
+pub struct PoseCache {
+    frame: u64,
+    poses: HashMap<Entity, (Vec<u32>, Pose, u64)>,
+}
+
+pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, mut transforms: Query<&mut Transform>, mut cache: Local<PoseCache>) {
     let dt = time.delta_secs();
-    for mut actor in &mut actors {
+    cache.frame += 1;
+    let frame = cache.frame;
+    for (e, mut actor) in &mut actors {
         if actor.clips.is_empty() {
             continue;
         }
@@ -932,14 +991,35 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<&mut Actor>, mut transf
                 l.cycle = (l.cycle + dt / d.max(1e-3)).rem_euclid(1.0);
             }
         }
-        let pose = actor.evaluate();
-        for (&j, (p, q)) in actor.joints.iter().zip(pose) {
+        // The pose is a pure function of the actor's layers: an actor whose inputs are the same
+        // as last frame (a pooled enemy waiting hidden, a held pose) reuses it. Bones are only
+        // written when they move, so still ones don't mark their transforms changed (which
+        // sends them through transform propagation and the skinning upload again).
+        let key = actor.pose_key();
+        let entry = cache.poses.entry(e).or_insert_with(|| (Vec::new(), Pose::new(), 0));
+        if entry.0 != key {
+            entry.1 = actor.evaluate();
+            entry.0 = key;
+        }
+        entry.2 = frame;
+        for (&j, &(p, q)) in actor.joints.iter().zip(&entry.1) {
             if let Ok(mut tf) = transforms.get_mut(j) {
-                tf.translation = p;
-                tf.rotation = q;
+                if bits3(tf.translation) != bits3(p) || bits4(tf.rotation) != bits4(q) {
+                    tf.translation = p;
+                    tf.rotation = q;
+                }
             }
         }
     }
+    cache.poses.retain(|_, v| v.2 == frame);
+}
+
+fn bits3(v: Vec3) -> [u32; 3] {
+    v.to_array().map(f32::to_bits)
+}
+
+fn bits4(q: Quat) -> [u32; 4] {
+    q.to_array().map(f32::to_bits)
 }
 
 /// Copies a leader actor's bone transforms onto this actor's bones of the same name
