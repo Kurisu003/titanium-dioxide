@@ -1019,7 +1019,7 @@ impl Cells for [Option<&CollisionWorld>] {
 pub(crate) struct Region<'a> {
     lo: Vec3,
     hi: Vec3,
-    sets: [(Option<&'a CollisionWorld>, SmallBuf<Node, 128>); 2],
+    sets: [(Option<&'a CollisionWorld>, SmallBuf<Node, 64>); 2],
 }
 
 impl Cells for Region<'_> {
@@ -1051,7 +1051,7 @@ impl Region<'_> {
     /// `CollisionWorld::raycast_moving` in the region's sets.
     pub(crate) fn raycast(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
         let [a, b] = &self.sets;
-        let cast = |(w, leaves): &(Option<&CollisionWorld>, SmallBuf<Node, 128>)| {
+        let cast = |(w, leaves): &(Option<&CollisionWorld>, SmallBuf<Node, 64>)| {
             let w = (*w)?;
             let bvh = w.bvh();
             if !bvh.nodes.is_empty() && !bvh.median.is_empty() && dir.length() * max_t <= SHORT_RAY {
