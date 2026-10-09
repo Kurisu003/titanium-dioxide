@@ -1284,6 +1284,11 @@ graph's own encoder, so every sorted translucent draw was encoded serially. `tra
 puts it in a worker task like the others (same commands, submitted in the same order): the graph
 walk went from about 4.0 to 3.1 ms. `TF_SERIAL_TRANSPARENT=1` keeps Bevy's node.
 
+The guns' ammo counters (`ruiscreen.rs`) render through small UI cameras into textures. Those
+cameras now render only for 30 frames after a counter's text changes (and until it is laid
+out); the texture keeps the last picture. Drawing the same digits every frame cost the render
+thread about 1 ms (two cameras' graph, UI preparation and command buffers).
+
 The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
