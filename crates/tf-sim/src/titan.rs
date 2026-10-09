@@ -132,6 +132,9 @@ pub struct TitanState {
     /// down to the crouch view height (0 standing .. 1 crouched).
     pub crouched: bool,
     pub duck: f32,
+    /// What the last move was pushed off (horizontal normal, zero if nothing), for Friction's
+    /// wall rule (`walk_move`).
+    pub block_normal: Vec3,
 }
 
 impl TitanState {
@@ -152,6 +155,7 @@ impl TitanState {
             land_speed: 0.0,
             crouched: false,
             duck: 0.0,
+            block_normal: Vec3::ZERO,
         }
     }
 
@@ -183,12 +187,29 @@ impl TitanState {
 /// wish speed, never raising the total speed above the larger of the old speed and the wish
 /// speed. So turning while holding forward bends the path without the sideways slide a single
 /// rate toward the wanted velocity gives.
-pub fn walk_move(v: Vec2, wish: Vec2, max_speed: f32, accel: f32, decel: f32, dt: f32) -> Vec2 {
+pub fn walk_move(v: Vec2, wish: Vec2, max_speed: f32, accel: f32, decel: f32, block: Vec3, dt: f32) -> Vec2 {
     let dir = wish.normalize_or_zero();
     let wish_speed = wish.length().min(1.0) * max_speed;
 
     let along = v.dot(dir);
-    let keep = if along > 0.0 { dir * along * (along * wish_speed / v.length_squared()).min(1.0) } else { Vec2::ZERO };
+    let keep = if along <= 0.0 {
+        Vec2::ZERO
+    } else {
+        let k = (along * wish_speed / v.length_squared()).min(1.0);
+        let d = dir.extend(0.0);
+        if d.dot(block) < 0.0 {
+            // Pushing into what blocked the last move (`block`, the move trace's plane normal,
+            // player+0x2b70, which WalkMove/AirMove store when the blocked handler didn't get
+            // through: 0x18020e226, 0x1801f25f9): the kept velocity is along the wish turned
+            // onto that surface (plus 1/128 of its normal, 0x1808f8510), so sliding along a
+            // wall keeps the wish speed's share along it instead of being braked (Friction
+            // 0x1801f81bf).
+            let t = (d + block * (1.0 / 128.0 - d.dot(block))).normalize_or_zero();
+            (t * t.dot(v.extend(0.0)).max(0.0) * k).truncate()
+        } else {
+            dir * along * k
+        }
+    };
     let rest = v - keep;
     let len = rest.length();
     let rest = if len > 1e-6 { rest * ((len - decel * dt).max(0.0) / len) } else { rest };
@@ -242,8 +263,8 @@ fn stand_room(s: &TitanState, p: &TitanParams, world: &CollisionWorld) -> bool {
     let r = p.radius;
     let lo = (p.crouch_height - r).max(p.step_height + r);
     let hi = (p.height - r).max(lo);
-    [lo, (lo + hi) * 0.5, hi].iter().all(|&z| world.push_sphere(s.pos + Vec3::Z * z, r * 0.9, 0.7).0 == Vec3::ZERO)
-        && world.raycast(s.pos + Vec3::Z * p.crouch_height, Vec3::Z, p.height - p.crouch_height).is_none()
+    [lo, (lo + hi) * 0.5, hi].iter().all(|&z| world.push_sphere_moving(s.pos + Vec3::Z * z, r * 0.9, 0.7, CLIP_TITAN).0 == Vec3::ZERO)
+        && world.raycast_moving(s.pos + Vec3::Z * p.crouch_height, Vec3::Z, p.height - p.crouch_height, CLIP_TITAN).is_none()
 }
 
 /// Advance one tick.
@@ -342,7 +363,7 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
             Some(d) if cur > walk_speed => d,
             _ => decel,
         };
-        hvel = walk_move(hvel, wish, max_speed, accel, decel, dt);
+        hvel = walk_move(hvel, wish, max_speed, accel, decel, s.block_normal, dt);
     } else {
         hvel = air_move(hvel, wish, p.air_speed * scale, p.air_accel, dt);
         // Keyboard grace (AirMove 0x1801f1d62): for jump_keyboardgraceperiodmax (0.5 s) after
@@ -379,6 +400,7 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
     // Move in small substeps so fast dashes cannot tunnel through walls.
     let delta = s.vel * dt;
     let steps = ((delta.length() / (p.radius * 0.5)).ceil() as usize).max(1);
+    s.block_normal = Vec3::ZERO;
     for _ in 0..steps {
         move_once(s, p, world, delta / steps as f32);
     }
@@ -407,6 +429,7 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
             let into = s.vel.dot(n);
             if into < 0.0 {
                 s.vel -= n * into;
+                s.block_normal = n;
             }
         }
     }

@@ -204,16 +204,15 @@ fn static_model_data(gd: &GameData, path: &str) -> anyhow::Result<PropModel> {
             let mat_name = model.textures.get(tex).cloned().unwrap_or_default();
             if l == 0 {
                 for &i in &md.indices {
-                    let p = md.positions[i as usize];
-                    radius = radius.max(Vec3::from(p).length());
-                    tris.push(p);
+                    radius = radius.max(Vec3::from(md.positions[i as usize]).length());
                 }
             }
             parts.push((mat_name, convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, None)));
         }
         lods.push((if l == 0 { 0.0 } else { switch }, parts));
     }
-    Ok(PropModel { lods, tris, radius })
+    tris.extend(model.collision_tris().into_iter().flat_map(|(t, _)| t));
+    Ok(PropModel { lods, tris, hull: model.collision_hull_tris(), radius })
 }
 
 /// At most this many LODs per prop model are built.
@@ -256,7 +255,11 @@ impl PropOptions {
 /// triangles for collision, and its bounding radius about the origin.
 struct PropModel {
     lods: Vec<(f32, Vec<(String, Mesh)>)>,
+    /// The per-triangle collision mesh (`Model::collision_tris`), three corners each: LOD 0's
+    /// triangles less foliage cards. Only shots trace it.
     tris: Vec<[f32; 3]>,
+    /// The convex collision hulls as triangles (`Model::collision_hull_tris`): what movement hits.
+    hull: Vec<[[f32; 3]; 3]>,
     radius: f32,
 }
 
@@ -373,8 +376,11 @@ pub fn spawn_static_props(
     };
     // Per model: LODs as (switch point, parts) and the bounding radius.
     let mut built: Vec<Option<(Vec<(f32, Vec<(Handle<Mesh>, Handle<StandardMaterial>)>)>, f32)>> = vec![None; sp.model_names.len()];
-    // Model-space triangles of each prop model, for solid instances.
+    // Model-space per-triangle meshes and collision hulls of each prop model.
     let mut shapes: Vec<Vec<[f32; 3]>> = vec![Vec::new(); sp.model_names.len()];
+    let mut hulls: Vec<Vec<[[f32; 3]; 3]>> = vec![Vec::new(); sp.model_names.len()];
+    // The props the map's collision lists, with their contents (the rest are never traced).
+    let in_cm = bsp.static_prop_contents();
     let mut failed = 0;
     // Parse the models and build their meshes (tangents included) on every core; materials
     // and asset handles are made on this thread afterwards.
@@ -397,6 +403,7 @@ pub fn spawn_static_props(
         match r.unwrap_or_else(|| Err(anyhow::anyhow!("worker panicked"))) {
             Ok(pm) => {
                 shapes[mi] = pm.tris;
+                hulls[mi] = pm.hull;
                 let lods = pm
                     .lods
                     .into_iter()
@@ -417,10 +424,10 @@ pub fn spawn_static_props(
         }
     }
     let mut count = 0;
-    let mut solid = 0;
+    let (mut solid, mut no_hull, mut pilot_only) = (0, 0, 0);
     let mut parts_spawned = 0usize;
     let opts = PropOptions::from_env();
-    for p in &sp.props {
+    for (pi, p) in sp.props.iter().enumerate() {
         // Vistas belong to the 3D skybox (sky.rs).
         if sp.model_names[p.model as usize].starts_with("models/vistas/") {
             continue;
@@ -430,13 +437,31 @@ pub fn spawn_static_props(
         // Source angles: yaw about Z, then pitch about Y, then roll about X.
         let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(roll);
         let tf = Transform { translation: Vec3::from(p.origin), rotation: rot, scale: Vec3::splat(p.scale.max(0.0001)) };
-        if p.solid != 0 {
+        // Collision as engine.dll traces static props (0x1801b7cf0): only the props in the
+        // map's CM_PRIMITIVES, each by its contents there. Movement (the player's mask, detail
+        // level 0) hits the model's convex hulls; shots (TRACEDETAILLEVEL_HIGH) hit the
+        // per-triangle mesh. Small props and railings have PLAYER and BULLET but not TITAN: BT
+        // walks through them.
+        if let Some(&c) = in_cm.get(&pi) {
+            use tf_assets::bsp::contents::{BULLET, PLAYER, TITAN};
+            use tf_sim::collision::{CLIP_PILOT, CLIP_TITAN};
             let m = tf.to_matrix();
-            for tri in shapes[p.model as usize].chunks_exact(3) {
-                let v = |a: [f32; 3]| SVec3::from(m.transform_point3(Vec3::from(a)).to_array());
-                collision.add(v(tri[0]), v(tri[1]), v(tri[2]));
+            let v = |a: [f32; 3]| SVec3::from(m.transform_point3(Vec3::from(a)).to_array());
+            if c & BULLET != 0 {
+                for tri in shapes[p.model as usize].chunks_exact(3) {
+                    collision.add_detail(v(tri[0]), v(tri[1]), v(tri[2]));
+                }
+            }
+            for tri in &hulls[p.model as usize] {
+                for (bit, set) in [(PLAYER, CLIP_PILOT), (TITAN, CLIP_TITAN)] {
+                    if c & bit != 0 {
+                        collision.add_clip(set, v(tri[0]), v(tri[1]), v(tri[2]));
+                    }
+                }
             }
             solid += 1;
+            no_hull += hulls[p.model as usize].is_empty() as usize;
+            pilot_only += (c & PLAYER != 0 && c & TITAN == 0) as usize;
         }
         // One entity per mesh part and LOD, straight under the root (no per-prop parent), each
         // with the distance range it's drawn in (world units, i.e. after the root's scale).
@@ -470,7 +495,7 @@ pub fn spawn_static_props(
         count += 1;
     }
     log::info!(
-        "static props: {count} instances ({solid} solid, {parts_spawned} mesh entities) of {} models ({failed} failed) in {:?}",
+        "static props: {count} instances ({solid} in the map's collision: {no_hull} without hulls stop shots only, {pilot_only} not titans; {parts_spawned} mesh entities) of {} models ({failed} failed) in {:?}",
         sp.model_names.len(),
         t.elapsed()
     );

@@ -131,6 +131,31 @@ fn seams_in_floor_and_wall_dont_snag() {
 }
 
 #[test]
+fn steep_wall_slide_keeps_the_wish_share_along_the_wall() {
+    // Running into a wall: Friction keeps the velocity along the wish turned onto the wall the
+    // last move hit (client.dll 0x1801f81bf) up to the sprint speed's share along the wall
+    // (260 x cos 66 = 106 at 66 degrees, where it used to crawl at about 10 u/s) and brakes the
+    // rest at 1500 u/s^2, while Accelerate adds 2500 u/s^2 along the input, cos(angle) of it
+    // along the wall: below about 53 degrees that beats the braking and the slide keeps the
+    // full sprint speed.
+    let p = PilotParams::default();
+    let mut w = CollisionWorld::default();
+    floor(&mut w, 3000.0);
+    quad(&mut w, Vec3::new(-400.0, 100.0, 0.0), Vec3::new(3000.0, 100.0, 0.0), Vec3::new(3000.0, 100.0, 200.0), Vec3::new(-400.0, 100.0, 200.0));
+    for yaw in [45.0f32, 66.0, 80.0] {
+        let r = sprint(&w, yaw, 3.0);
+        let share = p.sprint_speed * yaw.to_radians().cos();
+        // The last second's average speed along the wall.
+        let tail = sprint(&w, yaw, 2.0);
+        let speed = r.pos.x - tail.pos.x;
+        println!("wall at {yaw} deg: along it {speed:.0} u/s (share {share:.0}), ends at {:?}", r.pos);
+        assert!((r.pos.y - (100.0 - p.radius)).abs() < 0.1, "against the wall: {:?}", r.pos);
+        let (lo, hi) = if yaw < 53.0 { (p.sprint_speed - 2.0, p.sprint_speed) } else { (share - 1.0, share + p.ground_accel * DT * yaw.to_radians().cos() + 1.0) };
+        assert!(speed > lo && speed < hi, "slides at {speed} along the wall at {yaw} degrees, not {lo}..{hi}");
+    }
+}
+
+#[test]
 fn runs_up_and_down_stairs() {
     let p = PilotParams::default();
     // Ten 8-unit steps, 12 deep, from x = 0, then a landing.

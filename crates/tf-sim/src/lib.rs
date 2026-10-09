@@ -49,6 +49,22 @@ mod tests {
     }
 
     #[test]
+    fn walking_into_a_wall_at_a_steep_angle_slides_along_it() {
+        // 66 degrees into the wall at x = 1000: Friction keeps the walk speed's share along
+        // the wall (280 x cos 66 = 114, client.dll 0x1801f81bf) instead of braking it away.
+        let w = world();
+        let yaw = 24f32.to_radians();
+        let mut s = TitanState::new(Vec3::new(900.0, -1500.0, 0.0), yaw);
+        let input = TitanInput { forward: 1.0, yaw, ..Default::default() };
+        run(&mut s, input, &w, 3.0);
+        let y0 = s.pos.y;
+        run(&mut s, input, &w, 1.0);
+        let share = 280.0 * 66f32.to_radians().cos();
+        assert!(s.pos.x > 1000.0 - 62.0, "at the wall: {:?}", s.pos);
+        assert!(s.pos.y - y0 > share - 2.0, "slides at {} along the wall, share {share}", s.pos.y - y0);
+    }
+
+    #[test]
     fn landing_records_impact_speed() {
         let w = world();
         // A 120-unit fall (viewkickFallDistMax) lands at about sqrt(2 * 750 * 120) = 424 u/s.
