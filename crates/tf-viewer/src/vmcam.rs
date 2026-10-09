@@ -119,3 +119,17 @@ pub fn fx_to_world(p: Vec3, cam: &GlobalTransform, world_fov: f32, vm_fov: f32) 
     c.z /= k.max(1e-3);
     cam.affine().transform_point3(c)
 }
+
+/// Keep only the first shadow cascade of the sun for the viewmodel camera. Bevy builds the full
+/// set (four, out to 150 m) for every camera the light reaches, but first-person models are all
+/// within a few metres of the eye, well inside the first cascade (0.1-10 m, blending into the
+/// next only past 8 m), so the viewmodel camera never samples the others. That saved three
+/// shadow passes of the whole map, and their visibility checks, every frame.
+pub fn one_shadow_cascade(vm: Query<Entity, With<ViewmodelCamera>>, mut lights: Query<&mut bevy::light::Cascades>) {
+    let Ok(vm) = vm.single() else { return };
+    for mut c in &mut lights {
+        if let Some(v) = c.cascades.get_mut(&vm) {
+            v.truncate(1);
+        }
+    }
+}

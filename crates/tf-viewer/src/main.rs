@@ -34,6 +34,7 @@ mod gamepad;
 mod pilotability;
 mod pilotbody;
 mod autotitan;
+mod bindcache;
 mod cloak;
 mod colorcorr;
 mod rodeo;
@@ -239,7 +240,20 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin { default_sampler: convert::sampler() }),
+                .set(ImagePlugin { default_sampler: convert::sampler() })
+                .set(bevy::render::RenderPlugin {
+                    render_creation: bevy::render::settings::RenderCreation::Automatic(bevy::render::settings::WgpuSettings {
+                        // Materials without bindless binding arrays (lightmaps and light probes
+                        // keep theirs: they don't need this feature). With them, every switch
+                        // between material slabs (up to 2048 textures each) costs wgpu-core a
+                        // walk over the whole slab when the pass is encoded: 4-6 ms per shadow
+                        // cascade on Angel City. Per-material bind groups draw the same pixels.
+                        // TF_BINDLESS=1 keeps them (A/B measurements).
+                        disabled_features: std::env::var_os("TF_BINDLESS").is_none().then_some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY),
+                        ..default()
+                    }),
+                    ..default()
+                }),
         )
         .add_plugins(FreeCameraPlugin)
         .add_plugins(ui::PipelineWatchPlugin)
@@ -252,7 +266,8 @@ fn main() {
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)
-        .add_systems(Update, (perf_log, weapons::shimmer_shields))
+        .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin))
+        .add_systems(Update, (perf_log, fps_overlay, weapons::shimmer_shields))
         .insert_resource(args)
         .insert_resource(script)
         .insert_resource(mode)
@@ -271,6 +286,12 @@ fn main() {
         .add_systems(Update, settings::apply_fov.after(player::update_camera).after(pilotctl::pilot_camera).run_if(ui::loaded))
         .add_systems(Update, pilotctl::cockpit_boot.run_if(ui::loaded))
         .add_systems(First, ui::log_hitches)
+        .add_systems(
+            PostUpdate,
+            vmcam::one_shadow_cascade
+                .after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
+                .before(bevy::light::SimulationLightSystems::UpdateLightFrusta),
+        )
         .add_systems(Update, (zipline::zipline_cables, zipline::zipline_sounds).run_if(ui::loaded))
         .add_systems(Update, pilotability::grapple_cable.after(pilotctl::pilot_camera).run_if(ui::loaded))
         .add_systems(Update, pilotctl::bt_sequence_sounds.after(pilotctl::control_transitions).run_if(ui::loaded))
@@ -644,13 +665,23 @@ fn setup(
             Visibility::default(),
         ))
         .id();
+    // The map's static geometry (world meshes, props, probes) hangs under its own root with the
+    // same transform. Bevy skips a hierarchy nothing in has moved, but recomputes every direct
+    // child of a root whose tree changed: under `root`, with BT and everything that moves,
+    // that was ~47k prop and world entities every frame (2-4 ms on one thread).
+    let static_root = commands
+        .spawn((
+            Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT)),
+            Visibility::default(),
+        ))
+        .id();
 
     let mut cache = convert::Cache::default();
     let mut collision = CollisionWorld::default();
     let mut sweep: Option<CollisionWorld> = None;
     match gd.read_map(&args.map) {
         Ok(bsp) => {
-            world::spawn_world(&mut commands, root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
+            world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
             if std::env::var_os("TF_NO_MAP_COLLISION").is_none() {
                 world::add_game_collision(&bsp, &mut collision);
             }
@@ -662,15 +693,15 @@ fn setup(
                 sweep = Some(extra);
             }
             if args.props {
-                world::spawn_static_props(&mut commands, root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
+                world::spawn_static_props(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
                 sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
             }
             // Baked probes replace the flat ambient term for everything without a lightmap.
-            if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, root, &bsp, &mut images) {
+            if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images) {
                 commands.insert_resource(GlobalAmbientLight { brightness: 0.0, ..map_env.ambient() });
             }
             let reflections = env::Reflections::load(&bsp, &mut images);
-            reflections.spawn_probes(&mut commands, root);
+            reflections.spawn_probes(&mut commands, static_root);
             commands.insert_resource(reflections);
             commands.insert_resource(pfx::ParticleLight::load(&bsp));
         }
@@ -1043,12 +1074,61 @@ fn screenshots(
     }
 }
 
-/// Log the average frame time every two seconds (RUST_LOG=tf_viewer=info shows it).
-fn perf_log(time: Res<Time>, mut acc: Local<(f32, u32)>) {
-    acc.0 += time.delta_secs();
+/// Log the average frame rate every two seconds, with the slowest frame in that time
+/// (RUST_LOG=tf_viewer=info shows it).
+fn perf_log(time: Res<Time<Real>>, mut acc: Local<(f32, u32, f32)>) {
+    let dt = time.delta_secs();
+    acc.0 += dt;
     acc.1 += 1;
+    acc.2 = acc.2.max(dt);
     if acc.0 >= 2.0 {
-        log::info!("perf: {:.1} fps ({:.1} ms/frame)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32);
-        *acc = (0.0, 0);
+        log::info!("perf: {:.1} fps ({:.1} ms/frame, slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
+        *acc = (0.0, 0, 0.0);
+    }
+}
+
+/// TF_FPS=1 shows the frame rate in the top-left corner: the average over the last half
+/// second, its frame time, and the slowest frame in it.
+#[derive(Component)]
+struct FpsText;
+
+fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&mut Text, With<FpsText>>, mut acc: Local<(f32, u32, f32)>) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("TF_FPS").is_some_and(|v| v != "0")) {
+        return;
+    }
+    let Ok(mut text) = text.single_mut() else {
+        commands.spawn((
+            Text::new(""),
+            TextFont { font_size: 18.0, ..default() },
+            TextColor(Color::srgb(1.0, 1.0, 0.3)),
+            Node { position_type: PositionType::Absolute, left: px(8), top: px(6), ..default() },
+            GlobalZIndex(200),
+            FpsText,
+        ));
+        return;
+    };
+    let dt = time.delta_secs();
+    acc.0 += dt;
+    acc.1 += 1;
+    acc.2 = acc.2.max(dt);
+    if acc.0 >= 0.5 {
+        text.0 = format!("{:.0} fps  {:.1} ms  (slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
+        *acc = (0.0, 0, 0.0);
+    }
+}
+
+/// TF_GPU_TIMES=1 logs the CPU and GPU time of every render pass (Bevy's render diagnostics,
+/// timestamp queries) every few seconds: for finding what the frame spends its time on.
+struct GpuTimesPlugin;
+
+impl Plugin for GpuTimesPlugin {
+    fn build(&self, app: &mut App) {
+        if std::env::var_os("TF_GPU_TIMES").is_some() {
+            app.add_plugins((
+                bevy::render::diagnostic::RenderDiagnosticsPlugin,
+                bevy::diagnostic::LogDiagnosticsPlugin { wait_duration: std::time::Duration::from_secs(4), ..default() },
+            ));
+        }
     }
 }

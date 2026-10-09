@@ -1217,7 +1217,41 @@ carry no fade distances on the maps checked (-1), so these limits are our own.
 
 On Forwardbase Kodai at 3414x1357 this takes BT's spawn view from about 65 fps to about 90 fps.
 `TF_PROP_LOD=0`, `TF_PROP_CULL=0`, `TF_PROP_SHADOWS=all` and `TF_PROP_RADII=N` switch the
-parts off for comparisons, and `--features profile` writes a Chrome trace of every system.
+parts off for comparisons, and `--features profile` writes a Chrome trace of every system (with
+system names).
+
+Materials are bound one bind group per material, not through Bevy's bindless material slabs
+(the `BUFFER_BINDING_ARRAY` feature is turned off; lightmaps and light probes don't need it and
+stay bindless). With slabs, each switch between material slabs made wgpu-core walk every texture
+in the slab (up to 2048) while encoding the pass, 4-6 ms per shadow cascade on Angel City; the
+per-material groups draw the same pixels. Angel City, BT's spawn, 1920x1080, uncapped: cockpit
+34-53 fps before, 64-81 after; on foot 26-46 before, 56-67 after. `TF_BINDLESS=1` brings the
+slabs back for comparisons.
+
+The map's static geometry (world batches, props, probes) hangs under its own root entity, apart
+from everything that moves. Bevy skips a hierarchy in which nothing moved, but under one shared
+root it recomputed all ~47k static children every frame (main thread: transform propagation
+3.7 -> 1.1 ms on Angel City).
+
+Bevy rebuilds every mesh bind group every frame, and with lightmaps that is one per lightmap
+slab (four lightmapped entities) per render phase: ~750 bind groups created and dropped per frame
+for Angel City's 419 world batches. `bindcache.rs` keeps the last two sets (the skin buffers
+alternate between frames) and reuses one while the instance, skin and morph buffers and the
+lightmap slabs are unchanged; a lightmap slot being filled or freed rebuilds for a few frames.
+Bevy sized the per-phase instance buffers to exactly the frame's instance count, so every new
+high made a new buffer (and a 5 ms rebuild, ~15 times a minute on foot); they now grow by half
+again (rebuilds on the Angel City run: 146 -> 8).
+Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
+
+The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
+for every camera the light reaches, but first-person models are within a few metres of the eye
+and never sample the others, so three shadow passes of the whole map per frame were wasted.
+
+Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
+its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
+with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs
+Bevy's render diagnostics every four seconds: CPU and GPU time (timestamp queries) and pipeline
+statistics of every render pass.
 
 ### Campaign maps
 
