@@ -13,7 +13,9 @@ use anyhow::{bail, Result};
 /// One sprite-sheet sequence: frames as (duration, [u0, v0, u1, v1]).
 #[derive(Clone, Debug, Default)]
 pub struct Sequence {
+    /// The sheet's clamp flag (hold the last frame rather than loop; not used by `rect_at`).
     pub clamp: bool,
+    /// Total duration of the frames.
     pub total: f32,
     pub frames: Vec<(f32, [f32; 4])>,
 }
@@ -35,11 +37,14 @@ impl Sequence {
     }
 }
 
+/// A decoded VTF: one mip as RGBA8 and the sprite sheet.
 pub struct Vtf {
+    /// Size of the decoded mip.
     pub width: u32,
     pub height: u32,
     /// RGBA8 (straight alpha) of the decoded mip.
     pub rgba: Vec<u8>,
+    /// Sprite-sheet sequences by sequence number (empty without a sheet).
     pub sheet: Vec<Sequence>,
     /// The file's format code (8 = A8, 13 = DXT1, 15 = DXT5, ...).
     pub format: i32,

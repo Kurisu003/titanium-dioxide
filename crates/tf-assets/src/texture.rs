@@ -3,6 +3,7 @@
 use crate::rpak::{Asset, Rpak};
 use anyhow::{bail, Context, Result};
 
+/// A texture's pixel format (the header's DXGI-like format index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TexFormat {
     Bc1,
@@ -23,6 +24,7 @@ pub enum TexFormat {
     Rgba8,
     Rgba8Srgb,
     R8,
+    /// A format this reader doesn't decode (the raw index).
     Other(u16),
 }
 
@@ -65,36 +67,47 @@ impl TexFormat {
         })
     }
 
+    /// Bytes of one `w` x `h` image (unknown formats count as 4 bytes per texel).
     pub fn mip_size(self, w: usize, h: usize) -> usize {
         let (b, bw, bh) = self.block().unwrap_or((4, 1, 1));
         w.div_ceil(bw) * h.div_ceil(bh) * b
     }
 }
 
+/// A texture's header.
 #[derive(Debug, Clone)]
 pub struct TextureInfo {
     pub guid: u64,
+    /// The texture's path, when the pak keeps names.
     pub name: Option<String>,
+    /// Size of mip 0.
     pub width: u32,
     pub height: u32,
     pub format: TexFormat,
+    /// Array layers (at least 1).
     pub array_size: u32,
+    /// Mips stored in the pak itself (the smallest ones).
     pub permanent_mips: u32,
+    /// Mips stored in the starpak (the largest ones).
     pub streamed_mips: u32,
 }
 
+/// A texture's loaded mip chain.
 #[derive(Debug, Clone)]
 pub struct Texture {
     pub info: TextureInfo,
     /// Mip chain, largest first, tightly packed (no alignment padding), `mips` levels.
     pub data: Vec<u8>,
     pub mips: u32,
+    /// Size of the first level in `data` (smaller than the header's when the streamed mips
+    /// weren't read).
     pub width: u32,
     pub height: u32,
 }
 
 const MIP_ALIGN: usize = 16;
 
+/// Read a `txtr` asset's header.
 pub fn info(pak: &Rpak, a: &Asset) -> Result<TextureInfo> {
     let h = a.head.context("texture has no header")?;
     Ok(TextureInfo {

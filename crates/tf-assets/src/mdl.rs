@@ -37,13 +37,16 @@ impl R<'_> {
     }
 }
 
+/// A skeleton bone (mstudiobone_t, 0xF4 bytes) and its rest pose relative to its parent.
 #[derive(Debug, Clone)]
 pub struct Bone {
     pub name: String,
+    /// Parent bone index (-1 for a root).
     pub parent: i32,
     pub pos: [f32; 3],
     /// x, y, z, w
     pub quat: [f32; 4],
+    /// Rest rotation as RadianEuler, and the quantisation scale of animated rotation tracks.
     pub rot: [f32; 3],
     pub rot_scale: [f32; 3],
     /// Rest scale, and the quantisation scale of animated scale tracks.
@@ -51,6 +54,7 @@ pub struct Bone {
     pub scale_scale: [f32; 3],
     /// Row-major 3x4 matrix taking model-space positions into bone space (inverse bind).
     pub pose_to_bone: [[f32; 4]; 3],
+    /// Hemisphere decoded rotations are flipped into (bone flag 0x100000).
     pub q_alignment: [f32; 4],
     pub flags: i32,
 }
@@ -60,17 +64,22 @@ pub struct Bone {
 pub struct MeshData {
     /// Index into the skin reference table (map through [`Model::skin_families`]).
     pub material: usize,
+    /// The body part the mesh came from.
     pub bodypart: usize,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
+    /// Up to three bone indices per vertex (unused slots 0).
     pub joints: Vec<[u16; 4]>,
+    /// The matching weights, normalised to sum to 1.
     pub weights: Vec<[f32; 4]>,
     /// Vertex colours (RGBA8) from the model's embedded VVC block, empty when it has none.
     pub colors: Vec<[u8; 4]>,
+    /// Triangle list into the vertex arrays.
     pub indices: Vec<u32>,
 }
 
+/// A body part (a body group): `num_models` alternatives, one of which is drawn.
 #[derive(Debug, Clone)]
 pub struct BodyPart {
     pub name: String,
@@ -84,7 +93,7 @@ pub struct Animation {
     pub fps: f32,
     pub flags: i32,
     pub num_frames: usize,
-    /// frames[frame][bone] = (position, quaternion xyzw), bones of the owning model.
+    /// `frames[frame][bone]` = (position, quaternion xyzw), bones of the owning model.
     pub frames: Vec<Vec<([f32; 3], [f32; 4])>>,
     /// Bones that have a track in at least one frame (others hold the rest pose).
     pub animated: Vec<bool>,
@@ -105,13 +114,16 @@ impl Animation {
     }
 }
 
+/// A sequence (mstudioseqdesc_t, 0xE8 bytes): a named, possibly blended, use of animations.
 #[derive(Debug, Clone)]
 pub struct Sequence {
     pub label: String,
+    /// Activity name (`ACT_...`), empty if none.
     pub activity: String,
     pub flags: i32,
     /// Indices into the owning model's animation descriptors (blend grid, row-major).
     pub anims: Vec<usize>,
+    /// Blend grid size (`groupsize`; `anims` holds `group_size[0] * group_size[1]`).
     pub group_size: [i32; 2],
     /// Pose parameter index driving each grid axis (-1 = none) and the parameter range the
     /// axis spans (`paramindex`, `paramstart`, `paramend`).
@@ -131,28 +143,38 @@ pub struct Sequence {
     pub fade_in: f32,
 }
 
-/// mstudioevent_t (v53, 0x50 bytes: cycle, event, type, options[64], name index): fires `name` with `options` when the cycle passes `cycle`.
+/// mstudioevent_t (v53, 0x50 bytes: cycle, event, type, `options[64]`, name index): fires `name` with `options` when the cycle passes `cycle`.
 #[derive(Debug, Clone)]
 pub struct Event {
+    /// When it fires, as a fraction of the sequence (0..1).
     pub cycle: f32,
+    /// The record's event number (the events used here go by `name`).
     pub event: i32,
     pub name: String,
     pub options: String,
 }
 
+/// A parsed studio model. Geometry and animations are decoded on demand from `raw`.
 pub struct Model {
+    /// The name stored in the header (`models/...mdl` path).
     pub name: String,
+    /// The whole .mdl file.
     pub raw: Vec<u8>,
     pub bones: Vec<Bone>,
+    /// Material names, indexed by the skin tables.
     pub textures: Vec<String>,
+    /// Material search directories.
     pub cd_textures: Vec<String>,
-    /// skin_families[family][skinref] -> texture index
+    /// `skin_families[family][skinref]` -> texture index
     pub skin_families: Vec<Vec<u16>>,
     pub bodyparts: Vec<BodyPart>,
+    /// Models whose sequences and animations this one shares (`$includemodel`).
     pub include_models: Vec<String>,
     pub sequences: Vec<Sequence>,
+    /// Number of animation descriptors (see [`Model::animation`]).
     pub num_anims: usize,
     pub surface_prop: String,
+    /// Movement hull (min, max).
     pub hull: ([f32; 3], [f32; 3]),
     /// The default hitbox set (set 0).
     pub hitboxes: Vec<Hitbox>,
@@ -177,15 +199,18 @@ pub struct RuiMesh {
     pub faces: Vec<RuiFace>,
 }
 
+/// One quad of an [`RuiMesh`].
 #[derive(Debug, Clone)]
 pub struct RuiFace {
     /// Bone of the first corner.
     pub bone: usize,
     /// The four corners in that bone's space.
     pub corners: [[f32; 3]; 4],
+    /// UVs of the four corners.
     pub uvs: [[f32; 2]; 4],
 }
 
+/// A named attachment point (muzzles, eyes, sockets) on a bone.
 #[derive(Debug, Clone)]
 pub struct Attachment {
     pub name: String,
@@ -194,11 +219,13 @@ pub struct Attachment {
     pub local: [[f32; 4]; 3],
 }
 
+/// A pose parameter (mstudioposeparamdesc_t): a named blend axis and its range.
 #[derive(Debug, Clone)]
 pub struct PoseParam {
     pub name: String,
     pub start: f32,
     pub end: f32,
+    /// The range a looping parameter wraps over (0 if it doesn't loop).
     pub looping: f32,
 }
 
@@ -208,7 +235,9 @@ pub struct PoseParam {
 #[derive(Debug, Clone, Copy)]
 pub struct Hitbox {
     pub bone: usize,
+    /// Hit group (see above).
     pub group: i32,
+    /// The box in the bone's space.
     pub min: [f32; 3],
     pub max: [f32; 3],
     pub crit: bool,
@@ -217,6 +246,7 @@ pub struct Hitbox {
 const HDR_SIZE: usize = 0x2CC;
 const BONE_SIZE: usize = 0xF4;
 const ANIMDESC_SIZE: usize = 0x5C;
+/// Size of a v53 sequence descriptor (mstudioseqdesc_t).
 pub const SEQDESC_SIZE: usize = 0xE8;
 const VERTEX_SIZE: usize = 48;
 
@@ -258,6 +288,8 @@ impl Model {
         out
     }
 
+    /// Parse a version 53 .mdl file (bones, materials, body parts, sequences, hitboxes,
+    /// attachments, pose parameters, RUI meshes).
     pub fn parse(raw: Vec<u8>) -> Result<Self> {
         if raw.len() < HDR_SIZE || &raw[0..4] != b"IDST" {
             bail!("not a studio model");
@@ -422,6 +454,7 @@ impl Model {
         })
     }
 
+    /// The index of the bone named `name` (ignoring ASCII case).
     pub fn bone_index(&self, name: &str) -> Option<usize> {
         self.bones.iter().position(|b| b.name.eq_ignore_ascii_case(name))
     }
@@ -440,11 +473,11 @@ impl Model {
     /// studiorender.dll 0x18000f6e0 -> 0x18000e570, which walks this BVH ("Unsupported per tri
     /// version %d ... missing the $staticprop key" when the version isn't 2).
     ///
-    /// Layout (from 0x18000e570): at the offset, u16 version (2), u16, f32 min[3], f32 max[3];
-    /// the data starts 0x3C in: header 0x19C interior nodes of 20 bytes (u16 box[6], i32
-    /// child[2]; a negative child is !leaf), header 0x1A0 leaves of 0x70 bytes (u16 box[6], u32
+    /// Layout (from 0x18000e570): at the offset, u16 version (2), u16, f32 `min[3]`, f32 `max[3]`;
+    /// the data starts 0x3C in: header 0x19C interior nodes of 20 bytes (u16 `box[6]`, i32
+    /// `child[2]`; a negative child is !leaf), header 0x1A0 leaves of 0x70 bytes (u16 `box[6]`, u32
     /// first vertex, 12 triangles of u16 a, b, c, surface; a == b ends the leaf), header 0x1A4
-    /// vertices of u16[3]. Boxes and vertices are quantized: min + q * (max - min) / 65535.
+    /// vertices of `u16[3]`. Boxes and vertices are quantized: min + q * (max - min) / 65535.
     pub fn collision_tris(&self) -> Vec<([[f32; 3]; 3], u16)> {
         let r = R(&self.raw);
         let off = r.i32(0x198);

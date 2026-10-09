@@ -38,8 +38,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+/// One audio source of the bank (see the module docs for the entry layout).
 #[derive(Clone, Debug)]
 pub struct Source {
+    /// Lowercase source name.
     pub name: String,
     pub sample_rate: u32,
     pub channels: u32,
@@ -47,7 +49,9 @@ pub struct Source {
     pub header_size: u32,
     pub data_offset: u64,
     pub data_size: u32,
+    /// -1 for language-independent sources, 0 for English.
     pub language: i16,
+    /// Which `.mstr` patch bank holds the stream.
     pub patch: u16,
 }
 
@@ -70,8 +74,11 @@ pub struct EventInfo {
     pub max_distance: Option<f32>,
 }
 
+/// The opened sound bank: sources, events and the stream banks holding the audio.
 pub struct MilesBank {
+    /// mbnk version (12 or 13).
     pub version: u32,
+    /// Shared sources followed by the English ones.
     pub sources: Vec<Source>,
     by_name: std::collections::BTreeMap<String, usize>,
     /// Sound event name (lowercase) -> what it plays.
@@ -160,6 +167,7 @@ impl MilesBank {
         self.events.get(&name.to_ascii_lowercase()).filter(|v| !v.sources.is_empty())
     }
 
+    /// Number of sound events in the bank.
     pub fn event_count(&self) -> usize {
         self.events.len()
     }
@@ -202,6 +210,7 @@ impl MilesBank {
         self.by_name.get(&e).map(|&i| vec![i]).unwrap_or_default()
     }
 
+    /// The source named `name` (any case).
     pub fn find(&self, name: &str) -> Option<&Source> {
         self.by_name.get(&name.to_ascii_lowercase()).map(|&i| &self.sources[i])
     }

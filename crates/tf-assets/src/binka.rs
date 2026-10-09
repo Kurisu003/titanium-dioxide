@@ -20,6 +20,7 @@ const CRITICAL_FREQS: [u32; 25] = [
 pub struct Pcm {
     pub channels: usize,
     pub sample_rate: u32,
+    /// Interleaved, `channels` samples per frame.
     pub samples: Vec<f32>,
 }
 

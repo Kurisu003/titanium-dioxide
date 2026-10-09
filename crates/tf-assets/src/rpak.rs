@@ -14,9 +14,11 @@ use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Size of a version 7 RPAK header (kept verbatim by the decompressor).
 pub const HEADER_SIZE_V7: usize = 0x58;
 const ASSET_SIZE_V7: usize = 0x48;
 
+/// A memory segment the game allocates pages in (flags, alignment, total size).
 #[derive(Debug, Clone, Copy)]
 pub struct Segment {
     pub flags: u32,
@@ -24,6 +26,8 @@ pub struct Segment {
     pub size: u64,
 }
 
+/// A page of asset data. Pages that live in an older pak of a patch chain have no data here
+/// (`start` is `usize::MAX`).
 #[derive(Debug, Clone, Copy)]
 pub struct Page {
     pub segment: u32,
@@ -33,6 +37,7 @@ pub struct Page {
     pub start: usize,
 }
 
+/// One entry of the asset table.
 #[derive(Debug, Clone)]
 pub struct Asset {
     pub guid: u64,
@@ -40,28 +45,38 @@ pub struct Asset {
     pub head: Option<usize>,
     /// Absolute offset of the asset's CPU data, if any.
     pub cpu: Option<usize>,
+    /// Streamed data in a starpak (see [`Rpak::read_starpak`]); negative when there is none.
     pub starpak_offset: i64,
     pub header_size: u32,
     pub version: u32,
+    /// Asset type tag, e.g. `txtr`, `matl`, `shds`.
     pub kind: [u8; 4],
+    /// GUIDs of the assets this one refers to.
     pub dependencies: Vec<u64>,
 }
 
 impl Asset {
+    /// [`Asset::kind`] as a string (`"txtr"`).
     pub fn kind_str(&self) -> String {
         String::from_utf8_lossy(&self.kind).trim_end_matches('\0').to_string()
     }
 }
 
+/// A loaded RPAK: the decompressed file with its in-page pointers rewritten (see the module
+/// docs) and its tables parsed.
 pub struct Rpak {
     pub path: PathBuf,
     pub version: u16,
+    /// Header flags (0x100: the body was RTech-compressed).
     pub flags: u16,
+    /// The whole decompressed file; every offset in this module points into it.
     pub data: Vec<u8>,
+    /// Starpak file names as stored (game paths).
     pub starpaks: Vec<String>,
     pub pages: Vec<Page>,
     pub segments: Vec<Segment>,
     pub assets: Vec<Asset>,
+    /// Index into `assets` by GUID.
     pub by_guid: HashMap<u64, usize>,
 }
 
@@ -76,6 +91,7 @@ fn rd_u64(b: &[u8], o: usize) -> u64 {
 }
 
 impl Rpak {
+    /// Read, decompress and parse a version 7 RPAK.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let raw = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
@@ -222,19 +238,24 @@ impl Rpak {
         Ok(Self { path, version, flags, data, starpaks, pages, segments, assets, by_guid })
     }
 
+    /// The asset with this GUID, if the pak has it.
     pub fn asset(&self, guid: u64) -> Option<&Asset> {
         self.by_guid.get(&guid).map(|&i| &self.assets[i])
     }
 
+    /// The byte at offset `o` of [`Rpak::data`] (panics past the end, as do the other readers).
     pub fn u8(&self, o: usize) -> u8 {
         self.data[o]
     }
+    /// Little-endian u16 at offset `o`.
     pub fn u16(&self, o: usize) -> u16 {
         rd_u16(&self.data, o)
     }
+    /// Little-endian u32 at offset `o`.
     pub fn u32(&self, o: usize) -> u32 {
         rd_u32(&self.data, o)
     }
+    /// Little-endian u64 at offset `o`.
     pub fn u64(&self, o: usize) -> u64 {
         rd_u64(&self.data, o)
     }
@@ -245,6 +266,7 @@ impl Rpak {
             v => Some(v as usize),
         }
     }
+    /// The NUL-terminated string at offset `o` (lossy UTF-8; empty if unterminated).
     pub fn cstr(&self, o: usize) -> String {
         let end = self.data[o..].iter().position(|&c| c == 0).unwrap_or(0);
         String::from_utf8_lossy(&self.data[o..o + end]).to_string()

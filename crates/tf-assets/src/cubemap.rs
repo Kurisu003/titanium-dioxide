@@ -8,10 +8,12 @@
 use crate::bc6h;
 use anyhow::{bail, Context, Result};
 
+/// Every baked cubemap of a map (BC6H data, decoded per face on demand).
 pub struct CubemapSet {
     /// Face width/height of mip 0.
     pub size: u32,
     pub mips: u32,
+    /// Number of cubemaps (VTF frames).
     pub count: usize,
     data: Vec<u8>,
 }
@@ -24,6 +26,7 @@ fn face_bytes(size: u32, mip: u32) -> usize {
 }
 
 impl CubemapSet {
+    /// Read `cubemaps.hdr.vtf`.
     pub fn parse(vtf: &[u8]) -> Result<Self> {
         if vtf.len() < 80 || &vtf[0..4] != b"VTF\0" {
             bail!("not a VTF");

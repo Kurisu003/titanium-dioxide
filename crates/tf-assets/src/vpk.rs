@@ -13,16 +13,24 @@ use std::path::{Path, PathBuf};
 const VPK_MAGIC: u32 = 0x55AA_1234;
 const VPK_VERSION: u32 = 0x0003_0002;
 
+/// One stored piece of a file: a range of an archive, LZHAM-compressed unless `len` equals
+/// `len_uncompressed`.
 #[derive(Debug, Clone)]
 pub struct VpkPart {
+    /// Archive number (`..._NNN.vpk`).
     pub archive: u16,
     pub load_flags: u16,
     pub texture_flags: u32,
+    /// Byte offset in the archive.
     pub offset: u64,
+    /// Stored size.
     pub len: u64,
+    /// Size once decompressed.
     pub len_uncompressed: u64,
 }
 
+/// A file in the directory tree: its CRC32, preload bytes (kept in the directory file) and
+/// the parts that follow them.
 #[derive(Debug, Clone)]
 pub struct VpkEntry {
     pub crc: u32,
@@ -31,15 +39,18 @@ pub struct VpkEntry {
 }
 
 impl VpkEntry {
+    /// The file's full (decompressed) size.
     pub fn size(&self) -> u64 {
         self.preload.len() as u64 + self.parts.iter().map(|p| p.len_uncompressed).sum::<u64>()
     }
 }
 
+/// An opened VPK: its directory tree, with the archives read on demand.
 pub struct Vpk {
     dir: PathBuf,
     /// Archive file stem, e.g. `client_mp_common.bsp.pak000`.
     archive_stem: String,
+    /// Every file by lowercase `/`-separated path.
     pub entries: HashMap<String, VpkEntry>,
 }
 
@@ -152,10 +163,12 @@ impl Vpk {
         })
     }
 
+    /// Whether the VPK has `path` (any case, `\` or `/`).
     pub fn contains(&self, path: &str) -> bool {
         self.entries.contains_key(&normalize(path))
     }
 
+    /// Read and decompress a whole file (any case, `\` or `/`), checking its CRC.
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
         let key = normalize(path);
         let e = self.entries.get(&key).with_context(|| format!("{path} not in vpk"))?;
