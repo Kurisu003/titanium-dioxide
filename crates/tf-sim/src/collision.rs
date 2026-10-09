@@ -75,8 +75,8 @@ impl Bvh {
         while pending.len() < threads * 4 {
             let mut next = Vec::new();
             let mut split_any = false;
-            for &ni in &pending {
-                match ctx.split(&mut nodes, &mut order, ni) {
+            for (&ni, split) in pending.iter().zip(ctx.split_level(&mut nodes, &mut order, &pending)) {
+                match split {
                     Some(left) => {
                         next.push(left);
                         next.push(left + 1);
@@ -164,6 +164,62 @@ impl BuildCtx<'_> {
         nodes.push(Node { min: rlo, max: rhi, start: start + mid as u32, count: (c - mid) as u32 });
         nodes[ni] = Node { min, max, start: left as u32, count: 0 };
         Some(left)
+    }
+
+    /// `split` every node of `pending` (disjoint ranges of `order`), partitioning their
+    /// triangles in parallel; the nodes are appended in `pending` order, exactly as splitting
+    /// them one after another would.
+    fn split_level(&self, nodes: &mut Vec<Node>, order: &mut [u32], pending: &[usize]) -> Vec<Option<usize>> {
+        let mut by_start: Vec<usize> = (0..pending.len()).collect();
+        by_start.sort_by_key(|&i| nodes[pending[i]].start);
+        let mut slices: Vec<Option<&mut [u32]>> = (0..pending.len()).map(|_| None).collect();
+        let mut rest: &mut [u32] = order;
+        let mut consumed = 0u32;
+        for &i in &by_start {
+            let Node { start, count, .. } = nodes[pending[i]];
+            let tail = std::mem::take(&mut rest);
+            let (_, tail) = tail.split_at_mut((start - consumed) as usize);
+            let (mine, tail) = tail.split_at_mut(count as usize);
+            rest = tail;
+            consumed = start + count;
+            slices[i] = Some(mine);
+        }
+        // Per node: the left half's size and both halves' bounds (None for a leaf).
+        type Halves = Option<(usize, (Vec3, Vec3), (Vec3, Vec3))>;
+        let halves: Vec<Halves> = std::thread::scope(|scope| {
+            let handles: Vec<_> = pending
+                .iter()
+                .zip(slices)
+                .map(|(&ni, slice)| {
+                    let Node { count, min, max, .. } = nodes[ni];
+                    let slice = slice.expect("every pending node has a range");
+                    scope.spawn(move || -> Halves {
+                        if (count as usize) <= LEAF_SIZE {
+                            return None;
+                        }
+                        let ext = max - min;
+                        let axis = if ext.x >= ext.y && ext.x >= ext.z { 0 } else if ext.y >= ext.z { 1 } else { 2 };
+                        let mid = count as usize / 2;
+                        slice.select_nth_unstable_by(mid, |&a, &b| self.centroids[a as usize][axis].total_cmp(&self.centroids[b as usize][axis]));
+                        Some((mid, self.bounds(&slice[..mid]), self.bounds(&slice[mid..])))
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().expect("bvh worker")).collect()
+        });
+        pending
+            .iter()
+            .zip(halves)
+            .map(|(&ni, h)| {
+                let (mid, (llo, lhi), (rlo, rhi)) = h?;
+                let Node { start, count, min, max } = nodes[ni];
+                let left = nodes.len();
+                nodes.push(Node { min: llo, max: lhi, start, count: mid as u32 });
+                nodes.push(Node { min: rlo, max: rhi, start: start + mid as u32, count: count - mid as u32 });
+                nodes[ni] = Node { min, max, start: left as u32, count: 0 };
+                Some(left)
+            })
+            .collect()
     }
 
     /// Build the subtree under `root` (whose triangles are `slice`, starting at `base` in the
@@ -266,10 +322,13 @@ impl CollisionWorld {
 
     /// Build the acceleration structure now instead of on the first query.
     pub fn finish(&self) {
-        self.bvh();
-        for c in self.clips.iter().flatten().chain(self.detail.iter()) {
-            c.bvh();
-        }
+        // The sets' hierarchies are independent: build them at the same time.
+        std::thread::scope(|scope| {
+            for c in self.clips.iter().flatten().chain(self.detail.iter()) {
+                scope.spawn(|| c.bvh());
+            }
+            self.bvh();
+        });
     }
 
     /// Add a triangle that only shots and other non-movement traces hit (`detail`).
@@ -340,14 +399,20 @@ impl CollisionWorld {
         let inv = Vec3::ONE / dir;
         let mut best: Option<Hit> = None;
         let mut limit = max_t;
-        let mut stack = [0u32; 64];
+        // Each entry keeps its box's entry distance from when it was pushed: whether the ray
+        // reaches a box depends on the limit only through `entry <= limit` (`ray_box`), so the
+        // box needn't be tested again when it is popped.
+        let Some(t_root) = ray_box(origin, inv, bvh.nodes[0].min, bvh.nodes[0].max, limit) else { return None };
+        let mut stack = [(0u32, 0f32); 64];
+        stack[0] = (0, t_root);
         let mut sp = 1;
         while sp > 0 {
             sp -= 1;
-            let n = bvh.nodes[stack[sp] as usize];
-            if ray_box(origin, inv, n.min, n.max, limit).is_none() {
+            let (ni, entry) = stack[sp];
+            if entry > limit {
                 continue;
             }
+            let n = bvh.nodes[ni as usize];
             if n.count > 0 {
                 for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
                     let tri = &self.tris[i as usize];
@@ -364,10 +429,15 @@ impl CollisionWorld {
                 let (a, b) = (bvh.nodes[n.start as usize], bvh.nodes[n.start as usize + 1]);
                 let ta = ray_box(origin, inv, a.min, a.max, limit);
                 let tb = ray_box(origin, inv, b.min, b.max, limit);
-                let (first, second) = if ta.unwrap_or(f32::MAX) <= tb.unwrap_or(f32::MAX) { (n.start, n.start + 1) } else { (n.start + 1, n.start) };
-                stack[sp] = second;
-                stack[sp + 1] = first;
-                sp += 2;
+                let (first, second) = if ta.unwrap_or(f32::MAX) <= tb.unwrap_or(f32::MAX) { ((n.start, ta), (n.start + 1, tb)) } else { ((n.start + 1, tb), (n.start, ta)) };
+                // A child the ray misses now misses at any later (smaller) limit too: don't
+                // push it (the visiting order of the rest is unchanged).
+                for (i, t) in [second, first] {
+                    if let Some(t) = t {
+                        stack[sp] = (i, t);
+                        sp += 1;
+                    }
+                }
             }
         }
         best
@@ -389,6 +459,11 @@ fn nearer(a: Option<Hit>, b: Option<Hit>) -> Option<Hit> {
     }
 }
 
+/// Margin (game units) on the plane-distance test that skips triangles before the exact
+/// distance check: far above the rounding in `closest_point_on_tri` at map coordinates, so
+/// every triangle the exact test would accept still reaches it.
+const PLANE_SLACK: f32 = 0.25;
+
 /// `CollisionWorld::push_sphere` against several worlds at once.
 fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
     let mut c = center;
@@ -397,6 +472,11 @@ fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32,
         let mut push = Vec3::ZERO;
         let r = Vec3::splat(radius);
         let mut visit = |tri: &Tri| {
+            // Farther from the triangle's plane than the radius (with room for rounding in
+            // the closest point): no contact, skip the closest-point search.
+            if (c - tri.a).dot(tri.n).abs() > radius + PLANE_SLACK {
+                return;
+            }
             let p = closest_point_on_tri(c, tri);
             let d = c - p;
             let dist = d.length();
@@ -433,7 +513,7 @@ impl CollisionWorld {
         let mut best: Option<(Vec3, f32)> = None;
         let r = Vec3::splat(radius);
         self.cells_in(center - r, center + r, |tri| {
-            if tri.n.z.abs() > max_normal_z {
+            if tri.n.z.abs() > max_normal_z || (center - tri.a).dot(tri.n).abs() > radius + PLANE_SLACK {
                 return;
             }
             let p = closest_point_on_tri(center, tri);
@@ -494,7 +574,7 @@ impl CollisionWorld {
         let tie = 0.01 / d.length().max(1e-6);
         let mut solid: Option<Vec3> = None;
         for w in self.with_clip(which).iter().flatten() {
-            w.cells_in(lo, hi, |tri| match sweep_box_tri(c0, half, d, tri) {
+            w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tri, lo, hi) {
                 Sweep::Miss => {}
                 Sweep::Inside(mtv) => {
                     if d.dot(mtv) < 0.0 || d == Vec3::ZERO {
@@ -530,6 +610,16 @@ enum Sweep {
     Hit(f32, Vec3, bool),
     /// Overlapping at the start; the shortest way out.
     Inside(Vec3),
+}
+
+/// `sweep_box_tri` for a triangle that may lie outside `lo..hi`, the swept box's bounds
+/// padded by a unit: one entirely outside them (the leaf's box overlapped, the triangle doesn't)
+/// misses on that world axis, so the full test is skipped.
+fn sweep_box_tri_in(c: Vec3, e: Vec3, d: Vec3, t: &Tri, lo: Vec3, hi: Vec3) -> Sweep {
+    if t.a.max(t.b).max(t.c).cmplt(lo).any() || t.a.min(t.b).min(t.c).cmpgt(hi).any() {
+        return Sweep::Miss;
+    }
+    sweep_box_tri(c, e, d, t)
 }
 
 /// Separating-axis sweep of a box (centre `c`, half extents `e`, moving by `d`) against a
@@ -671,6 +761,37 @@ pub fn closest_point_on_tri(p: Vec3, t: &Tri) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_split_level_matches_serial_splits() {
+        // Pseudo-random triangles; the top levels split node by node (as before) and level by
+        // level in parallel must give the same nodes and order.
+        let mut seed = 0x1234_5678u32;
+        let mut r = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 1000.0
+        };
+        let tris: Vec<Tri> = (0..5000).map(|_| {
+            let a = Vec3::new(r(), r(), r());
+            Tri { a, b: a + Vec3::new(r(), r(), r()) * 0.01, c: a + Vec3::new(r(), r(), r()) * 0.01, n: Vec3::Z }
+        }).collect();
+        let boxes: Vec<(Vec3, Vec3)> = tris.iter().map(|t| (t.a.min(t.b).min(t.c), t.a.max(t.b).max(t.c))).collect();
+        let centroids: Vec<Vec3> = boxes.iter().map(|(lo, hi)| (*lo + *hi) * 0.5).collect();
+        let ctx = BuildCtx { boxes: &boxes, centroids: &centroids };
+        let run = |parallel: bool| {
+            let mut order: Vec<u32> = (0..tris.len() as u32).collect();
+            let (lo, hi) = ctx.bounds(&order);
+            let mut nodes = vec![Node { min: lo, max: hi, start: 0, count: tris.len() as u32 }];
+            let mut pending = vec![0usize];
+            for _ in 0..8 {
+                let splits: Vec<Option<usize>> = if parallel { ctx.split_level(&mut nodes, &mut order, &pending) } else { pending.iter().map(|&ni| ctx.split(&mut nodes, &mut order, ni)).collect() };
+                pending = pending.iter().zip(splits).flat_map(|(&ni, s)| s.map_or(vec![ni], |l| vec![l, l + 1])).collect();
+            }
+            let flat: Vec<[u32; 8]> = nodes.iter().map(|n| [n.min.x, n.min.y, n.min.z, n.max.x, n.max.y, n.max.z].map(f32::to_bits).iter().copied().chain([n.start, n.count]).collect::<Vec<_>>().try_into().unwrap()).collect();
+            (flat, order)
+        };
+        assert!(run(false) == run(true));
+    }
 
     #[test]
     fn clips_stop_movement_queries_only() {

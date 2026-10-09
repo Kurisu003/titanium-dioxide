@@ -288,10 +288,12 @@ pub fn load_particles(
             }
         }
     };
+    // The textures decode on every core; the assets are made here, in the table's order.
+    let decoded = crate::world::parallel_map(TEXTURES, |&(_, path, ramp, _, max)| read(path, max).map(|v| (v, ramp.and_then(|r| read(r, 256)))));
     let mut layers = Vec::new();
-    for &(tex, path, ramp, additive, max) in TEXTURES {
-        let Some(mut v) = read(path, max) else { continue };
-        if let Some(r) = ramp.and_then(|r| read(r, 256)) {
+    for (&(tex, _, _, additive, _), d) in TEXTURES.iter().zip(decoded) {
+        let Some((mut v, ramp)) = d.flatten() else { continue };
+        if let Some(r) = ramp {
             // $texColorFromAlpha: the colour comes from the ramp, indexed by the texture's alpha.
             let row = (r.height / 2) as usize * r.width as usize;
             for px in v.rgba.chunks_exact_mut(4) {
@@ -698,11 +700,17 @@ pub fn update_particles(
             col.extend([c; 4]);
             idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
-        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         if idx.is_empty() {
-            *mesh = empty_mesh();
+            // Left alone once empty: `get_mut` marks the asset modified (a re-upload) every time
+            // (an empty mesh is empty_mesh's single triangle; live ones are whole quads).
+            if meshes.get(&layer.mesh).is_some_and(|m| m.count_vertices() != 3) {
+                if let Some(mesh) = meshes.get_mut(&layer.mesh) {
+                    *mesh = empty_mesh();
+                }
+            }
             continue;
         }
+        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         let normals = vec![(-cam.forward().as_vec3()).to_array(); pos.len()];
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);

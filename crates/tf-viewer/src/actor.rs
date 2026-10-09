@@ -232,6 +232,56 @@ impl Actor {
         self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name)).map(|i| self.joints[i])
     }
 
+    /// Everything [`Actor::evaluate`] reads, as bits: the same key gives the same pose.
+    pub fn pose_key(&self) -> Vec<u32> {
+        let mut k = Vec::with_capacity(32);
+        let f = |k: &mut Vec<u32>, x: f32| k.push(x.to_bits());
+        let s = |k: &mut Vec<u32>, t: &str| {
+            k.push(t.len() as u32);
+            k.extend(t.bytes().map(u32::from));
+        };
+        let ptr = |k: &mut Vec<u32>, p: usize| k.extend([p as u32, (p as u64 >> 32) as u32]);
+        ptr(&mut k, Arc::as_ptr(&self.clips) as usize);
+        ptr(&mut k, Arc::as_ptr(&self.grids) as usize);
+        k.push(self.rest.len() as u32);
+        for (p, q) in &self.rest {
+            k.extend(p.to_array().map(f32::to_bits));
+            k.extend(q.to_array().map(f32::to_bits));
+        }
+        for list in [&self.layers, &self.overlays, &self.additive] {
+            k.push(list.len() as u32);
+            for l in list.iter() {
+                k.push(l.clip as u32);
+                f(&mut k, l.cycle);
+                f(&mut k, l.weight);
+            }
+        }
+        match &self.aim {
+            Some(a) => {
+                k.push(1);
+                s(&mut k, &a.grid);
+                for x in [a.yaw, a.pitch, a.weight] {
+                    f(&mut k, x);
+                }
+            }
+            None => k.push(0),
+        }
+        k.push(self.grid_layers.len() as u32);
+        for l in &self.grid_layers {
+            s(&mut k, l.grid);
+            for x in [l.x, l.y, l.cycle, l.weight] {
+                f(&mut k, x);
+            }
+            k.push(l.relative as u32);
+        }
+        k.push(self.root_offsets.len() as u32);
+        for &(b, off) in &self.root_offsets {
+            k.push(b as u32);
+            k.extend(off.to_array().map(f32::to_bits));
+        }
+        k
+    }
+
     /// Model-space transform of a bone in the current pose.
     pub fn bone_model_transform(&self, name: &str) -> Option<Transform> {
         let target = self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name))?;
@@ -345,16 +395,24 @@ impl Actor {
         let mut all: Vec<Clip> = self.clips.iter().cloned().collect();
         let mut by_name = (*self.by_name).clone();
         let mut gmap: HashMap<String, AimGrid> = self.grids.iter().map(|(k, g)| (k.clone(), g.clone())).collect();
+        // Every mirrored clip is independent: build them on all cores (BT's set took 190 ms
+        // on one), then add them in the same order.
+        let mut jobs: Vec<(usize, bool)> = clips.iter().filter_map(|name| self.clip(name)).map(|c| (c, true)).collect();
+        for name in grids {
+            let Some(g) = self.grids.get(*name) else { continue };
+            jobs.extend(g.clips.iter().map(|&c| (c, g.post)));
+        }
+        let mut mirrored = crate::world::parallel_map(&jobs, |&(c, post)| self.mirrored_clip(&self.clips[c], post)).into_iter().map(|c| c.expect("mirrored clip"));
         for name in clips {
-            let Some(c) = self.clip(name) else { continue };
+            let Some(_) = self.clip(name) else { continue };
             by_name.insert(format!("{}#m", name.to_ascii_lowercase()), all.len());
-            all.push(self.mirrored_clip(&self.clips[c], true));
+            all.push(mirrored.next().expect("mirrored clip"));
         }
         for name in grids {
             let Some(g) = self.grids.get(*name) else { continue };
             let mut ng = g.clone();
-            ng.clips = g.clips.iter().map(|&c| {
-                all.push(self.mirrored_clip(&self.clips[c], g.post));
+            ng.clips = g.clips.iter().map(|_| {
+                all.push(mirrored.next().expect("mirrored clip"));
                 all.len() - 1
             }).collect();
             gmap.insert(format!("{name}#m"), ng);
@@ -563,6 +621,7 @@ fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
 }
 
 /// What an actor should load: plain sequences and additive grids.
+#[derive(Clone, Copy)]
 pub struct ActorSpec<'a> {
     pub path: &'a str,
     pub sequences: &'a [&'a str],
@@ -596,7 +655,7 @@ pub fn spawn_actor(
     materials: &mut Assets<StandardMaterial>,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
 ) -> Result<Spawned> {
-    let key = format!("{}|{:?}|{:?}|{:?}", spec.path, spec.sequences, spec.grids, spec.body);
+    let key = spec_key(spec);
     let tpl = match cache.actors.get(&key) {
         Some(t) => t.clone(),
         None => {
@@ -700,6 +759,46 @@ pub fn prefetch_models(gd: &GameData, paths: &[String]) {
     log::info!("prefetched {} models and {} includes in {:?}", paths.len(), includes.len(), t.elapsed());
 }
 
+fn spec_key(spec: &ActorSpec) -> String {
+    format!("{}|{:?}|{:?}|{:?}", spec.path, spec.sequences, spec.grids, spec.body)
+}
+
+/// The part of an actor template that needs no Bevy assets (the model, clips, grids and
+/// meshes), so it can be built on any thread (`prefetch_actors`).
+pub struct TemplateData {
+    bones: Vec<(String, i32, Vec3, Quat)>,
+    clips: Vec<Clip>,
+    by_name: HashMap<String, usize>,
+    grids: HashMap<String, AimGrid>,
+    inverse: Vec<Mat4>,
+    /// (material name, triangles, body part, mesh)
+    parts: Vec<(String, usize, usize, Mesh)>,
+    includes: usize,
+    bone_count: usize,
+    took: (std::time::Duration, std::time::Duration, std::time::Duration),
+}
+
+/// Build the templates of `specs` (their asset-free part, textures included) on every core,
+/// ahead of `spawn_actor`, which then only adds their assets.
+pub fn prefetch_actors(gd: &GameData, cache: &Cache, specs: &[ActorSpec]) {
+    let t = std::time::Instant::now();
+    let mut keys = std::collections::HashSet::new();
+    let todo: Vec<(&ActorSpec, String)> = specs
+        .iter()
+        .map(|s| (s, spec_key(s)))
+        .filter(|(_, k)| !cache.actors.contains_key(k) && !cache.templates.lock().is_ok_and(|m| m.contains_key(k)) && keys.insert(k.clone()))
+        .collect();
+    let built = crate::world::parallel_map(&todo, |(spec, _)| template_data(gd, spec, cache));
+    if let Ok(mut map) = cache.templates.lock() {
+        for ((_, key), data) in todo.iter().zip(built) {
+            if let Some(data) = data {
+                map.insert(key.clone(), data);
+            }
+        }
+    }
+    log::info!("prefetched {} actor templates in {:?}", todo.len(), t.elapsed());
+}
+
 fn build_template(
     gd: &GameData,
     spec: &ActorSpec,
@@ -709,6 +808,43 @@ fn build_template(
     materials: &mut Assets<StandardMaterial>,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
 ) -> Result<ActorTemplate> {
+    let t = std::time::Instant::now();
+    let prepared = cache.templates.lock().ok().and_then(|mut m| m.remove(&spec_key(spec)));
+    let data = match prepared {
+        Some(d) => d?,
+        None => template_data(gd, spec, cache)?,
+    };
+    let path = spec.path;
+    let inverse = bindposes.add(SkinnedMeshInverseBindposes::from(data.inverse));
+    let mut parts = Vec::new();
+    let mut tris = 0;
+    for (mat_name, n, part, mesh) in data.parts {
+        let mat = convert::material(gd, cache, images, materials, &mat_name, false);
+        tris += n;
+        parts.push((meshes.add(mesh), mat, part));
+    }
+    let (took, t_parse, t_anim) = data.took;
+    log::info!(
+        "{path}: {} bones, {tris} triangles, {} includes, {} clips, grids {:?} in {:?} (parse {:?}, animations {:?})",
+        data.bone_count,
+        data.includes,
+        data.clips.len(),
+        data.grids.keys().collect::<Vec<_>>(),
+        took + t.elapsed(),
+        t_parse,
+        t_anim
+    );
+    Ok(ActorTemplate {
+        bones: Arc::new(data.bones),
+        clips: Arc::new(data.clips),
+        by_name: Arc::new(data.by_name),
+        grids: Arc::new(data.grids),
+        parts: Arc::new(parts),
+        inverse,
+    })
+}
+
+fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<TemplateData> {
     let t = std::time::Instant::now();
     let path = spec.path;
     let model = parsed_model(gd, path)?;
@@ -868,10 +1004,8 @@ fn build_template(
             )
         })
         .collect();
-    let inverse = bindposes.add(SkinnedMeshInverseBindposes::from(inverse));
-    let mut parts = Vec::new();
-    let mut tris = 0;
-    // Meshes (tangent generation is most of the work) on every core; materials here.
+    // Meshes (tangent generation is most of the work) on every core; materials on the main
+    // thread (`build_template`).
     let mut mesh_data = model.meshes(spec.body)?;
     hide_behind_screen(&model, &mut mesh_data, spec.sequences.first().copied());
     let mds: Vec<std::sync::Mutex<Option<tf_assets::mdl::MeshData>>> = mesh_data.into_iter().map(|m| std::sync::Mutex::new(Some(m))).collect();
@@ -886,43 +1020,33 @@ fn build_template(
         if hidden || mat_name.contains("debugempty") || mat_name.to_ascii_lowercase().contains("_int_screen") {
             return None;
         }
+        // The material's textures decode here too (the main thread only adds them).
+        convert::prefetch_material(gd, prep, &mat_name, false);
         let n = md.indices.len() / 3;
         let part = md.bodypart;
         Some((mat_name, n, part, convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, Some((md.joints, md.weights)))))
     });
-    for (mat_name, n, part, mesh) in built.into_iter().flatten().flatten() {
-        let mat = convert::material(gd, cache, images, materials, &mat_name, false);
-        tris += n;
-        parts.push((meshes.add(mesh), mat, part));
-    }
-    log::info!(
-        "{path}: {} bones, {tris} triangles, {} includes, {} clips, grids {:?} in {:?} (parse {:?}, animations {:?})",
-        model.bones.len(),
-        includes.len(),
-        clips.len(),
-        grids.keys().collect::<Vec<_>>(),
-        t.elapsed(),
-        t_parse,
-        t_anim - t_parse
-    );
+    let parts: Vec<(String, usize, usize, Mesh)> = built.into_iter().flatten().flatten().collect();
     let bones = model
         .bones
         .iter()
         .map(|b| (b.name.clone(), b.parent, Vec3::from(b.pos), Quat::from_array(b.quat).normalize()))
         .collect();
-    Ok(ActorTemplate {
-        bones: Arc::new(bones),
-        clips: Arc::new(clips),
-        by_name: Arc::new(by_name),
-        grids: Arc::new(grids),
-        parts: Arc::new(parts),
-        inverse,
-    })
+    Ok(TemplateData { bones, clips, by_name, grids, inverse, parts, includes: includes.len(), bone_count: model.bones.len(), took: (t.elapsed(), t_parse, t_anim - t_parse) })
 }
 
-pub fn animate_actors(time: Res<Time>, mut actors: Query<&mut Actor>, mut transforms: Query<&mut Transform>) {
+/// The last pose evaluated for each actor, with the inputs it came from ([`Actor::pose_key`]).
+#[derive(Default)]
+pub struct PoseCache {
+    frame: u64,
+    poses: HashMap<Entity, (Vec<u32>, Pose, u64)>,
+}
+
+pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, mut transforms: Query<&mut Transform>, mut cache: Local<PoseCache>) {
     let dt = time.delta_secs();
-    for mut actor in &mut actors {
+    cache.frame += 1;
+    let frame = cache.frame;
+    for (e, mut actor) in &mut actors {
         if actor.clips.is_empty() {
             continue;
         }
@@ -932,14 +1056,35 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<&mut Actor>, mut transf
                 l.cycle = (l.cycle + dt / d.max(1e-3)).rem_euclid(1.0);
             }
         }
-        let pose = actor.evaluate();
-        for (&j, (p, q)) in actor.joints.iter().zip(pose) {
+        // The pose is a pure function of the actor's layers: an actor whose inputs are the same
+        // as last frame (a pooled enemy waiting hidden, a held pose) reuses it. Bones are only
+        // written when they move, so still ones don't mark their transforms changed (which
+        // sends them through transform propagation and the skinning upload again).
+        let key = actor.pose_key();
+        let entry = cache.poses.entry(e).or_insert_with(|| (Vec::new(), Pose::new(), 0));
+        if entry.0 != key {
+            entry.1 = actor.evaluate();
+            entry.0 = key;
+        }
+        entry.2 = frame;
+        for (&j, &(p, q)) in actor.joints.iter().zip(&entry.1) {
             if let Ok(mut tf) = transforms.get_mut(j) {
-                tf.translation = p;
-                tf.rotation = q;
+                if bits3(tf.translation) != bits3(p) || bits4(tf.rotation) != bits4(q) {
+                    tf.translation = p;
+                    tf.rotation = q;
+                }
             }
         }
     }
+    cache.poses.retain(|_, v| v.2 == frame);
+}
+
+fn bits3(v: Vec3) -> [u32; 3] {
+    v.to_array().map(f32::to_bits)
+}
+
+fn bits4(q: Quat) -> [u32; 4] {
+    q.to_array().map(f32::to_bits)
 }
 
 /// Copies a leader actor's bone transforms onto this actor's bones of the same name

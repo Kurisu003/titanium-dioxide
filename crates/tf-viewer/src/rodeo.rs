@@ -435,7 +435,7 @@ pub fn rodeo_update(
             if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
                 tf.rotation = anchor_rot;
                 tf.translation = attach.translation;
-                *vis = if detach.is_some() { Visibility::Hidden } else { Visibility::Inherited };
+                vis.set_if_neq(if detach.is_some() { Visibility::Hidden } else { Visibility::Inherited });
             }
         }
     }
@@ -464,7 +464,7 @@ pub fn rodeo_update(
         rodeo.cam = None;
         if let Some((anchor, _)) = arms {
             if let Ok((_, mut vis)) = tfs.get_mut(anchor) {
-                *vis = Visibility::Hidden;
+                vis.set_if_neq(Visibility::Hidden);
             }
         }
     } else {
@@ -501,6 +501,6 @@ pub fn spawn_battery_hud(mut commands: Commands, ui: Res<UiAssets>) {
 pub fn battery_hud(rodeo: Res<Rodeo>, control: Res<Control>, mode: Res<CameraMode>, game: Res<crate::game::Game>, hidden: Res<crate::hud::HudHidden>, mut huds: Query<&mut Visibility, With<BatteryHud>>) {
     let show = rodeo.battery && *control == Control::Pilot && *mode != CameraMode::Free && game.in_play() && !hidden.0;
     for mut v in &mut huds {
-        *v = if show { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
     }
 }

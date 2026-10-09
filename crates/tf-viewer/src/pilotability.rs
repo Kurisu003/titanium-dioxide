@@ -1423,7 +1423,7 @@ pub fn update_pilot_slots(
     }
     let playing = matches!(game.state, crate::game::GameState::Playing | crate::game::GameState::Intermission) && !hidden.0;
     if let Ok(mut v) = root.single_mut() {
-        *v = if *control == Control::Pilot && playing { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if *control == Control::Pilot && playing { Visibility::Inherited } else { Visibility::Hidden });
     }
     let def = &defs.tactical[status.tactical.min(defs.tactical.len() - 1)];
     let odef = &defs.ordnance[status.ordnance.min(defs.ordnance.len() - 1)];
@@ -1490,9 +1490,11 @@ pub fn update_pulse_markers(
             Some(p) => {
                 n.left = Val::Px(p.x);
                 n.top = Val::Px(p.y);
-                *v = Visibility::Inherited;
+                v.set_if_neq(Visibility::Inherited);
             }
-            None => *v = Visibility::Hidden,
+            None => {
+                v.set_if_neq(Visibility::Hidden);
+            }
         }
     }
 }
@@ -1517,7 +1519,7 @@ pub fn grapple_cable(
         return;
     };
     let (Some(hook), Ok(cam)) = (hook, cams.single()) else {
-        *vis = Visibility::Hidden;
+        vis.set_if_neq(Visibility::Hidden);
         return;
     };
     let u = crate::player::UNIT;
@@ -1527,11 +1529,11 @@ pub fn grapple_cable(
     let d = end - hand;
     let len = d.length();
     if len < 1e-3 {
-        *vis = Visibility::Hidden;
+        vis.set_if_neq(Visibility::Hidden);
         return;
     }
     *tf = Transform { translation: hand + d * 0.5, rotation: Quat::from_rotation_arc(Vec3::Y, d / len), scale: Vec3::new(0.35 * u, len, 0.35 * u) };
-    *vis = Visibility::Visible;
+    vis.set_if_neq(Visibility::Visible);
 }
 
 #[derive(Component)]
@@ -1798,7 +1800,7 @@ pub fn update_decoy(
     }
     if let Ok((mut tf, mut vis)) = decoys.single_mut() {
         *tf = game_tf(d.pos, d.dir.y.atan2(d.dir.x));
-        *vis = if d.time > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+        vis.set_if_neq(if d.time > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
     }
     if d.time <= 0.0 {
         status.decoy = None;

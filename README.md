@@ -1187,7 +1187,8 @@ from the same direction refresh it instead of stacking.
 
 ### Loading
 
-Kodai is playable about 10 s after launch (6–15 s on other maps). That comes from:
+Kodai is playable about 10 s after launch (6–15 s on other maps); Angel City's `setup` takes about 6 s
+(it was 23-26 s). That comes from:
 
 - VPK entries decompressing their LZHAM parts on every core (a map's ~190 MB `.bsp`: 4.2 s →
   0.3 s), and BSP lumps being read in parallel.
@@ -1196,6 +1197,25 @@ Kodai is playable about 10 s after launch (6–15 s on other maps). That comes f
 - Enemy models and their animation includes being read in parallel before spawning, and parsed
   models being shared between chassis.
 - Sounds decoding on every core.
+- The rpaks (19 on an MP map with the common patch chains) decompressing and being indexed on
+  every core (`GameData::add_rpaks`), in the same order and with the same first-wins rules.
+- Material textures (starpak reads, the combined spec/gloss and colour + opacity maps) decoding
+  on the same workers that build the world, prop and actor meshes (`convert::prefetch_material`
+  into `Cache::prepared`, keyed by every input of the decode); the main thread only adds them
+  as assets, in the same order. That was 4 s of Angel City's load.
+- The sounds decoding on a thread of their own (own VPK handles) while the map loads.
+- Every actor template (BT, cockpit, viewmodel, arms, guns, each enemy class) building its
+  asset-free part (model, clips, grids, meshes, textures) on every core while the collision
+  hierarchy builds (`actor::prefetch_actors`); spawning then only adds the assets.
+- The collision sets' BVHs building at the same time, their top levels split a level at a time
+  in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City).
+- The probed nav grids (MP maps) casting their cells and edges on every core (7-9 s → 0.5 s on
+  Angel City), and the particle textures decoding in parallel.
+
+The world's material batches are made in a fixed (key) order, so a load is reproducible: the
+collision triangles (`TF_COLLISION_DUMP`), the BVH, the nav grids and the spawn spots come out
+the same on every run (they used to follow a HashMap's per-run order). `RUST_LOG=info` logs
+each phase of `setup` as `load phase: <what> <time>`.
 
 The loading screen then stays up while the world warms up behind it (`ui::loading_tick`): every
 first-person model is shown (they skip frustum culling, so they count from wherever they sit),
@@ -1254,11 +1274,30 @@ The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy 
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
 
+The game's own per-frame systems avoid change-detection churn: `animate_actors` reuses an
+actor's last pose while its inputs (layers, aim, grids, overlays, offsets) are bit-identical and
+writes only bones that moved (of ~5400 bone transforms written per frame, ~2800 were unchanged,
+mostly pooled enemies waiting hidden); Visibility is set only when it changes; empty particle
+layer meshes are no longer re-marked modified every frame (`Assets::get_mut` alone does that:
+~39 mesh re-uploads a frame on foot). BT's mirrored clips and the kit's offhand viewmodels are
+built under the loading screen instead of on the first frame of play (a 430-590 ms hitch).
+Collision queries reject more work exactly (same results bit for bit): Titan steps ~35% and
+Pilot steps ~40% cheaper offline. With wave 3 enemies on Angel City: 58 -> 72 fps average at
+1920x1080 (noisy, shared machine).
+
+The sky and world cameras don't copy their picture to the window (`CameraOutputMode::Skip`):
+the viewmodel camera draws last into the same HDR textures and its copy overwrites the whole
+window, so theirs were two wasted full-screen passes (~0.05 ms GPU at 3440x1440, plus their
+encoding).
+
 Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs
 Bevy's render diagnostics every four seconds: CPU and GPU time (timestamp queries) and pipeline
-statistics of every render pass.
+statistics of every render pass. Bevy averages a pass name over the cameras that run it, so
+`TF_GPU_TIMES` also logs a `gpu:` line every two seconds with each pass's GPU time per frame
+summed over the cameras, split into the cameras' runs (largest first; the sky, world and
+viewmodel cameras each run their own opaque pass and tonemapping), and the frame's total.
 
 ### Campaign maps
 
