@@ -891,14 +891,20 @@ fn fall_off_wall(s: &mut PilotState, p: &PilotParams, normal: Vec3) {
     s.wallrun_no_boost = true;
 }
 
-/// Jumping off a wall: remembered for the same-wall rule; no lockout, the next run is boosted.
-fn jump_off_wall(s: &mut PilotState, normal: Vec3) {
+/// A jump off the ground or a wall (not the double jump): no wall-run lockout, the next run is
+/// boosted, and the keyboard grace starts.
+fn took_off(s: &mut PilotState) {
     s.mode = PilotMove::Air;
-    s.last_wall = Some(normal);
     s.since_ground = 99.0;
     s.since_jump = 0.0;
     s.wallrun_no_boost = false;
     s.jumps += 1;
+}
+
+/// Jumping off a wall: remembered for the same-wall rule.
+fn jump_off_wall(s: &mut PilotState, normal: Vec3) {
+    took_off(s);
+    s.last_wall = Some(normal);
 }
 
 /// The double jump (client.dll jump handler 0x180200200, superjump branch). Vertical: rising
@@ -955,10 +961,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     s.pitch = input.pitch;
     let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
     let right = Vec2::new(s.yaw.sin(), -s.yaw.cos());
-    let mut wish = fwd * input.forward + right * input.right;
-    if wish.length() > 1.0 {
-        wish = wish.normalize();
-    }
+    let wish = wish_of(s.yaw, input);
     let jump_v = |h: f32| (2.0 * p.jump_gravity * h).sqrt();
     s.zip_cooldown = (s.zip_cooldown - dt).max(0.0);
     s.jump_grace = (s.jump_grace - dt).max(0.0);
@@ -1154,12 +1157,8 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 let d = h.normalize_or_zero();
                 s.vel.x = d.x * sp;
                 s.vel.y = d.y * sp;
-                s.mode = PilotMove::Air;
                 s.crouched = false;
-                s.since_ground = 99.0;
-                s.since_jump = 0.0;
-                s.wallrun_no_boost = false;
-                s.jumps += 1;
+                took_off(s);
             }
         }
         PilotMove::Air => {
@@ -1179,10 +1178,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 // Just walked off a ledge: still a normal jump (jump_graceperiod).
                 s.jump_grace = 0.0;
                 s.vel.z = jump_v(p.jump_height);
-                s.since_ground = 99.0;
-                s.since_jump = 0.0;
-                s.wallrun_no_boost = false;
-                s.jumps += 1;
+                took_off(s);
             } else if input.jump && s.double_jump_available {
                 superjump(s, wish, p);
             }
