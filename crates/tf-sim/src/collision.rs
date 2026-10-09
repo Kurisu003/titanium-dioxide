@@ -207,6 +207,54 @@ impl CollisionWorld {
         self.bvh.get_or_init(|| Bvh::build(&self.tris))
     }
 
+    /// Write the triangles and clip sets to `path` (testing: `TF_COLLISION_DUMP`), for offline
+    /// movement tests with [`CollisionWorld::load`].
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let mut out = b"TFCW1".to_vec();
+        for set in [Some(self), self.clips[0].as_deref(), self.clips[1].as_deref()] {
+            let tris = set.map_or(&[][..], |w| &w.tris[..]);
+            out.extend_from_slice(&(tris.len() as u32).to_le_bytes());
+            for t in tris {
+                for v in [t.a, t.b, t.c] {
+                    for x in v.to_array() {
+                        out.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+            }
+        }
+        std::fs::write(path, out)
+    }
+
+    /// Read a world written by [`CollisionWorld::save`].
+    pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
+        let data = std::fs::read(path)?;
+        let bad = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not a TFCW1 collision dump");
+        if !data.starts_with(b"TFCW1") {
+            return Err(bad());
+        }
+        let mut o = 5;
+        let mut f = || -> std::io::Result<f32> {
+            let b = data.get(o..o + 4).ok_or_else(bad)?;
+            o += 4;
+            Ok(f32::from_le_bytes(b.try_into().unwrap()))
+        };
+        let mut w = CollisionWorld::default();
+        for set in 0..3 {
+            let n = f()?.to_bits() as usize;
+            for _ in 0..n {
+                let mut v = [Vec3::ZERO; 3];
+                for p in v.iter_mut() {
+                    *p = Vec3::new(f()?, f()?, f()?);
+                }
+                match set {
+                    0 => w.add(v[0], v[1], v[2]),
+                    s => w.add_clip(s - 1, v[0], v[1], v[2]),
+                }
+            }
+        }
+        Ok(w)
+    }
+
     /// Build the acceleration structure now instead of on the first query.
     pub fn finish(&self) {
         self.bvh();
@@ -375,6 +423,149 @@ impl CollisionWorld {
         });
         best
     }
+}
+
+/// A box swept through the world: the parts of the engine's trace_t that player movement reads.
+#[derive(Debug, Clone, Copy)]
+pub struct Trace {
+    /// How far toward `end` the box got (1: nothing in the way).
+    pub fraction: f32,
+    /// Where the box's origin stopped.
+    pub end: Vec3,
+    /// The blocking surface's normal, facing the box (zero when nothing was hit).
+    pub normal: Vec3,
+    /// The box started inside something and the move would go deeper (fraction 0).
+    pub start_solid: bool,
+}
+
+impl Trace {
+    pub fn hit(&self) -> bool {
+        self.fraction < 1.0
+    }
+}
+
+/// The engine's DIST_EPSILON: box traces stop this far (along the surface normal) short of
+/// what they hit, so a box resting on a floor or against a wall doesn't touch it.
+pub const DIST_EPSILON: f32 = 0.03125;
+
+impl CollisionWorld {
+    /// Sweep the axis-aligned box `mins..maxs` (relative to the origin) from `start` to `end`
+    /// against the world and clip set `which`, as the engine's hull traces do for player
+    /// movement (client.dll 0x1801fbdc0). Triangles count from both sides; a box that starts
+    /// overlapping one is only stopped when the move goes deeper into it.
+    pub fn trace_box(&self, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, which: usize) -> Trace {
+        let half = (maxs - mins) * 0.5;
+        let c0 = start + (mins + maxs) * 0.5;
+        let d = end - start;
+        let pad = Vec3::splat(1.0);
+        let (lo, hi) = (c0.min(c0 + d) - half - pad, c0.max(c0 + d) + half + pad);
+        let mut toi = f32::INFINITY;
+        let mut normal = Vec3::ZERO;
+        let mut solid: Option<Vec3> = None;
+        for w in self.with_clip(which).iter().flatten() {
+            w.cells_in(lo, hi, |tri| match sweep_box_tri(c0, half, d, tri) {
+                Sweep::Miss => {}
+                Sweep::Inside(mtv) => {
+                    if d.dot(mtv) < 0.0 || d == Vec3::ZERO {
+                        solid = Some(mtv);
+                    }
+                }
+                Sweep::Hit(t, n) => {
+                    if t < toi {
+                        toi = t;
+                        normal = n;
+                    }
+                }
+            });
+        }
+        if let Some(n) = solid {
+            return Trace { fraction: 0.0, end: start, normal: n, start_solid: true };
+        }
+        if !toi.is_finite() {
+            return Trace { fraction: 1.0, end, normal: Vec3::ZERO, start_solid: false };
+        }
+        // Stop DIST_EPSILON short along the normal.
+        let closing = -d.dot(normal);
+        let fraction = if closing > 1e-6 { (toi - DIST_EPSILON / closing).clamp(0.0, 1.0) } else { 0.0 };
+        Trace { fraction, end: start + d * fraction, normal, start_solid: false }
+    }
+}
+
+enum Sweep {
+    Miss,
+    /// Time of impact (0..1 of the move) and the surface normal facing the box.
+    Hit(f32, Vec3),
+    /// Overlapping at the start; the shortest way out.
+    Inside(Vec3),
+}
+
+/// Separating-axis sweep of a box (centre `c`, half extents `e`, moving by `d`) against a
+/// triangle: the box's three axes, the triangle's normal and the nine edge cross products.
+fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
+    let v = [t.a - c, t.b - c, t.c - c];
+    let edges = [v[1] - v[0], v[2] - v[1], v[0] - v[2]];
+    let (mut t_enter, mut t_exit) = (f32::NEG_INFINITY, f32::INFINITY);
+    let mut n_enter = Vec3::ZERO;
+    let mut inside = true;
+    let (mut depth, mut mtv) = (f32::INFINITY, Vec3::ZERO);
+    let mut test = |axis: Vec3| -> bool {
+        let len2 = axis.length_squared();
+        if len2 < 1e-10 {
+            return true;
+        }
+        let l = axis / len2.sqrt();
+        let (p0, p1, p2) = (v[0].dot(l), v[1].dot(l), v[2].dot(l));
+        let r = e.x * l.x.abs() + e.y * l.y.abs() + e.z * l.z.abs();
+        // The box's centre at t is s = t * dl along l; it overlaps while lo < s < hi.
+        let (lo, hi) = (p0.min(p1).min(p2) - r, p0.max(p1).max(p2) + r);
+        let dl = d.dot(l);
+        if dl.abs() < 1e-9 {
+            if lo >= 0.0 || hi <= 0.0 {
+                return false;
+            }
+        } else {
+            let (t0, t1, n) = if dl > 0.0 { (lo / dl, hi / dl, -l) } else { (hi / dl, lo / dl, l) };
+            if t0 > t_enter {
+                t_enter = t0;
+                n_enter = n;
+            }
+            t_exit = t_exit.min(t1);
+            if t_enter >= t_exit {
+                return false;
+            }
+        }
+        if lo < 0.0 && hi > 0.0 {
+            if -lo < depth {
+                depth = -lo;
+                mtv = -l;
+            }
+            if hi < depth {
+                depth = hi;
+                mtv = l;
+            }
+        } else {
+            inside = false;
+        }
+        true
+    };
+    let n = (v[1] - v[0]).cross(v[2] - v[0]);
+    if !(test(Vec3::X) && test(Vec3::Y) && test(Vec3::Z) && test(n)) {
+        return Sweep::Miss;
+    }
+    for ed in edges {
+        for ax in [Vec3::X, Vec3::Y, Vec3::Z] {
+            if !test(ax.cross(ed)) {
+                return Sweep::Miss;
+            }
+        }
+    }
+    if inside {
+        return Sweep::Inside(mtv);
+    }
+    if t_exit <= 0.0 || t_enter > 1.0 {
+        return Sweep::Miss;
+    }
+    Sweep::Hit(t_enter.max(0.0), n_enter)
 }
 
 fn ray_tri(o: Vec3, d: Vec3, t: &Tri) -> Option<f32> {
