@@ -1220,6 +1220,14 @@ On Forwardbase Kodai at 3414x1357 this takes BT's spawn view from about 65 fps t
 parts off for comparisons, and `--features profile` writes a Chrome trace of every system (with
 system names).
 
+Materials are bound one bind group per material, not through Bevy's bindless material slabs
+(the `BUFFER_BINDING_ARRAY` feature is turned off; lightmaps and light probes don't need it and
+stay bindless). With slabs, each switch between material slabs made wgpu-core walk every texture
+in the slab (up to 2048) while encoding the pass, 4-6 ms per shadow cascade on Angel City; the
+per-material groups draw the same pixels. Angel City, BT's spawn, 1920x1080, uncapped: cockpit
+34-53 fps before, 64-81 after; on foot 26-46 before, 56-67 after. `TF_BINDLESS=1` brings the
+slabs back for comparisons.
+
 Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs

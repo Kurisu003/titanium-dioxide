@@ -239,7 +239,20 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin { default_sampler: convert::sampler() }),
+                .set(ImagePlugin { default_sampler: convert::sampler() })
+                .set(bevy::render::RenderPlugin {
+                    render_creation: bevy::render::settings::RenderCreation::Automatic(bevy::render::settings::WgpuSettings {
+                        // Materials without bindless binding arrays (lightmaps and light probes
+                        // keep theirs: they don't need this feature). With them, every switch
+                        // between material slabs (up to 2048 textures each) costs wgpu-core a
+                        // walk over the whole slab when the pass is encoded: 4-6 ms per shadow
+                        // cascade on Angel City. Per-material bind groups draw the same pixels.
+                        // TF_BINDLESS=1 keeps them (A/B measurements).
+                        disabled_features: std::env::var_os("TF_BINDLESS").is_none().then_some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY),
+                        ..default()
+                    }),
+                    ..default()
+                }),
         )
         .add_plugins(FreeCameraPlugin)
         .add_plugins(ui::PipelineWatchPlugin)
