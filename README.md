@@ -1233,6 +1233,13 @@ from everything that moves. Bevy skips a hierarchy in which nothing moved, but u
 root it recomputed all ~47k static children every frame (main thread: transform propagation
 3.7 -> 1.1 ms on Angel City).
 
+Bevy rebuilds every mesh bind group every frame, and with lightmaps that is one per lightmap
+slab (four lightmapped entities) per render phase: ~750 bind groups created and dropped per frame
+for Angel City's 419 world batches. `bindcache.rs` keeps the last two sets (the skin buffers
+alternate between frames) and reuses one while the instance, skin and morph buffers and the
+lightmap slabs are unchanged; a lightmap slot being filled or freed rebuilds for a few frames.
+Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
+
 Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs

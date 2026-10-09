@@ -34,6 +34,7 @@ mod gamepad;
 mod pilotability;
 mod pilotbody;
 mod autotitan;
+mod bindcache;
 mod cloak;
 mod colorcorr;
 mod rodeo;
@@ -265,7 +266,7 @@ fn main() {
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)
-        .add_plugins(GpuTimesPlugin)
+        .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin))
         .add_systems(Update, (perf_log, fps_overlay, weapons::shimmer_shields))
         .insert_resource(args)
         .insert_resource(script)
