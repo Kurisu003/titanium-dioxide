@@ -976,6 +976,16 @@ pub fn update_enemies(
                 if let Some(fx_e) = e.defense_fx {
                     let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
                     commands.entity(fx_e).insert(Transform::from_translation(to_bevy(defense_fx_spot(d.kind, shield_spot))).looking_to(to_bevy(facing).normalize(), Vec3::Y));
+                    // The shield colour in control point 1 (fxuber::shield_color): the Vortex's
+                    // by how much of its hold is spent, the Gun Shield's by its health.
+                    let spent = match d.kind {
+                        DefenseKind::Vortex => Some(1.0 - e.defense_left / d.hold.max(1e-3)),
+                        DefenseKind::GunShield => Some(1.0 - e.shield_hp / GUN_SHIELD_HEALTH),
+                        _ => None,
+                    };
+                    if let Some(f) = spent {
+                        commands.entity(fx_e).insert(crate::pfx::PfxColor(crate::fxuber::shield_color(f)));
+                    }
                 }
                 if d.kind == DefenseKind::Heat {
                     // Burns everything close in front at HEAT_RATE.
@@ -1045,8 +1055,11 @@ pub fn update_enemies(
                     }
                     // The game's shield systems, fixed to the Titan and facing its aim
                     // (TF_OLD_FX keeps the glow stand-in).
+                    // (Ion's mp_titanweapon_vortex_shield_ion plays the same third-person system
+                    // as BT's Vortex: mp_titanweapon_vortex_shield.nut's
+                    // wpn_vortex_chargingCP_titan, with the dome model.)
                     let system = match d.kind {
-                        DefenseKind::Vortex => Some("wpn_vortex_shield_charging"),
+                        DefenseKind::Vortex => Some("wpn_vortex_chargingCP_titan"),
                         DefenseKind::Heat => Some("P_wpn_HeatShield"),
                         DefenseKind::GunShield => Some("P_titan_gun_shield_3P"),
                         DefenseKind::Block | DefenseKind::ParticleWall => None,
@@ -1056,9 +1069,11 @@ pub fn update_enemies(
                         Some(name) if std::env::var_os("TF_OLD_FX").is_none() => {
                             let tf = Transform::from_translation(to_bevy(defense_fx_spot(d.kind, shield_spot))).looking_to(to_bevy(facing).normalize(), Vec3::Y);
                             let fx_e = commands.spawn((tf, Visibility::default(), crate::pfx::PfxTrail::oriented(name))).id();
-                            // The dome itself is a refraction effect in the game: a translucent
-                            // disc stands in for it.
+                            // The dome is the system's own model now (fxuber.rs); TF_OLD_SHIELDS
+                            // keeps the translucent disc that stood in for it.
+                            let old = std::env::var_os("TF_OLD_SHIELDS").is_some();
                             let disc = match d.kind {
+                                _ if !old => None,
                                 DefenseKind::Vortex => Some(&fx.vortex_disc),
                                 DefenseKind::Heat => Some(&fx.heat_disc),
                                 _ => None,

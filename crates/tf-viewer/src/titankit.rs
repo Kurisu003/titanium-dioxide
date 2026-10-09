@@ -2469,6 +2469,12 @@ pub fn kit_world(
         }
         // Control point 0 takes the entity's rotation, forward (Bevy -Z) along the normal.
         *tf = Transform::from_translation(to_bevy(w.origin)).looking_to(to_bevy(w.normal).normalize(), Vec3::Y);
+        // UpdateShieldWallColorForFrac( shieldWallFX, GetHealthFrac( vortexSphere ) ): control
+        // point 1 carries GetShieldTriLerpColor( 1 - health fraction ), so the wall goes from
+        // blue through orange to red as it takes damage.
+        for &c in children.into_iter().flatten() {
+            commands.entity(c).insert(crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - w.hp / 1750.0)));
+        }
         if w.enemy {
             enemy_walls.walls.push(BoltShield::wall(w.origin, w.normal, Some(id)));
         } else {
@@ -2521,7 +2527,10 @@ pub fn kit_world(
         let old_fx = std::env::var_os("TF_OLD_FX").is_some();
         let fx_center = if old_fx || fp { to_bevy(center) } else { to_bevy(center + Vec3::Z * 80.0) };
         let fx_center = gun_muzzle.shield_fp.filter(|_| fp && !old_fx && gun_muzzle.cockpit).unwrap_or(fx_center);
-        commands.entity(e).insert(Transform::from_translation(fx_center).looking_to(to_bevy(view).normalize(), Vec3::Y));
+        // mp_titanability_gun_shield.nut's UpdateShieldColor: control point 1 carries
+        // GetShieldTriLerpColor( 1 - health / TITAN_GUN_SHIELD_HEALTH ).
+        let color = crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - st.gun_shield_hp / 2500.0));
+        commands.entity(e).insert((Transform::from_translation(fx_center).looking_to(to_bevy(view).normalize(), Vec3::Y), color));
     } else if let Some(e) = st.gun_vis.take() {
         commands.entity(e).despawn();
     }

@@ -66,6 +66,8 @@ pub struct MeshData {
     pub uvs: Vec<[f32; 2]>,
     pub joints: Vec<[u16; 4]>,
     pub weights: Vec<[f32; 4]>,
+    /// Vertex colours (RGBA8) from the model's embedded VVC block, empty when it has none.
+    pub colors: Vec<[u8; 4]>,
     pub indices: Vec<u32>,
 }
 
@@ -552,6 +554,9 @@ impl Model {
                                 md.uvs.push(v.uv);
                                 md.joints.push(v.joints);
                                 md.weights.push(v.weights);
+                                if let Some(c) = v.color {
+                                    md.colors.push(c);
+                                }
                                 next
                             });
                             md.indices.push(id);
@@ -576,6 +581,12 @@ impl Model {
         let num_fixups = r.i32(vvd + 48) as usize;
         let fixup_start = vvd + r.i32(vvd + 52) as usize;
         let vertex_start = vvd + r.i32(vvd + 56) as usize;
+        // The embedded VVC block (header 0x1B4, size 0x1C4; "IDCV" version 1: id, version,
+        // checksum, LOD count, 8 LOD vertex counts, colour data offset, UV2 data offset) holds
+        // an RGBA8 colour per VVD vertex, in the same order. The effect models' alpha lives
+        // here (the Vortex dome fades to 0 at its rim through it).
+        let vvc = r.i32(0x1B4) as usize;
+        let colors = (r.i32(0x1C4) > 0 && self.raw.get(vvc..vvc + 4) == Some(b"IDCV")).then(|| vvc + r.i32(vvc + 48) as usize);
         let read = |i: usize| {
             let o = vertex_start + i * VERTEX_SIZE;
             let n = (self.raw[o + 15] as usize).clamp(1, 3);
@@ -591,7 +602,8 @@ impl Model {
             } else {
                 weights = [1.0, 0.0, 0.0, 0.0];
             }
-            Vert { pos: r.v3(o + 16), normal: r.v3(o + 28), uv: [r.f32(o + 40), r.f32(o + 44)], joints, weights }
+            let color = colors.and_then(|c| self.raw.get(c + i * 4..c + i * 4 + 4)).map(|b| [b[0], b[1], b[2], b[3]]);
+            Vert { pos: r.v3(o + 16), normal: r.v3(o + 28), uv: [r.f32(o + 40), r.f32(o + 44)], joints, weights, color }
         };
         let mut out = Vec::with_capacity(num_lod0);
         if num_fixups == 0 {
@@ -780,6 +792,7 @@ struct Vert {
     uv: [f32; 2],
     joints: [u16; 4],
     weights: [f32; 4],
+    color: Option<[u8; 4]>,
 }
 
 /// RadianEuler (x = roll, y = pitch, z = yaw) to quaternion, Source convention.

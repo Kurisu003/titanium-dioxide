@@ -28,12 +28,17 @@ pub struct Material {
 /// materials: three UV transforms, then distortion, tints and fades. Checked on
 /// `world\atmosphere\godray_500_fade_scroll`, whose distance fade (scale 0.0021, bias -0.0638)
 /// reaches full opacity at 500 units, as its name says, and whose UV1 translate (0.01, -0.2)
-/// is its scroll speed (the shader set's `Uv1at` flag animates it).
+/// is its scroll speed (the shader set's `Uv1at` flag animates it). The names are the
+/// `CBufUberStatic` members in the shaders' own reflection data (the `RDEF` chunk of the
+/// `shdr` assets' DXBC: `c_uv1RotScaleX`, ..., `c_alphaEdgeFadeExponent`, `c_emissiveTint`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShaderParams {
     /// UV transforms: [m00, m01, m10, m11, translate u, translate v].
     pub uv: [[f32; 6]; 3],
+    /// `c_uvDistortionIntensity` (the `Uvd1` texture's offsets) and
+    /// `c_uvDistortion2Intensity` (`Uvd2`'s).
     pub uv_distortion: [f32; 2],
+    pub uv_distortion2: [f32; 2],
     pub albedo_tint: [f32; 3],
     pub opacity: f32,
     /// Alpha edge fade: exponent, inner, outer (by |N·V|).
@@ -41,6 +46,11 @@ pub struct ShaderParams {
     /// Alpha distance fade: alpha *= saturate(distance * scale + bias).
     pub distance_fade: [f32; 2],
     pub emissive_tint: [f32; 3],
+    /// `c_useAlphaModulateSpecular` and `c_useAlphaModulateEmissive` (the emissive is scaled
+    /// by the alpha when the latter is above 0).
+    pub alpha_modulate: [f32; 2],
+    /// Emissive edge fade: exponent, inner, outer (by |N·V|).
+    pub emissive_edge_fade: [f32; 3],
 }
 
 impl ShaderParams {
@@ -48,11 +58,14 @@ impl ShaderParams {
         Self {
             uv: std::array::from_fn(|t| std::array::from_fn(|k| f(t * 6 + k))),
             uv_distortion: [f(18), f(19)],
+            uv_distortion2: [f(20), f(21)],
             albedo_tint: [f(24), f(25), f(26)],
             opacity: f(27),
             edge_fade: [f(29), f(30), f(31)],
             distance_fade: [f(36), f(37)],
             emissive_tint: [f(40), f(41), f(42)],
+            alpha_modulate: [f(28), f(32)],
+            emissive_edge_fade: [f(33), f(34), f(35)],
         }
     }
 }

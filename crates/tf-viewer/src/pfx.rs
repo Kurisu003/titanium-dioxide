@@ -173,13 +173,16 @@ impl Plugin for SoftMaterialPlugin {
 pub enum FxMat {
     Std(Handle<StandardMaterial>),
     Uber(Handle<crate::uber::UberMaterial>),
+    /// The game's unlit uber shader (fxuber.rs); each instance gets its own copy, carrying
+    /// its particle's colour and alpha.
+    Fx(Handle<crate::fxuber::FxUberMaterial>),
 }
 
 /// Effect models (shields, walls) use the game's unlit `Add`/`Trans` shader sets, which the
 /// plain model path draws opaque: swap in unlit materials with the right blend, tinted by the
 /// system's colour (`Entcol*`: the entity colour modulates them).
 #[allow(clippy::too_many_arguments)]
-fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert::Cache, images: &mut Assets<Image>, path: &str, parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>, mats: &mut Assets<StandardMaterial>, uber: &mut Assets<crate::uber::UberMaterial>, tint: Vec3, hdr: f32) -> Vec<(Handle<Mesh>, FxMat)> {
+fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert::Cache, images: &mut Assets<Image>, path: &str, parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>, mats: &mut Assets<StandardMaterial>, uber: &mut Assets<crate::uber::UberMaterial>, fxmats: &mut Assets<crate::fxuber::FxUberMaterial>, mesh_assets: &mut Assets<Mesh>, tint: Vec3, hdr: f32) -> Vec<(Handle<Mesh>, FxMat)> {
     let plain = |parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>| parts.into_iter().map(|(m, h)| (m, FxMat::Std(h))).collect();
     let Ok(model) = gd.read_file(path).and_then(|b| tf_assets::mdl::Model::parse(b).map_err(Into::into)) else { return plain(parts) };
     let Ok(meshes) = model.meshes(&[]) else { return plain(parts) };
@@ -187,6 +190,21 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
     for (md, (mesh, mat)) in meshes.iter().zip(parts) {
         let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
         let name = model.textures.get(tex).cloned().unwrap_or_default();
+        // The game's own shader for unlit effect materials (every shield and wall model), with
+        // the model's vertex colours (their alpha shapes the domes and walls). TF_OLD_SHIELDS=1
+        // keeps the stand-ins below, for comparing.
+        if std::env::var_os("TF_OLD_SHIELDS").is_none() {
+            if let Some(fm) = crate::fxuber::material(gd, cache, images, &name) {
+                if md.colors.len() == md.positions.len() && !md.colors.is_empty() {
+                    if let Some(m) = mesh_assets.get_mut(&mesh) {
+                        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, crate::fxuber::vertex_colors(&md.colors));
+                    }
+                }
+                log::debug!("particle model {path}: {name} via the game's uber shader");
+                out.push((mesh, FxMat::Fx(fxmats.add(fm))));
+                continue;
+            }
+        }
         let found = gd.material(&name);
         let shader = found.as_ref().and_then(|(pi, m)| tf_assets::material::shader_set_name(&gd.paks[*pi], m.shader_set)).unwrap_or_default();
         let Some(src) = mats.get(&mat) else {
@@ -620,6 +638,13 @@ pub struct PfxVmSpace;
 /// moving points (the Laser Core). CP0 faces it.
 #[derive(Component, Clone, Copy)]
 pub struct PfxBeamEnd(pub Vec3);
+
+/// With a [`PfxTrail`]: the value scripts put in control point 1 with
+/// `EffectSetControlPointVector( fx, 1, color )` (0-255 per channel), kept up to date each
+/// frame: the shields' charge or health colour (`fxuber::shield_color`), which their systems'
+/// `Remap Control Point to Vector` turn into the particle (and so the model) colour.
+#[derive(Component, Clone, Copy)]
+pub struct PfxColor(pub Vec3);
 
 impl PfxTrail {
     pub fn new(name: &str) -> Self {
@@ -1568,6 +1593,9 @@ struct Node {
     layer: Option<usize>,
     /// Model-renderer instances (one entity per particle per Render::Models, pooled).
     models: Vec<Entity>,
+    /// Each instance's own copies of its game-shader materials (their instance colour is the
+    /// particle's colour and alpha).
+    model_mats: Vec<Vec<Handle<crate::fxuber::FxUberMaterial>>>,
     /// The node's decal has been laid.
     decal_done: bool,
     /// The parent system's node (for `Position From Parent Particles`).
@@ -1612,7 +1640,7 @@ struct Effect {
 
 fn new_node(sys: Arc<Compiled>, delay: f32) -> Node {
     let n = sys.emit.len();
-    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), decal_done: false, parent: None, op_stopped: false, restart_at: 0.0 }
+    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), model_mats: Vec::new(), decal_done: false, parent: None, op_stopped: false, restart_at: 0.0 }
 }
 
 /// The system tree under `root`, with each child's delay added to its parent's.
@@ -3223,9 +3251,9 @@ pub fn update_pfx(
     world: Option<Res<crate::player::Collision>>,
     requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>, Has<PfxScreen>)>,
     impacts: Query<(Entity, &ImpactRequest)>,
-    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>)>,
+    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>, Option<&PfxColor>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
-    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>),
+    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>, ResMut<Assets<crate::fxuber::FxUberMaterial>>),
     mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>, Option<Res<ParticleLight>>),
     mut vis: Query<&mut Visibility>,
     mut lights: Query<(&mut PointLight, &mut Transform)>,
@@ -3311,7 +3339,7 @@ pub fn update_pfx(
     }
     // Trails follow their entities.
     let mut alive_trails = Vec::new();
-    for (ent, gt, mut tr, end, screen, vm_space) in &mut trails {
+    for (ent, gt, mut tr, end, screen, vm_space, color) in &mut trails {
         let at = match (vm_space, fp_lens) {
             (true, Some((cam, w, v))) => to_game(crate::vmcam::fx_to_world(gt.translation(), &cam, w, v)),
             _ => to_game(gt.translation()),
@@ -3349,6 +3377,10 @@ pub fn update_pfx(
                 fx.cps[0] = cp;
                 if let Some(c) = cp1 {
                     fx.cps[1] = c;
+                }
+                if let Some(c) = color {
+                    fx.cps[1] = Cp { pos: c.0, ..cp };
+                    fx.cp_set |= 2;
                 }
             }
         }
@@ -3574,7 +3606,7 @@ pub fn update_pfx(
                             Some(cache) => match crate::world::build_static_model(&gd, model, cache, meshes, images, &mut assets.3) {
                                 // The tint without the system's HDR gain: additive fans
                                 // (heat shield, hdr 5) blow out to white with it.
-                                Ok((parts, _)) => Some(Arc::new(fx_model_materials(&gd, cache, images, model, parts, &mut assets.3, &mut assets.4, if std::env::var_os("TF_PFX_GAMMA_COLORS").is_some() { n.sys.color / n.sys.hdr.max(1.0) } else { to_srgb(n.sys.color / n.sys.hdr.max(1.0)) }, n.sys.hdr.max(1.0)))),
+                                Ok((parts, _)) => Some(Arc::new(fx_model_materials(&gd, cache, images, model, parts, &mut assets.3, &mut assets.4, &mut assets.6, meshes, if std::env::var_os("TF_PFX_GAMMA_COLORS").is_some() { n.sys.color / n.sys.hdr.max(1.0) } else { to_srgb(n.sys.color / n.sys.hdr.max(1.0)) }, n.sys.hdr.max(1.0)))),
                                 Err(e) => {
                                     log::warn!("particle model {model}: {e:#}");
                                     None
@@ -3584,6 +3616,7 @@ pub fn update_pfx(
                         })
                         .clone();
                     let e = commands.spawn((Transform::default(), Visibility::Hidden, FxModelInstance)).id();
+                    let mut own = Vec::new();
                     if let Some(parts) = parts {
                         for (m, mat) in parts.iter() {
                             if let Some(aabb) = meshes.get(m).and_then(|m| bevy::camera::primitives::MeshAabb::compute_aabb(m)) {
@@ -3593,6 +3626,11 @@ pub fn update_pfx(
                             match mat {
                                 FxMat::Std(h) => commands.entity(c).insert(MeshMaterial3d(h.clone())),
                                 FxMat::Uber(h) => commands.entity(c).insert(MeshMaterial3d(h.clone())),
+                                FxMat::Fx(h) => {
+                                    let copy = assets.6.get(h).cloned().map(|m| assets.6.add(m)).unwrap_or_else(|| h.clone());
+                                    own.push(copy.clone());
+                                    commands.entity(c).insert(MeshMaterial3d(copy))
+                                }
                             };
                             commands.entity(e).add_child(c);
                         }
@@ -3601,6 +3639,7 @@ pub fn update_pfx(
                         commands.entity(r.0).add_child(e);
                     }
                     n.models.push(e);
+                    n.model_mats.push(own);
                 }
                 let cp = cps[0];
                 let basis = Quat::from_mat3(&Mat3::from_cols(cp.fwd, cp.up.cross(cp.fwd), cp.up));
@@ -3635,6 +3674,19 @@ pub fn update_pfx(
                         }
                         let k = std::env::var("TF_FX_MODEL_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
                         commands.entity(e).insert((Transform { translation: p.pos, rotation: rot, scale: Vec3::splat(p.radius * k) }, Visibility::Visible));
+                        // The model instance's colour and alpha (CBufModelInstance row 6, which
+                        // the game's uber shader multiplies its albedo, emissive and alpha by)
+                        // are the particle's: a shield's health colour reaches its dome this way.
+                        // C_OP_RenderModels' own mapping (client.dll vtable 0x1809bb018) wasn't
+                        // traced; colour and alpha passed straight through is a guess.
+                        let modulation = Vec4::new(p.color.x, p.color.y, p.color.z, p.alpha.min(1.0));
+                        for h in &n.model_mats[used - 1] {
+                            if assets.6.get(h).is_some_and(|m| (m.params.modulation - modulation).abs().max_element() > 1e-4) {
+                                if let Some(m) = assets.6.get_mut(h) {
+                                    m.params.modulation = modulation;
+                                }
+                            }
+                        }
                     }
                 }
                 for e in &n.models[used..] {

@@ -1,7 +1,11 @@
 //! The Pilot's Cloak and Phase Shift in first person. Cloak: while Cloak (`mp_ability_cloak`) runs, the arms and gun
-//! draw as a refracting outline (cloak.wgsl) instead of their own materials. The game's cloak
-//! look is engine-side (its scripts only call `EnableCloak`), so the strength of the warp, the
-//! tint and the rim are by eye.
+//! draw as the engine's cloak post-process draws a cloaked surface (cloak.wgsl): three taps of
+//! the picture around the pixel, weighted, brightened and desaturated by the
+//! `cloak_pilot*` ConVars of materialsystem_dx11.dll (Tint1-3 0.35 / 0.5 / 0.65 over their
+//! sum, BrightenMul 1.2, BrightenAdd 0.02, Desaturate 0.6, NoiseFactor 0.25). The tap distance
+//! is a guess: the engine scales `cloak_pilotAberrationScale` (0.012) by a mask the cloaked
+//! model writes into the frame's alpha, and that model shader isn't known; here the whole
+//! surface is masked and the distance is 0.012 of the screen width.
 
 use crate::pilotctl::Control;
 use crate::pilotability::PilotStatus;
@@ -12,9 +16,11 @@ use bevy::render::render_resource::{AsBindGroup, ShaderType};
 
 #[derive(Clone, Copy, Debug, Default, ShaderType, Reflect)]
 pub struct CloakParams {
-    /// x: refraction offset (fraction of the screen), y: rim strength, z: rim exponent, w: tint.
+    /// x: tap distance (fraction of the screen width), y: its per-frame jitter, z: brighten
+    /// scale, w: brighten bias.
     pub params: Vec4,
-    pub rim_color: Vec4,
+    /// The three tap weights; w: desaturation.
+    pub tints: Vec4,
 }
 
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
@@ -67,8 +73,9 @@ pub fn cloak_viewmodel(
                 mats.add(CloakMaterial {
                     // In the transmissive phase (specular_transmission), drawn opaque-style.
                     base: StandardMaterial { specular_transmission: 1.0, unlit: true, alpha_mode: AlphaMode::Opaque, ..default() },
-                    // TF_CLOAK="warp rim exponent tint" overrides the look (testing).
-                    extension: CloakExt { params: CloakParams { params: tuned(Vec4::new(0.016, 0.05, 3.0, 0.3)), rim_color: Vec4::new(0.55, 0.75, 1.0, 1.0) } },
+                    // TF_CLOAK="distance jitter mul add" overrides the post's numbers (testing).
+                    // The weights: cloak_pilotTint1-3 over their sum (0x18003b064).
+                    extension: CloakExt { params: CloakParams { params: tuned(Vec4::new(0.012, 0.25, 1.2, 0.02)), tints: Vec4::new(0.35 / 1.5, 0.5 / 1.5, 0.65 / 1.5, 0.6) } },
                 })
             })
             .clone();
