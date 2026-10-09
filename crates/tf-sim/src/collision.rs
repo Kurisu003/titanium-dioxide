@@ -461,6 +461,12 @@ impl CollisionWorld {
         let (lo, hi) = (c0.min(c0 + d) - half - pad, c0.max(c0 + d) + half + pad);
         let mut toi = f32::INFINITY;
         let mut normal = Vec3::ZERO;
+        let mut face = false;
+        // Contacts this close (in units travelled) count as simultaneous; then a face normal
+        // beats an edge-edge one. A box reaching the corner of a step, or the edge where two
+        // triangles meet, touches the edge and the face together; the edge's diagonal normal
+        // would turn the slide (and StepMove) sideways where the engine's brush planes don't.
+        let tie = 0.01 / d.length().max(1e-6);
         let mut solid: Option<Vec3> = None;
         for w in self.with_clip(which).iter().flatten() {
             w.cells_in(lo, hi, |tri| match sweep_box_tri(c0, half, d, tri) {
@@ -470,10 +476,11 @@ impl CollisionWorld {
                         solid = Some(mtv);
                     }
                 }
-                Sweep::Hit(t, n) => {
-                    if t < toi {
-                        toi = t;
+                Sweep::Hit(t, n, f) => {
+                    if t < toi - tie || (t < toi + tie && f && !face) {
+                        toi = t.min(toi);
                         normal = n;
+                        face = f;
                     }
                 }
             });
@@ -493,8 +500,9 @@ impl CollisionWorld {
 
 enum Sweep {
     Miss,
-    /// Time of impact (0..1 of the move) and the surface normal facing the box.
-    Hit(f32, Vec3),
+    /// Time of impact (0..1 of the move), the surface normal facing the box, and whether that
+    /// normal is a face's (the box's or the triangle's) rather than an edge-edge axis.
+    Hit(f32, Vec3, bool),
     /// Overlapping at the start; the shortest way out.
     Inside(Vec3),
 }
@@ -506,9 +514,13 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
     let edges = [v[1] - v[0], v[2] - v[1], v[0] - v[2]];
     let (mut t_enter, mut t_exit) = (f32::NEG_INFINITY, f32::INFINITY);
     let mut n_enter = Vec3::ZERO;
+    let mut face = true;
+    // An edge-edge axis only takes over the entry from a face axis when it enters this much
+    // (in units travelled) later.
+    let tie = 0.01 / d.length().max(1e-6);
     let mut inside = true;
     let (mut depth, mut mtv) = (f32::INFINITY, Vec3::ZERO);
-    let mut test = |axis: Vec3| -> bool {
+    let mut test = |axis: Vec3, is_face: bool| -> bool {
         let len2 = axis.length_squared();
         if len2 < 1e-10 {
             return true;
@@ -525,9 +537,10 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
             }
         } else {
             let (t0, t1, n) = if dl > 0.0 { (lo / dl, hi / dl, -l) } else { (hi / dl, lo / dl, l) };
-            if t0 > t_enter {
-                t_enter = t0;
+            if t0 > t_enter + if is_face || !face { 0.0 } else { tie } || (is_face && !face && t0 > t_enter - tie) {
+                t_enter = t0.max(t_enter);
                 n_enter = n;
+                face = is_face;
             }
             t_exit = t_exit.min(t1);
             if t_enter >= t_exit {
@@ -549,12 +562,12 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
         true
     };
     let n = (v[1] - v[0]).cross(v[2] - v[0]);
-    if !(test(Vec3::X) && test(Vec3::Y) && test(Vec3::Z) && test(n)) {
+    if !(test(Vec3::X, true) && test(Vec3::Y, true) && test(Vec3::Z, true) && test(n, true)) {
         return Sweep::Miss;
     }
     for ed in edges {
         for ax in [Vec3::X, Vec3::Y, Vec3::Z] {
-            if !test(ax.cross(ed)) {
+            if !test(ax.cross(ed), false) {
                 return Sweep::Miss;
             }
         }
@@ -565,7 +578,7 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
     if t_exit <= 0.0 || t_enter > 1.0 {
         return Sweep::Miss;
     }
-    Sweep::Hit(t_enter.max(0.0), n_enter)
+    Sweep::Hit(t_enter.max(0.0), n_enter, face)
 }
 
 fn ray_tri(o: Vec3, d: Vec3, t: &Tri) -> Option<f32> {

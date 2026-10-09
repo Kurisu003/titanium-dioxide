@@ -132,11 +132,12 @@ fn main() {
                 s.vel = dir * p.sprint_speed;
                 runs += 1;
                 let start = s.pos;
+                let start_txt = format!("from {:.1} {:.1} {:.2} {:.1}", start.x, start.y, start.z, yaw.to_degrees());
                 let mut was_fast = 0;
                 let mut hitched = false;
                 let report = |what: &str, s: &PilotState, i: usize, h: Option<f32>| {
                     println!(
-                        "{what} at {:.0} {:.0} {:.0} yaw {:.0} after {:.2}s: obstacle top {:?} (TF_PILOT_TP=\"{:.0} {:.0} {:.0} {:.0}\")",
+                        "{what} at {:.0} {:.0} {:.0} yaw {:.0} after {:.2}s: obstacle top {:?} (TF_PILOT_TP=\"{:.0} {:.0} {:.0} {:.0}\") {start_txt}",
                         s.pos.x,
                         s.pos.y,
                         s.pos.z,
@@ -196,6 +197,56 @@ fn main() {
                 100.0 * small as f32 / runs.max(1) as f32,
                 dist_sum / runs.max(1) as f32
             );
+        }
+        "steps" => {
+            // Where sprints step up a curb or stair (3 to 18 units in one tick, on the ground):
+            // `steps x0 y0 x1 y1 samples max_z` lists the first few, for test spots.
+            let (x0, y0, x1, y1) = (f(3), f(4), f(5), f(6));
+            let (n, max_z): (usize, f32) = (a[7].parse().unwrap(), f(8));
+            let mut seed: u64 = 99;
+            for _ in 0..n {
+                let (x, y) = (x0 + (x1 - x0) * rng(&mut seed), y0 + (y1 - y0) * rng(&mut seed));
+                let yaw = rng(&mut seed) * std::f32::consts::TAU;
+                let Some(g) = ground_at(&w, x, y, max_z) else { continue };
+                let mut s = PilotState::new(g + Vec3::Z * 0.5, yaw);
+                s.mode = PilotMove::Ground;
+                for i in 0..120 {
+                    let (z, grounded) = (s.pos.z, s.on_ground());
+                    step(&mut s, &input(yaw, Gait::Sprint, 1), &p, &w, DT);
+                    let rise = s.pos.z - z;
+                    if grounded && s.on_ground() && (3.0..=18.5).contains(&rise) && i > 20 {
+                        let back = Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 200.0;
+                        println!("step up {rise:.1} at {:.0} {:.0} {:.0} yaw {:.0} (TF_PILOT_TP=\"{:.0} {:.0} {:.0} {:.0}\")", s.pos.x, s.pos.y, z, yaw.to_degrees(), s.pos.x - back.x, s.pos.y - back.y, z + 10.0, yaw.to_degrees());
+                        break;
+                    }
+                }
+            }
+        }
+        "tris" => {
+            // Triangles within `r` of a point: `tris x y z r`.
+            let (c, r) = (Vec3::new(f(3), f(4), f(5)), f(6));
+            for (name, set) in [("solid", Some(&w)), ("pilot clip", w.clips[CLIP_PILOT].as_deref())] {
+                for t in set.into_iter().flat_map(|s| s.tris.iter()) {
+                    if t.a.min(t.b).min(t.c).cmple(c + r).all() && t.a.max(t.b).max(t.c).cmpge(c - r).all() {
+                        println!("{name}: {:.1} | {:.1} | {:.1}  n {:.2}", t.a, t.b, t.c, t.n);
+                    }
+                }
+            }
+        }
+        "replay" => {
+            // A scan run again: on the ground at x y z, sprinting along yaw from sprint speed.
+            let (pos, yaw) = (Vec3::new(f(3), f(4), f(5)), f(6).to_radians());
+            let dir = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+            let mut s = PilotState::new(pos, yaw);
+            s.mode = PilotMove::Ground;
+            s.vel = dir * p.sprint_speed;
+            for i in 0..120 {
+                step(&mut s, &input(yaw, Gait::Sprint, 1), &p, &w, DT);
+                if i % 6 == 5 {
+                    println!("t {:5.2} pos {:8.1} {:8.1} {:7.1} hspeed {:5.0} {:?}", (i + 1) as f32 * DT, s.pos.x, s.pos.y, s.pos.z, s.horizontal_speed(), s.mode);
+                }
+            }
+            println!("travelled {:.0}", (s.pos - pos).truncate().length());
         }
         "probe" => {
             // What is in front of the feet at a spot: per height, the nearest hit ahead.

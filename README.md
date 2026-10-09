@@ -355,6 +355,33 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     acceleration x 0.6 = 1500 u/s^2 (GetDeceleration 0x1801fcf10); Accelerate (0x1801f0ac0) adds
     up to 2500 u/s^2 along the input. sv_friction and sv_stopspeed aren't used. So a sprint stops in
     0.17 s over 22 units, top speed is reached in about 0.1 s, and turning keeps the speed.
+  - Collision and steps follow client.dll's movement code. The Pilot is a box (`pilot_base.set`:
+    -16 -16 0 to 16 16 72, 47 high crouched), swept against the world's triangles. On the
+    ground the move is turned along the floor (0x18020dd06) and traced; a blocked move goes to
+    HandleBlocked (0x1802055b0), which slides along walkable slopes (normal z above 0.7) and
+    otherwise runs StepMove (0x1801fb0e0): try the plain move, try it again lifted by
+    `stepheight` 18 and dropped back down, and keep the lifted one when it went further and
+    lands on walkable ground. A steep face under the landing (a bevelled curb edge) still counts
+    when it is shorter than `stepTestDist` 10 (the probe goes on 10 units and needs a floor at
+    about the same height). The plain move is TryPlayerMove (0x1801fa310: up to 8 bumps, clipping
+    along up to 2 planes and their crease, stopping in corners sharper than 30 degrees).
+    StayOnGround (0x180207860) then keeps the Pilot on stairs and slopes going down (up to 18).
+    In the air, hitting a ledge also tries StepMove, so a jump that rises past a lip lands on
+    it. So anything up to 18 units is run over at full speed, and taller ledges stop you at the
+    face. Automantle on the ground needs jump held (0x180209ed0 checks `IN_JUMP` there and for
+    0.25 s after leaving the ground); before this, running into any knee-high ledge started a
+    1 s climb. Not modelled or guessed: the slow-fall case's flag (0x2b7c) is ignored, the
+    `boostEnabled` air step-up doubling (boost Pilot classes only) is left out, the step's
+    view offset is our camera's own smoothing, ties between a triangle's face and its edges are
+    resolved toward the face, getting unstuck from inside geometry (small nudges) is ours, and
+    props collide with their render triangles, not their collision models. The game finds no
+    floor in quadrants as Source's TryTouchGroundInQuadrants does, and neither do we.
+    `tf-sim/tests/step_sweep.rs` checks ledges, curbs, stairs, ramps, a wall slide, an air step
+    and staying crouched under a low ceiling. `TF_COLLISION_DUMP=<file>` makes the viewer save
+    the map's collision when it quits; `cargo run --release -p tf-sim --example pilotscan` runs
+    the Pilot over a saved dump (sprints in all directions from many spots, reporting stops,
+    hitches and ground mantles), and `tf-assets --example cmdump` writes the map's own
+    `CM_PRIMITIVES` collision in the same format for comparison.
   - Jumps take off at sqrt(2 x sv_gravity x height) (jump handler 0x180200cf9) while gravity in
     flight is sv_gravity x gravityscale (0x1801f74b3): a 60-unit jump takes off at 300 u/s and
     goes 75 units high for 1 s. The double jump (0x1802007ba) replaces the vertical speed with a
@@ -439,8 +466,8 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     going that way (not capped). The wall last left (normals within `wallrun_sameWallDot` 0.9,
     remembered until landing) can be run again only below where that run started
     (`wallrun_sameWallHeight` 0), and gets no boost; the boost is also skipped after landing
-    or falling off a wall until the next jump. Our hull is two spheres, so the hull's contacts
-    and a 3x3 grid of rays stand in for the game's box traces. `tf-sim/tests/wallrun_sweep.rs`
+    or falling off a wall until the next jump. The probes are rays (a 3x3 grid) rather than the
+    game's box traces, and the wall's normal comes from the hull's first hit. `tf-sim/tests/wallrun_sweep.rs`
     jumps at a wall from 1080 combinations of angle, speed, distance, view and input and checks
     that every jump that reaches the wall in the air starts a run. Curved walls: the run
     turns with the wall the probe finds, at most `wallrun_rotateMaxRate` 3 rad/s, and lets go when the
@@ -1413,7 +1440,7 @@ the free camera at a position in game units; `--no-props` skips static props.
 - RPAK patch chains (`name(01).rpak`...) are not applied as deltas; base paks are used, plus each
   `common(NN).rpak` and `common_mp(NN).rpak` patch's own pages (newest first) for assets the base pak lacks (e.g. the R-101
   SFP's materials). Set `TF_NO_PATCH_PAKS=1` to skip that (~0.75 s at startup).
-- Collision uses render meshes plus the map's collision where nothing rendered covers it (see Titan); render meshes the game doesn't collide with (wires, some decals) still block, wall-running and mantling ignore clip surfaces, and the 57 props on Kodai that are marked solid but have no collision primitive still block.
+- Collision uses render meshes plus the map's collision where nothing rendered covers it (see Titan); render meshes the game doesn't collide with (wires, some decals) still block, wall-running and mantling ignore clip surfaces, and the 57 props on Kodai that are marked solid but have no collision primitive still block. Props collide with their render triangles, not their collision models, so the Pilot can catch on a prop's detail the game would smooth over (about 1 in 5 of the dead stops a scan of Angel City found are on such geometry).
 - Screen-space particle effects are placed by a guessed mapping and drawn under the viewmodel;
   particle light sources are off by default (see
   Effects). Particle refraction approximates Source's Refract shader (see Effects); refracting
