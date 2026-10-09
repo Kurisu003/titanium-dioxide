@@ -36,6 +36,12 @@ impl Plugin for MeshBindCachePlugin {
             .add_systems(ExtractSchedule, watch_lightmaps)
             .add_systems(
                 Render,
+                reserve_instance_buffers
+                    .in_set(RenderSystems::PrepareResourcesFlush)
+                    .before(bevy::render::batching::gpu_preprocessing::write_batched_instance_buffers::<bevy::pbr::MeshPipeline>),
+            )
+            .add_systems(
+                Render,
                 (restore, prepare_mesh_bind_groups.run_if(|c: Res<BindCache>| !c.reused)).chain().in_set(RenderSystems::PrepareBindGroups),
             );
     }
@@ -83,8 +89,23 @@ fn watch_lightmaps(
         touched |= cache.lit.remove(&e);
     }
     if touched {
+        log::debug!("mesh bind groups: lightmap slots changed ({} lit)", cache.lit.len());
         // Bevy fills a slot once its image is on the GPU (normally the same frame).
         cache.dirty = 3;
+    }
+}
+
+/// Grow the per-phase instance buffers with headroom. Bevy sizes them to exactly this frame's
+/// instance count, so walking into a view with one more mesh than ever before made a new buffer,
+/// and with it a full rebuild of the mesh bind groups (a 5 ms frame), many times a minute.
+fn reserve_instance_buffers(device: Res<bevy::render::renderer::RenderDevice>, buffers: Option<ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>>) {
+    let Some(mut buffers) = buffers else { return };
+    for phase in buffers.phase_instance_buffers.values_mut() {
+        let len = phase.data_buffer.len();
+        let capacity = phase.data_buffer.buffer().map_or(0, |b| b.size() as usize / size_of::<MeshUniform>());
+        if len > capacity {
+            phase.data_buffer.reserve((len + len / 2).max(1024), &device);
+        }
     }
 }
 
@@ -129,6 +150,9 @@ fn restore(world: &mut World) {
         return;
     }
     let previous = cache.current.take();
+    if cache.spare.as_ref().is_none_or(|(k, _)| *k != key) {
+        log::debug!("mesh bind groups: new buffers (skin {}, phases {})", previous.as_ref().is_some_and(|p| p.skin != key.skin), previous.as_ref().is_some_and(|p| p.phases != key.phases));
+    }
     let spare = cache.spare.take_if(|(k, _)| *k == key);
     let reused = spare.is_some();
     cache.reused = reused;
