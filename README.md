@@ -197,10 +197,22 @@ Scalar` read only control points that hold a value (passed by the caller or set 
 operator): the others copy control point 0's position, where the game's scripts would have set
 a colour or a scale, so those systems keep their own colour. Sprites ignore the normal and yaw
 (orientation 3 still faces control point 0's up). `TF_PFX_NO_ALPHA2=1`
-ignores the second alpha, for comparing. System colours are converted from sRGB to linear
-before tinting (the game tints its sRGB textures in gamma space, which is the same product);
-taken as linear they had washed every effect out, drawing a frag's dark dirt smoke as a pale
-tan haze (`TF_PFX_GAMMA_COLORS=1` shows the old look). Texture names with a source-art
+ignores the second alpha, for comparing. System colours are squared, (byte / 255)^2, as
+client.dll's `Color Random` setup does (0x180706700); taken as linear they had washed every
+effect out, drawing a frag's dark dirt smoke as a pale tan haze (`TF_PFX_GAMMA_COLORS=1`
+shows that look). `Color Random`'s lighting tint is in (client.dll 0x1806fa030; 2365 of the
+game's 4768 `Color Random`s use it): with `tint_perc` set, the light at the tint control point
+times `light amplification amount` is blended into the colour by `tint blend mode` (0 the
+light, 1 overlay, 2 darken, 3 lighten, 4 multiply; higher modes write nothing) and lerped in by
+`tint_perc`, re-read once the point moves `tint update movement threshold` units. The light is
+engine.dll's no-normal `GetLightForPoint` (0x180175ea3) on the map's own data: the nearest
+light probe's L0 (int16 / 8192), plus a quarter of the sun's `WORLD_LIGHTS` intensity times the
+probe's sun visibility, plus the sky ambient's times |v| (|v| + 1) / 4 for the probe's sky
+vector v (times `light sky scale`). Approximations: the nearest probe instead of the probe
+tree, the probe's local lights and two engine scalars on the sun term left out (taken as 1).
+So smoke and dust are lit by where they are: the Titan dash's grey dust (61-165 grey times
+twice the light, at 50%) is pale in daylight where its plain colour drew dark blobs.
+`Color Lit Per Particle` keeps plain colours. `TF_PFX_NO_TINT=1` turns the tint off. Texture names with a source-art
 extension (`dirt_burst_full.tga`) load their .vtf; those dirt bursts were missing.
 Particle textures are precached the way the engine precaches each weapon's systems: once
 the library has loaded, its thread walks every system the weapon scripts name (`fx_*`,
@@ -212,7 +224,9 @@ its file). Materials not in that set decode on all cores when first used.
 and built (with BT's kit) during a few extra frames under the loading screen; built on the
 first playing frame they froze the game for a second as it began. `RUST_LOG=tf_viewer::ui=debug`
 logs frames slower than 60 ms after loading. `TF_PFX_TEST=<system>` with the script action `pfxtest` plays a system on the ground 300 units
-ahead of the camera, for checking one in isolation. Effects carry 16 control points (the game addresses up to CP 10). `Render models`
+ahead of the camera (`TF_PFX_TEST_DIST=units`; the ground is found by a trace down, so it works
+from the cockpit and a `--cam` free camera), for checking one in isolation; `TF_PFX_SKIP=a,b`
+leaves out child systems whose names contain a part. Effects carry 16 control points (the game addresses up to CP 10). `Render models`
 renderers draw a model per particle (`fx_model_materials`: the game's unlit `Add`/`Trans`
 shader sets become additive / translucent unlit materials tinted by the system colour without
 its HDR gain; the hex shields' refraction is approximated by their caustic texture at 35%
@@ -223,7 +237,14 @@ white disc under this tonemapper, so the camera's bloom carries the rest (an app
 of the game's HDR pipeline, not its numbers). Model renderers draw (shield walls, casings).
 `Emit Decal` lays a bullet hole on level geometry: one of the system's materials (its
 `_subrect` atlas name maps to the material without the suffix), 4 units wide (the size is a
-guess), the newest 256 kept; `TF_NO_DECALS=1` turns them off. Refracting materials (the
+guess), the newest 256 kept; `TF_NO_DECALS=1` turns them off. Translucent world surfaces (the
+BSP's translucent meshes: ground dirt overlays such as `dirt_pathway_to_transparent_bm`, which
+covers much of Kodai's floor, grime decals, glass) and these decals draw before every other
+translucent thing (`convert::TransparentOrder`, applied to Bevy's transparent phase before it
+is sorted). Bevy adds a material's `depth_bias` (256 on overlays, against z-fighting) to the
+sort distance too, so they had sorted 256 m nearer and drew over explosions, smoke and shields
+wherever they lay. The cost: an effect behind a translucent window draws over the glass, and
+refracting sprites (drawn before the transparent phase) are still covered by those overlays. Refracting materials (the
 `Refract` shader: heat haze, explosion shockwave rings, distortion rings) draw in Bevy's
 transmissive phase (`RefractMaterial`, refract.wgsl): a copy of the scene drawn so far (world
 and sky) is looked up offset by the material's normal map as in Source's Refract shader (the

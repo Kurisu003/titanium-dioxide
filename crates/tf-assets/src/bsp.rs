@@ -28,6 +28,7 @@ pub mod lump {
     pub const CUBEMAPS: usize = 0x2A;
     pub const LIGHTPROBES: usize = 0x65;
     pub const LIGHTPROBE_REFERENCES: usize = 0x68;
+    pub const WORLD_LIGHTS: usize = 0x36;
     pub const PLANES: usize = 0x01;
     pub const TRICOLL_TRIANGLES: usize = 0x42;
     pub const TRICOLL_HEADERS: usize = 0x45;
@@ -481,6 +482,32 @@ impl Bsp {
         self.lump(lump::LIGHTPROBES)
             .chunks_exact(48)
             .map(|c| std::array::from_fn(|ch| std::array::from_fn(|k| i16::from_le_bytes([c[ch * 8 + k * 2], c[ch * 8 + k * 2 + 1]]))))
+            .collect()
+    }
+
+    /// Each probe's fourth row (bytes 24..32 of its LIGHTPROBES record): the sky visibility
+    /// vector `[x, y, z]` and the sun visibility `w` (int16, 8192 = 1). engine.dll unpacks the
+    /// record at 0x1800cd050 (all 16 values times 1/8192, the sky vector times the caller's
+    /// sky scale) and its no-normal lighting (0x180175ea3) adds the sun's intensity times a
+    /// quarter of `w` and the sky ambient's times a quarter of |v| (|v| + 1).
+    pub fn light_probe_sky(&self) -> Vec<[i16; 4]> {
+        self.lump(lump::LIGHTPROBES)
+            .chunks_exact(48)
+            .map(|c| std::array::from_fn(|k| i16::from_le_bytes([c[24 + k * 2], c[25 + k * 2]])))
+            .collect()
+    }
+
+    /// The baked lights (WORLD_LIGHTS, 112 bytes each, engine.dll's stride): `(type, origin,
+    /// intensity)`, Source's emit types (3 the sun `emit_skylight`, 5 the sky ambient
+    /// `emit_skyambient`) with the intensity already linear (Kodai's sun "255 237 211 2040"
+    /// is stored as (8.0, 6.81, 5.27): (colour / 255)^2.2 times brightness / 255).
+    pub fn world_lights(&self) -> Vec<(i32, [f32; 3], [f32; 3])> {
+        self.lump(lump::WORLD_LIGHTS)
+            .chunks_exact(112)
+            .map(|c| {
+                let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
+                (i32::from_le_bytes([c[52], c[53], c[54], c[55]]), [f(0), f(4), f(8)], [f(12), f(16), f(20)])
+            })
             .collect()
     }
 

@@ -244,6 +244,7 @@ fn main() {
         .add_plugins(ui::PipelineWatchPlugin)
         .add_plugins(audio::GameAudioPlugin)
         .add_plugins(convert::BlendMaterialPlugin)
+        .add_plugins(convert::TransparentOrderPlugin)
         .add_plugins(pfx::SoftMaterialPlugin)
         .add_plugins(uber::UberPlugin)
         .add_plugins(cloak::CloakPlugin)
@@ -665,6 +666,7 @@ fn setup(
             let reflections = env::Reflections::load(&bsp, &mut images);
             reflections.spawn_probes(&mut commands, root);
             commands.insert_resource(reflections);
+            commands.insert_resource(pfx::ParticleLight::load(&bsp));
         }
         Err(e) => log::error!("map {}: {e:#}", args.map),
     }

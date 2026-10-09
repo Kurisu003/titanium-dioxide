@@ -168,6 +168,11 @@ pub fn spawn_world(
         if page >= 0 {
             commands.entity(e).insert(bevy::pbr::Lightmap { image: pages[page as usize].clone(), uv_rect: Rect::new(0.0, 0.0, 1.0, 1.0), bicubic_sampling: false });
         }
+        if blend {
+            // Translucent world surfaces (dirt and grime overlays on the ground, decals, glass)
+            // draw before every other translucent thing (see `convert::TransparentOrder`).
+            commands.entity(e).insert(convert::TransparentOrder::WORLD);
+        }
         commands.entity(root).add_child(e);
     }
     log::info!("sky materials: {sky_names:?}");
