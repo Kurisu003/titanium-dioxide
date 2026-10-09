@@ -790,6 +790,28 @@ pub fn simulate(
 }
 
 /// Choose and weight BT's locomotion clips from his velocity, and aim his gun arm.
+/// BT's mirrored clips (see `drive_animation`), made once.
+fn mirror_bt_clips(actor: &mut Actor) {
+    if actor.mirror.is_none() {
+        actor.enable_mirror();
+        actor.add_mirrored(
+            &["bt_combat_idle", "bt_casual_idle", "bt_combat_walk_forward", "bt_combat_walk_backward", "bt_combat_walk_left", "bt_combat_walk_right", "bt_combat_sprint_forward_noaim", "bt_vortex_arm_pose_add", "bt_vortex_ion_arm_pose_add"],
+            &["combat_aim_stand", "combat_aim_run"],
+        );
+    }
+}
+
+/// Make BT's mirrored clips under the loading screen rather than on the first frame of play.
+pub fn prepare_mirrored_clips(titans: Query<&PlayerTitan>, mut actors: Query<&mut Actor>) {
+    for t in &titans {
+        if let Ok(mut actor) = actors.get_mut(t.actor) {
+            if actor.mirror.is_none() && !actor.clips.is_empty() {
+                mirror_bt_clips(&mut actor);
+            }
+        }
+    }
+}
+
 pub fn drive_animation(
     mut commands: Commands,
     time: Res<Time>,
@@ -818,13 +840,8 @@ pub fn drive_animation(
         // those clips (`<name>#m`), gun in the right hand, the Vortex in the left. The MP crouch
         // set is right-handed already and scripted sequences stay as they are (they're synced
         // with the pilot's).
-        if actor.mirror.is_none() {
-            actor.enable_mirror();
-            actor.add_mirrored(
-                &["bt_combat_idle", "bt_casual_idle", "bt_combat_walk_forward", "bt_combat_walk_backward", "bt_combat_walk_left", "bt_combat_walk_right", "bt_combat_sprint_forward_noaim", "bt_vortex_arm_pose_add", "bt_vortex_ion_arm_pose_add"],
-                &["combat_aim_stand", "combat_aim_run"],
-            );
-        }
+        // (Built under the loading screen by `prepare_mirrored_clips`; this is the fallback.)
+        mirror_bt_clips(&mut actor);
         let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
         let left = Vec2::new(-s.yaw.sin(), s.yaw.cos());
         let v = Vec2::new(s.vel.x, s.vel.y);

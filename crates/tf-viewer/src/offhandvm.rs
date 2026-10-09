@@ -89,11 +89,11 @@ fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> 
 /// Spawn, animate and place the current kit's offhand viewmodels, on the gun viewmodel's eye
 /// frame so they share the gun's sway.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn offhand_viewmodels(
+/// Spawn the kit's offhand viewmodels the first time the kit is used: under the loading
+/// screen for the starting kit (loading them took 225 ms on the first frame of play), and
+/// after a kit change.
+pub fn spawn_offhand_viewmodels(
     mut commands: Commands,
-    time: Res<Time>,
-    mode: Res<CameraMode>,
-    control: Res<crate::pilotctl::Control>,
     kit: Res<crate::titankit::ActiveKit>,
     mut offhands: ResMut<Offhands>,
     gd: Res<crate::gamedata::GameData>,
@@ -105,16 +105,12 @@ pub fn offhand_viewmodels(
         ResMut<Assets<StandardMaterial>>,
         ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     ),
-    mut titans: Query<(&mut Weapon, &crate::combat::Vortex, &crate::abilities::Ordnance, &crate::abilities::TitanCore, &crate::titankit::KitState), With<PlayerTitan>>,
-    mut actors: Query<&mut Actor>,
-    mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
-    merges: Query<(Entity, &BoneMergeTo, Has<BoneMergeSplit>)>,
+    titans: Query<(), With<PlayerTitan>>,
 ) {
-    use crate::titankit::{DefKind, OrdKind};
-    let Ok((mut w, vortex, ord, core, st)) = titans.single_mut() else { return };
+    if titans.single().is_err() {
+        return;
+    }
     let scripts = crate::titankit::kit_scripts(&kit);
-
-    // Spawn the kit's offhand viewmodels the first time the kit is used.
     let Some(root) = root else { return };
     let o = &mut *offhands;
     for script in scripts {
@@ -149,6 +145,28 @@ pub fn offhand_viewmodels(
         log::info!("offhand viewmodel for {script}: {def:?}");
         o.insts.push(Inst { script, def, anchor, actor: vm.entity, arms, phase: Phase::Hidden, t: 0.0 });
     }
+}
+
+pub fn offhand_viewmodels(
+    mut commands: Commands,
+    time: Res<Time>,
+    mode: Res<CameraMode>,
+    control: Res<crate::pilotctl::Control>,
+    kit: Res<crate::titankit::ActiveKit>,
+    mut offhands: ResMut<Offhands>,
+    root: Option<Res<crate::pilotweapon::WorldRoot>>,
+    mut titans: Query<(&mut Weapon, &crate::combat::Vortex, &crate::abilities::Ordnance, &crate::abilities::TitanCore, &crate::titankit::KitState), With<PlayerTitan>>,
+    mut actors: Query<&mut Actor>,
+    mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
+    merges: Query<(Entity, &BoneMergeTo, Has<BoneMergeSplit>)>,
+) {
+    use crate::titankit::{DefKind, OrdKind};
+    let Ok((mut w, vortex, ord, core, st)) = titans.single_mut() else { return };
+    let scripts = crate::titankit::kit_scripts(&kit);
+    if root.is_none() {
+        return;
+    }
+    let o = &mut *offhands;
 
     // What each slot (ordnance, defensive, utility, core) is doing: (held, used this frame,
     // firing). A core is held while it charges; the Laser Core's beam and the Salvo Core's

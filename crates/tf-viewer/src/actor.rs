@@ -395,16 +395,24 @@ impl Actor {
         let mut all: Vec<Clip> = self.clips.iter().cloned().collect();
         let mut by_name = (*self.by_name).clone();
         let mut gmap: HashMap<String, AimGrid> = self.grids.iter().map(|(k, g)| (k.clone(), g.clone())).collect();
+        // Every mirrored clip is independent: build them on all cores (BT's set took 190 ms
+        // on one), then add them in the same order.
+        let mut jobs: Vec<(usize, bool)> = clips.iter().filter_map(|name| self.clip(name)).map(|c| (c, true)).collect();
+        for name in grids {
+            let Some(g) = self.grids.get(*name) else { continue };
+            jobs.extend(g.clips.iter().map(|&c| (c, g.post)));
+        }
+        let mut mirrored = crate::world::parallel_map(&jobs, |&(c, post)| self.mirrored_clip(&self.clips[c], post)).into_iter().map(|c| c.expect("mirrored clip"));
         for name in clips {
-            let Some(c) = self.clip(name) else { continue };
+            let Some(_) = self.clip(name) else { continue };
             by_name.insert(format!("{}#m", name.to_ascii_lowercase()), all.len());
-            all.push(self.mirrored_clip(&self.clips[c], true));
+            all.push(mirrored.next().expect("mirrored clip"));
         }
         for name in grids {
             let Some(g) = self.grids.get(*name) else { continue };
             let mut ng = g.clone();
-            ng.clips = g.clips.iter().map(|&c| {
-                all.push(self.mirrored_clip(&self.clips[c], g.post));
+            ng.clips = g.clips.iter().map(|_| {
+                all.push(mirrored.next().expect("mirrored clip"));
                 all.len() - 1
             }).collect();
             gmap.insert(format!("{name}#m"), ng);
