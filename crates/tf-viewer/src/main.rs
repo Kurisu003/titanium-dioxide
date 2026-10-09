@@ -576,6 +576,16 @@ fn titan_params(gd: &GameData, path: &str) -> TitanParams {
     }
 }
 
+/// Load profiling: each `mark` logs the time since the previous one.
+struct Phases(std::time::Instant);
+
+impl Phases {
+    fn mark(&mut self, what: &str) {
+        log::info!("load phase: {what} {:?}", self.0.elapsed());
+        self.0 = std::time::Instant::now();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
@@ -588,6 +598,7 @@ fn setup(
     mut blends: ResMut<Assets<convert::BlendMaterial>>,
 ) {
     let t = std::time::Instant::now();
+    let mut ph = Phases(t);
     let mut gd = GameData::new(&args.game);
     // frontend holds resource/ files such as the closed captions.
     for v in [args.map.as_str(), "sp_beacon", "mp_common", "frontend"] {
@@ -605,6 +616,7 @@ fn setup(
             gd.add_rpak_patches(stem);
         }
     }
+    ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());
     let params = titan_params(&gd, "scripts/players/mp/titan_buddy.set");
@@ -644,6 +656,7 @@ fn setup(
         );
     }
     commands.insert_resource(args.difficulty);
+    ph.mark("settings and kits");
     let mut sfx = audio::Sfx::open(&args.game);
     let ts = std::time::Instant::now();
     let mut cues: Vec<audio::Cue> = audio::ALL_CUES.to_vec();
@@ -654,6 +667,7 @@ fn setup(
     sfx.preload_code_events();
     log::info!("sounds decoded in {:?}", ts.elapsed());
     commands.insert_resource(sfx);
+    ph.mark("sounds");
     if let Some(v) = args.volume {
         commands.insert_resource(crate::audio::MasterVolume::new(bevy::audio::Volume::Linear(v.clamp(0.0, 1.0))));
     }
@@ -681,6 +695,7 @@ fn setup(
     let mut sweep: Option<CollisionWorld> = None;
     match gd.read_map(&args.map) {
         Ok(bsp) => {
+            ph.mark("bsp read");
             world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
             if std::env::var_os("TF_NO_MAP_COLLISION").is_none() {
                 world::add_game_collision(&bsp, &mut collision);
@@ -692,10 +707,12 @@ fn setup(
                 world::add_game_collision(&bsp, &mut extra);
                 sweep = Some(extra);
             }
+            ph.mark("world and map collision");
             if args.props {
                 world::spawn_static_props(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
                 sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
             }
+            ph.mark("props and sky");
             // Baked probes replace the flat ambient term for everything without a lightmap.
             if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images) {
                 commands.insert_resource(GlobalAmbientLight { brightness: 0.0, ..map_env.ambient() });
@@ -707,6 +724,7 @@ fn setup(
         }
         Err(e) => log::error!("map {}: {e:#}", args.map),
     }
+    ph.mark("probes, reflections, particle light");
     let tb = std::time::Instant::now();
     collision.finish();
     log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
@@ -721,6 +739,7 @@ fn setup(
         world::collision_sweep(&collision, &extra);
     }
 
+    ph.mark("collision BVH");
     let (mut bt_pos, bt_yaw, placements) = match titan_spawn(&gd, &args.map) {
         Some((p, y)) => (p, y, Vec::new()),
         None => campaign_arena(&gd, &args.map).unwrap_or((Vec3::ZERO, 0.0, Vec::new())),
@@ -844,6 +863,7 @@ fn setup(
         }
         Err(e) => log::warn!("viewmodel: {e:#}"),
     }
+    ph.mark("BT, cockpit, viewmodel");
     let mut world_gun = None;
     if let Some(hand) = bt.as_ref().ok().and_then(|b| b.joint("ja_c_propGun")) {
         commands.insert_resource(weapons::BtHand(hand));
@@ -892,8 +912,11 @@ fn setup(
     let bt_ground = collision.raycast(sv(bt_pos + Vec3::Z * 50.0), down, 2000.0).map(|h| h.point.z).unwrap_or(bt_pos.z);
     // The game's navmesh where the map ships one (campaign maps); a grid probed from the
     // collision mesh around the arena otherwise (MP maps have no client navmesh).
+    ph.mark("world gun, pilot");
     let nav_titan = nav::Nav::load(&gd, &args.map, "large").unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 6000.0, nav::Agent::TITAN));
+    ph.mark("titan nav");
     let nav_small = nav::Nav::load(&gd, &args.map, "small").unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 4000.0, nav::Agent::GRUNT));
+    ph.mark("grunt nav");
     let mut spots: Vec<Vec3> = Vec::new();
     // The campaign's own Titan placements near the arena come first.
     for p in placements.iter().filter(|p| p.distance(bt_pos) > 1200.0 && p.distance(bt_pos) < 6000.0) {
@@ -923,6 +946,7 @@ fn setup(
     }
     // Only spots a Titan can walk to the player from (a gantry or a roof the ring probes
     // landed on would leave it pacing up there).
+    ph.mark("spawn spot probes");
     let reachable: Vec<Vec3> = spots.iter().copied().filter(|s| nav_titan.path(*s, bt_pos).is_some()).collect();
     if reachable.len() < spots.len() {
         log::info!("{} of {} enemy spawn spots have no walking route to the player, dropped", spots.len() - reachable.len(), spots.len());
@@ -939,6 +963,7 @@ fn setup(
 
     // A pool of enemy Titans, two of each class (hidden until a wave needs them), each holding
     // its class's weapon.
+    ph.mark("spawn spot routes");
     let mut prefetch: Vec<String> = kits.iter().flat_map(|k| [k.model.clone(), k.weapon.playermodel.clone()]).collect();
     prefetch.sort();
     prefetch.dedup();
@@ -992,6 +1017,7 @@ fn setup(
             Err(e) => log::warn!("enemy titan: {e:#}"),
         }
     }
+    ph.mark("enemies");
     if !cache.missing_materials.is_empty() {
         log::warn!("{} materials not found, e.g. {:?}", cache.missing_materials.len(), &cache.missing_materials[..cache.missing_materials.len().min(8)]);
     }
@@ -1037,6 +1063,7 @@ fn setup(
     // The sun also lights the first-person models (their own camera and layer, vmcam.rs).
     commands.spawn((map_env.sun(), bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER])));
     vmcam::spawn_camera(&mut commands);
+    ph.mark("rest");
     log::info!(
         "texture loads {:.2}s, spec/gloss {:.2}s",
         convert::TEX_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,

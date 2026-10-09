@@ -339,8 +339,11 @@ impl GridNav {
         }
         log::info!("nav grid: {n}x{n} cells of {} around {:.0}, {walkable} walkable surfaces in {:?}", agent.cell, center, t.elapsed());
         let mut grid = Self { origin, n, agent, layers, connected: HashMap::new(), blocked: HashMap::new() };
+        let t = std::time::Instant::now();
         grid.probe_edges(world);
+        let t_edges = t.elapsed();
         grid.label_components();
+        log::info!("nav grid: edges probed in {t_edges:?}, components in {:?}", t.elapsed() - t_edges);
         // TF_NAV_DUMP=<dir>: a PGM per grid (brightness = surfaces per cell, 0 = none).
         if let Ok(dir) = std::env::var("TF_NAV_DUMP") {
             let mut out = format!("P2\n{n} {n}\n255\n");

@@ -119,6 +119,11 @@ pub fn spawn_world(
         tris += m.num_triangles as usize;
     }
     let n = batches.len();
+    // In key order, so the collision triangles (and with them the BVH, the nav grids' probes
+    // and anything else that breaks ties by triangle order) are the same on every run: a
+    // HashMap's order changes from run to run.
+    let mut batches: Vec<_> = batches.into_iter().collect();
+    batches.sort_unstable_by_key(|(k, _)| *k);
     // Collision on this thread, then the meshes (tangent generation is most of the work) on
     // every core.
     let batches: Vec<((i16, bool, i16), std::sync::Mutex<Option<Batch>>)> = batches
