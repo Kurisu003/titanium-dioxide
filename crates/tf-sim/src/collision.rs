@@ -206,7 +206,10 @@ fn half_area(lo: Vec3, hi: Vec3) -> f32 {
     e.x * e.y + e.y * e.z + e.z * e.x
 }
 
-fn bounds_of(prims: &[Node]) -> (Vec3, Vec3) {
+/// A box's min and max corners.
+type Bounds = (Vec3, Vec3);
+
+fn bounds_of(prims: &[Node]) -> Bounds {
     prims.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| (lo.min(p.min), hi.max(p.max)))
 }
 
@@ -225,9 +228,7 @@ impl Bins {
 
     fn add(&mut self, prims: &[Node], clo: Vec3, scale: Vec3) {
         for p in prims {
-            let b = bin_of(p, clo, scale);
-            for axis in 0..3 {
-                let i = b[axis];
+            for (axis, &i) in bin_of(p, clo, scale).iter().enumerate() {
                 self.lo[axis][i] = self.lo[axis][i].min(p.min);
                 self.hi[axis][i] = self.hi[axis][i].max(p.max);
                 self.n[axis][i] += 1;
@@ -246,7 +247,7 @@ impl Bins {
     }
 
     /// Bounds of bins `range` on `axis`.
-    fn bounds(&self, axis: usize, range: std::ops::Range<usize>) -> (Vec3, Vec3) {
+    fn bounds(&self, axis: usize, range: std::ops::Range<usize>) -> Bounds {
         range.fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), i| (lo.min(self.lo[axis][i]), hi.max(self.hi[axis][i])))
     }
 }
@@ -271,7 +272,7 @@ const SAH_PAR_BIN: usize = 1 << 16;
 
 /// Reorder `prims` into the two halves of a binned-SAH split (on box centres) and return the
 /// left half's size and both halves' bounds, or None for a leaf.
-fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, (Vec3, Vec3), (Vec3, Vec3))> {
+fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, Bounds, Bounds)> {
     let n = prims.len();
     if n <= SAH_LEAF {
         return None;
@@ -356,7 +357,7 @@ enum SahPart {
 }
 
 /// Build the search subtree over `prims` (bounds `lo..hi`, starting at `base` in the leaf list).
-fn sah_part(prims: &mut [Node], (lo, hi): (Vec3, Vec3), base: u32, depth: usize) -> SahPart {
+fn sah_part(prims: &mut [Node], (lo, hi): Bounds, base: u32, depth: usize) -> SahPart {
     if depth < SAH_PAR_DEPTH && prims.len() > 4096 {
         if let Some((mid, lb, rb)) = sah_split(prims, depth) {
             let (l, r) = prims.split_at_mut(mid);
@@ -739,7 +740,7 @@ impl CollisionWorld {
             }
         }
         let found = found.as_mut_slice();
-        found.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        found.sort_unstable_by_key(|&(start, _)| std::cmp::Reverse(start));
         for &(start, count) in found.iter() {
             for &i in &bvh.order[start as usize..(start + count) as usize] {
                 f(&self.tris[i as usize]);
