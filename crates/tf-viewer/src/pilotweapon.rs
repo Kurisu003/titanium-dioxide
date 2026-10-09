@@ -818,7 +818,8 @@ pub fn pilot_weapon_fire(
         g.fire_t += dt;
     }
     if *control == Control::Pilot {
-        punch.step(dt, lo.guns.get(lo.active).map(|g| &g.def.kick));
+        let g = lo.guns.get(lo.active);
+        punch.step(dt, g.map(|g| &g.def.kick), g.map_or(0.0, |g| g.ads));
     }
     if *control != Control::Pilot || *mode == CameraMode::Free || lo.guns.is_empty() || rodeo.riding() {
         for g in &mut lo.guns {
@@ -1599,8 +1600,11 @@ pub fn pilot_viewmodel(
         if let Some(c) = sprint_clip {
             layers.push(Layer { clip: c, cycle: lo.vm_cycle, weight: sprint_blend });
         }
-        if let Some(g) = actor.grids.get("attack_seq") {
-            for (i, wgt) in [(0usize, 1.0 - ads), (1, ads)] {
+        if let Some(g) = actor.grids.get("attack_seq").filter(|_| !vm_off("fire")) {
+            // A new sequence blends in over its fadeintime (Source's sequence transitioner;
+            // 0.05 s for the guns' attack_seq), so a shot's kick doesn't start at full weight.
+            let fade = (fire_t / g.fade_in.max(1e-3)).min(1.0);
+            for (i, wgt) in [(0usize, (1.0 - ads) * fade), (1, ads * fade)] {
                 if let Some(&c) = g.clips.get(i) {
                     let d = actor.clips[c].duration.max(1e-3);
                     if fire_t < d {
@@ -1659,9 +1663,11 @@ pub fn pilot_viewmodel(
             *v = if on { Visibility::Inherited } else { Visibility::Hidden };
         }
     }
-    // Sway, bob and the gun's share of the recoil turn the viewmodel about its sway pivot
-    // (SWAY_ROTATE on the weapon bone; SWAY_ROTATE_ZOOMED far out along the barrel in ADS, so
-    // the sight stays on the aim point).
+    // Sway and bob turn the viewmodel about its sway pivot (SWAY_ROTATE on the weapon bone;
+    // SWAY_ROTATE_ZOOMED far out along the barrel in ADS, so the sight stays on the aim point).
+    // The gun's share of the recoil turns it about its origin, the eye: client.dll adds the
+    // punch (0x1802c7360) to the viewmodel's angles after its origin is placed (0x1800d2685).
+    // About the far ADS pivot a 0.5 degree kick up swung the whole gun down off the sight.
     let pivot_of = |a: &Actor, (bone, off): &(String, Vec3)| a.bone_model_transform(bone).map(|t| t.transform_point(*off));
     let hp = pivot_of(&actor, &pivots[0]).unwrap_or(offset);
     let zp = pivot_of(&actor, &pivots[1]).unwrap_or(hp);
@@ -1671,12 +1677,13 @@ pub fn pilot_viewmodel(
     let vel = Vec3::new(s.vel.x * cy + s.vel.y * sy, -s.vel.x * sy + s.vel.y * cy, s.vel.z);
     let inp = crate::vmmotion::MotionInput { yaw: s.yaw, pitch: s.pitch, vel, on_ground, bob: sprint_blend < 0.5, ads };
     let off = if vm_off("sway") { crate::vmmotion::VmOffset { rot: Vec3::ZERO, trans: Vec3::ZERO } } else { lo.vm_motion.step(&def, &inp, dt) };
-    let rs = crate::vmmotion::angles_quat(off.rot + punch.vm);
+    let rs = crate::vmmotion::angles_quat(off.rot);
+    let rp = crate::vmmotion::angles_quat(if vm_off("punch") { Vec3::ZERO } else { punch.vm });
     // viewmodel_offset_hip/_ads, (right, forward, up) in the view.
     let (oh, oa) = vm_offset;
     let o = oh.lerp(oa, ads);
     let script_off = Vec3::new(o.y, -o.x, o.z);
-    place.0.push((anchor, Transform::from_translation(-offset + script_off + pivot + off.trans + punch.vm_shake - rs * pivot).with_rotation(rs)));
+    place.0.push((anchor, Transform::from_translation(script_off + off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot)).with_rotation(rp * rs)));
 }
 
 /// Where each shown first-person model sits in the view frame (camera bone at the eye),

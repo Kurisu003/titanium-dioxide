@@ -149,6 +149,8 @@ pub struct AimGrid {
     /// `STUDIO_POST` (0x10): the delta is applied in the bone's local frame (base * delta)
     /// instead of before it (delta * base).
     pub post: bool,
+    /// The sequence's `fadeintime`: a newly started one blends in over this long.
+    pub fade_in: f32,
 }
 
 /// The body part a mesh belongs to (for showing and hiding bodygroups at run time).
@@ -816,6 +818,7 @@ fn build_template(
                 x_range: (f(0x54), f(0x5C)),
                 y_range: (f(0x58), f(0x60)),
                 post: seq.flags & 0x10 != 0,
+                fade_in: seq.fade_in,
             })
         })();
         match r {

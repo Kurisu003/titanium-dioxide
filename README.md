@@ -419,16 +419,27 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   No firing meanwhile.
 - **Hit feedback:** hit markers and the game's `hitbeep2`.
 - **Weapon feel** (`vmmotion.rs`; the keys are the scripts', how the engine combines them is
-  reconstructed because that code is compiled):
+  reconstructed from client.dll where noted, otherwise guessed):
   - Recoil uses each weapon's `viewkick_*` keys with the spring its `viewkick_spring` names in
-    `scripts/weapons/springs.txt` (hip-fire and ADS constants per axis, blended by zoom). A
-    shot's pitch, yaw (outside `innerexclude`) and roll are scaled by the kick ramp
+    `scripts/weapons/springs.txt` (hip-fire and ADS constants per axis, blended by zoom). As in
+    client.dll's fire kick, a shot's pitch and yaw are the base plus or minus a random amount
+    between half the `innerexclude` and half the `random` range, and its roll is plus or minus
+    `randomMin`..`randomMax`. Pitch and yaw (not roll) are scaled by the kick ramp
     (`viewkick_scale_min/max`, `valuePerShot`, lerp window, decay delay and rate, first-shot
-    scale, `duck_scale`). The hard part moves the angle at once and the soft part pushes the
-    spring (Source's `ViewPunch` factor of 20). `weaponFraction` of the kick moves the gun
-    instead of the view, times its `vmScale`. `viewkick_perm_*` stays in the aim. The view
-    rolls with the kick. Guesses: random pitch is symmetric around the base, missing springs
-    fall back to Source's 65/9.
+    scale, `duck_scale`); keys a script leaves out take the engine's defaults (soft scales,
+    `vmScale`s and the value keys 0, so with no lerp window the kick is at its max scale). The
+    hard part moves the angle at once and the soft part pushes the spring (velocity += 20 x
+    soft). The whole kick goes into one weapon punch spring, split by `weaponFraction`
+    (blended hip to ADS by the current zoom): the camera (and the shots, which follow it) gets
+    pitch and yaw times (1 − fraction) and the whole roll, and the viewmodel gets pitch and yaw
+    times fraction times `vmScale` with the roll undone, turning the gun about the eye (client.dll
+    adds it to the viewmodel's angles after placing it; turned about the far ADS sway pivot, a
+    small kick up swung the whole gun down off the sight). `viewmodel_shake_*` moves the gun along
+    its forward, up and right axes by the punch roll over 3 degrees
+    (`viewmodelShake_sourceRollRange`), so it buzzes with the roll spring. `viewkick_perm_*`
+    stays in the aim. A gun's fire animation (`attack_seq`, the hip and ADS clips blended by
+    zoom) fades in over the sequence's fade time (0.05 s). Guesses: duck, move and air scales
+    are only partly modelled, and missing springs fall back to Source's 65/9.
   - Viewmodels sway from `sway_*` (turn and move pushes, clamps, gains; `_zoomed` variants in
     ADS, where keys a script leaves out are 0) about the `sway_rotate_attach` attachment
     (`SWAY_ROTATE_ZOOMED` sits far along the barrel, so ADS sway keeps the sight on target).

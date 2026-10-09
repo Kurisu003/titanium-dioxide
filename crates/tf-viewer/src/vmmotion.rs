@@ -65,6 +65,8 @@ pub struct KickDef {
     /// (base, random, softScale, hardScale) for pitch and yaw.
     pub pitch: [f32; 4],
     pub yaw: [f32; 4],
+    /// `viewkick_*_random_innerexclude`: the smallest random kick (pitch, yaw).
+    pub pitch_inner_exclude: f32,
     pub yaw_inner_exclude: f32,
     /// (base, randomMin, randomMax, softScale, hardScale).
     pub roll: [f32; 5],
@@ -83,7 +85,8 @@ pub struct KickDef {
     pub perm_pitch: (f32, f32),
     pub perm_yaw: (f32, f32),
     pub duck_scale: f32,
-    /// `viewmodel_shake_forward`, `_up`, `_right`: how far a shot jolts the gun (units).
+    /// `viewmodel_shake_forward`, `_up`, `_right`: how far the gun moves per unit of punch
+    /// roll (see `ViewPunch::vm_shake`).
     pub vm_shake: Vec3,
 }
 
@@ -92,20 +95,22 @@ impl KickDef {
         let f = |k: &str, d: f32| val(s, k).unwrap_or(d);
         Self {
             spring: s.get("sp_base.viewkick_spring").or_else(|| s.get(".viewkick_spring")).unwrap_or("").trim().to_ascii_lowercase(),
-            pitch: [f("viewkick_pitch_base", 0.0), f("viewkick_pitch_random", 0.0), f("viewkick_pitch_softscale", 1.0), f("viewkick_pitch_hardscale", 0.0)],
-            yaw: [f("viewkick_yaw_base", 0.0), f("viewkick_yaw_random", 0.0), f("viewkick_yaw_softscale", 1.0), f("viewkick_yaw_hardscale", 0.0)],
+            pitch: [f("viewkick_pitch_base", 0.0), f("viewkick_pitch_random", 0.0), f("viewkick_pitch_softscale", 0.0), f("viewkick_pitch_hardscale", 0.0)],
+            yaw: [f("viewkick_yaw_base", 0.0), f("viewkick_yaw_random", 0.0), f("viewkick_yaw_softscale", 0.0), f("viewkick_yaw_hardscale", 0.0)],
+            pitch_inner_exclude: f("viewkick_pitch_random_innerexclude", 0.0),
             yaw_inner_exclude: f("viewkick_yaw_random_innerexclude", 0.0),
-            roll: [f("viewkick_roll_base", 0.0), f("viewkick_roll_randommin", 0.0), f("viewkick_roll_randommax", 0.0), f("viewkick_roll_softscale", 1.0), f("viewkick_roll_hardscale", 0.0)],
-            hip_fraction: (f("viewkick_hipfire_weaponfraction", 0.0), f("viewkick_hipfire_weaponfraction_vmscale", 1.0)),
-            ads_fraction: (f("viewkick_ads_weaponfraction", 0.0), f("viewkick_ads_weaponfraction_vmscale", 1.0)),
-            first_hip: val(s, "viewkick_scale_firstshot_hipfire"),
-            first_ads: val(s, "viewkick_scale_firstshot_ads"),
+            roll: [f("viewkick_roll_base", 0.0), f("viewkick_roll_randommin", 0.0), f("viewkick_roll_randommax", 0.0), f("viewkick_roll_softscale", 0.0), f("viewkick_roll_hardscale", 0.0)],
+            hip_fraction: (f("viewkick_hipfire_weaponfraction", 0.0), f("viewkick_hipfire_weaponfraction_vmscale", 0.0)),
+            ads_fraction: (f("viewkick_ads_weaponfraction", 0.0), f("viewkick_ads_weaponfraction_vmscale", 0.0)),
+            // A first-shot scale of 0 (the default) isn't used (client.dll 0x1805a7990).
+            first_hip: val(s, "viewkick_scale_firstshot_hipfire").filter(|&v| v != 0.0),
+            first_ads: val(s, "viewkick_scale_firstshot_ads").filter(|&v| v != 0.0),
             scale_hip: (f("viewkick_scale_min_hipfire", 1.0), f("viewkick_scale_max_hipfire", 1.0)),
             scale_ads: (f("viewkick_scale_min_ads", 1.0), f("viewkick_scale_max_ads", 1.0)),
-            per_shot: f("viewkick_scale_valuepershot", 1.0),
-            lerp: (f("viewkick_scale_valuelerpstart", 0.0), f("viewkick_scale_valuelerpend", 1.0)),
-            decay_delay: f("viewkick_scale_valuedecaydelay", 0.2),
-            decay_rate: f("viewkick_scale_valuedecayrate", 10.0),
+            per_shot: f("viewkick_scale_valuepershot", 0.0),
+            lerp: (f("viewkick_scale_valuelerpstart", 0.0), f("viewkick_scale_valuelerpend", 0.0)),
+            decay_delay: f("viewkick_scale_valuedecaydelay", 0.0),
+            decay_rate: f("viewkick_scale_valuedecayrate", 0.0),
             perm_pitch: (f("viewkick_perm_pitch_base", 0.0), f("viewkick_perm_pitch_random", 0.0)),
             perm_yaw: (f("viewkick_perm_yaw_base", 0.0), f("viewkick_perm_yaw_random", 0.0)),
             duck_scale: f("viewkick_duck_scale", 1.0),
@@ -114,31 +119,45 @@ impl KickDef {
     }
 }
 
-/// How fast a shot's viewmodel jolt dies away (per second).
-const VM_SHAKE_DECAY: f32 = 25.0;
+/// ConVar `viewmodelShake_sourceRollRange` (3): the punch roll (degrees) that gives one unit of
+/// `viewmodel_shake_*`.
+const VM_SHAKE_ROLL_RANGE: f32 = 3.0;
 
-/// Recoil state: the view's punch (added to the aim) and the viewmodel's, each a damped
-/// spring per axis, and the per-shot kick scale.
+/// Recoil state, as client.dll keeps it: the shot kicks one "weapon punch" spring (player
+/// m_vecPunchWeapon_Angle / _AngleVel), stepped with the weapon's `viewkick_spring`, its hip
+/// and ADS settings blended by the current zoom (0x1805a9380 and the punch update at
+/// 0x1801f5210). What each part sees is split by the weapon fraction, blended hip to ADS by
+/// the current zoom (weapon +0x1b40..0x1b4c):
+/// - the camera, and with it the shots: pitch and yaw x (1 - fraction), the whole roll
+///   (0x1802c7260, the view's punch);
+/// - the viewmodel: pitch and yaw x fraction x vmScale, the roll undone (0x1802c7360).
+/// (A function giving pitch and yaw x fraction alone, 0x1802c71c0, has no callers in either
+/// dll. Source's base view punch, its own 65/9 spring, isn't kicked by shots.)
 #[derive(Resource, Default, Clone)]
 pub struct ViewPunch {
-    /// View punch angles (degrees): added to the player's aim.
+    /// Camera punch angles (degrees): added to the view.
     pub pitch: f32,
     pub yaw: f32,
     pub roll: f32,
-    vel: Vec3,
-    /// Viewmodel kick angles (pitch, yaw, roll) and their spring velocity.
+    /// Viewmodel kick angles (pitch, yaw, roll).
     pub vm: Vec3,
-    vm_vel: Vec3,
+    /// The weapon punch spring: angles (pitch, yaw, roll) and velocity.
+    ang: Vec3,
+    vel: Vec3,
     springs: (SpringAxes, SpringAxes),
-    /// How zoomed the gun was at the last shot (blends the hip and ADS springs).
-    ads: f32,
+    /// Weapon fraction and its vmScale, hip and ADS, of the gun that last fired.
+    fractions: ((f32, f32), (f32, f32)),
     /// `viewkick_scale_value` and seconds since the last shot.
     value: f32,
     since_shot: f32,
     /// Permanent aim change not yet taken by the aim (pitch, yaw), degrees.
     pub perm: Vec2,
-    /// The gun's shot jolt (view frame: forward, left, up), decaying.
+    /// The gun's shot shake (view frame: forward, left, up): the weapon's `viewmodel_shake_*`
+    /// times the punch roll over `viewmodelShake_sourceRollRange`, clamped to +-3, so it
+    /// buzzes with the roll spring (client.dll 0x1800d23a3, viewmodel placement).
     pub vm_shake: Vec3,
+    /// `viewmodel_shake_*` of the gun that last fired (forward, up, right).
+    shake: Vec3,
 }
 
 impl ViewPunch {
@@ -146,9 +165,11 @@ impl ViewPunch {
     /// numbers in 0..1.
     pub fn kick(&mut self, def: &KickDef, springs: &WeaponSprings, ads: f32, crouched: bool, extra: f32, r: [f32; 4]) {
         self.springs = springs.0.get(&def.spring).copied().unwrap_or_default();
-        self.ads = ads;
-        // Kick scale ramps from min to max as shots pile up (value per shot, lerp window).
-        let t = ((self.value - def.lerp.0) / (def.lerp.1 - def.lerp.0).max(1e-3)).clamp(0.0, 1.0);
+        self.fractions = (def.hip_fraction, def.ads_fraction);
+        // Kick scale ramps from min to max as shots pile up (value per shot, lerp window); with
+        // no window (start = end, the default) it is the max (client.dll 0x1805a7990).
+        let w = def.lerp.1 - def.lerp.0;
+        let t = if w == 0.0 { 1.0 } else { ((self.value - def.lerp.0) / w).clamp(0.0, 1.0) };
         let first = self.value <= 0.0;
         let hip = if first { def.first_hip.unwrap_or(def.scale_hip.0) } else { def.scale_hip.0 + (def.scale_hip.1 - def.scale_hip.0) * t };
         let ads_s = if first { def.first_ads.unwrap_or(def.scale_ads.0) } else { def.scale_ads.0 + (def.scale_ads.1 - def.scale_ads.0) * t };
@@ -159,56 +180,61 @@ impl ViewPunch {
         scale *= extra;
         self.value += def.per_shot;
         self.since_shot = 0.0;
-        let signed = |u: f32| u * 2.0 - 1.0;
-        let pitch = def.pitch[0] + def.pitch[1] * signed(r[0]);
-        // Yaw: random magnitude outside the inner exclusion, random side.
-        let mag = def.yaw_inner_exclude + (1.0 - def.yaw_inner_exclude) * r[1];
-        let yaw = def.yaw[0] + def.yaw[1] * mag * if r[2] < 0.5 { -1.0 } else { 1.0 };
-        let roll = def.roll[0] + (def.roll[1] + (def.roll[2] - def.roll[1]) * r[3]) * if r[1] < 0.5 { -1.0 } else { 1.0 };
-        let kick = Vec3::new(pitch, yaw, roll) * scale;
+        // client.dll 0x18059c350: pitch and yaw are base +- a random amount between half the
+        // inner exclusion and half the random range, on a random side; roll is +- randomMin..Max
+        // and isn't scaled by the kick scale (only by the weapon's own roll scale, here `extra`).
+        let side = |u: f32| if u < 0.5 { -1.0 } else { 1.0 };
+        let rand = |random: f32, inner: f32, u: f32| inner * 0.5 + (random * 0.5 - inner * 0.5) * u;
+        let pitch = def.pitch[0] + rand(def.pitch[1], def.pitch_inner_exclude, r[0]) * side(r[2]);
+        let yaw = def.yaw[0] + rand(def.yaw[1], def.yaw_inner_exclude, r[1]) * side(r[3]);
+        // (Sums of two of the four draws, wrapped, are new uniform draws for the roll.)
+        let (roll_u, roll_side) = ((r[0] + r[3]).fract(), (r[1] + r[2]).fract());
+        let roll = (def.roll[0] + (def.roll[1] + (def.roll[2] - def.roll[1]) * roll_u) * side(roll_side)) * extra;
+        let kick = Vec3::new(pitch * scale, yaw * scale, roll);
         let soft = kick * Vec3::new(def.pitch[2], def.yaw[2], def.roll[3]);
         let hard = kick * Vec3::new(def.pitch[3], def.yaw[3], def.roll[4]);
-        // Part of the kick moves the gun instead of the view (weaponFraction), scaled for the
-        // viewmodel by its vmScale.
-        let frac = def.hip_fraction.0 + (def.ads_fraction.0 - def.hip_fraction.0) * ads;
-        let vm_scale = def.hip_fraction.1 + (def.ads_fraction.1 - def.hip_fraction.1) * ads;
-        let view = 1.0 - frac;
-        // Hard kick moves the angle at once; soft kick pushes the spring (Source's ViewPunch:
-        // velocity += angle * 20).
-        self.pitch += hard.x * view;
-        self.yaw += hard.y * view;
-        self.roll += hard.z * view;
-        self.vel += soft * view * 20.0;
-        self.vm += hard * frac * vm_scale;
-        self.vm_vel += soft * frac * vm_scale * 20.0;
-        log::debug!("kick x{scale:.2} ({:.2} {:.2} {:.2}) view now ({:.2} {:.2} {:.2}) vel {:.1?} vm {:.2?}", kick.x, kick.y, kick.z, self.pitch, self.yaw, self.roll, self.vel, self.vm);
-        // Viewmodel shake: back along the barrel, and a random nudge up and sideways.
-        self.vm_shake = Vec3::new(-def.vm_shake.x * (0.5 + 0.5 * r[3]), def.vm_shake.z * signed(r[1]), def.vm_shake.y * signed(r[2]));
-        self.perm += Vec2::new(def.perm_pitch.0 + def.perm_pitch.1 * signed(r[0]), def.perm_yaw.0 + def.perm_yaw.1 * signed(r[2]));
+        // Hard kick moves the angle at once; soft kick pushes the spring (velocity += angle * 20,
+        // client.dll 0x1802cfc50).
+        self.ang += hard;
+        self.vel += soft * 20.0;
+        self.split(ads);
+        log::debug!("kick x{scale:.2} ({:.2} {:.2} {:.2}) punch now {:.2?} vel {:.1?}", kick.x, kick.y, kick.z, self.ang, self.vel);
+        self.shake = def.vm_shake;
+        // The permanent kick works the same way, times the kick scale.
+        self.perm += Vec2::new(def.perm_pitch.0 + rand(def.perm_pitch.1, 0.0, r[0]) * side(r[2]), def.perm_yaw.0 + rand(def.perm_yaw.1, 0.0, r[1]) * side(r[3])) * scale;
     }
 
-    /// Spring the punch back and decay the kick scale.
-    pub fn step(&mut self, dt: f32, def: Option<&KickDef>) {
+    /// The camera, shot and viewmodel shares of the weapon punch at zoom `ads`.
+    fn split(&mut self, ads: f32) {
+        let ((hf, hv), (af, av)) = self.fractions;
+        let frac = hf + (af - hf) * ads;
+        let vm_scale = hv + (av - hv) * ads;
+        self.pitch = self.ang.x * (1.0 - frac);
+        self.yaw = self.ang.y * (1.0 - frac);
+        self.roll = self.ang.z;
+        self.vm = Vec3::new(self.ang.x * frac * vm_scale, self.ang.y * frac * vm_scale, -self.ang.z);
+        let s = (self.ang.z / VM_SHAKE_ROLL_RANGE).clamp(-3.0, 3.0);
+        self.vm_shake = Vec3::new(self.shake.x, -self.shake.z, self.shake.y) * s;
+    }
+
+    /// Spring the punch back and decay the kick scale; `ads` is the gun's zoom now.
+    pub fn step(&mut self, dt: f32, def: Option<&KickDef>, ads: f32) {
         self.since_shot += dt;
-        let (delay, rate) = def.map(|d| (d.decay_delay, d.decay_rate)).unwrap_or((0.2, 10.0));
+        let (delay, rate) = def.map(|d| (d.decay_delay, d.decay_rate)).unwrap_or((0.0, 0.0));
         if self.since_shot > delay {
             self.value = (self.value - rate * dt).max(0.0);
         }
         let (h, a) = self.springs;
-        let k = h.k.lerp(a.k, self.ads);
-        let c = h.c.lerp(a.c, self.ads);
+        let k = h.k.lerp(a.k, ads);
+        let c = h.c.lerp(a.c, ads);
         // Stiff roll springs (k up to 28000) need small steps.
         let n = ((dt * 1000.0).ceil() as usize).clamp(1, 200);
         let h = dt / n as f32;
-        let mut ang = Vec3::new(self.pitch, self.yaw, self.roll);
         for _ in 0..n {
-            self.vel += (-k * ang - c * self.vel) * h;
-            ang += self.vel * h;
-            self.vm_vel += (-k * self.vm - c * self.vm_vel) * h;
-            self.vm += self.vm_vel * h;
+            self.vel += (-k * self.ang - c * self.vel) * h;
+            self.ang += self.vel * h;
         }
-        (self.pitch, self.yaw, self.roll) = (ang.x, ang.y, ang.z);
-        self.vm_shake *= (-VM_SHAKE_DECAY * dt).exp();
+        self.split(ads);
     }
 }
 
@@ -596,6 +622,37 @@ mod tests {
             s.step(&CockpitSwayDef::TITAN, yaw, 0.0, Vec3::ZERO, dt);
         }
         assert!(s.angles.y.abs() < 0.01, "{}", s.angles.y);
+    }
+
+    #[test]
+    fn weapon_punch_splits_by_fraction() {
+        // The Mozambique's kick: hip fraction 0.1 (vmScale 0), ADS fraction 1.0 (vmScale 0.15).
+        let def = KickDef {
+            pitch: [-2.25, 0.0, 1.4, 0.5],
+            yaw: [-0.95, 0.0, 1.5, 0.5],
+            roll: [0.0, 0.6, 0.6, 0.2, 2.75],
+            hip_fraction: (0.1, 0.0),
+            ads_fraction: (1.0, 0.15),
+            scale_hip: (1.0, 1.0),
+            scale_ads: (1.0, 1.0),
+            per_shot: 1.0,
+            lerp: (0.0, 1.0),
+            duck_scale: 1.0,
+            ..Default::default()
+        };
+        let springs = WeaponSprings::default();
+        // Aimed down the sights: the camera keeps still in pitch and yaw but takes the roll,
+        // the gun takes 15% of the kick and undoes the roll.
+        let mut p = ViewPunch::default();
+        p.kick(&def, &springs, 1.0, false, 1.0, [0.5; 4]);
+        p.step(0.01, Some(&def), 1.0);
+        assert!(p.pitch.abs() < 1e-6 && p.yaw.abs() < 1e-6, "{} {}", p.pitch, p.yaw);
+        assert!(p.vm.x < -0.05 && p.roll.abs() > 0.5 && (p.vm.z + p.roll).abs() < 1e-6, "{} {:?}", p.roll, p.vm);
+        // From the hip: the camera takes 90% of the kick, the gun no pitch or yaw.
+        let mut h = ViewPunch::default();
+        h.kick(&def, &springs, 0.0, false, 1.0, [0.5; 4]);
+        h.step(0.01, Some(&def), 0.0);
+        assert!(h.pitch < -0.5 && h.vm.x == 0.0, "{} {:?}", h.pitch, h.vm);
     }
 
     #[test]

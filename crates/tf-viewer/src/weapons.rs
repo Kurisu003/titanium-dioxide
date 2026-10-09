@@ -911,7 +911,7 @@ pub fn weapon_fire(
     let punch: &mut ViewPunch = if piloted { &mut punch_res } else { &mut scratch };
     // Recoil springs back.
     if let Ok((_, w, ..)) = titans.single() {
-        punch.step(dt, Some(&w.def.kick));
+        punch.step(dt, Some(&w.def.kick), w.ads);
     }
     let Ok((titan, mut w, mut core, vortex, melee, health, kit)) = titans.single_mut() else { return };
     gun_muzzle.cockpit = *mode == CameraMode::Cockpit && piloted;
@@ -1427,7 +1427,8 @@ pub fn weapon_viewmodel(
 
     // Place the viewmodel so its camera bone is on the eye, like the cockpit.
     let offset = actor.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
-    // Sway, bob and the gun's share of the recoil, about the script's sway pivot.
+    // Sway and bob about the script's sway pivot; the gun's share of the recoil about the eye
+    // (see pilotweapon.rs).
     let pivots = w.pivots.clone().unwrap_or_default();
     let pivot_of = |(bone, off): &(String, Vec3)| actor.bone_model_transform(bone).map(|t| t.transform_point(*off));
     let hp = pivot_of(&pivots[0]).unwrap_or(offset);
@@ -1437,17 +1438,18 @@ pub fn weapon_viewmodel(
     let inp = crate::vmmotion::MotionInput { yaw: s.yaw, pitch: s.pitch, vel, on_ground: s.on_ground, bob: !s.sprinting, ads };
     let def = w.def.motion.clone();
     let off = w.motion.step(&def, &inp, dt);
-    let rs = crate::vmmotion::angles_quat(off.rot + punch.vm);
+    let rs = crate::vmmotion::angles_quat(off.rot);
+    let rp = crate::vmmotion::angles_quat(punch.vm);
     if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
         *vis = if *mode == CameraMode::Cockpit && in_titan { Visibility::Inherited } else { Visibility::Hidden };
         let yaw = s.yaw + punch.yaw.to_radians();
         let pitch = s.pitch + punch.pitch.to_radians();
         let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(punch.roll.to_radians());
-        tf.rotation = rot * rs;
+        tf.rotation = rot * rp * rs;
         // The viewmodel rides on the view like the cockpit: the sprint view offset (last frame's,
         // from the camera), the look-down slide (pitchOffsetScale) and viewmodelDuckOffset.
         let view_off = feel.as_deref().map_or(Vec3::ZERO, |f| f.pitch_ahead(s) + Vec3::Z * (view.as_deref().map_or(0.0, |v| v.sprint_lower) + f.duck_offset(s)));
-        tf.translation = Vec3::from(s.eye(&settings.0).to_array()) + view_off - rot * offset + rot * (pivot + off.trans + punch.vm_shake - rs * pivot);
+        tf.translation = Vec3::from(s.eye(&settings.0).to_array()) + view_off + rot * (off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot));
     }
 }
 

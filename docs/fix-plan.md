@@ -262,7 +262,7 @@ We work through these one at a time, and the next one starts only after the user
 15d. ~~BT's shield arm pose is missing in third person (added later)~~ (fixed: bt_vortex_arm_pose_add is a full-pose gesture limited by its weightlist, blended over the aim layer; the 3P shield rides the raised arm at w_vortexblocker's vortex_center. BT's NPC set is the mirror of the cockpit (gun left, Vortex right), so by choice he plays mirrored copies: gun in the right hand, Vortex in the left. In the cockpit the gun's arms take the left arm from the blocker viewmodel, so two arms show, not three)
 16. Everything moves too much and is too shaky (2)
 17. HUD countdowns don't behave like TF2 (11)
-18. Mozambique and sidearm recoil (10)
+18. ~~Mozambique and sidearm recoil (10)~~ (fixed: the gun's share of the weapon punch turns the viewmodel about the eye, as client.dll does, not about the far ADS sway pivot, which swung the gun down off the sight. Kick reconstructed from client.dll: one weapon punch spring split by weaponFraction, random kick at half the `random` range, roll not scaled by the kick ramp, the engine's defaults for missing keys, viewmodel_shake driven by the punch roll, and attack_seq fading in over its 0.05 s)
 19. ADS animation is weird (3)
 20. Holo Pilot moves weirdly (20)
 21. Wallrun start is unreliable (6)
