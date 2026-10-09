@@ -1057,11 +1057,13 @@ fn setup(
     vmcam::spawn_camera(&mut commands);
     ph.mark("rest");
     log::info!(
-        "texture loads {:.2}s, spec/gloss {:.2}s",
+        "materials {:.2}s: texture loads {:.2}s, spec/gloss {:.2}s",
+        convert::MAT_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
         convert::TEX_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
         convert::SPEC_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6
     );
     log::info!("scene ready in {:?}", t.elapsed());
+    cache.prepared.clear();
     // Keep the game data and caches for things loaded later (e.g. weapon viewmodels).
     commands.insert_resource(gd);
     commands.insert_resource(cache);

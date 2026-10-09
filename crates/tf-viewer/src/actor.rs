@@ -875,6 +875,7 @@ fn build_template(
     let mut mesh_data = model.meshes(spec.body)?;
     hide_behind_screen(&model, &mut mesh_data, spec.sequences.first().copied());
     let mds: Vec<std::sync::Mutex<Option<tf_assets::mdl::MeshData>>> = mesh_data.into_iter().map(|m| std::sync::Mutex::new(Some(m))).collect();
+    let prep: &Cache = cache;
     let built = crate::world::parallel_map(&mds, |slot| {
         let md = slot.lock().ok()?.take()?;
         let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
@@ -886,6 +887,8 @@ fn build_template(
         if hidden || mat_name.contains("debugempty") || mat_name.to_ascii_lowercase().contains("_int_screen") {
             return None;
         }
+        // The material's textures decode here too (the main thread only adds them).
+        convert::prefetch_material(gd, prep, &mat_name, false);
         let n = md.indices.len() / 3;
         let part = md.bodypart;
         Some((mat_name, n, part, convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, Some((md.joints, md.weights)))))

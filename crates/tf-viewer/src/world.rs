@@ -143,9 +143,12 @@ pub fn spawn_world(
         let name = &texdata[td as usize].name;
         !blend && name.to_ascii_lowercase().ends_with("_bm") && std::env::var_os("TF_NO_BM").is_none()
     };
+    let prep: &Cache = cache;
     let built = parallel_map(&batches, |((td, _, page), b)| {
         let b = b.lock().ok()?.take()?;
         let blend = b.blend;
+        // The material's textures decode here too (the main thread only adds them).
+        convert::prefetch_material(gd, prep, &texdata[*td as usize].name, blend);
         let mut mesh = convert::build_mesh(b.pos, b.nrm, b.uv, b.idx, None);
         if *page >= 0 {
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, b.lm);
@@ -389,6 +392,7 @@ pub fn spawn_static_props(
     let mut failed = 0;
     // Parse the models and build their meshes (tangents included) on every core; materials
     // and asset handles are made on this thread afterwards.
+    let prep: &Cache = cache;
     let parsed = parallel_map(&sp.model_names, |name| -> anyhow::Result<PropModel> {
         if name.starts_with("models/vistas/") {
             anyhow::bail!("vista (built by sky.rs)");
@@ -402,7 +406,14 @@ pub fn spawn_static_props(
         if name.to_ascii_lowercase().contains("godray") && !crate::uber::enabled() {
             anyhow::bail!("godray volume (not drawn)");
         }
-        static_model_data(gd, name)
+        let pm = static_model_data(gd, name)?;
+        // The materials' textures decode here too (the main thread only adds them).
+        for (_, parts) in &pm.lods {
+            for (mat_name, _) in parts {
+                convert::prefetch_material(gd, prep, mat_name, false);
+            }
+        }
+        Ok(pm)
     });
     for (mi, r) in parsed.into_iter().enumerate() {
         match r.unwrap_or_else(|| Err(anyhow::anyhow!("worker panicked"))) {

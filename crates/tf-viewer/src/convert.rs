@@ -18,6 +18,71 @@ pub struct Cache {
     pub actors: HashMap<String, crate::actor::ActorTemplate>,
     /// Materials whose shader needs the effect path (uber.rs swaps them in on the meshes).
     pub uber: HashMap<AssetId<StandardMaterial>, crate::uber::UberInfo>,
+    /// Textures decoded ahead on worker threads (`prefetch_material`).
+    pub prepared: Prepared,
+}
+
+/// What a texture decode depends on: the plain texture (pak hint, guid), the combined
+/// spec/gloss map (pak hint, gloss, spec) or the colour + opacity map (pak hint, colour,
+/// opacity).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum PrepKey {
+    Tex(usize, u64),
+    SpecGloss(usize, Option<u64>, Option<u64>),
+    ColorOpacity(usize, u64, u64),
+}
+
+enum PrepSlot {
+    Decoding,
+    Ready(Option<Image>),
+}
+
+/// Textures decoded ahead of `material` on worker threads (`prefetch_material`, called where
+/// meshes are built in parallel), so the main thread only adds them as assets. Entries are
+/// keyed by every input of the decode, so a prepared image is exactly what the main thread
+/// would have decoded; anything not prepared is decoded there as before.
+#[derive(Default)]
+pub struct Prepared(std::sync::Mutex<HashMap<PrepKey, PrepSlot>>);
+
+impl Prepared {
+    /// Decode `key` with `decode` unless it is prepared or being prepared already.
+    fn prepare(&self, key: PrepKey, decode: impl FnOnce() -> Option<Image>) {
+        {
+            let Ok(mut map) = self.0.lock() else { return };
+            if map.contains_key(&key) {
+                return;
+            }
+            map.insert(key, PrepSlot::Decoding);
+        }
+        let img = decode();
+        if let Ok(mut map) = self.0.lock() {
+            map.insert(key, PrepSlot::Ready(img));
+        }
+    }
+
+    /// The prepared result for `key`, or `decode()` when there is none.
+    fn take_or(&self, key: PrepKey, decode: impl FnOnce() -> Option<Image>) -> Option<Image> {
+        let ready = self.0.lock().ok().and_then(|mut map| match map.remove(&key) {
+            Some(PrepSlot::Ready(img)) => Some(img),
+            Some(PrepSlot::Decoding) => {
+                // Still in a worker's hands (not expected: the workers are joined first).
+                map.insert(key, PrepSlot::Decoding);
+                None
+            }
+            None => None,
+        });
+        match ready {
+            Some(img) => img,
+            None => decode(),
+        }
+    }
+
+    /// Drop whatever was prepared but never used.
+    pub fn clear(&self) {
+        if let Ok(mut map) = self.0.lock() {
+            map.clear();
+        }
+    }
 }
 
 pub fn wgpu_format(f: TexFormat) -> Option<TextureFormat> {
@@ -62,6 +127,8 @@ pub fn sampler() -> ImageSamplerDescriptor {
 /// Time spent loading textures and building spec/gloss maps (microseconds), for load profiling.
 pub static TEX_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static SPEC_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Time spent building new materials (textures included).
+pub static MAT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>, pak_hint: usize, guid: u64) -> Option<Handle<Image>> {
     if let Some(h) = cache.images.get(&guid) {
@@ -69,7 +136,14 @@ pub fn image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>, pak_h
     }
     let t0 = std::time::Instant::now();
     let _timer = scopeguard(move || { TEX_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); });
-    let result = (|| {
+    let result = cache.prepared.take_or(PrepKey::Tex(pak_hint, guid), || decode_image(gd, pak_hint, guid)).map(|img| images.add(img));
+    cache.images.insert(guid, result.clone());
+    result
+}
+
+/// Texture `guid` (searching all paks, preferring `pak_hint`) as a Bevy image.
+fn decode_image(gd: &GameData, pak_hint: usize, guid: u64) -> Option<Image> {
+    {
         let (pi, ai) = gd.find_texture(pak_hint, guid)?;
         let pak = &gd.paks[pi];
         let tex = texture::load(pak, &pak.assets[ai]).ok()?;
@@ -89,10 +163,8 @@ pub fn image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>, pak_h
         // descriptor per image) keeps bindless material slabs small.
         img.sampler = ImageSampler::Default;
         img.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        Some(images.add(img))
-    })();
-    cache.images.insert(guid, result.clone());
-    result
+        Some(img)
+    }
 }
 
 /// Cache key salt for the combined spec/gloss images.
@@ -122,7 +194,13 @@ fn color_opacity_image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Ima
     if let Some(h) = cache.images.get(&key) {
         return h.clone();
     }
-    let result = (|| {
+    let result = cache.prepared.take_or(PrepKey::ColorOpacity(pak_hint, col, opa), || decode_color_opacity(gd, pak_hint, col, opa)).map(|img| images.add(img));
+    cache.images.insert(key, result.clone());
+    result
+}
+
+fn decode_color_opacity(gd: &GameData, pak_hint: usize, col: u64, opa: u64) -> Option<Image> {
+    {
         let c = small_texture(gd, pak_hint, col)?;
         let o = small_texture(gd, pak_hint, opa)?;
         let (w, h) = (c.0, c.1);
@@ -162,10 +240,8 @@ fn color_opacity_image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Ima
         img.texture_descriptor.dimension = TextureDimension::D2;
         img.sampler = ImageSampler::Default;
         img.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        Some(images.add(img))
-    })();
-    cache.images.insert(key, result.clone());
-    result
+        Some(img)
+    }
 }
 
 /// Respawn's materials are specular/gloss. Both maps go into one texture, used as the
@@ -181,7 +257,13 @@ fn spec_gloss_image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>
     }
     let t0 = std::time::Instant::now();
     let _timer = scopeguard(move || { SPEC_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); });
-    let result = (|| {
+    let result = cache.prepared.take_or(PrepKey::SpecGloss(pak_hint, gloss, spec), || decode_spec_gloss(gd, pak_hint, gloss, spec)).map(|img| images.add(img));
+    cache.images.insert(key, result.clone());
+    result
+}
+
+fn decode_spec_gloss(gd: &GameData, pak_hint: usize, gloss: Option<u64>, spec: Option<u64>) -> Option<Image> {
+    {
         let g = gloss.and_then(|g| small_texture(gd, pak_hint, g));
         let s = spec.and_then(|s| small_texture(gd, pak_hint, s));
         if g.is_none() && s.is_none() {
@@ -229,10 +311,104 @@ fn spec_gloss_image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>
         // descriptor per image) keeps bindless material slabs small.
         img.sampler = ImageSampler::Default;
         img.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        Some(images.add(img))
-    })();
-    cache.images.insert(key, result.clone());
-    result
+        Some(img)
+    }
+}
+
+/// What a material's texture slot holds: its texture name's suffix, else the usual slot order
+/// of model/world shaders.
+fn slot_kind(gd: &GameData, pi: usize, slot: usize, guid: u64) -> &'static str {
+    let tex_name = gd
+        .find_texture(pi, guid)
+        .and_then(|(p, a)| texture::info(&gd.paks[p], &gd.paks[p].assets[a]).ok())
+        .and_then(|i| i.name)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match tex_name.rsplit('_').next().unwrap_or("") {
+        "col" => "col",
+        "nml" => "nml",
+        "gls" => "gls",
+        "exp" => "exp",
+        "spc" => "spc",
+        "ilm" => "ilm",
+        "ao" => "ao",
+        "cav" => "cav",
+        "opa" => "opa",
+        _ => ["col", "nml", "gls", "spc"].get(slot).copied().unwrap_or(""),
+    }
+}
+
+/// Decode the textures `material(name, blend)` (and `blend_material` for a two-layer
+/// material) will ask for into `cache.prepared`, from a worker thread. Only the first texture
+/// of each kind is prepared; `material` decodes any other itself, as before.
+pub fn prefetch_material(gd: &GameData, cache: &Cache, name: &str, blend: bool) {
+    if cache.materials.contains_key(&format!("{}|{}", crate::gamedata::normalize_name(name), blend)) {
+        return;
+    }
+    let tex = |pi: usize, guid: u64| {
+        if !cache.images.contains_key(&guid) {
+            cache.prepared.prepare(PrepKey::Tex(pi, guid), || decode_image(gd, pi, guid));
+        }
+    };
+    let Some((pi, m)) = gd.material(name) else {
+        // As `material`: textures by name from the patch paks.
+        if let Some((p, g)) = gd.texture_by_name(&format!("{name}_col")) {
+            tex(p, g);
+            if let Some((p, g)) = gd.texture_by_name(&format!("{name}_nml")) {
+                tex(p, g);
+            }
+        }
+        return;
+    };
+    let (mut gloss, mut spec, mut opa, mut col) = (None, None, None, None);
+    let (mut nml, mut ilm, mut ao) = (false, false, false);
+    for (slot, &guid) in m.textures.iter().enumerate() {
+        if guid == 0 {
+            continue;
+        }
+        match slot_kind(gd, pi, slot, guid) {
+            "col" if col.is_none() => {
+                tex(pi, guid);
+                col = Some(guid);
+            }
+            "opa" if opa.is_none() => opa = Some(guid),
+            "nml" if !nml => {
+                tex(pi, guid);
+                nml = true;
+            }
+            "ilm" if !ilm && std::env::var_os("TF_NO_ILM").is_none() => {
+                tex(pi, guid);
+                ilm = true;
+            }
+            "ao" if !ao => {
+                tex(pi, guid);
+                ao = true;
+            }
+            "gls" | "exp" if gloss.is_none() => gloss = Some(guid),
+            "spc" if spec.is_none() => spec = Some(guid),
+            _ => {}
+        }
+    }
+    if std::env::var_os("TF_NO_SPEC").is_none() && (gloss.is_some() || spec.is_some()) {
+        let key = gloss.unwrap_or(0).rotate_left(17) ^ spec.unwrap_or(0) ^ SPEC_GLOSS_KEY;
+        if !cache.images.contains_key(&key) {
+            cache.prepared.prepare(PrepKey::SpecGloss(pi, gloss, spec), || decode_spec_gloss(gd, pi, gloss, spec));
+        }
+    }
+    if let (Some(c), Some(o)) = (col, opa) {
+        let masked = blend || m.blended() || tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set).is_some_and(|n| n.contains("Opam"));
+        let key = c.rotate_left(29) ^ o ^ COLOR_OPA_KEY;
+        if masked && !cache.images.contains_key(&key) {
+            cache.prepared.prepare(PrepKey::ColorOpacity(pi, c, o), || decode_color_opacity(gd, pi, c, o));
+        }
+    }
+    // A two-layer material's layer B colour and blend mask (`blend_material`).
+    if let (Some(&mask), Some(&col_b)) = (m.textures.get(22).filter(|&&g| g != 0), m.textures.get(23).filter(|&&g| g != 0)) {
+        if !blend && name.to_ascii_lowercase().ends_with("_bm") {
+            tex(pi, col_b);
+            tex(pi, mask);
+        }
+    }
 }
 
 /// Build (or fetch) a StandardMaterial for a game material name.
@@ -251,6 +427,8 @@ pub fn material(
     if let Some(h) = cache.materials.get(&key) {
         return h.clone();
     }
+    let t0 = std::time::Instant::now();
+    let _timer = scopeguard(move || { MAT_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); });
     let mut mat = StandardMaterial {
         perceptual_roughness: 0.6,
         reflectance: 0.3,
@@ -267,19 +445,7 @@ pub fn material(
                 if guid == 0 {
                     continue;
                 }
-                let tex_name = gd
-                    .find_texture(pi, guid)
-                    .and_then(|(p, a)| texture::info(&gd.paks[p], &gd.paks[p].assets[a]).ok())
-                    .and_then(|i| i.name)
-                    .unwrap_or_default()
-                    .to_ascii_lowercase();
-                // Prefer the name suffix; otherwise use the usual slot order of model/world shaders.
-                let suffix = tex_name.rsplit('_').next().unwrap_or("");
-                let kind = match suffix {
-                    "col" | "nml" | "gls" | "exp" | "spc" | "ilm" | "ao" | "cav" | "opa" => suffix,
-                    _ => ["col", "nml", "gls", "spc"].get(slot).copied().unwrap_or(""),
-                };
-                match kind {
+                match slot_kind(gd, pi, slot, guid) {
                     "col" if mat.base_color_texture.is_none() => {
                         mat.base_color_texture = image(gd, cache, images, pi, guid);
                         col = Some(guid);
