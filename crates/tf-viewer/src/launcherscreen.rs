@@ -188,8 +188,9 @@ fn build(
     let mut target = Image::new_fill(Extent3d { width: TEX.0, height: TEX.1, ..default() }, TextureDimension::D2, &[0, 0, 0, 0], TextureFormat::Bgra8UnormSrgb, default());
     target.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
     let target = images.add(target);
+    // UI only: no render layers (see ui::spawn_loading_screen).
     let camera = commands
-        .spawn((Camera2d, Camera { order: -21, clear_color: ClearColorConfig::Custom(Color::NONE), is_active: false, ..default() }, RenderTarget::Image(target.clone().into())))
+        .spawn((Camera2d, Camera { order: -21, clear_color: ClearColorConfig::Custom(Color::NONE), is_active: false, ..default() }, RenderTarget::Image(target.clone().into()), bevy::camera::visibility::RenderLayers::none()))
         .id();
     let root = commands.spawn((Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, UiTargetCamera(camera))).id();
     let px = TEX.1 as f32 / PANEL.y;

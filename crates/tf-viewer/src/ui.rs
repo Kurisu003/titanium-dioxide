@@ -197,6 +197,9 @@ pub fn spawn_loading_screen(mut commands: Commands, ui: Res<UiAssets>, args: Res
         Camera { order: 10, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() },
         IsDefaultUiCamera,
         UiCamera,
+        // UI only: no render layers, so Bevy's visibility pass doesn't test the 3D world against
+        // its frustum (the UI doesn't go through that pass).
+        bevy::camera::visibility::RenderLayers::none(),
     ));
     let root = commands
         .spawn((

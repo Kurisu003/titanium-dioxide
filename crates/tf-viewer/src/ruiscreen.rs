@@ -129,8 +129,9 @@ fn build(
     let mut image = Image::new_fill(Extent3d { width: w, height: h, ..default() }, TextureDimension::D2, &[0, 0, 0, 0], TextureFormat::Bgra8UnormSrgb, default());
     image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
     let image = images.add(image);
+    // UI only: no render layers (see ui::spawn_loading_screen).
     let camera = commands
-        .spawn((Camera2d, Camera { order: -20, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() }, RenderTarget::Image(image.clone().into())))
+        .spawn((Camera2d, Camera { order: -20, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() }, RenderTarget::Image(image.clone().into()), bevy::camera::visibility::RenderLayers::none()))
         .id();
     let ui_root = commands
         .spawn((
