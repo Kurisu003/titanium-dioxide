@@ -1187,7 +1187,8 @@ from the same direction refresh it instead of stacking.
 
 ### Loading
 
-Kodai is playable about 10 s after launch (6–15 s on other maps). That comes from:
+Kodai is playable about 10 s after launch (6–15 s on other maps); Angel City's `setup` takes about 6 s
+(it was 23-26 s). That comes from:
 
 - VPK entries decompressing their LZHAM parts on every core (a map's ~190 MB `.bsp`: 4.2 s →
   0.3 s), and BSP lumps being read in parallel.
@@ -1196,6 +1197,25 @@ Kodai is playable about 10 s after launch (6–15 s on other maps). That comes f
 - Enemy models and their animation includes being read in parallel before spawning, and parsed
   models being shared between chassis.
 - Sounds decoding on every core.
+- The rpaks (19 on an MP map with the common patch chains) decompressing and being indexed on
+  every core (`GameData::add_rpaks`), in the same order and with the same first-wins rules.
+- Material textures (starpak reads, the combined spec/gloss and colour + opacity maps) decoding
+  on the same workers that build the world, prop and actor meshes (`convert::prefetch_material`
+  into `Cache::prepared`, keyed by every input of the decode); the main thread only adds them
+  as assets, in the same order. That was 4 s of Angel City's load.
+- The sounds decoding on a thread of their own (own VPK handles) while the map loads.
+- Every actor template (BT, cockpit, viewmodel, arms, guns, each enemy class) building its
+  asset-free part (model, clips, grids, meshes, textures) on every core while the collision
+  hierarchy builds (`actor::prefetch_actors`); spawning then only adds the assets.
+- The collision sets' BVHs building at the same time, their top levels split a level at a time
+  in parallel (the detail set, the props' render triangles, is 9 million triangles on Angel City).
+- The probed nav grids (MP maps) casting their cells and edges on every core (7-9 s → 0.5 s on
+  Angel City), and the particle textures decoding in parallel.
+
+The world's material batches are made in a fixed (key) order, so a load is reproducible: the
+collision triangles (`TF_COLLISION_DUMP`), the BVH, the nav grids and the spawn spots come out
+the same on every run (they used to follow a HashMap's per-run order). `RUST_LOG=info` logs
+each phase of `setup` as `load phase: <what> <time>`.
 
 The loading screen then stays up while the world warms up behind it (`ui::loading_tick`): every
 first-person model is shown (they skip frustum culling, so they count from wherever they sit),
