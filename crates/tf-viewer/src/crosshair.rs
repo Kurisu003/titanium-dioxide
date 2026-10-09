@@ -158,10 +158,10 @@ pub fn update(
             };
             (p.size, c)
         };
-        node.width = Val::Vh(size.x);
-        node.height = Val::Vh(size.y);
-        node.left = Val::Vh(centre.x - size.x * 0.5);
-        node.top = Val::Vh(centre.y - size.y * 0.5);
+        crate::hud::set(&mut node, |n| &mut n.width, Val::Vh(size.x));
+        crate::hud::set(&mut node, |n| &mut n.height, Val::Vh(size.y));
+        crate::hud::set(&mut node, |n| &mut n.left, Val::Vh(centre.x - size.x * 0.5));
+        crate::hud::set(&mut node, |n| &mut n.top, Val::Vh(centre.y - size.y * 0.5));
         tf.rotation = Rot2::degrees(p.rot);
         img.color = Color::srgba(1.0, 1.0, 1.0, alpha);
     }

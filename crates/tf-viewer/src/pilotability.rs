@@ -1430,7 +1430,7 @@ pub fn update_pilot_slots(
     let tac_frac = if status.active > 0.0 || status.tac_charges > 0 { 0.0 } else { (status.tac_cooldown / def.cooldown.max(0.1)).clamp(0.0, 1.0) };
     let ord_frac = if status.ord_charges > 0 { 0.0 } else { (status.ord_cooldown / odef.cooldown.max(0.1)).clamp(0.0, 1.0) };
     for (s, mut n) in &mut shades {
-        n.height = Val::Percent(100.0 * if s.0 == 0 { tac_frac } else { ord_frac });
+        crate::hud::set(&mut n, |n| &mut n.height, Val::Percent(100.0 * if s.0 == 0 { tac_frac } else { ord_frac }));
     }
     for (s, mut t) in &mut texts {
         let v = if s.0 == 0 {

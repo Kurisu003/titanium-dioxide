@@ -11,9 +11,9 @@ fn main() -> anyhow::Result<()> {
             let k = (0..4).max_by(|&x, &y| w[x].total_cmp(&w[y])).unwrap();
             let e = by.entry(j[k] as usize).or_insert((0, [f32::MAX; 3], [f32::MIN; 3]));
             e.0 += 1;
-            for c in 0..3 {
-                e.1[c] = e.1[c].min(p[c]);
-                e.2[c] = e.2[c].max(p[c]);
+            for (c, &pc) in p.iter().enumerate() {
+                e.1[c] = e.1[c].min(pc);
+                e.2[c] = e.2[c].max(pc);
             }
         }
     }

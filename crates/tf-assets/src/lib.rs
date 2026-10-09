@@ -1,5 +1,6 @@
 //! Readers for Titanfall 2 asset formats, working directly on a game install.
 
+mod bytes;
 mod guid;
 pub mod bc6h;
 pub mod binka;
@@ -21,6 +22,8 @@ pub mod vfont;
 pub mod vpk;
 pub mod vtf;
 
+/// The GUID an asset is looked up by from its name (`RTech::StringToGuid`; case-insensitive,
+/// `\` and `/` alike), e.g. `datatable/titan_properties.rpak`.
 pub fn string_to_guid(s: &str) -> u64 {
     guid::string_to_guid(s.as_bytes())
 }

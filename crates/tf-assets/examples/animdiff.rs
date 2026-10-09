@@ -5,7 +5,8 @@ fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let vpk = Vpk::open(&a[1])?;
     let m = Model::parse(vpk.read(&a[2])?)?;
-    let get = |ai: &str, fi: &str| -> anyhow::Result<(String, Vec<([f32; 3], [f32; 4])>)> {
+    type Frame = Vec<([f32; 3], [f32; 4])>;
+    let get = |ai: &str, fi: &str| -> anyhow::Result<(String, Frame)> {
         let an = m.animation(ai.parse()?)?;
         let f: i64 = fi.parse()?;
         let f = if f < 0 { an.num_frames - 1 } else { (f as usize).min(an.num_frames - 1) };
