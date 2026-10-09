@@ -1059,7 +1059,7 @@ impl CollisionWorld {
         let tie = 0.01 / d.length().max(1e-6);
         let mut solid: Option<Vec3> = None;
         for w in self.with_clip(which).iter().flatten() {
-            w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tri, lo, hi) {
+            w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tie, tri, lo, hi) {
                 Sweep::Miss => {}
                 Sweep::Inside(mtv) => {
                     if d.dot(mtv) < 0.0 || d == Vec3::ZERO {
@@ -1100,24 +1100,23 @@ enum Sweep {
 /// `sweep_box_tri` for a triangle that may lie outside `lo..hi`, the swept box's bounds
 /// padded by a unit: one entirely outside them (the leaf's box overlapped, the triangle doesn't)
 /// misses on that world axis, so the full test is skipped.
-fn sweep_box_tri_in(c: Vec3, e: Vec3, d: Vec3, t: &Tri, lo: Vec3, hi: Vec3) -> Sweep {
+fn sweep_box_tri_in(c: Vec3, e: Vec3, d: Vec3, tie: f32, t: &Tri, lo: Vec3, hi: Vec3) -> Sweep {
     if t.a.max(t.b).max(t.c).cmplt(lo).any() || t.a.min(t.b).min(t.c).cmpgt(hi).any() {
         return Sweep::Miss;
     }
-    sweep_box_tri(c, e, d, t)
+    sweep_box_tri(c, e, d, tie, t)
 }
 
 /// Separating-axis sweep of a box (centre `c`, half extents `e`, moving by `d`) against a
-/// triangle: the box's three axes, the triangle's normal and the nine edge cross products.
-fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
+/// triangle: the box's three axes, the triangle's normal and the nine edge cross products. An
+/// edge-edge axis only takes over the entry from a face axis when it enters `tie` (0.01 units
+/// travelled, as a fraction of the move) later.
+fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, tie: f32, t: &Tri) -> Sweep {
     let v = [t.a - c, t.b - c, t.c - c];
     let edges = [v[1] - v[0], v[2] - v[1], v[0] - v[2]];
     let (mut t_enter, mut t_exit) = (f32::NEG_INFINITY, f32::INFINITY);
     let mut n_enter = Vec3::ZERO;
     let mut face = true;
-    // An edge-edge axis only takes over the entry from a face axis when it enters this much
-    // (in units travelled) later.
-    let tie = 0.01 / d.length().max(1e-6);
     let mut inside = true;
     let (mut depth, mut mtv) = (f32::INFINITY, Vec3::ZERO);
     // Separation along the unit axis `l`.
