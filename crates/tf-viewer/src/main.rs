@@ -1024,7 +1024,9 @@ fn setup(
         MainCamera,
         bevy::camera::Exposure { ev100: env::EV100 },
         // The sky camera (sky.rs) clears and draws the skybox first.
-        Camera { clear_color: ClearColorConfig::None, ..default() },
+        // The viewmodel camera, drawing last into the same textures, copies the frame to the
+        // window (sky.rs).
+        Camera { clear_color: ClearColorConfig::None, output_mode: bevy::camera::CameraOutputMode::Skip, ..default() },
         // Contact shading (SSAO needs MSAA off; SMAA smooths edges instead).
         Msaa::Off,
         bevy::pbr::ScreenSpaceAmbientOcclusion::default(),

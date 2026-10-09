@@ -38,7 +38,10 @@ pub fn spawn_sky(
 ) {
     commands.spawn((
         Camera3d::default(),
-        Camera { order: -1, ..default() },
+        // The world and viewmodel cameras draw over this picture in the same textures, and
+        // the viewmodel camera's output overwrites the whole window, so copying it to the
+        // window here (and from the world camera) is a wasted full-screen pass.
+        Camera { order: -1, output_mode: bevy::camera::CameraOutputMode::Skip, ..default() },
         bevy::render::view::Hdr,
         // Explicit so the cockpit boot (pilotctl::cockpit_boot) can dim it with the others.
         bevy::camera::Exposure::default(),

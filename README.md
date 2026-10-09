@@ -1247,6 +1247,11 @@ The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy 
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
 
+The sky and world cameras don't copy their picture to the window (`CameraOutputMode::Skip`):
+the viewmodel camera draws last into the same HDR textures and its copy overwrites the whole
+window, so theirs were two wasted full-screen passes (~0.05 ms GPU at 3440x1440, plus their
+encoding).
+
 Measuring: `TF_FPS=1` shows the frame rate in the top-left corner (average over half a second,
 its frame time and the slowest frame in it), and the log has a `perf:` line every two seconds
 with the slowest frame. `TF_NO_VSYNC=1` lifts the monitor's refresh cap. `TF_GPU_TIMES=1` logs
