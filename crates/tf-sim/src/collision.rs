@@ -348,7 +348,7 @@ fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, Bounds, Bounds)
         // Best (cost, axis, first bin of the right half).
         let mut best: Option<(f32, usize, usize)> = None;
         for axis in 0..3 {
-            if !(ext[axis] > 0.0) {
+            if ext[axis].is_nan() || ext[axis] <= 0.0 {
                 continue;
             }
             let mut right_cost = [0f32; SAH_BINS];
@@ -360,14 +360,14 @@ fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, Bounds, Bounds)
                 right_cost[i] = if cnt > 0 { half_area(lo, hi) * cnt as f32 } else { 0.0 };
             }
             let (mut lo, mut hi, mut cnt) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN), 0u32);
-            for i in 1..SAH_BINS {
+            for (i, &right) in right_cost.iter().enumerate().skip(1) {
                 lo = lo.min(bins.lo[axis][i - 1]);
                 hi = hi.max(bins.hi[axis][i - 1]);
                 cnt += bins.n[axis][i - 1];
                 if cnt == 0 || cnt as usize == n {
                     continue;
                 }
-                let cost = half_area(lo, hi) * cnt as f32 + right_cost[i];
+                let cost = half_area(lo, hi) * cnt as f32 + right;
                 if best.is_none_or(|b| cost < b.0) {
                     best = Some((cost, axis, i));
                 }
@@ -643,7 +643,7 @@ impl CollisionWorld {
     pub fn add(&mut self, a: Vec3, b: Vec3, c: Vec3) {
         let n = (b - a).cross(c - a);
         let len = n.length();
-        if !(len > 1e-6) {
+        if len.is_nan() || len <= 1e-6 {
             return; // degenerate
         }
         self.tris.push(Tri { a, b, c, n: n / len });
@@ -936,7 +936,7 @@ impl CollisionWorld {
         // Each entry keeps its box's entry distance from when it was pushed: whether the ray
         // reaches a box depends on the limit only through `entry <= limit` (`ray_box`), so the
         // box needn't be tested again when it is popped.
-        let Some(t_root) = ray_box(origin, inv, bvh.median[0].min, bvh.median[0].max, limit) else { return None };
+        let t_root = ray_box(origin, inv, bvh.median[0].min, bvh.median[0].max, limit)?;
         let mut stack = [(0u32, 0f32); 64];
         stack[0] = (0, t_root);
         let mut sp = 1;
