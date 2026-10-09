@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
     let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
     eprintln!("read in {:?}", t.elapsed());
     for (i, h) in bsp.headers.iter().enumerate() {
-        if bsp.lumps[i].len() > 0 { eprint!("{i:02x}:{}(v{}{}) ", bsp.lumps[i].len(), h.version, if h.length == 0 { ",ext" } else { "" }); }
+        if !bsp.lumps[i].is_empty() { eprint!("{i:02x}:{}(v{}{}) ", bsp.lumps[i].len(), h.version, if h.length == 0 { ",ext" } else { "" }); }
     }
     eprintln!();
     let meshes = bsp.meshes();

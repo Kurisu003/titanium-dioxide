@@ -70,10 +70,10 @@ impl CubemapSet {
         for (bi, chunk) in self.data[o..o + fb].chunks_exact(16).enumerate() {
             bc6h::decode_block(chunk, &mut block, false);
             let (bx, by) = (bi % bw * 4, bi / bw * 4);
-            for k in 0..16 {
+            for (k, &texel) in block.iter().enumerate() {
                 let (x, y) = (bx + k % 4, by + k / 4);
                 if x < s && y < s {
-                    out[y * s + x] = block[k];
+                    out[y * s + x] = texel;
                 }
             }
         }

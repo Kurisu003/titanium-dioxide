@@ -95,7 +95,7 @@ impl PlayerSettings {
                 for section in ["", "sp_base", "mp_base"] {
                     let full = format!("{section}.{key}");
                     let base = out.values.get(&full).cloned();
-                    if section != "" && base.is_none() {
+                    if !section.is_empty() && base.is_none() {
                         continue;
                     }
                     if let Some(new) = apply_mod(base.as_deref(), &v) {

@@ -145,10 +145,9 @@ impl Decoder {
             let c = offset + ch;
             let total = self.overlap_len * count;
             if !self.first {
-                let mut j = ch;
-                for i in 0..self.overlap_len {
-                    out[c][i] = (self.previous[c][i] * (total - j) as f32 + out[c][i] * j as f32) / total as f32;
-                    j += count;
+                for (i, (o, &p)) in out[c].iter_mut().zip(&self.previous[c]).enumerate() {
+                    let j = ch + i * count;
+                    *o = (p * (total - j) as f32 + *o * j as f32) / total as f32;
                 }
             }
             self.previous[c].copy_from_slice(&out[c][n - self.overlap_len..]);

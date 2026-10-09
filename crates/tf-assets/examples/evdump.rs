@@ -5,8 +5,6 @@ fn main() -> anyhow::Result<()> {
     let d = Vpk::open(&a[1])?.read(&a[2])?;
     let i32_at = |o: usize| i32::from_le_bytes(d[o..o + 4].try_into().unwrap());
     let (n, si) = (i32_at(0xC0) as usize, i32_at(0xC4) as usize);
-    let size = (i32_at(si + 0x1C + 0) as usize, 0);
-    let _ = size;
     for i in 0..n {
         let o = si + i * tf_assets::mdl::SEQDESC_SIZE;
         let lo = o + i32_at(o + 4) as usize;

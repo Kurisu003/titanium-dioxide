@@ -1179,6 +1179,7 @@ mod collision_tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)] // the bevel normals are written as a file would round them
     fn hull_planes_become_a_closed_box() {
         // One hull: a box 10..30 x -5..5 x 0..40 as six planes (plus two bevels after them,
         // which only box sweeps use).
@@ -1200,8 +1201,8 @@ mod collision_tests {
         }
         for (k, (n, d)) in planes.iter().enumerate() {
             let o = 0x314 + k * 16;
-            for j in 0..3 {
-                put_f32(&mut raw, o + j * 4, n[j]);
+            for (j, &nj) in n.iter().enumerate() {
+                put_f32(&mut raw, o + j * 4, nj);
             }
             put_f32(&mut raw, o + 12, *d);
         }
@@ -1247,8 +1248,8 @@ mod collision_tests {
         }
         let verts = leaf + 0x70;
         for (i, q) in [[0u16, 0, 0], [65535, 0, 0], [0, 65535, 32768]].iter().enumerate() {
-            for k in 0..3 {
-                put_u16(&mut raw, verts + i * 6 + k * 2, q[k]);
+            for (k, &qk) in q.iter().enumerate() {
+                put_u16(&mut raw, verts + i * 6 + k * 2, qk);
             }
         }
         let tris = model(raw).collision_tris();
