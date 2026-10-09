@@ -1242,6 +1242,28 @@ On Forwardbase Kodai at 3414x1357 this takes BT's spawn view from about 65 fps t
 parts off for comparisons, and `--features profile` writes a Chrome trace of every system (with
 system names).
 
+Small props (the ones that cast no real-time shadows) are drawn from batch meshes
+(`propbatch.rs`): one entity per 2048-unit cell, material and LOD instead of one per prop, mesh
+part and LOD. Angel City goes from 46 235 prop entities to 4 943 plus 4 157 batches (Bevy runs
+its visibility, bounds and specialization passes over every entity every frame, drawn or not).
+A batch mesh only lists (prop, model vertex) pairs; its vertex shader (`propbatch.wgsl`) reads
+the model's vertices and the prop's transform and draw range from two storage buffers and does
+per prop what Bevy does per entity, with the same functions: the draw range test from the
+prop's origin, the dithered LOD and distance crossfade, and the vertex transforms.
+StandardMaterial's own fragment shaders shade it, and a batch's own range and bounds enclose its
+props', so Bevy only culls a batch when all its props would have been culled. Shadow casters,
+translucent materials and effect materials keep their own entities. Free-camera screenshots
+(7 spots on Angel City, 5 on Kodai) match the per-prop version bit for bit with `TF_NO_UBER=1`,
+except ~770 pixels (0.04%) of one Angel City overview on a coplanar strip whose z-fighting winner
+depends on draw order (registering the batch material alone flips some of them) and 11 pixels on
+Kodai. With the haze cards on, their scrolling follows the time since launch, which shifts with
+the (shorter) load time. The collision dump is identical. Angel City on foot at 1920x1080,
+uncapped, three interleaved runs each: 85 -> 98 fps average; main thread PostUpdate 7.3 ->
+5.7 ms (profile build), GPU +0.15 ms per frame (vertices of out-of-range props in a drawn batch
+still run the vertex shader). Loading Bevy's prepass for these meshes logs "The default normal
+prepass expects the mesh to have vertex normal attributes" a few times: the batch material
+supplies them itself. `TF_PROP_BATCH=0` gives every prop its own entities again.
+
 Materials are bound one bind group per material, not through Bevy's bindless material slabs
 (the `BUFFER_BINDING_ARRAY` feature is turned off; lightmaps and light probes don't need it and
 stay bindless). With slabs, each switch between material slabs made wgpu-core walk every texture

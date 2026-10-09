@@ -44,6 +44,7 @@ mod pilotctl;
 mod pilotweapon;
 mod particles;
 mod pfx;
+mod propbatch;
 mod player;
 mod ruiscreen;
 mod sky;
@@ -264,6 +265,7 @@ fn main() {
         .add_plugins(ui::PipelineWatchPlugin)
         .add_plugins(audio::GameAudioPlugin)
         .add_plugins(convert::BlendMaterialPlugin)
+        .add_plugins(propbatch::PropBatchPlugin)
         .add_plugins(convert::TransparentOrderPlugin)
         .add_plugins(pfx::SoftMaterialPlugin)
         .add_plugins(uber::UberPlugin)
@@ -617,6 +619,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut blends: ResMut<Assets<convert::BlendMaterial>>,
+    (mut batch_materials, mut buffers): (ResMut<Assets<propbatch::PropBatchMaterial>>, ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>),
 ) {
     let t = std::time::Instant::now();
     let mut ph = Phases(t);
@@ -703,12 +706,8 @@ fn setup(
     // same transform. Bevy skips a hierarchy nothing in has moved, but recomputes every direct
     // child of a root whose tree changed: under `root`, with BT and everything that moves,
     // that was ~47k prop and world entities every frame (2-4 ms on one thread).
-    let static_root = commands
-        .spawn((
-            Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT)),
-            Visibility::default(),
-        ))
-        .id();
+    let static_root_tf = Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT));
+    let static_root = commands.spawn((static_root_tf, Visibility::default())).id();
 
     let mut cache = convert::Cache::default();
     let mut collision = CollisionWorld::default();
@@ -729,7 +728,7 @@ fn setup(
             }
             ph.mark("world and map collision");
             if args.props {
-                world::spawn_static_props(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
+                world::spawn_static_props(&mut commands, static_root, &static_root_tf, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, (&mut batch_materials, &mut buffers), &mut collision);
                 sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
             }
             ph.mark("props and sky");

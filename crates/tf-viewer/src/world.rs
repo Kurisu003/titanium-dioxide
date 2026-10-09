@@ -362,16 +362,21 @@ pub fn build_posed_model(
     Ok(out)
 }
 
-/// Static props (game lump `sprp`). Each distinct model is converted once and instanced.
+/// Static props (game lump `sprp`). Each distinct model is converted once and instanced; small
+/// props go into batches (`propbatch.rs`). `root_tf` is the transform of `root` (which has no
+/// parent).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_static_props(
     commands: &mut Commands,
     root: Entity,
+    root_tf: &Transform,
     gd: &GameData,
     bsp: &Bsp,
     cache: &mut Cache,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     materials: &mut Assets<StandardMaterial>,
+    (batch_materials, buffers): (&mut Assets<crate::propbatch::PropBatchMaterial>, &mut Assets<bevy::render::storage::ShaderStorageBuffer>),
     collision: &mut CollisionWorld,
 ) {
     let t = std::time::Instant::now();
@@ -382,8 +387,11 @@ pub fn spawn_static_props(
             return;
         }
     };
-    // Per model: LODs as (switch point, parts) and the bounding radius.
-    let mut built: Vec<Option<(Vec<(f32, Vec<(Handle<Mesh>, Handle<StandardMaterial>)>)>, f32)>> = vec![None; sp.model_names.len()];
+    // Per model: LODs as (switch point, parts) and the bounding radius. A part keeps its mesh
+    // data when it can go into a batch.
+    type Part = (Handle<Mesh>, Handle<StandardMaterial>, Option<Mesh>);
+    let mut built: Vec<Option<(Vec<(f32, Vec<Part>)>, f32)>> = vec![None; sp.model_names.len()];
+    let batching = crate::propbatch::enabled();
     // Model-space per-triangle meshes and collision hulls of each prop model.
     let mut shapes: Vec<Vec<[f32; 3]>> = vec![Vec::new(); sp.model_names.len()];
     let mut hulls: Vec<Vec<[[f32; 3]; 3]>> = vec![Vec::new(); sp.model_names.len()];
@@ -424,7 +432,15 @@ pub fn spawn_static_props(
                     .lods
                     .into_iter()
                     .map(|(switch, parts)| {
-                        let parts = parts.into_iter().map(|(mat_name, mesh)| (meshes.add(mesh), convert::material(gd, cache, images, materials, &mat_name, false))).collect();
+                        let parts = parts
+                            .into_iter()
+                            .map(|(mat_name, mesh)| {
+                                let mat = convert::material(gd, cache, images, materials, &mat_name, false);
+                                let keep = batching && materials.get(&mat).is_some_and(|m| crate::propbatch::batchable(&mesh, m, cache.uber.contains_key(&mat.id())));
+                                let data = keep.then(|| mesh.clone());
+                                (meshes.add(mesh), mat, data)
+                            })
+                            .collect();
                         (switch, parts)
                     })
                     .collect();
@@ -441,8 +457,9 @@ pub fn spawn_static_props(
     }
     let mut count = 0;
     let (mut solid, mut no_hull, mut pilot_only) = (0, 0, 0);
-    let mut parts_spawned = 0usize;
+    let (mut parts_spawned, mut parts_batched) = (0usize, 0usize);
     let opts = PropOptions::from_env();
+    let mut batcher = crate::propbatch::PropBatcher::new(root_tf);
     for (pi, p) in sp.props.iter().enumerate() {
         // Vistas belong to the 3D skybox (sky.rs).
         if sp.model_names[p.model as usize].starts_with("models/vistas/") {
@@ -495,7 +512,15 @@ pub fn spawn_static_props(
                 // Crossfade (dithered) over the last 10% before each switch.
                 bevy::camera::visibility::VisibilityRange { start_margin: s * 0.9..s, end_margin: e * 0.9..e, use_aabb: false }
             });
-            for (mesh, mat) in parts {
+            let small = opts.small_no_shadow && r < PROP_SHADOW_MIN_RADIUS;
+            for (part, (mesh, mat, data)) in parts.iter().enumerate() {
+                // Small props that don't cast shadows go into batches where they can.
+                if let (true, Some(data), Some(range)) = (small, data, &range) {
+                    if batcher.add(pi, p.model as usize, l, part, data, mat, &tf, range) {
+                        parts_batched += 1;
+                        continue;
+                    }
+                }
                 let mut c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), tf));
                 if let Some(range) = &range {
                     c.insert(range.clone());
@@ -510,8 +535,10 @@ pub fn spawn_static_props(
         }
         count += 1;
     }
+    drop(built);
+    let batches = batcher.finish(commands, root, meshes, materials, batch_materials, buffers);
     log::info!(
-        "static props: {count} instances ({solid} in the map's collision: {no_hull} without hulls stop shots only, {pilot_only} not titans; {parts_spawned} mesh entities) of {} models ({failed} failed) in {:?}",
+        "static props: {count} instances ({solid} in the map's collision: {no_hull} without hulls stop shots only, {pilot_only} not titans; {parts_spawned} mesh entities, {parts_batched} parts in {batches} batches) of {} models ({failed} failed) in {:?}",
         sp.model_names.len(),
         t.elapsed()
     );
