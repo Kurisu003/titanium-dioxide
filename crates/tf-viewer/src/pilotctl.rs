@@ -747,6 +747,20 @@ pub fn simulate_pilot(
             );
         }
     }
+    // RUST_LOG=pilot_speed=debug: the Pilot's speed every frame, for comparing speed curves.
+    log::debug!(
+        target: "pilot_speed",
+        "t {:.4} dt {:.4} speed {:.1} vz {:.1} pos {:.1} {:.1} {:.1} yaw {:.1} {:?}",
+        time.elapsed_secs(),
+        dt,
+        pilot.state.horizontal_speed(),
+        pilot.state.vel.z,
+        pilot.state.pos.x,
+        pilot.state.pos.y,
+        pilot.state.pos.z,
+        pilot.state.yaw.to_degrees(),
+        pilot.state.mode
+    );
     // Footsteps every stride on the ground or the wall.
     let speed = pilot.state.horizontal_speed();
     let stepping = matches!(pilot.state.mode, PilotMove::Ground | PilotMove::WallRun { .. }) && speed > 60.0;
