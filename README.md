@@ -1277,6 +1277,13 @@ remain per cascade, mostly alpha-tested materials, which keep theirs): about 2.3
 of CPU per cascade. The depth written is the same (screenshots with time frozen, flipping between
 the two every 4 s, match bit for bit). `TF_SHADOW_BY_MATERIAL=1` turns it off.
 
+The render thread walks the render graph one node at a time, and with wgpu 27 a pass's commands
+are only validated and encoded when its command encoder is finished. Bevy's opaque, prepass,
+shadow and bloom passes are encoded on worker threads, but its transparent pass went into the
+graph's own encoder, so every sorted translucent draw was encoded serially. `transparentpass.rs`
+puts it in a worker task like the others (same commands, submitted in the same order): the graph
+walk went from about 4.0 to 3.1 ms. `TF_SERIAL_TRANSPARENT=1` keeps Bevy's node.
+
 The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
