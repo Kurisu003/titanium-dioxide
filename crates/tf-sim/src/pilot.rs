@@ -814,33 +814,40 @@ fn wall_probe(world: &CollisionWorld, p: &PilotParams, origin: Vec3, n: Vec3) ->
     best
 }
 
+/// What CanWallrun says.
+enum CanWallrun {
+    No,
+    /// Not yet: the probes didn't find the wall close enough (retry).
+    NotYet,
+    Yes,
+}
+
 /// client.dll CanWallrun (0x180202090) for an airborne Pilot whose move hit a surface with
-/// normal `n` while moving along `dir`: 0 no, 1 not yet (the probes didn't find the wall close
-/// enough: retry), 2 yes. No speed, input or view requirement.
-fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, n: Vec3, dir: Vec3) -> u8 {
+/// normal `n` while moving along `dir`. No speed, input or view requirement.
+fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, n: Vec3, dir: Vec3) -> CanWallrun {
     let w = &p.wallrun;
     // Not within the lockout after leaving the ground without a jump.
     if s.since_ground < w.ground_lockout {
-        return 0;
+        return CanWallrun::No;
     }
     // Walls and overhangs, not floors.
     if n.z > 0.7 || n.z < -0.35 {
-        return 0;
+        return CanWallrun::No;
     }
     // (Crouching only blocks a Pilot who can't stand up; airborne Pilots aren't crouched here.)
     let flat = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
     // The wall last left: only below where that run started.
     if s.last_wall.is_some_and(|last| flat.dot(last) > w.same_wall_dot) && (!w.same_wall_allowed || s.pos.z >= s.wallrun_start.z + w.same_wall_height) {
-        return 0;
+        return CanWallrun::No;
     }
     // Moving into the wall (wallrun_minAngle_air).
     if Vec3::new(dir.x, dir.y, 0.0).normalize_or_zero().dot(n) >= -(w.min_angle_air * 0.5).to_radians().cos() {
-        return 0;
+        return CanWallrun::No;
     }
     // The wall must be there at the knees and at the middle of the hull.
     let near = |h: f32| wall_probe(world, p, s.pos + Vec3::Z * h, n).is_some_and(|(d, _)| d <= w.allowed_wall_dist);
     if !near(16.0) || !near(p.height * 0.5 + p.radius) {
-        return 1;
+        return CanWallrun::NotYet;
     }
     // Pushing and looking squarely into a wall whose top is below the head is a mantle
     // (0x180201e50): the head-height probe must find the wall too.
@@ -849,9 +856,9 @@ fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &
     let into = -hv(flat);
     let mantle = wish.length_squared() > 1e-6 && wish.normalize().dot(into) >= w.mantle_push_angle.to_radians().cos() && fwd.dot(into) >= w.mantle_view_angle.to_radians().cos();
     if mantle && !near(p.height - p.radius) {
-        return 1;
+        return CanWallrun::NotYet;
     }
-    2
+    CanWallrun::Yes
 }
 
 /// TryStartWallrun (client.dll 0x18020b390): start a wall-run on the wall with normal `n` if
@@ -861,7 +868,7 @@ fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &
 fn try_start_wallrun(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, n: Vec3, dir: Vec3) {
     s.wallrun_retry = None;
     match can_wallrun(s, p, world, input, n, dir) {
-        2 => {
+        CanWallrun::Yes => {
             let w = &p.wallrun;
             let flat = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
             if s.last_wall.is_some_and(|last| flat.dot(last) > w.same_wall_dot) {
@@ -878,8 +885,8 @@ fn try_start_wallrun(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld
             s.push_away = 0.0;
             s.wallrun_start = s.pos;
         }
-        1 => s.wallrun_retry = Some((p.wallrun.retry_interval, s.pos, n)),
-        _ => {}
+        CanWallrun::NotYet => s.wallrun_retry = Some((p.wallrun.retry_interval, s.pos, n)),
+        CanWallrun::No => {}
     }
 }
 
