@@ -1,7 +1,8 @@
-//! Titan movement: walk, sprint, dash and gravity against a [`CollisionWorld`].
+//! Titan movement: walk, sprint, crouch, dash, hover and gravity against a [`CollisionWorld`].
 //! Units are the game's (inches, seconds); Z is up; yaw 0 faces +X.
 
 use crate::collision::{CollisionWorld, CLIP_TITAN};
+use crate::smoothstep;
 use glam::{Vec2, Vec3};
 
 /// Tuning, normally filled from `titan_*.set` player settings.
@@ -162,8 +163,7 @@ impl TitanState {
     /// The eye: the stand view height, eased toward the crouch one by `duck` (Source's
     /// SimpleSpline, 3t^2 - 2t^3).
     pub fn eye(&self, p: &TitanParams) -> Vec3 {
-        let d = self.duck.clamp(0.0, 1.0);
-        let d = d * d * (3.0 - 2.0 * d);
+        let d = smoothstep(self.duck.clamp(0.0, 1.0));
         self.pos + Vec3::Z * (p.eye_height + (p.crouch_eye_height - p.eye_height) * d)
     }
 
@@ -253,8 +253,9 @@ fn approach(cur: Vec2, target: Vec2, rate: f32) -> Vec2 {
 }
 
 /// Seconds the eye takes to move down into the crouch view height and back up. The settings
-/// have no key for it; these are Source's gamemovement constants (TIME_TO_DUCK_MSECS 400,
-/// TIME_TO_UNDUCK_MSECS 200), a guess for Respawn's engine.
+/// have no key for it: the engine's Duck (client.dll 0x1801f5500) times the view with
+/// m_flDucktime, 400 ms down and 200 ms up (Source's TIME_TO_DUCK_MSECS / TIME_TO_UNDUCK_MSECS),
+/// as the Pilot's crouch does (`pilot::step`).
 pub const DUCK_TIME: f32 = 0.4;
 pub const UNDUCK_TIME: f32 = 0.2;
 

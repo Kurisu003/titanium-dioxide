@@ -1,9 +1,11 @@
-//! Pilot movement: walk, sprint, crouch, slide, jump, double jump, wall-running and the grapple.
+//! Pilot movement: walk, sprint, crouch, slide, jump, double jump, mantle, wall-running and
+//! wall hang, ziplines and the grapple.
 //! Values from `scripts/players/mp/pilot_mp.set` (the base of every multiplayer Pilot class);
 //! fields it leaves out use the engine's player-settings defaults from client.dll (acceleration
 //! 2500, deceleration -1, airSpeed 60, airAcceleration 500) and its convars.
 
 use crate::collision::{CollisionWorld, Trace, CLIP_PILOT, DIST_EPSILON};
+use crate::smoothstep;
 use glam::{Vec2, Vec3};
 
 #[derive(Debug, Clone)]
@@ -762,8 +764,7 @@ impl PilotState {
     }
     /// The view's crouch fraction: Duck's smoothstep (client.dll 0x1801f8020).
     pub fn duck_frac(&self) -> f32 {
-        let k = self.duck.clamp(0.0, 1.0);
-        k * k * (3.0 - 2.0 * k)
+        smoothstep(self.duck.clamp(0.0, 1.0))
     }
     /// The eye: the stand and crouch view heights blended by the crouch fraction.
     pub fn eye_offset(&self, p: &PilotParams) -> f32 {
@@ -1000,8 +1001,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             r.t = (r.t + r.dir * r.speed * dt / len).clamp(0.0, 1.0);
             r.mount += dt;
             let hang = r.line.point(r.t) - Vec3::Z * (p.height + z.hang);
-            let k = (r.mount / z.mount_time.max(1e-3)).min(1.0);
-            let k = k * k * (3.0 - 2.0 * k);
+            let k = smoothstep((r.mount / z.mount_time.max(1e-3)).min(1.0));
             s.pos = r.from.lerp(hang, k);
             s.vel = r.line.tangent(r.t).normalize_or_zero() * r.dir * r.speed;
             s.mode = PilotMove::Air;
@@ -1189,8 +1189,8 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             // Up first, then over the edge.
             let up = (k / 0.6).min(1.0);
             let over = ((k - 0.4) / 0.6).clamp(0.0, 1.0);
-            let ease = |x: f32| x * x * (3.0 - 2.0 * x);
-            s.pos = Vec3::new(from.x + (to.x - from.x) * ease(over), from.y + (to.y - from.y) * ease(over), from.z + (to.z - from.z) * ease(up));
+            let (over, up) = (smoothstep(over), smoothstep(up));
+            s.pos = Vec3::new(from.x + (to.x - from.x) * over, from.y + (to.y - from.y) * over, from.z + (to.z - from.z) * up);
             s.vel = Vec3::ZERO;
             if k >= 1.0 {
                 s.mode = PilotMove::Ground;
