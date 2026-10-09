@@ -1299,6 +1299,11 @@ statistics of every render pass. Bevy averages a pass name over the cameras that
 summed over the cameras, split into the cameras' runs (largest first; the sky, world and
 viewmodel cameras each run their own opaque pass and tonemapping), and the frame's total.
 
+`TF_FIXED_DT=60` (testing) advances the game by exactly 1/60 s per frame and runs the `--script` and
+`--shots` clock on frame counts, so a scripted run plays out the same, frame by frame, whatever the
+frame rate: the `TF_RECORD` logs and screenshots of two runs match exactly, which is how changes to
+the per-frame systems are checked for unchanged behaviour.
+
 ### Campaign maps
 
 The map menu also lists the campaign levels by mission name (all but The Ark, whose ships are

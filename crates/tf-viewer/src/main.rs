@@ -227,7 +227,12 @@ fn main() {
             }
         }
     }
-    App::new()
+    let mut app = App::new();
+    if let Some(dt) = ui::fixed_dt() {
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(dt)))
+            .add_systems(First, ui::fixed_clock.before(script_time_scale));
+    }
+    app
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {

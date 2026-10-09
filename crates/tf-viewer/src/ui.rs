@@ -67,7 +67,28 @@ pub fn log_hitches(loaded: Option<Res<LoadedAt>>, mut last: Local<Option<std::ti
 
 impl LoadedAt {
     pub fn secs(&self) -> f32 {
-        self.0.elapsed().as_secs_f32()
+        match fixed_dt() {
+            Some(dt) => (FIXED_FRAMES.load(std::sync::atomic::Ordering::Relaxed) as f64 * dt) as f32,
+            None => self.0.elapsed().as_secs_f32(),
+        }
+    }
+}
+
+/// TF_FIXED_DT=N (testing): every frame advances the game clock by exactly 1/N s and the
+/// script and screenshot clock counts frames from the end of loading, so a scripted run plays
+/// out the same frame by frame whatever the frame rate (comparing `TF_RECORD` logs).
+pub fn fixed_dt() -> Option<f64> {
+    static DT: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    *DT.get_or_init(|| std::env::var("TF_FIXED_DT").ok().and_then(|v| v.parse::<f64>().ok()).filter(|n| *n > 0.0).map(|n| 1.0 / n))
+}
+
+/// Frames since loading finished (the TF_FIXED_DT clock).
+static FIXED_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count a frame of the TF_FIXED_DT clock.
+pub fn fixed_clock(loaded: Option<Res<LoadedAt>>) {
+    if loaded.is_some() {
+        FIXED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
