@@ -44,8 +44,7 @@ pub fn spawn_pilot_body(
     }
     let Some(root) = root else { return };
     *done = true;
-    let mut sequences: Vec<&str> = vec![IDLE, CROUCH_RUN, SLIDE, WALLRUN_LEFT, WALLRUN_RIGHT, AIR];
-    sequences.extend(RUN);
+    let mut sequences: Vec<&str> = BODY_SEQUENCES.to_vec();
     sequences.extend(crate::executions::PILOT_EXECUTIONS.iter().map(|e| e.0));
     let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden)).id();
     commands.entity(root.0).add_child(anchor);
@@ -90,48 +89,75 @@ pub fn update_pilot_body(
     let Ok(mut a) = actors.get_mut(body.actor) else { return };
     a.autoplay = false;
     a.aim = None;
-    let dt = time.delta_secs();
     let v = Vec2::new(s.vel.x, s.vel.y);
-    let speed = v.length();
-    let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
     let left = Vec2::new(-s.yaw.sin(), s.yaw.cos());
-    let clip = |a: &Actor, n: &str| a.clip(n);
-    let looped = |a: &Actor, c: usize, cycle: &mut f32, rate: f32| {
-        *cycle = (*cycle + dt * rate / a.clips[c].duration.max(1e-3)).rem_euclid(1.0);
-        Layer { clip: c, cycle: *cycle, weight: 1.0 }
+    let mv = match s.mode {
+        PilotMove::Slide => BodyMove::Slide,
+        // The wall on the Pilot's left has its normal pointing to the right.
+        PilotMove::WallRun { normal, .. } => BodyMove::WallRun { wall_left: Vec2::new(normal.x, normal.y).dot(left) < 0.0 },
+        PilotMove::WallHang { .. } => BodyMove::WallHang,
+        PilotMove::Air | PilotMove::Mantle { .. } => BodyMove::Air,
+        PilotMove::Ground if v.length() < 20.0 => BodyMove::Idle,
+        PilotMove::Ground if s.crouched => BodyMove::CrouchRun,
+        PilotMove::Ground => BodyMove::Run,
     };
     let mut cycle = body.cycle;
-    let layers: Vec<Layer> = match s.mode {
-        PilotMove::Slide => clip(&a, SLIDE).map(|c| vec![looped(&a, c, &mut cycle, 1.0)]).unwrap_or_default(),
-        PilotMove::WallRun { normal, .. } => {
-            // The wall on the Pilot's left has its normal pointing to the right.
-            let wall_left = Vec2::new(normal.x, normal.y).dot(left) < 0.0;
-            let n = if wall_left { WALLRUN_LEFT } else { WALLRUN_RIGHT };
-            clip(&a, n).map(|c| vec![looped(&a, c, &mut cycle, 1.0)]).unwrap_or_default()
-        }
-        PilotMove::WallHang { .. } => clip(&a, WALL_HANG).map(|c| vec![looped(&a, c, &mut cycle, 1.0)]).unwrap_or_default(),
-        PilotMove::Air | PilotMove::Mantle { .. } => clip(&a, AIR).map(|c| vec![looped(&a, c, &mut cycle, 1.0)]).unwrap_or_default(),
-        PilotMove::Ground if speed < 20.0 => clip(&a, IDLE).map(|c| vec![looped(&a, c, &mut cycle, 1.0)]).unwrap_or_default(),
-        PilotMove::Ground => {
-            if s.crouched {
-                clip(&a, CROUCH_RUN).map(|c| vec![looped(&a, c, &mut cycle, 1.0)]).unwrap_or_default()
-            } else {
-                // Blend the four run directions by the movement direction; play them at the
-                // speed their root motion covers.
-                let d = Vec2::new(v.dot(fwd), v.dot(left)) / speed;
-                let w = [d.x.max(0.0), (-d.x).max(0.0), d.y.max(0.0), (-d.y).max(0.0)];
-                let ids: Vec<Option<usize>> = RUN.iter().map(|n| clip(&a, n)).collect();
-                let lead = ids[0].or(ids.iter().flatten().next().copied());
-                let rate = lead.map(|c| speed / a.clips[c].ground_speed.max(1.0)).unwrap_or(1.0);
-                if let Some(c) = lead {
-                    cycle = (cycle + dt * rate / a.clips[c].duration.max(1e-3)).rem_euclid(1.0);
-                }
-                ids.iter().zip(w).filter_map(|(c, w)| c.filter(|_| w > 0.01).map(|c| Layer { clip: c, cycle, weight: w })).collect()
-            }
-        }
-    };
+    let layers = body_layers(&a, mv, v, s.yaw, time.delta_secs(), &mut cycle);
     body.cycle = cycle;
     if !layers.is_empty() {
         a.layers = layers;
+    }
+}
+
+/// What a third-person Pilot body is doing, for picking its locomotion clips.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum BodyMove {
+    Idle,
+    Run,
+    CrouchRun,
+    Slide,
+    WallRun { wall_left: bool },
+    WallHang,
+    Air,
+}
+
+/// The sequences a third-person Pilot body needs for `body_layers`.
+pub const BODY_SEQUENCES: [&str; 11] = [IDLE, CROUCH_RUN, SLIDE, WALLRUN_LEFT, WALLRUN_RIGHT, AIR, WALL_HANG, RUN[0], RUN[1], RUN[2], RUN[3]];
+
+/// The locomotion layers for `mv` at ground velocity `v` facing `yaw`, advancing `cycle`: the
+/// four run directions blended by the movement direction and played at the speed their root
+/// motion covers; the other states loop their one clip.
+pub fn body_layers(a: &Actor, mv: BodyMove, v: Vec2, yaw: f32, dt: f32, cycle: &mut f32) -> Vec<Layer> {
+    let speed = v.length();
+    let fwd = Vec2::new(yaw.cos(), yaw.sin());
+    let left = Vec2::new(-yaw.sin(), yaw.cos());
+    let mut looped = |n: &str| -> Vec<Layer> {
+        a.clip(n)
+            .map(|c| {
+                *cycle = (*cycle + dt / a.clips[c].duration.max(1e-3)).rem_euclid(1.0);
+                vec![Layer { clip: c, cycle: *cycle, weight: 1.0 }]
+            })
+            .unwrap_or_default()
+    };
+    match mv {
+        BodyMove::Idle => looped(IDLE),
+        BodyMove::CrouchRun => looped(CROUCH_RUN),
+        BodyMove::Slide => looped(SLIDE),
+        // The clips are named for the lean: a_pt_wallrun_right has the feet to the left of the
+        // head (the engine's decoy plays it when the wall normal points right).
+        BodyMove::WallRun { wall_left } => looped(if wall_left { WALLRUN_RIGHT } else { WALLRUN_LEFT }),
+        BodyMove::WallHang => looped(WALL_HANG),
+        BodyMove::Air => looped(AIR),
+        BodyMove::Run => {
+            let d = if speed > 1e-3 { Vec2::new(v.dot(fwd), v.dot(left)) / speed } else { Vec2::X };
+            let w = [d.x.max(0.0), (-d.x).max(0.0), d.y.max(0.0), (-d.y).max(0.0)];
+            let ids: Vec<Option<usize>> = RUN.iter().map(|n| a.clip(n)).collect();
+            let lead = ids[0].or(ids.iter().flatten().next().copied());
+            let rate = lead.map(|c| speed / a.clips[c].ground_speed.max(1.0)).unwrap_or(1.0);
+            if let Some(c) = lead {
+                *cycle = (*cycle + dt * rate / a.clips[c].duration.max(1e-3)).rem_euclid(1.0);
+            }
+            ids.iter().zip(w).filter_map(|(c, w)| c.filter(|_| w > 0.01).map(|c| Layer { clip: c, cycle: *cycle, weight: w })).collect()
+        }
     }
 }

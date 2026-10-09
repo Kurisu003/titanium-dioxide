@@ -358,7 +358,7 @@ fn main() {
                     hud::hit_feedback,
                     hud::update_damage_arcs,
                     (hud::update_smart_hud, hud::update_tone_hud),
-                    pilotability::pilot_abilities,
+                    (pilotability::pilot_abilities, pilotability::update_decoy).chain(),
                     (pilotability::update_grenades, pilotability::grenade_visuals).chain(),
                     (pilotability::update_pilot_slots, cloak::cloak_viewmodel, cloak::phase_shift_fx),
                     (pilotability::update_pulse_markers, rodeo::battery_hud).chain(),

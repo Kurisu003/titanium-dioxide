@@ -42,6 +42,7 @@ use crate::ui::UiAssets;
 use bevy::prelude::*;
 use tf_assets::settings::PlayerSettings;
 use tf_sim::glam::Vec3 as SVec3;
+use tf_sim::pilot::PilotMove;
 
 /// Stim's speed boost (STIM_EFFECT_SEVERITY with movement_speedboost_extraScale 2.0).
 const STIM_SPEED: f32 = 1.4;
@@ -302,13 +303,157 @@ impl PilotAbilityDefs {
     }
 }
 
-/// The Holo Pilot decoy.
+/// The Holo Pilot decoy (server.dll CPlayerDecoy): a copy of the player that carries on with
+/// what the player was doing when it was made, then runs straight, moved by its animation.
 #[derive(Clone, Copy)]
 pub struct Decoy {
+    /// Feet position.
     pub pos: Vec3,
+    /// Facing (the player's view yaw, flat).
     pub dir: Vec3,
+    /// Seconds left (SetTimeout DECOY_DURATION).
     pub time: f32,
+    pub state: DecoyState,
+    /// Velocity while airborne.
+    pub vel: Vec3,
+    /// Created in the air: jump this fast up next tick (the decoy's double jump).
+    pub jump: Option<f32>,
+    /// It came out of a slide (lands sliding; a ledge launches it at slide speed).
+    pub was_sliding: bool,
+    /// Was strafing before going airborne (lands strafing).
+    pub strafe_right: Option<bool>,
 }
+
+/// CPlayerDecoy's states (server.dll 0x1802a4360; WALK is never set).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DecoyState {
+    Idle,
+    CrouchIdle,
+    CrouchWalk,
+    CrouchStrafe { right: bool },
+    Run,
+    Strafe { right: bool },
+    Sprint,
+    /// Seconds of slide left.
+    Slide { left: f32 },
+    Air,
+    /// Along a wall with this outward normal, at this speed.
+    WallRun { normal: Vec3, speed: f32 },
+    WallHang,
+}
+
+/// The stick push below which a standing decoy idles (`CreatePlayerDecoy( 0.65 )`).
+const DECOY_STICK_TO_RUN: f32 = 0.65;
+/// A slide lasts 2 s, slowing over the last 1.25 s (server.dll 0x1801c42cb).
+const DECOY_SLIDE_TIME: f32 = 2.0;
+const DECOY_SLIDE_SLOWDOWN: f32 = 1.25;
+/// Wallrun speed ramps up at 750/s to 350 (server.dll 0x1801c8d44).
+const DECOY_WALLRUN_ACCEL: f32 = 750.0;
+const DECOY_WALLRUN_MAX: f32 = 350.0;
+/// Half the hull width, and the ground-state step height.
+const DECOY_HULL: f32 = 16.0;
+const DECOY_STEP: f32 = 18.0;
+
+impl Decoy {
+    /// CreatePlayerDecoy (server.dll 0x1801c40d0): copy the player's position and view yaw and
+    /// pick the state from what the player is doing.
+    pub fn from_player(s: &tf_sim::pilot::PilotState, p: &tf_sim::pilot::PilotParams, forward: f32, right: f32) -> Self {
+        let mut dir = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
+        let vel = Vec3::from(s.vel.to_array());
+        let flat = Vec3::new(vel.x, vel.y, 0.0);
+        let stick = (forward + right.abs()).clamp(0.0, 1.0);
+        let strafing = right.abs() > forward.abs();
+        let mut d = Decoy { pos: Vec3::from(s.pos.to_array()), dir, time: DECOY_DURATION, state: DecoyState::Idle, vel: Vec3::ZERO, jump: None, was_sliding: false, strafe_right: None };
+        d.state = match s.mode {
+            PilotMove::Slide => {
+                d.was_sliding = true;
+                DecoyState::Slide { left: DECOY_SLIDE_TIME }
+            }
+            PilotMove::WallHang { .. } => DecoyState::WallHang,
+            PilotMove::WallRun { .. } if flat.length() <= p.walk_speed => DecoyState::WallHang,
+            PilotMove::WallRun { normal, .. } => {
+                // Facing along the player's horizontal velocity.
+                dir = flat.normalize_or(dir);
+                d.dir = dir;
+                DecoyState::WallRun { normal: Vec3::from(normal.to_array()), speed: 0.0 }
+            }
+            PilotMove::Air | PilotMove::Mantle { .. } => {
+                // The horizontal speed carries on along the view yaw; a superjump-style jump
+                // next tick (server.dll 0x1801c460e).
+                let g = p.gravity;
+                let mut h = p.double_jump_height;
+                let mut vz = vel.z;
+                if h > h * p.double_jump_min_frac + vz.max(0.0).powi(2) / (2.0 * g) {
+                    vz = 0.0;
+                } else {
+                    h *= p.double_jump_min_frac;
+                }
+                d.vel = dir * flat.length();
+                d.jump = Some((2.0 * g * h).sqrt() + vz);
+                DecoyState::Air
+            }
+            PilotMove::Ground if s.crouched => {
+                if strafing {
+                    DecoyState::CrouchStrafe { right: right > 0.0 }
+                } else if stick >= DECOY_STICK_TO_RUN {
+                    DecoyState::CrouchWalk
+                } else {
+                    DecoyState::CrouchIdle
+                }
+            }
+            PilotMove::Ground if s.sprinting => DecoyState::Sprint,
+            PilotMove::Ground if strafing => DecoyState::Strafe { right: right > 0.0 },
+            PilotMove::Ground if stick >= DECOY_STICK_TO_RUN => DecoyState::Run,
+            PilotMove::Ground => DecoyState::Idle,
+        };
+        d
+    }
+
+    /// The clip a state plays (activity, with the weapon's "pistol" modifier where the model has
+    /// one), as sequence names.
+    fn clip(&self, pistol: bool) -> &'static str {
+        let p = |rifle: &'static str, pistol_seq: &'static str| if pistol { pistol_seq } else { rifle };
+        match self.state {
+            DecoyState::Idle => p("CQB_Idle_MP", "CQB_Idle_MP_Pistol"),
+            DecoyState::CrouchIdle => p("CQB_CrouchIdle_MP", "CrouchIdle_Pistol_MP"),
+            DecoyState::CrouchWalk => p("CrouchRun_forward_mp", "CrouchRun_pistol_forward_mp"),
+            DecoyState::CrouchStrafe { right } => if right { "CrouchRUN_mp_right" } else { "CrouchRUN_mp_left" },
+            DecoyState::Run => p("Run_forward_mp", "Run_pistol_forward_mp"),
+            DecoyState::Strafe { right } => match (right, pistol) {
+                (true, false) => "Run_mp_right",
+                (false, false) => "Run_mp_left",
+                (true, true) => "Run_mp_right_pistol",
+                (false, true) => "Run_mp_left_pistol",
+            },
+            DecoyState::Sprint => p("Sprint_mp_forward", "Sprint_mp_forward_Pistol"),
+            DecoyState::Slide { .. } => p("Slide_forward_mp", "Slide_Pistol_forward_mp"),
+            DecoyState::Air if self.was_sliding => p("MP_Pt_Slide_Float", "MP_Pt_Pistol_Slide_Float"),
+            DecoyState::Air => "Jump_float_MP",
+            DecoyState::WallRun { normal, .. } => {
+                // ACT_MP_WALLRUN_RIGHT when dot(right, normal) >= 0, i.e. the wall is on the
+                // left: the clips are named for the way the body leans (a_pt_wallrun_right
+                // has the feet to the left of the head).
+                let right_dir = Vec3::new(self.dir.y, -self.dir.x, 0.0);
+                match (right_dir.dot(normal) >= 0.0, pistol) {
+                    (true, false) => "a_pt_wallrun_right",
+                    (false, false) => "a_pt_wallrun_left",
+                    (true, true) => "a_pt_wallrun_pistol_right",
+                    (false, true) => "a_pt_wallrun_pistol_left",
+                }
+            }
+            DecoyState::WallHang => p("pt_wallrun_hang_idle", "pt_wallrun_Pistol_hang_idle"),
+        }
+    }
+}
+
+/// The sequences the decoy plays (`Decoy::clip`).
+const DECOY_SEQUENCES: &[&str] = &[
+    "CQB_Idle_MP", "CQB_Idle_MP_Pistol", "CQB_CrouchIdle_MP", "CrouchIdle_Pistol_MP", "CrouchRun_forward_mp", "CrouchRun_pistol_forward_mp",
+    "CrouchRUN_mp_right", "CrouchRUN_mp_left", "Run_forward_mp", "Run_pistol_forward_mp", "Run_mp_right", "Run_mp_left", "Run_mp_right_pistol",
+    "Run_mp_left_pistol", "Sprint_mp_forward", "Sprint_mp_forward_Pistol", "Slide_forward_mp", "Slide_Pistol_forward_mp", "MP_Pt_Slide_Float",
+    "MP_Pt_Pistol_Slide_Float", "Jump_float_MP", "a_pt_wallrun_right", "a_pt_wallrun_left", "a_pt_wallrun_pistol_right", "a_pt_wallrun_pistol_left",
+    "pt_wallrun_hang_idle", "pt_wallrun_Pistol_hang_idle",
+];
 
 /// What the Pilot's abilities are doing right now (read by movement, enemies and damage).
 #[derive(Resource, Default)]
@@ -490,8 +635,10 @@ pub struct ShieldMesh;
 pub struct PilotKitAssets {
     shield_mesh: Handle<Mesh>,
     shield_mat: Handle<StandardMaterial>,
-    /// The Holo Pilot's anchor (hidden until used).
+    /// The Holo Pilot: its anchor (hidden until used), actor and gun hand (`ja_c_propGun`).
     decoy: Option<Entity>,
+    pub decoy_actor: Option<Entity>,
+    pub decoy_hand: Option<Entity>,
 }
 
 /// Build the A-Wall mesh and the Holo Pilot model once, while loading.
@@ -540,17 +687,18 @@ pub fn setup_pilot_kit(
         cull_mode: None,
         ..default()
     });
-    // The decoy: a Pilot in the reaper suit, running.
+    // The decoy: a copy of the player (CreatePlayerDecoy), so the player's own body model with
+    // its locomotion clips; it carries the player's gun (`update_decoy_gun`).
     let anchor = commands.spawn((game_tf(Vec3::ZERO, 0.0), Visibility::Hidden, DecoyActor)).id();
-    let spec = crate::actor::ActorSpec { path: "models/humans/pilots/pilot_medium_reaper_m.mdl", sequences: &["Run_forward_mp"], grids: &[], body: &[] };
-    let decoy = match crate::actor::spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
-        Ok(_) => Some(anchor),
+    let spec = crate::actor::ActorSpec { path: crate::pilotbody::PILOT_BODY_MODEL, sequences: DECOY_SEQUENCES, grids: &[], body: &[] };
+    let (decoy, decoy_actor, decoy_hand) = match crate::actor::spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+        Ok(a) => (Some(anchor), Some(a.entity), a.joint("ja_c_propGun")),
         Err(e) => {
             log::warn!("holo pilot model: {e:#}");
-            None
+            (None, None, None)
         }
     };
-    commands.insert_resource(PilotKitAssets { shield_mesh, shield_mat, decoy });
+    commands.insert_resource(PilotKitAssets { shield_mesh, shield_mat, decoy, decoy_actor, decoy_hand });
 }
 
 /// A game-space placement (feet position, yaw about Z) as a Bevy world transform (the world
@@ -580,7 +728,6 @@ pub fn pilot_abilities(
     mut shields: ResMut<Shields>,
     mut input: ResMut<PlayerInput>,
     mut pilots: Query<(&mut PlayerPilot, &mut PilotHealth)>,
-    mut decoys: Query<(&mut Transform, &mut Visibility), With<DecoyActor>>,
     mut throw_state: ResMut<OrdnanceThrow>,
 ) {
     let dt = time.delta_secs().min(0.1);
@@ -638,28 +785,6 @@ pub fn pilot_abilities(
         }
     }
 
-    // The decoy runs on along the ground until its time is up or it hits a wall.
-    if let Some(mut d) = status.decoy {
-        d.time -= dt;
-        let run = d.dir * settings.0.sprint_speed;
-        let ahead = world.0.raycast(SVec3::from((d.pos + Vec3::Z * 40.0).to_array()), SVec3::from(d.dir.to_array()), 40.0);
-        if ahead.is_none() {
-            d.pos += run * dt;
-        }
-        if let Some(h) = world.0.raycast(SVec3::from((d.pos + Vec3::Z * 40.0).to_array()), -SVec3::Z, 400.0) {
-            d.pos.z = h.point.z;
-        }
-        if let Ok((mut tf, mut vis)) = decoys.single_mut() {
-            *tf = game_tf(d.pos, d.dir.y.atan2(d.dir.x));
-            *vis = if d.time > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
-        }
-        if d.time <= 0.0 {
-            status.decoy = None;
-            crate::audio::event_at(&mut commands, "holopilot_end_3P", d.pos);
-        } else {
-            status.decoy = Some(d);
-        }
-    }
     // Shields wear out.
     for s in &mut shields.0 {
         s.time -= dt;
@@ -769,9 +894,10 @@ pub fn pilot_abilities(
                     ));
                 }
                 Tactical::HoloPilot => {
-                    let dir = Vec3::new(pilot.state.yaw.cos(), pilot.state.yaw.sin(), 0.0);
-                    let at = Vec3::from(pilot.state.pos.to_array()) + dir * 40.0;
-                    status.decoy = Some(Decoy { pos: at, dir, time: def.duration });
+                    let mut d = Decoy::from_player(&pilot.state, &settings.0, input.forward, input.right);
+                    d.time = def.duration;
+                    log::debug!("holo pilot: {:?}", d.state);
+                    status.decoy = Some(d);
                     if kit.as_ref().is_some_and(|k| k.decoy.is_none()) {
                         log::warn!("holo pilot has no model; enemies still target it");
                     }
@@ -1464,5 +1590,183 @@ pub fn grenade_visuals(
             let c = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY)).id();
             commands.entity(holder).add_child(c);
         }
+    }
+}
+
+/// What `update_decoy` keeps between frames: the gun it carries, whether that gun plays the
+/// pistol sequences, the playing clip and its cycle.
+#[derive(Default)]
+pub struct DecoyRig {
+    gun: Option<Entity>,
+    pistol: bool,
+    clip: Option<usize>,
+    cycle: f32,
+}
+
+/// Move and animate the Holo Pilot (server.dll CPlayerDecoy think, 0x1801c8330). On the ground
+/// it is moved by its animation's root motion at playback rate 1 along its facing, stepping up
+/// to 18 units; at a wall it stays put and keeps animating; off a ledge it launches at 1.2 x its
+/// speed and falls (gravity), landing into a run, sprint or slide. A slide lasts 2 s; a wallrun
+/// speeds up to 350 and jumps off when the wall ends. It carries the player's gun
+/// (`playermodel`, in `ja_c_propGun`) and plays the pistol sequences for a "pistol" one.
+#[allow(clippy::too_many_arguments)]
+pub fn update_decoy(
+    mut commands: Commands,
+    mut rig: Local<DecoyRig>,
+    time: Res<Time>,
+    world: Res<Collision>,
+    settings: Res<crate::pilotctl::PilotSettings>,
+    mut status: ResMut<PilotStatus>,
+    kit: Option<Res<PilotKitAssets>>,
+    loadouts: Query<&crate::pilotweapon::PilotLoadout>,
+    mut actors: Query<&mut crate::actor::Actor>,
+    mut decoys: Query<(&mut Transform, &mut Visibility), With<DecoyActor>>,
+    gd: Res<GameData>,
+    mut cache: ResMut<Cache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+) {
+    let Some(kit) = kit else { return };
+    let Some(mut d) = status.decoy else {
+        if let Some(e) = rig.gun.take() {
+            commands.entity(e).despawn();
+        }
+        rig.clip = None;
+        return;
+    };
+    let dt = time.delta_secs().min(0.1);
+    // The gun, once, from the weapon in hand.
+    if rig.gun.is_none() {
+        if let (Some(hand), Some(g)) = (kit.decoy_hand, loadouts.iter().next().and_then(|lo| lo.guns.get(lo.active))) {
+            rig.pistol = g.def.activity_modifier == "pistol";
+            let path = g.def.playermodel.clone();
+            if !path.is_empty() {
+                let spec = crate::actor::ActorSpec { path: &path, sequences: &[], grids: &[], body: &[] };
+                match crate::actor::spawn_actor(&mut commands, hand, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                    Ok(a) => rig.gun = Some(a.entity),
+                    Err(e) => log::warn!("holo pilot gun {path}: {e:#}"),
+                }
+            }
+        }
+    }
+    let p = &settings.0;
+    let Ok(mut actor) = kit.decoy_actor.map_or(Err(()), |e| actors.get_mut(e).map_err(|_| ())) else { return };
+    let clip = actor.clip(d.clip(rig.pistol)).or_else(|| actor.clip(d.clip(false)));
+    if clip != rig.clip {
+        // A new activity starts its sequence from the beginning.
+        rig.clip = clip;
+        rig.cycle = 0.0;
+    }
+    let ground_speed = clip.map_or(0.0, |c| actor.clips[c].ground_speed);
+    if let Some(c) = clip {
+        rig.cycle = (rig.cycle + dt / actor.clips[c].duration.max(1e-3)).rem_euclid(1.0);
+        actor.autoplay = false;
+        actor.aim = None;
+        actor.layers = vec![crate::actor::Layer { clip: c, cycle: rig.cycle, weight: 1.0 }];
+    }
+    let ray = |o: Vec3, dir: Vec3, len: f32| world.0.raycast(SVec3::from(o.to_array()), SVec3::from(dir.to_array()), len).map(|h| (Vec3::from(h.point.to_array()), Vec3::from(h.normal.to_array())));
+    let blocked = |pos: Vec3, dir: Vec3, dist: f32| ray(pos + Vec3::Z * (DECOY_STEP + 2.0), dir, dist + DECOY_HULL).is_some_and(|(_, n)| n.z.abs() < 0.7);
+    let ground_below = |pos: Vec3, below: f32| ray(pos + Vec3::Z * DECOY_STEP, -Vec3::Z, DECOY_STEP + below).filter(|(_, n)| n.z > 0.7).map(|(h, _)| h.z);
+    let right = Vec3::new(d.dir.y, -d.dir.x, 0.0);
+    d.time -= dt;
+    match d.state {
+        DecoyState::Air => {
+            if let Some(j) = d.jump.take() {
+                d.vel.z = j;
+            }
+            d.vel.z -= p.gravity * dt;
+            let flat = Vec3::new(d.vel.x, d.vel.y, 0.0);
+            if flat.length() > 1e-3 && blocked(d.pos, flat.normalize(), flat.length() * dt) {
+                d.vel.x = 0.0;
+                d.vel.y = 0.0;
+            }
+            let next = d.pos + d.vel * dt;
+            // Land (SurfaceTouch): ground under the feet while falling.
+            let land = (d.vel.z <= 0.0).then(|| ground_below(next, (-d.vel.z * dt).max(1.0))).flatten();
+            if let Some(z) = land.filter(|&z| z >= next.z - 1.0) {
+                d.pos = Vec3::new(next.x, next.y, z);
+                let speed = Vec2::new(d.vel.x, d.vel.y).length();
+                d.state = if let Some(r) = d.strafe_right {
+                    DecoyState::Strafe { right: r }
+                } else if speed < p.sprint_speed {
+                    DecoyState::Run
+                } else if d.was_sliding {
+                    DecoyState::Slide { left: DECOY_SLIDE_TIME }
+                } else {
+                    DecoyState::Sprint
+                };
+                d.vel = Vec3::ZERO;
+            } else {
+                d.pos = next;
+            }
+        }
+        DecoyState::WallRun { normal, speed } => {
+            let speed = (speed + DECOY_WALLRUN_ACCEL * dt).min(DECOY_WALLRUN_MAX);
+            let along = (d.dir - normal * d.dir.dot(normal)).normalize_or(d.dir);
+            let on_wall = ray(d.pos + Vec3::Z * 16.0, -normal, 13.0 + DECOY_HULL + 4.7).filter(|(_, n)| (-0.35..=0.7).contains(&n.z));
+            if on_wall.is_none() || blocked(d.pos, along, speed * dt) {
+                // Off the end of the wall: jump away from it (server.dll 0x1801c9350).
+                let strength = p.wallrun_jump_input + p.wallrun_jump_out;
+                let out = (d.dir + normal).normalize_or(normal);
+                d.vel = Vec3::new(out.x, out.y, 0.0) * strength + Vec3::Z * strength * (normal.z + 0.2);
+                d.state = DecoyState::Air;
+            } else {
+                d.pos += along * speed * dt;
+                d.state = DecoyState::WallRun { normal, speed };
+            }
+        }
+        DecoyState::Idle | DecoyState::CrouchIdle | DecoyState::WallHang => {
+            if d.state != DecoyState::WallHang && ground_below(d.pos, 4.0).is_none() {
+                d.state = DecoyState::Air;
+            }
+        }
+        _ => {
+            // Ground states: root motion along the facing (sideways for a strafe).
+            let (move_dir, speed) = match d.state {
+                DecoyState::Strafe { right: r } | DecoyState::CrouchStrafe { right: r } => (if r { right } else { -right }, ground_speed),
+                DecoyState::Slide { left } => {
+                    // Sprint speed x 1.5, slowing (cubic) over the last 1.25 s.
+                    let into = (DECOY_SLIDE_SLOWDOWN - left).max(0.0) / DECOY_SLIDE_SLOWDOWN;
+                    (d.dir, p.sprint_speed * (1.0 - into.powi(3)) * 1.5)
+                }
+                _ => (d.dir, ground_speed),
+            };
+            if let DecoyState::Slide { left } = d.state {
+                d.state = if left - dt <= 0.0 { DecoyState::CrouchIdle } else { DecoyState::Slide { left: left - dt } };
+            }
+            let step = move_dir * speed * dt;
+            if !blocked(d.pos, move_dir, step.length()) {
+                let next = d.pos + step;
+                if let Some(z) = ground_below(next, DECOY_STEP) {
+                    d.pos = Vec3::new(next.x, next.y, z);
+                } else {
+                    // Off a ledge: launch at 1.2 x the state's speed.
+                    let launch = match d.state {
+                        DecoyState::Sprint => p.sprint_speed,
+                        DecoyState::Slide { .. } => p.sprint_speed * 1.5,
+                        _ => p.walk_speed,
+                    };
+                    d.strafe_right = match d.state {
+                        DecoyState::Strafe { right: r } => Some(r),
+                        _ => None,
+                    };
+                    d.pos = next;
+                    d.vel = move_dir * launch * 1.2;
+                    d.state = DecoyState::Air;
+                }
+            }
+        }
+    }
+    if let Ok((mut tf, mut vis)) = decoys.single_mut() {
+        *tf = game_tf(d.pos, d.dir.y.atan2(d.dir.x));
+        *vis = if d.time > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    if d.time <= 0.0 {
+        status.decoy = None;
+        crate::audio::event_at(&mut commands, "holopilot_end_3P", d.pos);
+    } else {
+        status.decoy = Some(d);
     }
 }

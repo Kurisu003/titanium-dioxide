@@ -503,6 +503,30 @@ impl Actor {
     }
 }
 
+/// A sequence played as one clip: a blend grid's cell where its parameters are 0, e.g.
+/// `Run_forward_mp`'s straight run (pt_Run_Forward) rather than its first clip, the run turned
+/// 90 degrees right (its move_yaw grid is -90, 0, +90). A grid whose range doesn't span 0 gives
+/// its first cell as before.
+fn neutral_anim(owner: &Model, si: usize) -> Option<usize> {
+    let seq = &owner.sequences[si];
+    let o = i32::from_le_bytes(owner.raw[0xC4..0xC8].try_into().unwrap()) as usize + si * 0xE8;
+    let f = |off: usize| f32::from_le_bytes(owner.raw[o + off..o + off + 4].try_into().unwrap());
+    let cell = |n: i32, (lo, hi): (f32, f32)| -> usize {
+        let n = n.max(1) as usize;
+        if n < 2 || !(lo < 0.0 && hi > 0.0) {
+            return 0;
+        }
+        ((-lo / (hi - lo)) * (n - 1) as f32).round() as usize
+    };
+    let (x, y) = (cell(seq.group_size[0], (f(0x54), f(0x5C))), cell(seq.group_size[1], (f(0x58), f(0x60))));
+    let w = seq.group_size[0].max(1) as usize;
+    let i = x + y * w;
+    if i != 0 {
+        log::debug!("{}: playing grid cell {i} (the neutral one) instead of the first", seq.label);
+    }
+    seq.anims.get(i).or(seq.anims.first()).copied()
+}
+
 /// Decode `anim_index` of `owner`, retargeted onto `model`'s skeleton by bone name.
 fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
     let anim = owner.animation(anim_index)?;
@@ -760,7 +784,7 @@ fn build_template(
         };
         let r = (|| -> Result<Clip> {
             let (owner, si) = find(label).with_context(|| format!("sequence {label} not found"))?;
-            let mut clip = retarget(&model, owner, *owner.sequences[si].anims.first().context("empty sequence")?)?;
+            let mut clip = retarget(&model, owner, neutral_anim(owner, si).context("empty sequence")?)?;
             clip.sounds = owner.sequences[si]
                 .events
                 .iter()

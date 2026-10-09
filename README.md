@@ -789,8 +789,13 @@ the constants in their `.nut` files:
   on the ground. Two hooks of 50 power, regenerating at 3/s (16.7 s per hook).
 - Pulse Blade (`mp_weapon_grenade_sonar`): thrown at 3500 u/s, sticks, and marks every enemy
   within 1250 units through walls for 6 s; 100 damage on a direct hit; 25 s.
-- Holo Pilot (`mp_ability_holopilot`): a decoy Pilot runs ahead at sprint speed for 10 s. Enemies
-  shoot at it when it's closer than you or they can't see you; two charges, 12.5 s each.
+- Holo Pilot (`mp_ability_holopilot`): a copy of you (your body model and gun) for 10 s, as
+  server.dll's CPlayerDecoy does it. It carries on with what you were doing (idle below 65% stick,
+  run, strafe, sprint, crouch walk, a 2 s slide, wallrun, or a double jump if made in the air),
+  facing your view, moved by its animation's root motion; it stops at walls, falls off ledges at
+  1.2x its speed and lands into a run, sprint or slide, and jumps off the end of a wall. Pistols
+  play the pistol sequences. Enemies shoot at it when it's closer than you or they can't see
+  you; two charges, 12.5 s each. Not modelled: its 3 s dissolve and occasional flicker.
 - A-Wall (`mp_weapon_deployable_cover`): thrown (ThrowDeployable: 15 units ahead of the eye, 8°
   above the view at 500, up to 3x looking down, gravity x3), it plants where it lands and puts up
   an arc shield (radius 84, 89 tall, 150°) whose face stands at the projectile, facing the throw

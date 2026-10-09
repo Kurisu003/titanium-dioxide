@@ -63,6 +63,9 @@ pub struct WeaponDef {
     /// impact_effect_table: which `scripts/impacts/<table>.txt` the hits play.
     pub impact_table: &'static str,
     pub playermodel: String,
+    /// `activitymodifier` ("pistol", "rocket", "satchel"): which third-person sequences a
+    /// holder plays.
+    pub activity_modifier: String,
     // AI use (npc_* keys and proficiency_*).
     pub npc_min_burst: u32,
     pub npc_max_burst: u32,
@@ -342,6 +345,7 @@ impl WeaponDef {
             stops_regen: s.get(".damage_flags").is_some_and(|v| v.contains("DF_STOPS_TITAN_REGEN")),
             impact_table: intern(s.get(".impact_effect_table").as_deref().filter(|t| !t.is_empty()).unwrap_or("default")),
             playermodel: s.get(".playermodel").unwrap_or_default().to_string(),
+            activity_modifier: s.get(".activitymodifier").unwrap_or_default().trim().to_ascii_lowercase(),
             npc_min_burst: f("npc_min_burst", 3.0) as u32,
             npc_max_burst: f("npc_max_burst", 6.0) as u32,
             npc_rest_min: f("npc_rest_time_between_bursts_min", 0.5),
