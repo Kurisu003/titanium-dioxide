@@ -695,7 +695,9 @@ impl Model {
                 let num_sg = r.i32(vmesh) as usize;
                 let sg_base = vmesh + r.i32(vmesh + 4) as usize;
                 let mut md = MeshData { material, bodypart: bpi, ..Default::default() };
-                let mut remap: HashMap<usize, u32> = HashMap::new();
+                // Output vertex of each of the mesh's VVD vertices (by its u16 index from
+                // `mesh_vertex_base`), u32::MAX until first used.
+                let mut remap: Vec<u32> = Vec::new();
                 for sgi in 0..num_sg {
                     let sg = sg_base + sgi * 33;
                     let sg_verts = sg + r.i32(sg + 4) as usize;
@@ -714,10 +716,12 @@ impl Model {
                             let vi = r.u16(sg_indices + (idx_off + k) * 2) as usize;
                             let vtx_vert = sg_verts + vi * 9;
                             let orig = r.u16(vtx_vert + 4) as usize;
-                            let global = mesh_vertex_base + orig;
-                            let next = md.positions.len() as u32;
-                            let id = *remap.entry(global).or_insert_with(|| {
-                                let v = &vertices[global.min(vertices.len() - 1)];
+                            if orig >= remap.len() {
+                                remap.resize(orig + 1, u32::MAX);
+                            }
+                            if remap[orig] == u32::MAX {
+                                remap[orig] = md.positions.len() as u32;
+                                let v = &vertices[(mesh_vertex_base + orig).min(vertices.len() - 1)];
                                 md.positions.push(v.pos);
                                 md.normals.push(v.normal);
                                 md.uvs.push(v.uv);
@@ -726,9 +730,8 @@ impl Model {
                                 if let Some(c) = v.color {
                                     md.colors.push(c);
                                 }
-                                next
-                            });
-                            md.indices.push(id);
+                            }
+                            md.indices.push(remap[orig]);
                         }
                     }
                 }
