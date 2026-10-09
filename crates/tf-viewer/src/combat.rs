@@ -449,14 +449,13 @@ pub fn player_combat(
                 commands.entity(root).insert(crate::pfx::PfxTrail::oriented(name));
             }
             vortex.shield_fp = fp;
-            // The effect's dome model (fx\vortex_shield_hld: an additive caustic pattern drawn
-            // through scrolled, distorted UV layers and emissive edge fades) barely shows through
-            // our effect shader, so the disc still stands in for it: in the cockpit where the
-            // dome sits (10 units out along the tag's axis) at the model's own size, 60 units
-            // across (its particle radius 3 is not applied: a guess); on BT's arm likewise (the
-            // third-person system spawns the same dome 10 out, radius 4, also not applied). The
-            // heat shield's flame fan is a drawn model.
-            if !(game_fx && heat) {
+            // The effect's dome model (fx\vortex_shield_hld) is drawn by the game's own shader
+            // (fxuber.rs), at the particle's radius (3 in the cockpit, 4 outside: 180 and 240
+            // units across). The disc stands in for it only with TF_OLD_FX or TF_OLD_SHIELDS:
+            // in the cockpit where the dome sits (10 units out along the tag's axis) at the
+            // model's own size, 60 units across, on BT's arm likewise. The heat shield's flame
+            // fan is a drawn model.
+            if !game_fx || (!heat && std::env::var_os("TF_OLD_SHIELDS").is_some()) {
                 // (The size rides on a holder: the shimmer animates the disc's own scale.)
                 let local = if (fp || vortex.shield_arm) && game_fx { Transform::from_translation(Vec3::NEG_Z * 10.0 * crate::player::UNIT).with_scale(Vec3::splat(30.0 / VORTEX_RADIUS)) } else { Transform::IDENTITY };
                 let holder = commands.spawn((local, Visibility::default())).id();
@@ -471,6 +470,12 @@ pub fn player_combat(
             vortex.shield = None;
         }
         _ => {}
+    }
+    // mp_titanweapon_vortex_shield.nut's VortexSphereColorUpdate: control point 1 carries
+    // GetVortexSphereCurrentColor( weapon.GetWeaponChargeFraction() ), blue while fresh,
+    // orange then red as the hold runs out (Ion's: 1 - its energy fraction).
+    if let (Some(e), true) = (vortex.shield, game_fx && vortex.mode != VortexMode::Heat) {
+        commands.entity(e).insert(crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - vortex.fraction())));
     }
     if let Some(e) = vortex.shield.filter(|_| !vortex.shield_arm) {
         if let Ok(mut tf) = shields.get_mut(e) {

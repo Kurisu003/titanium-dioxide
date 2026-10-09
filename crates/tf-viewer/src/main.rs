@@ -51,6 +51,7 @@ mod smartammo;
 mod targets;
 mod titankit;
 mod uber;
+mod fxuber;
 mod ui;
 mod vitals;
 mod vmcam;
@@ -247,6 +248,7 @@ fn main() {
         .add_plugins(convert::TransparentOrderPlugin)
         .add_plugins(pfx::SoftMaterialPlugin)
         .add_plugins(uber::UberPlugin)
+        .add_plugins(fxuber::FxUberPlugin)
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)

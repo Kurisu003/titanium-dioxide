@@ -93,7 +93,7 @@ already playing (loops, music) too.
 - **Weapon sights and scopes:** the reticles are compiled UI programs that can't be run yet, so
   optics show no reticle.
 - **Some visuals:** refraction is approximated, and only for particle effects (heat haze,
-  shockwave rings); shield domes still use stand-ins; some particle features are missing; lighting, fog and
+  shockwave rings); shield domes and walls use the game's effect shader but leave out its height fog; some particle features are missing; lighting, fog and
   materials are approximations, not the game's shaders.
 - **Movement details** that the game's engine code (not its data files) controls: the formulas
   behind the movement keys (we follow the game's own descriptions of them) and
@@ -227,10 +227,9 @@ logs frames slower than 60 ms after loading. `TF_PFX_TEST=<system>` with the scr
 ahead of the camera (`TF_PFX_TEST_DIST=units`; the ground is found by a trace down, so it works
 from the cockpit and a `--cam` free camera), for checking one in isolation; `TF_PFX_SKIP=a,b`
 leaves out child systems whose names contain a part. Effects carry 16 control points (the game addresses up to CP 10). `Render models`
-renderers draw a model per particle (`fx_model_materials`: the game's unlit `Add`/`Trans`
-shader sets become additive / translucent unlit materials tinted by the system colour without
-its HDR gain; the hex shields' refraction is approximated by their caustic texture at 35%
-alpha; `TF_NO_FX_MODELS=1` hides them and `TF_FX_MODEL_SCALE=k` rescales them for checking). Sprites also fade out within 60 units of the eye (rounds and smoke
+renderers draw a model per particle (`fx_model_materials`: unlit effect materials draw with
+the game's own unlit uber shader, see Shield looks; `TF_OLD_SHIELDS=1` brings back the earlier
+additive / translucent stand-ins; `TF_NO_FX_MODELS=1` hides them and `TF_FX_MODEL_SCALE=k` rescales them for checking). Sprites also fade out within 60 units of the eye (rounds and smoke
 arriving at the camera would white the screen out). `$overbrightfactor` (up to 30 on the
 `_15ob`/`_30ob` glows) is applied as its square root: at full strength every glow is a flat
 white disc under this tonemapper, so the camera's bloom carries the rest (an approximation
@@ -732,9 +731,9 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
 - **Effect fixes for shield models:** Graph Scalar `output op` 2 adds (the A-Wall's 10x deploy
   flash then its steady alpha; it used to set, leaving the wall invisible); "orient model z to
   normal" builds a fixed-roll basis (model X toward world down) instead of a shortest-arc turn,
-  which buried the wall facing one way; hex shield materials (a white base and the
-  `refract_hex_nml` normal map, which refracts in the game) draw the normal map's slope additively,
-  over a faint fill (A-Wall, Legion's Gun Shield).
+  which buried the wall facing one way; hex shield materials draw with the game's shader
+  (fxuber.rs, see Shield looks; `refract_hex_nml` is a UV distortion map there, not a refraction
+  of the scene).
 - **Weapon screens:** the .mdl's RUI meshes are parsed (`mdl::RuiMesh`: header 0x128/0x12C,
   parallelogram faces on bones with UVs into the RUI canvas; `ruimeshes` example). Each script's
   enabled `UiDataN` names an RUI and the mesh it draws on. The RUIs are compiled UI programs,
@@ -893,9 +892,15 @@ the constants in their `.nut` files:
 - Stim (`mp_ability_heal`): 3 s of 40% extra speed and doubled health regen; 25 s recharge.
   The screen plays `P_heal` while it runs (sh_stim.gnut), as a screen effect like
   `P_health_hex` (see Effects). Cloak and Phase Shift's first-person looks are engine-side. Cloak
-  draws the arms and gun as a refracting outline (cloak.rs: the picture behind them shifted by
-  their view-space normal, a cool tint and a faint fresnel rim; strengths by eye,
-  `TF_CLOAK="warp rim exponent tint"` to tune, `TF_NO_CLOAK_FX=1` for the old screen tint);
+  follows the engine's post shader (`engine_post_ps50` in shaders/fxc, cloak.rs): over the arms
+  and gun the scene behind is read at three taps 120 degrees apart (`+1,0`, `-0.5,∓0.866` times
+  `cloak_pilotAberrationScale` 0.012, jittered by `cloak_pilotNoiseFactor` 0.25 each frame as
+  materialsystem_dx11.dll does at 0x18003af97), weighted by `cloak_pilotTint1/2/3` (0.35, 0.5,
+  0.65, normalised), times `cloak_pilotBrightenMul` 1.2 plus `BrightenAdd` 0.02, and pulled toward
+  its grey by `cloak_pilotDesaturate` 0.6. Guesses: the engine scales the offset by a mask the
+  cloaked models write into the frame's alpha, which isn't traced, so the mask is taken as 1
+  over the silhouette and the 0.012 is read as a fraction of the screen width.
+  `TF_CLOAK="distance jitter mul add"` to tune, `TF_NO_CLOAK_FX=1` for the old screen tint;
   Phase Shift draws the game's colour correction (`materials/correction/mp_ability_shifter.raw`,
   which sh_phase_shift.gnut registers: a 32x32x32 table that maps each colour by its brightest
   channel onto a pale-blue ramp running white, black, then blue-grey, an inverted ghost world)
@@ -1020,16 +1025,24 @@ where the script has them):
   The sword hits for 625, and for 625 + 1400 during Sword Core (20 s).
 - **Tracker Rockets**: need a full lock. Each 40mm hit adds a lock stack (3 = full; stacks fade
   after 10 s). Firing launches 6 homing rockets of 350.
-- Shield looks: the Vortex dome is the effect's own model (`fx\vortex_shield_hld.mdl`, an
-  additive caustic material with an edge fade), which our uber path barely draws, so a disc
-  stands in, nearly clear in the middle with a faint hex lattice and a bright rim, slowly
-  turning and breathing. In the cockpit it sits where the game puts it: on the vortex blocker
+- Shield looks: every shield and wall model (the Vortex dome `fx\vortex_shield_hld.mdl`, the
+  Thermal Shield's flame fan, the Particle Wall's shells, Legion's Gun Shield, the A-Wall) draws
+  with the game's own unlit uber pixel shader (fxuber.rs, fxuber.wgsl, followed from the
+  disassembled `shdr` shaders: e.g. the dome's 4bd6a6bd4aad037a, the wall front's
+  c8be5a00373d3dff): scrolled and distorted caustic layers, edge and distance fades, the models'
+  own vertex colours and alpha (the VVC data in the .mdl; the dome's rim fades to clear), the
+  material's blend, depth and cull states. Shield colour follows the game scripts:
+  `GetTriLerpColor` in `_vortex.nut` (full 115,247,255, half 200,128,80, empty 200,80,80, crossing
+  at 75% and 95%) goes into control point 1 (`EffectSetControlPointVector`) by the Vortex's charge,
+  the Particle Wall's damage (of 1750) and the Gun Shield's (of 2500), and the systems' own
+  `Remap Control Point to Vector` turns it into the particle colour. Guesses: the particle's
+  colour and alpha are passed to the model as its instance colour (the model renderer's own
+  mapping isn't traced), the detail texture's UV slot (no shield uses it with a multiply map),
+  and the shader's height fog is left out. `TF_OLD_SHIELDS=1` brings back the old stand-ins
+  (a disc with a hex lattice). In the cockpit it sits where the game puts it: on the vortex blocker
   viewmodel's `vortex_center` tag at the end of its draw (105 units ahead, 24 left, 20 down,
   tilted like the hand), sized to the dome model (60 units across). BT's left arm comes from
-  the shield's own viewmodel (see Offhand viewmodels below). The Thermal Shield is a refraction
-  material in the game; a disc stands in for it too. The
-  Particle Wall's shells build their pattern in the shader from scaled, scrolled UV layers; a
-  tiled hex lattice stands in for it.
+  the shield's own viewmodel (see Offhand viewmodels below).
 - Offhand viewmodels (`offhandvm.rs`): every kit ability whose weapon script names a
   `viewmodel` plays it in the cockpit, with BT's arms bone-merged as on the gun's: the Vortex
   blocker's raised left hand (Ion's and Northstar's Tether Trap use it too), the shoulder rocket
@@ -1425,7 +1438,8 @@ the free camera at a position in game units; `--no-props` skips static props.
   white BC7 colour with a BC4 mask). `TF_NO_VSYNC=1` runs uncapped for frame-rate measurements
   (`RUST_LOG=tf_viewer=info` logs `perf:` lines). `matcpu` and `shdsls` examples dump the
   constants and shader set names.
-  Effect models always use it when their additive material scrolls or edge-fades: the Thermal
+  With `TF_OLD_SHIELDS=1` effect models use it when their additive material scrolls or
+  edge-fades (otherwise they draw with the game's effect shader, see Shield looks): the Thermal
   Shield's flame dome (`fx\flame_shield_edge`) scrolls its caustic texture through UV1, takes
   the high-contrast caustic opacity map (slot 13) as alpha, and is warped by a cloud offset map
   (slot 18) scrolled through UV2. The slot-to-transform reading and the warp amplitude (0.05) are
@@ -1443,8 +1457,8 @@ the free camera at a position in game units; `--no-props` skips static props.
 - Collision uses render meshes plus the map's collision where nothing rendered covers it (see Titan); render meshes the game doesn't collide with (wires, some decals) still block, wall-running and mantling ignore clip surfaces, and the 57 props on Kodai that are marked solid but have no collision primitive still block. Props collide with their render triangles, not their collision models, so the Pilot can catch on a prop's detail the game would smooth over (about 1 in 5 of the dead stops a scan of Angel City found are on such geometry).
 - Screen-space particle effects are placed by a guessed mapping and drawn under the viewmodel;
   particle light sources are off by default (see
-  Effects). Particle refraction approximates Source's Refract shader (see Effects); refracting
-  model materials (the Vortex and Thermal Shield domes, the hex shields) still use stand-ins. Bullet holes are flat quads, not projected decals, so they don't
+  Effects). Particle refraction approximates Source's Refract shader (see Effects); shield and
+  wall models use the game's effect shader without its height fog. Bullet holes are flat quads, not projected decals, so they don't
   wrap around edges. Point-blank
   hits on BT's hull play the game's systems at the game's sizes (Tone's 40mm bursts are
   100-unit fireballs 50 units from the eye), so a Titan shelling the cockpit still fills the
@@ -1464,8 +1478,7 @@ the free camera at a position in game units; `--no-props` skips static props.
   model; in the cockpit BT's own use the `_FP` systems the game plays on the viewmodel, placed
   at the shield point rather than on a viewmodel attachment (the Vortex at the blocker's
   `vortex_center` pose, baked from its draw sequence), so Scorch's fan is a
-  screen-filling tint there) plus a translucent disc where the game draws a refracting vortex
-  dome; a round the vortex catches hangs in it as `wpn_vortex_projectile_rifle`. Particle
+  screen-filling tint there); a round the vortex catches hangs in it as `wpn_vortex_projectile_rifle`. Particle
   Walls (BT's too) are the game's `P_xo_shield_wall`. `TF_OLD_FX=1` keeps the glow and pane
   stand-ins.
   Grunts have no cover use, grenades or squad behaviour (they hold their spot and shoot, and
