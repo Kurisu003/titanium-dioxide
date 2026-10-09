@@ -9,6 +9,7 @@
 //! Patch chains (`name(01).rpak` ...) are not applied as deltas; a patch pak's own pages can be
 //! read on their own (the viewer indexes new assets from `common(NN).rpak` that way).
 
+use crate::bytes::{u16_at, u32_at, u64_at};
 use crate::rpak_decompress;
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
@@ -80,16 +81,6 @@ pub struct Rpak {
     pub by_guid: HashMap<u64, usize>,
 }
 
-fn rd_u16(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-fn rd_u32(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn rd_u64(b: &[u8], o: usize) -> u64 {
-    u64::from_le_bytes(b[o..o + 8].try_into().unwrap())
-}
-
 impl Rpak {
     /// Read, decompress and parse a version 7 RPAK.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -98,17 +89,17 @@ impl Rpak {
         if raw.len() < HEADER_SIZE_V7 || &raw[0..4] != b"RPak" {
             bail!("{} is not an RPAK", path.display());
         }
-        let version = rd_u16(&raw, 4);
+        let version = u16_at(&raw, 4);
         if version != 7 {
             bail!("{}: rpak version {version} unsupported (Titanfall 2 uses 7)", path.display());
         }
-        let flags = rd_u16(&raw, 6);
+        let flags = u16_at(&raw, 6);
         let data = if rpak_decompress::is_rtech_compressed(flags) {
             rpak_decompress::decompress_pak(&raw, HEADER_SIZE_V7)?
         } else {
             raw
         };
-        let dcmp_size = rd_u64(&data, 0x28) as usize;
+        let dcmp_size = u64_at(&data, 0x28) as usize;
         if data.len() != dcmp_size {
             bail!("rpak: decompressed {} bytes, header says {}", data.len(), dcmp_size);
         }
@@ -117,25 +108,25 @@ impl Rpak {
 
     fn parse(path: PathBuf, mut data: Vec<u8>) -> Result<Self> {
         let h = &data;
-        let version = rd_u16(h, 4);
-        let flags = rd_u16(h, 6);
-        let starpak_buf = rd_u16(h, 0x38) as usize;
-        let num_segments = rd_u16(h, 0x3A) as usize;
-        let num_pages = rd_u16(h, 0x3C) as usize;
-        let patch_count = rd_u16(h, 0x3E) as usize;
-        let num_pointers = rd_u32(h, 0x40) as usize;
-        let num_assets = rd_u32(h, 0x44) as usize;
-        let num_guid_refs = rd_u32(h, 0x48) as usize;
-        let num_deps = rd_u32(h, 0x4C) as usize;
-        let num_ext_refs = rd_u32(h, 0x50) as usize;
-        let ext_refs_size = rd_u32(h, 0x54) as usize;
+        let version = u16_at(h, 4);
+        let flags = u16_at(h, 6);
+        let starpak_buf = u16_at(h, 0x38) as usize;
+        let num_segments = u16_at(h, 0x3A) as usize;
+        let num_pages = u16_at(h, 0x3C) as usize;
+        let patch_count = u16_at(h, 0x3E) as usize;
+        let num_pointers = u32_at(h, 0x40) as usize;
+        let num_assets = u32_at(h, 0x44) as usize;
+        let num_guid_refs = u32_at(h, 0x48) as usize;
+        let num_deps = u32_at(h, 0x4C) as usize;
+        let num_ext_refs = u32_at(h, 0x50) as usize;
+        let ext_refs_size = u32_at(h, 0x54) as usize;
 
         let mut off = HEADER_SIZE_V7;
         let mut first_page = 0usize;
         let mut patch_stream_size = 0usize;
         if patch_count != 0 {
-            patch_stream_size = rd_u32(h, off) as usize;
-            first_page = rd_u32(h, off + 4) as usize;
+            patch_stream_size = u32_at(h, off) as usize;
+            first_page = u32_at(h, off + 4) as usize;
             off += 8 + 16 * patch_count + 2 * patch_count;
         }
 
@@ -150,14 +141,14 @@ impl Rpak {
         let mut segments = Vec::with_capacity(num_segments);
         for i in 0..num_segments {
             let o = off + i * 16;
-            segments.push(Segment { flags: rd_u32(h, o), align: rd_u32(h, o + 4), size: rd_u64(h, o + 8) });
+            segments.push(Segment { flags: u32_at(h, o), align: u32_at(h, o + 4), size: u64_at(h, o + 8) });
         }
         off += num_segments * 16;
 
         let mut pages = Vec::with_capacity(num_pages);
         for i in 0..num_pages {
             let o = off + i * 12;
-            pages.push(Page { segment: rd_u32(h, o), align: rd_u32(h, o + 4), size: rd_u32(h, o + 8), start: usize::MAX });
+            pages.push(Page { segment: u32_at(h, o), align: u32_at(h, o + 4), size: u32_at(h, o + 8), start: usize::MAX });
         }
         off += num_pages * 12;
 
@@ -193,9 +184,9 @@ impl Rpak {
         // Rewrite every in-page pointer into an absolute buffer offset.
         for i in 0..num_pointers {
             let o = pointers_off + i * 8;
-            let (pi, po) = (rd_u32(&data, o), rd_u32(&data, o + 4));
+            let (pi, po) = (u32_at(&data, o), u32_at(&data, o + 4));
             let Some(slot) = page_addr(&pages, pi, po) else { continue };
-            let (ti, to) = (rd_u32(&data, slot), rd_u32(&data, slot + 4));
+            let (ti, to) = (u32_at(&data, slot), u32_at(&data, slot + 4));
             let abs = page_addr(&pages, ti, to).map(|a| a as u64).unwrap_or(0);
             data[slot..slot + 8].copy_from_slice(&abs.to_le_bytes());
         }
@@ -205,29 +196,29 @@ impl Rpak {
         for i in 0..num_assets {
             let o = assets_off + i * ASSET_SIZE_V7;
             let ptr = |o: usize| {
-                let (idx, off) = (rd_u32(&data, o), rd_u32(&data, o + 4));
+                let (idx, off) = (u32_at(&data, o), u32_at(&data, o + 4));
                 if idx == u32::MAX {
                     None
                 } else {
                     page_addr(&pages, idx, off)
                 }
             };
-            let deps_index = rd_u32(&data, o + 0x30) as usize;
-            let deps_count = rd_u32(&data, o + 0x38) as usize;
+            let deps_index = u32_at(&data, o + 0x30) as usize;
+            let deps_count = u32_at(&data, o + 0x38) as usize;
             let mut dependencies = Vec::with_capacity(deps_count);
             for d in 0..deps_count {
                 let r = guid_refs_off + (deps_index + d) * 8;
-                if let Some(slot) = page_addr(&pages, rd_u32(&data, r), rd_u32(&data, r + 4)) {
-                    dependencies.push(rd_u64(&data, slot));
+                if let Some(slot) = page_addr(&pages, u32_at(&data, r), u32_at(&data, r + 4)) {
+                    dependencies.push(u64_at(&data, slot));
                 }
             }
             let asset = Asset {
-                guid: rd_u64(&data, o),
+                guid: u64_at(&data, o),
                 head: ptr(o + 0x10),
                 cpu: ptr(o + 0x18),
-                starpak_offset: rd_u64(&data, o + 0x20) as i64,
-                header_size: rd_u32(&data, o + 0x3C),
-                version: rd_u32(&data, o + 0x40),
+                starpak_offset: u64_at(&data, o + 0x20) as i64,
+                header_size: u32_at(&data, o + 0x3C),
+                version: u32_at(&data, o + 0x40),
                 kind: data[o + 0x44..o + 0x48].try_into().unwrap(),
                 dependencies,
             };
@@ -249,19 +240,19 @@ impl Rpak {
     }
     /// Little-endian u16 at offset `o`.
     pub fn u16(&self, o: usize) -> u16 {
-        rd_u16(&self.data, o)
+        u16_at(&self.data, o)
     }
     /// Little-endian u32 at offset `o`.
     pub fn u32(&self, o: usize) -> u32 {
-        rd_u32(&self.data, o)
+        u32_at(&self.data, o)
     }
     /// Little-endian u64 at offset `o`.
     pub fn u64(&self, o: usize) -> u64 {
-        rd_u64(&self.data, o)
+        u64_at(&self.data, o)
     }
     /// Read a pointer slot that was rewritten at load (0 = null).
     pub fn ptr(&self, o: usize) -> Option<usize> {
-        match rd_u64(&self.data, o) {
+        match u64_at(&self.data, o) {
             0 => None,
             v => Some(v as usize),
         }

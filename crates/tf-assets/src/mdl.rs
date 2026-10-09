@@ -4,6 +4,7 @@
 //! Struct layouts follow r-ex/rsx (studio_r2.h, optimize.h). All values here are in the
 //! game's coordinate system: Z up, inches.
 
+use crate::bytes;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
@@ -11,16 +12,16 @@ struct R<'a>(&'a [u8]);
 
 impl R<'_> {
     fn i32(&self, o: usize) -> i32 {
-        i32::from_le_bytes(self.0[o..o + 4].try_into().unwrap())
+        bytes::i32_at(self.0, o)
     }
     fn u16(&self, o: usize) -> u16 {
-        u16::from_le_bytes(self.0[o..o + 2].try_into().unwrap())
+        bytes::u16_at(self.0, o)
     }
     fn i16(&self, o: usize) -> i16 {
-        self.u16(o) as i16
+        bytes::i16_at(self.0, o)
     }
     fn f32(&self, o: usize) -> f32 {
-        f32::from_le_bytes(self.0[o..o + 4].try_into().unwrap())
+        bytes::f32_at(self.0, o)
     }
     fn v3(&self, o: usize) -> [f32; 3] {
         [self.f32(o), self.f32(o + 4), self.f32(o + 8)]

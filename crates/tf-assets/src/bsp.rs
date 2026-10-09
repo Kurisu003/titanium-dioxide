@@ -2,6 +2,7 @@
 //!
 //! Layouts follow snake-biscuits/bsp_tool (branches/respawn/titanfall{,2}.py).
 
+use crate::bytes::{f32_at, i16_at, i32_at, u16_at, u32_at};
 use anyhow::{bail, Context, Result};
 
 /// Number of entries in the BSP header's lump directory.
@@ -188,21 +189,6 @@ pub struct StaticProps {
     pub props: Vec<StaticProp>,
 }
 
-fn u16_at(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
 fn vec3_at(b: &[u8], o: usize) -> [f32; 3] {
     [f32_at(b, o), f32_at(b, o + 4), f32_at(b, o + 8)]
 }
@@ -628,6 +614,7 @@ impl Bsp {
             if version != 13 {
                 bail!("static prop lump version {version} unsupported");
             }
+            // Game lump offsets are relative to the start of the .bsp file.
             let base = self.headers[lump::GAME_LUMP].offset as usize;
             let s = fileofs.checked_sub(base).context("game lump offset before lump start")?;
             return Ok(Some(g.get(s..s + filelen).context("static prop lump out of range")?));
@@ -637,54 +624,32 @@ impl Bsp {
 
     /// Static props from the `sprp` game lump (version 13).
     pub fn static_props(&self) -> Result<StaticProps> {
-        let g = self.lump(lump::GAME_LUMP);
-        if g.len() < 4 {
-            return Ok(StaticProps::default());
+        let Some(d) = self.sprp_data()? else { return Ok(StaticProps::default()) };
+        let n_names = u32_at(d, 0) as usize;
+        let mut p = 4;
+        let mut model_names = Vec::with_capacity(n_names);
+        for _ in 0..n_names {
+            let raw = &d[p..p + 128];
+            let end = raw.iter().position(|&c| c == 0).unwrap_or(128);
+            model_names.push(String::from_utf8_lossy(&raw[..end]).to_string());
+            p += 128;
         }
-        let count = i32_at(g, 0) as usize;
-        for i in 0..count {
-            let o = 4 + i * 16;
-            let id = &g[o..o + 4];
-            let version = u16_at(g, o + 6);
-            let fileofs = i32_at(g, o + 8) as usize;
-            let filelen = i32_at(g, o + 12) as usize;
-            if id != b"prps" && id != b"sprp" {
-                continue;
-            }
-            if version != 13 {
-                bail!("static prop lump version {version} unsupported");
-            }
-            // Game lump offsets are relative to the start of the .bsp file.
-            let base = self.headers[lump::GAME_LUMP].offset as usize;
-            let s = fileofs.checked_sub(base).context("game lump offset before lump start")?;
-            let d = g.get(s..s + filelen).context("static prop lump out of range")?;
-            let n_names = u32_at(d, 0) as usize;
-            let mut p = 4;
-            let mut model_names = Vec::with_capacity(n_names);
-            for _ in 0..n_names {
-                let raw = &d[p..p + 128];
-                let end = raw.iter().position(|&c| c == 0).unwrap_or(128);
-                model_names.push(String::from_utf8_lossy(&raw[..end]).to_string());
-                p += 128;
-            }
-            let n_props = u32_at(d, p) as usize;
-            p += 12;
-            let mut props = Vec::with_capacity(n_props);
-            for _ in 0..n_props {
-                props.push(StaticProp {
-                    origin: vec3_at(d, p),
-                    angles: vec3_at(d, p + 12),
-                    scale: f32_at(d, p + 24),
-                    model: u16_at(d, p + 28),
-                    solid: d[p + 30],
-                    flags: d[p + 31],
-                    skin: u16_at(d, p + 32),
-                });
-                p += 64;
-            }
-            return Ok(StaticProps { model_names, props });
+        let n_props = u32_at(d, p) as usize;
+        p += 12;
+        let mut props = Vec::with_capacity(n_props);
+        for _ in 0..n_props {
+            props.push(StaticProp {
+                origin: vec3_at(d, p),
+                angles: vec3_at(d, p + 12),
+                scale: f32_at(d, p + 24),
+                model: u16_at(d, p + 28),
+                solid: d[p + 30],
+                flags: d[p + 31],
+                skin: u16_at(d, p + 32),
+            });
+            p += 64;
         }
-        Ok(StaticProps::default())
+        Ok(StaticProps { model_names, props })
     }
 }
 

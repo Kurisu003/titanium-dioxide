@@ -1,5 +1,6 @@
 //! Readers for Titanfall 2 asset formats, working directly on a game install.
 
+mod bytes;
 mod guid;
 pub mod bc6h;
 pub mod binka;

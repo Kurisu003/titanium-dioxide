@@ -32,6 +32,7 @@
 //!   and 0x64 f32 the distance at which it is silent (rifle fire 200, footsteps 400,
 //!   explosions 1500), both read as feet; 0 on 2D sounds.
 
+use crate::bytes::{f32_at, u16_at, u32_at, u64_at};
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
@@ -84,16 +85,6 @@ pub struct MilesBank {
     /// Sound event name (lowercase) -> what it plays.
     events: HashMap<String, EventInfo>,
     streams: HashMap<(i16, u16), StreamBank>,
-}
-
-fn u16_at(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([b[o], b[o + 1]])
-}
-fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn u64_at(b: &[u8], o: usize) -> u64 {
-    u64::from_le_bytes(b[o..o + 8].try_into().unwrap())
 }
 
 impl MilesBank {
@@ -241,10 +232,6 @@ impl MilesBank {
 fn cstr_at(b: &[u8], o: usize) -> Option<String> {
     let end = b.get(o..)?.iter().position(|&c| c == 0)?;
     Some(String::from_utf8_lossy(&b[o..o + end]).to_ascii_lowercase())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
 
 /// A float field that holds a plausible value (not an offset or index read as a float).
