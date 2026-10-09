@@ -214,7 +214,7 @@ pub fn fp_seq_update(
     if let Ok((mut tf, mut vis)) = tfs.get_mut(arms.anchor) {
         tf.translation = root_pos;
         tf.rotation = root_rot;
-        *vis = Visibility::Inherited;
+        vis.set_if_neq(Visibility::Inherited);
     }
     let (eye, rot) = match a.from {
         Some((p, r)) if a.blend > 0.0 && a.t < a.blend => {

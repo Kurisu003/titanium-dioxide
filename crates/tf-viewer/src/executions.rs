@@ -488,13 +488,13 @@ pub fn execution_camera(
             for g in &lo.guns {
                 if let Some((anchor, _)) = g.viewmodel {
                     if let Ok(mut v) = vis.get_mut(anchor) {
-                        *v = Visibility::Hidden;
+                        v.set_if_neq(Visibility::Hidden);
                     }
                 }
             }
         }
         if let Ok(mut v) = vis.get_mut(b.anchor) {
-            *v = Visibility::Inherited;
+            v.set_if_neq(Visibility::Inherited);
         }
         (b.actor, r, 50.0)
     } else {

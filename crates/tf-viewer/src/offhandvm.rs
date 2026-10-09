@@ -272,10 +272,10 @@ pub fn offhand_viewmodels(
             left_arm = Some(inst.actor);
         }
         if let Some((_, mut vis)) = inst.arms.and_then(|a| tfs.get_mut(a).ok()) {
-            *vis = if split { Visibility::Hidden } else { Visibility::Inherited };
+            vis.set_if_neq(if split { Visibility::Hidden } else { Visibility::Inherited });
         }
         if let Ok((mut tf, mut vis)) = tfs.get_mut(inst.anchor) {
-            *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+            vis.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
             if let Some((eye, rot)) = eye_frame {
                 tf.rotation = rot;
                 tf.translation = eye - rot * offset;
@@ -306,7 +306,7 @@ pub fn offhand_viewmodels(
     if hide_gun {
         if let Some((xa, _)) = w.viewmodel {
             if let Ok((_, mut vis)) = tfs.get_mut(xa) {
-                *vis = Visibility::Hidden;
+                vis.set_if_neq(Visibility::Hidden);
             }
         }
     }

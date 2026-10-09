@@ -741,10 +741,10 @@ pub fn update_enemies(
         e.v.tick(dt);
         ensure_health_bar(&mut commands, &ui, id, &mut e);
         if !e.active {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         }
-        *vis = Visibility::Inherited;
+        vis.set_if_neq(Visibility::Inherited);
         // BT crushes grunts he walks into (on his own too).
         if e.infantry && e.alive() && bt_health.dead_for.is_none() {
             let tp = Vec3::from(titan.state.pos.to_array());
@@ -1672,7 +1672,7 @@ pub fn update_health_bars(
         let top = to_bevy(e.pos + Vec3::Z * (e.height + 60.0));
         match camera.world_to_viewport(cam_tf, top) {
             Ok(p) if e.alive() && !hidden.0 => {
-                *vis = Visibility::Inherited;
+                vis.set_if_neq(Visibility::Inherited);
                 node.left = px(p.x);
                 node.top = px(p.y);
                 // Centre on the point (13vh wide).
