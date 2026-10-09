@@ -1308,6 +1308,20 @@ built under the loading screen instead of on the first frame of play (a 430-590 
 Collision queries reject more work exactly (same results bit for bit): Titan steps ~35% and
 Pilot steps ~40% cheaper offline. With wave 3 enemies on Angel City: 58 -> 72 fps average at
 1920x1080 (noisy, shared machine).
+
+Enemy moves and actor poses run on every core: each enemy's decisions and movement (steering
+and route raycasts, the 120 Hz Titan steps) read only that enemy and the world, so they are
+worked out in parallel, and the attacks that follow still run one enemy at a time in the same
+order (anything else that depends on an earlier enemy's attack waits for it); the actors whose
+pose inputs changed are evaluated in parallel. The HUD writes UI node sizes and positions only
+when they change (52 -> 5 nodes re-marked per frame, each sending the HUD through Taffy's
+layout). Angel City, wave 3, 1920x1080 profile: the Update schedule 6.0-6.4 -> 3.7-4.4 ms,
+`update_enemies` 2.7-3.0 -> 0.9-1.1 ms, `animate_actors` 0.6 -> 0.4 ms, `ui_layout_system`
+0.65 -> 0.35 ms; uncapped 66-73 -> 72-83 fps over three alternating runs (noisy, shared
+machine). `TF_FIXED_DT` runs (`TF_RECORD` state, hashes of every entity's transforms,
+visibility and UI nodes, screenshots) are identical before and after. The particle simulation
+(`update_pfx`, 0.5-0.9 ms) stays on one thread: its effects draw from one random stream in
+order.
 The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
 ~3 triangles that actually touch it), but its leaves and walk order define the query results, so
 they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old
@@ -1335,6 +1349,11 @@ statistics of every render pass. Bevy averages a pass name over the cameras that
 `TF_GPU_TIMES` also logs a `gpu:` line every two seconds with each pass's GPU time per frame
 summed over the cameras, split into the cameras' runs (largest first; the sky, world and
 viewmodel cameras each run their own opaque pass and tonemapping), and the frame's total.
+
+`TF_FIXED_DT=60` (testing) advances the game by exactly 1/60 s per frame and runs the `--script` and
+`--shots` clock on frame counts, so a scripted run plays out the same, frame by frame, whatever the
+frame rate: the `TF_RECORD` logs and screenshots of two runs match exactly, which is how changes to
+the per-frame systems are checked for unchanged behaviour.
 
 ### Campaign maps
 

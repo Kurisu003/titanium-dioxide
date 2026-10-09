@@ -228,7 +228,12 @@ fn main() {
             }
         }
     }
-    App::new()
+    let mut app = App::new();
+    if ui::fixed_dt().is_some() {
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::ZERO))
+            .add_systems(First, ui::fixed_clock.before(bevy::time::TimeSystems).before(script_time_scale));
+    }
+    app
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
