@@ -677,6 +677,13 @@ fn setup(
     let tb = std::time::Instant::now();
     collision.finish();
     log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+    // TF_COLLISION_DUMP=<file>: save the movement collision for offline tests (tf-sim's
+    // `pilotscan` example).
+    if let Some(p) = std::env::var_os("TF_COLLISION_DUMP") {
+        if let Err(e) = collision.save(std::path::Path::new(&p)) {
+            log::error!("collision dump: {e}");
+        }
+    }
     if let Some(extra) = sweep {
         world::collision_sweep(&collision, &extra);
     }

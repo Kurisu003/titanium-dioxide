@@ -246,7 +246,14 @@ mod tests {
             quad(&mut w, Vec3::new(x0, -200.0, h), Vec3::new(x1, -200.0, h), Vec3::new(x1, 200.0, h), Vec3::new(x0, 200.0, h));
             quad(&mut w, Vec3::new(x0, -200.0, 0.0), Vec3::new(x0, 200.0, 0.0), Vec3::new(x0, 200.0, h), Vec3::new(x0, -200.0, h));
             let mut s = PilotState::new(Vec3::new(0.0, 0.0, 0.0), 0.0);
-            run(&mut s, PilotInput { forward: 1.0, ..Default::default() }, &w, 3.0);
+            // Walking into it just stops at its face: automantle needs a jump (client.dll
+            // 0x180209ed0).
+            let fwd = PilotInput { forward: 1.0, ..Default::default() };
+            run(&mut s, fwd, &w, 3.0);
+            assert!(s.on_ground() && s.pos.z.abs() < 1.0 && (s.pos.x - (x0 - 16.0)).abs() < 1.0, "should stop at the crate: {:?} {:?}", s.pos, s.mode);
+            // Jumping into it climbs onto it.
+            run(&mut s, PilotInput { jump: true, ..fwd }, &w, 1.0 / 120.0);
+            run(&mut s, fwd, &w, 2.0);
             assert!((s.pos.z - h).abs() < 2.0 && s.pos.x > x0, "should be on the crate: {:?} {:?}", s.pos, s.mode);
         }
 
