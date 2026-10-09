@@ -38,8 +38,9 @@ pub struct Hit {
 }
 
 /// Flattened BVH node: a box, and either two children (`count == 0`, left child at
-/// `start`, right child at `start + 1`) or a leaf range of `order`.
-#[derive(Clone, Copy)]
+/// `start`, right child at `start + 1`) or a leaf range (of `Bvh::order` in the median
+/// tree, of `Bvh::leaves` in the search tree).
+#[derive(Clone, Copy, Default)]
 struct Node {
     min: Vec3,
     max: Vec3,
@@ -47,10 +48,21 @@ struct Node {
     count: u32,
 }
 
+/// Two trees. The median tree (centroid median splits, up to `LEAF_SIZE` triangles per leaf)
+/// defines what the queries see: a triangle is visited when its median-tree leaf's box passes
+/// the query's box test, box queries visit the leaves in that tree's depth-first order (right
+/// child first), which is descending `start`, and rays walk it. Its splits overlap a lot, so
+/// box queries don't walk it: they walk a binned-SAH tree over its leaves (`nodes`), which
+/// finds the same leaves with far fewer box tests.
 #[derive(Default)]
 struct Bvh {
+    /// The search tree; its leaves are ranges of `leaves`.
     nodes: Vec<Node>,
-    /// Triangle indices, grouped by leaf.
+    /// The median tree's leaves (their boxes and ranges of `order`), in search tree order.
+    leaves: Vec<Node>,
+    /// The median tree (a node of `count` triangles splits them `count / 2` to the left).
+    median: Vec<Node>,
+    /// Triangle indices, grouped by median-tree leaf.
     order: Vec<u32>,
 }
 
@@ -58,12 +70,20 @@ const LEAF_SIZE: usize = 4;
 
 impl Bvh {
     fn build(tris: &[Tri]) -> Self {
+        let (median, order) = Self::build_median(tris);
+        let mut leaves: Vec<Node> = median.iter().copied().filter(|n| n.count > 0).collect();
+        let nodes = sah_build(&mut leaves);
+        Self { nodes, leaves, median, order }
+    }
+
+    /// The median tree: its nodes (empty without triangles) and the triangle order.
+    fn build_median(tris: &[Tri]) -> (Vec<Node>, Vec<u32>) {
         let mut order: Vec<u32> = (0..tris.len() as u32).collect();
         // Per-triangle bounds and centroids, computed once (cache friendly during the build).
         let boxes: Vec<(Vec3, Vec3)> = tris.iter().map(|t| (t.a.min(t.b).min(t.c), t.a.max(t.b).max(t.c))).collect();
         let centroids: Vec<Vec3> = boxes.iter().map(|(lo, hi)| (*lo + *hi) * 0.5).collect();
         if tris.is_empty() {
-            return Self { nodes: Vec::new(), order };
+            return (Vec::new(), order);
         }
         let ctx = BuildCtx { boxes: &boxes, centroids: &centroids };
         // Split the top of the tree on this thread until there are enough subtrees to keep
@@ -124,8 +144,235 @@ impl Bvh {
             nodes[ni] = remap(sub[0]);
             nodes.extend(sub[1..].iter().map(|&n| remap(n)));
         }
-        Self { nodes, order }
+        (nodes, order)
     }
+}
+
+/// Search tree leaves hold up to this many median-tree leaves (their boxes are tested one
+/// after another, which is cheaper than more levels).
+const SAH_LEAF: usize = 8;
+const SAH_BINS: usize = 16;
+/// From this depth on the search tree splits at the median (halving: at most ~32 more
+/// levels), so the traversal stacks (`STACK`) never fill up.
+const SAH_MAX_DEPTH: usize = 64;
+const STACK: usize = 128;
+/// The top levels of the search tree split on this many threads (2^depth subtrees).
+const SAH_PAR_DEPTH: usize = 6;
+
+fn half_area(lo: Vec3, hi: Vec3) -> f32 {
+    let e = (hi - lo).max(Vec3::ZERO);
+    e.x * e.y + e.y * e.z + e.z * e.x
+}
+
+fn bounds_of(prims: &[Node]) -> (Vec3, Vec3) {
+    prims.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| (lo.min(p.min), hi.max(p.max)))
+}
+
+/// Per-axis bins of box centres: each bin's bounds and count.
+#[derive(Clone, Copy)]
+struct Bins {
+    lo: [[Vec3; SAH_BINS]; 3],
+    hi: [[Vec3; SAH_BINS]; 3],
+    n: [[u32; SAH_BINS]; 3],
+}
+
+impl Bins {
+    fn new() -> Self {
+        Self { lo: [[Vec3::splat(f32::MAX); SAH_BINS]; 3], hi: [[Vec3::splat(f32::MIN); SAH_BINS]; 3], n: [[0; SAH_BINS]; 3] }
+    }
+
+    fn add(&mut self, prims: &[Node], clo: Vec3, scale: Vec3) {
+        for p in prims {
+            let b = bin_of(p, clo, scale);
+            for axis in 0..3 {
+                let i = b[axis];
+                self.lo[axis][i] = self.lo[axis][i].min(p.min);
+                self.hi[axis][i] = self.hi[axis][i].max(p.max);
+                self.n[axis][i] += 1;
+            }
+        }
+    }
+
+    fn merge(&mut self, o: &Bins) {
+        for axis in 0..3 {
+            for i in 0..SAH_BINS {
+                self.lo[axis][i] = self.lo[axis][i].min(o.lo[axis][i]);
+                self.hi[axis][i] = self.hi[axis][i].max(o.hi[axis][i]);
+                self.n[axis][i] += o.n[axis][i];
+            }
+        }
+    }
+
+    /// Bounds of bins `range` on `axis`.
+    fn bounds(&self, axis: usize, range: std::ops::Range<usize>) -> (Vec3, Vec3) {
+        range.fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), i| (lo.min(self.lo[axis][i]), hi.max(self.hi[axis][i])))
+    }
+}
+
+fn centre(p: &Node) -> Vec3 {
+    (p.min + p.max) * 0.5
+}
+
+/// The bin of `p`'s centre on `axis` (as `bin_of`).
+fn bin_on(p: &Node, axis: usize, clo: Vec3, scale: Vec3) -> usize {
+    (((centre(p)[axis] - clo[axis]) * scale[axis]) as usize).min(SAH_BINS - 1)
+}
+
+/// The bin of `p`'s centre on each axis.
+fn bin_of(p: &Node, clo: Vec3, scale: Vec3) -> [usize; 3] {
+    let f = (centre(p) - clo) * scale;
+    [(f.x as usize).min(SAH_BINS - 1), (f.y as usize).min(SAH_BINS - 1), (f.z as usize).min(SAH_BINS - 1)]
+}
+
+/// Nodes with at least this many boxes are binned on several threads.
+const SAH_PAR_BIN: usize = 1 << 16;
+
+/// Reorder `prims` into the two halves of a binned-SAH split (on box centres) and return the
+/// left half's size and both halves' bounds, or None for a leaf.
+fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, (Vec3, Vec3), (Vec3, Vec3))> {
+    let n = prims.len();
+    if n <= SAH_LEAF {
+        return None;
+    }
+    let (clo, chi) = prims.iter().fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), p| (lo.min(centre(p)), hi.max(centre(p))));
+    let ext = chi - clo;
+    let scale = Vec3::splat(SAH_BINS as f32) / ext;
+    if depth < SAH_MAX_DEPTH {
+        let mut bins = Bins::new();
+        if n >= SAH_PAR_BIN {
+            let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+            let parts: Vec<Bins> = std::thread::scope(|scope| {
+                let handles: Vec<_> = prims
+                    .chunks(n.div_ceil(threads))
+                    .map(|chunk| {
+                        scope.spawn(move || {
+                            let mut b = Bins::new();
+                            b.add(chunk, clo, scale);
+                            b
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().expect("bvh worker")).collect()
+            });
+            for p in &parts {
+                bins.merge(p);
+            }
+        } else {
+            bins.add(prims, clo, scale);
+        }
+        // Best (cost, axis, first bin of the right half).
+        let mut best: Option<(f32, usize, usize)> = None;
+        for axis in 0..3 {
+            if !(ext[axis] > 0.0) {
+                continue;
+            }
+            let mut right_cost = [0f32; SAH_BINS];
+            let (mut lo, mut hi, mut cnt) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN), 0u32);
+            for i in (1..SAH_BINS).rev() {
+                lo = lo.min(bins.lo[axis][i]);
+                hi = hi.max(bins.hi[axis][i]);
+                cnt += bins.n[axis][i];
+                right_cost[i] = if cnt > 0 { half_area(lo, hi) * cnt as f32 } else { 0.0 };
+            }
+            let (mut lo, mut hi, mut cnt) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN), 0u32);
+            for i in 1..SAH_BINS {
+                lo = lo.min(bins.lo[axis][i - 1]);
+                hi = hi.max(bins.hi[axis][i - 1]);
+                cnt += bins.n[axis][i - 1];
+                if cnt == 0 || cnt as usize == n {
+                    continue;
+                }
+                let cost = half_area(lo, hi) * cnt as f32 + right_cost[i];
+                if best.is_none_or(|b| cost < b.0) {
+                    best = Some((cost, axis, i));
+                }
+            }
+        }
+        if let Some((_, axis, split)) = best {
+            // Branch-free partition (the side is a coin flip to the branch predictor).
+            let mut left = 0;
+            for i in 0..n {
+                let goes_left = bin_on(&prims[i], axis, clo, scale) < split;
+                prims.swap(i, left);
+                left += goes_left as usize;
+            }
+            return Some((left, bins.bounds(axis, 0..split), bins.bounds(axis, split..SAH_BINS)));
+        }
+    }
+    // Every centre in one bin, or too deep: halve at the median of the longest centre axis.
+    let axis = if ext.x >= ext.y && ext.x >= ext.z { 0 } else if ext.y >= ext.z { 1 } else { 2 };
+    let mid = n / 2;
+    prims.select_nth_unstable_by(mid, |a, b| centre(a)[axis].total_cmp(&centre(b)[axis]));
+    Some((mid, bounds_of(&prims[..mid]), bounds_of(&prims[mid..])))
+}
+
+/// A search subtree being built: split nodes at the top (built on their own threads), then
+/// flat subtrees (node 0 is the root, leaf starts relative to `base`).
+enum SahPart {
+    Split(Vec3, Vec3, Box<SahPart>, Box<SahPart>),
+    Flat(Vec<Node>, u32),
+}
+
+/// Build the search subtree over `prims` (bounds `lo..hi`, starting at `base` in the leaf list).
+fn sah_part(prims: &mut [Node], (lo, hi): (Vec3, Vec3), base: u32, depth: usize) -> SahPart {
+    if depth < SAH_PAR_DEPTH && prims.len() > 4096 {
+        if let Some((mid, lb, rb)) = sah_split(prims, depth) {
+            let (l, r) = prims.split_at_mut(mid);
+            let (lp, rp) = std::thread::scope(|scope| {
+                let lh = scope.spawn(|| sah_part(l, lb, base, depth + 1));
+                let rp = sah_part(r, rb, base + mid as u32, depth + 1);
+                (lh.join().expect("bvh worker"), rp)
+            });
+            return SahPart::Split(lo, hi, Box::new(lp), Box::new(rp));
+        }
+    }
+    // (node, depth) of the nodes still to split; leaf starts are relative to `prims`.
+    let mut nodes = vec![Node { min: lo, max: hi, start: 0, count: prims.len() as u32 }];
+    let mut stack = vec![(0usize, depth)];
+    while let Some((ni, d)) = stack.pop() {
+        let Node { start, count, min, max } = nodes[ni];
+        let slice = &mut prims[start as usize..(start + count) as usize];
+        if let Some((mid, (llo, lhi), (rlo, rhi))) = sah_split(slice, d) {
+            let left = nodes.len();
+            nodes.push(Node { min: llo, max: lhi, start, count: mid as u32 });
+            nodes.push(Node { min: rlo, max: rhi, start: start + mid as u32, count: count - mid as u32 });
+            nodes[ni] = Node { min, max, start: left as u32, count: 0 };
+            stack.push((left, d + 1));
+            stack.push((left + 1, d + 1));
+        }
+    }
+    SahPart::Flat(nodes, base)
+}
+
+/// Lay `part` out with its root at `slot` of `out` (children pairs adjacent).
+fn sah_emit(part: SahPart, slot: usize, out: &mut Vec<Node>) {
+    match part {
+        SahPart::Split(min, max, l, r) => {
+            let c = out.len();
+            out.push(Node { min, max, start: 0, count: 0 });
+            out.push(Node { min, max, start: 0, count: 0 });
+            out[slot] = Node { min, max, start: c as u32, count: 0 };
+            sah_emit(*l, c, out);
+            sah_emit(*r, c + 1, out);
+        }
+        SahPart::Flat(sub, base) => {
+            let offset = out.len() as u32;
+            let remap = |n: Node| if n.count == 0 { Node { start: offset + n.start - 1, ..n } } else { Node { start: n.start + base, ..n } };
+            out[slot] = remap(sub[0]);
+            out.extend(sub[1..].iter().map(|&n| remap(n)));
+        }
+    }
+}
+
+/// Build the search tree over `prims` (reordered to its leaf order).
+fn sah_build(prims: &mut [Node]) -> Vec<Node> {
+    if prims.is_empty() {
+        return Vec::new();
+    }
+    let part = sah_part(prims, bounds_of(prims), 0, 0);
+    let mut out = vec![Node { min: Vec3::ZERO, max: Vec3::ZERO, start: 0, count: 0 }];
+    sah_emit(part, 0, &mut out);
+    out
 }
 
 struct BuildCtx<'a> {
@@ -252,6 +499,43 @@ fn ray_box(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> 
     (tmin <= tmax).then_some(tmin)
 }
 
+/// A list kept on the stack while it is short.
+struct SmallBuf<T: Copy + Default, const N: usize> {
+    first: [T; N],
+    len: usize,
+    rest: Vec<T>,
+}
+
+impl<T: Copy + Default, const N: usize> SmallBuf<T, N> {
+    fn new() -> Self {
+        Self { first: [T::default(); N], len: 0, rest: Vec::new() }
+    }
+
+    fn push(&mut self, v: T) {
+        if self.len < N {
+            self.first[self.len] = v;
+            self.len += 1;
+        } else {
+            self.rest.push(v);
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [T] {
+        if self.rest.is_empty() {
+            return &mut self.first[..self.len];
+        }
+        if self.len > 0 {
+            self.rest.splice(0..0, self.first[..self.len].iter().copied());
+            self.len = 0;
+        }
+        &mut self.rest
+    }
+}
+
+fn overlaps(n: &Node, min: Vec3, max: Vec3) -> bool {
+    !(n.max.x < min.x || n.max.y < min.y || n.max.z < min.z || n.min.x > max.x || n.min.y > max.y || n.min.z > max.z)
+}
+
 impl CollisionWorld {
     pub fn add(&mut self, a: Vec3, b: Vec3, c: Vec3) {
         let n = (b - a).cross(c - a);
@@ -358,28 +642,41 @@ impl CollisionWorld {
         push_sphere_in(&self.with_clip(which), center, radius, max_normal_z)
     }
 
-    /// Visit every triangle whose bounds overlap the box.
+    /// Visit the triangles of every median-tree leaf whose box overlaps the box, in that
+    /// tree's depth-first order (see `Bvh`).
     fn cells_in(&self, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
         let bvh = self.bvh();
-        if bvh.nodes.is_empty() {
+        if bvh.nodes.is_empty() || !overlaps(&bvh.nodes[0], min, max) {
             return;
         }
-        let mut stack = [0u32; 64];
+        // The overlapping leaves' (start, count) ranges of `order`.
+        let mut found: SmallBuf<(u32, u32), 64> = SmallBuf::new();
+        let mut stack = [0u32; STACK];
         let mut sp = 1;
         while sp > 0 {
             sp -= 1;
             let n = bvh.nodes[stack[sp] as usize];
-            if n.max.x < min.x || n.max.y < min.y || n.max.z < min.z || n.min.x > max.x || n.min.y > max.y || n.min.z > max.z {
-                continue;
-            }
             if n.count > 0 {
-                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
-                    f(&self.tris[i as usize]);
+                for leaf in &bvh.leaves[n.start as usize..(n.start + n.count) as usize] {
+                    if overlaps(leaf, min, max) {
+                        found.push((leaf.start, leaf.count));
+                    }
                 }
-            } else if sp + 2 <= stack.len() {
-                stack[sp] = n.start;
-                stack[sp + 1] = n.start + 1;
-                sp += 2;
+            } else {
+                // Children are tested here, so only overlapping ones are pushed.
+                for c in [n.start, n.start + 1] {
+                    if overlaps(&bvh.nodes[c as usize], min, max) {
+                        stack[sp] = c;
+                        sp += 1;
+                    }
+                }
+            }
+        }
+        let found = found.as_mut_slice();
+        found.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        for &(start, count) in found.iter() {
+            for &i in &bvh.order[start as usize..(start + count) as usize] {
+                f(&self.tris[i as usize]);
             }
         }
     }
@@ -402,7 +699,7 @@ impl CollisionWorld {
         // Each entry keeps its box's entry distance from when it was pushed: whether the ray
         // reaches a box depends on the limit only through `entry <= limit` (`ray_box`), so the
         // box needn't be tested again when it is popped.
-        let Some(t_root) = ray_box(origin, inv, bvh.nodes[0].min, bvh.nodes[0].max, limit) else { return None };
+        let Some(t_root) = ray_box(origin, inv, bvh.median[0].min, bvh.median[0].max, limit) else { return None };
         let mut stack = [(0u32, 0f32); 64];
         stack[0] = (0, t_root);
         let mut sp = 1;
@@ -412,7 +709,7 @@ impl CollisionWorld {
             if entry > limit {
                 continue;
             }
-            let n = bvh.nodes[ni as usize];
+            let n = bvh.median[ni as usize];
             if n.count > 0 {
                 for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
                     let tri = &self.tris[i as usize];
@@ -426,7 +723,7 @@ impl CollisionWorld {
                 }
             } else if sp + 2 <= stack.len() {
                 // Visit the nearer child first so `limit` shrinks sooner.
-                let (a, b) = (bvh.nodes[n.start as usize], bvh.nodes[n.start as usize + 1]);
+                let (a, b) = (bvh.median[n.start as usize], bvh.median[n.start as usize + 1]);
                 let ta = ray_box(origin, inv, a.min, a.max, limit);
                 let tb = ray_box(origin, inv, b.min, b.max, limit);
                 let (first, second) = if ta.unwrap_or(f32::MAX) <= tb.unwrap_or(f32::MAX) { ((n.start, ta), (n.start + 1, tb)) } else { ((n.start + 1, tb), (n.start, ta)) };
@@ -791,6 +1088,105 @@ mod tests {
             (flat, order)
         };
         assert!(run(false) == run(true));
+    }
+
+    /// A world built to give the queries trouble: an axis-aligned grid of floors and walls
+    /// (shared edges, exact ties, rays lying on box faces, hits that round to a hair in front
+    /// of their box), duplicated and re-wound triangles, big triangles over small ones (the
+    /// median tree's overlap) and random slivers. `at` is the grid's corner.
+    fn awkward_world(seed: u32, random: usize, at: Vec3) -> CollisionWorld {
+        let mut seed = seed;
+        let mut r = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let mut w = CollisionWorld::default();
+        for i in 0..12 {
+            for j in 0..12 {
+                let (x, y, z) = (at.x + i as f32 * 64.0, at.y + j as f32 * 64.0, at.z + ((i * 7 + j * 3) % 5) as f32 * 16.0);
+                let [a, b, c, d] = [Vec3::new(x, y, z), Vec3::new(x + 64.0, y, z), Vec3::new(x + 64.0, y + 64.0, z), Vec3::new(x, y + 64.0, z)];
+                w.add(a, b, c);
+                w.add(a, c, d);
+                if (i + j) % 3 == 0 {
+                    w.add(a, b, c); // duplicate
+                    w.add(c, a, b); // same triangle, other first vertex
+                }
+                if (i * j) % 4 == 1 {
+                    let h = Vec3::Z * 96.0;
+                    w.add(a, b, b + h);
+                    w.add(a, b + h, a + h);
+                    w.add(b, b + h, a); // overlaps the wall's first half
+                    w.add(a + h, a, b + h); // the second half again
+                }
+                if (i + 2 * j) % 5 == 0 {
+                    // A wall stacked many times over, so the copies span median-tree leaves.
+                    let h = Vec3::Z * 80.0;
+                    for k in 0..12 {
+                        let [p, q, r] = [d, a, a + h];
+                        match k % 3 {
+                            0 => w.add(p, q, r),
+                            1 => w.add(q, r, p),
+                            _ => w.add(r, q, p),
+                        }
+                    }
+                }
+            }
+        }
+        for k in 0..random {
+            let a = at + Vec3::new(r(), r(), r() * 0.2) * 800.0;
+            let size = if k % 50 == 0 { 600.0 } else if k % 7 == 0 { 0.05 } else { 20.0 };
+            let b = a + Vec3::new(r() - 0.5, r() - 0.5, r() - 0.5) * size;
+            let c = if k % 11 == 0 { a + (b - a) * 0.5 + Vec3::splat(1e-3) } else { a + Vec3::new(r() - 0.5, r() - 0.5, r() - 0.5) * size };
+            w.add(a, b, c);
+        }
+        w.finish();
+        w
+    }
+
+    /// The box query walk the search tree replaced: the median tree, right child first.
+    fn cells_in_median(w: &CollisionWorld, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
+        let bvh = w.bvh();
+        if bvh.median.is_empty() {
+            return;
+        }
+        let mut stack = vec![0u32];
+        while let Some(ni) = stack.pop() {
+            let n = bvh.median[ni as usize];
+            if !overlaps(&n, min, max) {
+                continue;
+            }
+            if n.count > 0 {
+                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
+                    f(&w.tris[i as usize]);
+                }
+            } else {
+                stack.push(n.start);
+                stack.push(n.start + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn box_queries_visit_what_the_median_walk_did() {
+        // The second world has enough median-tree leaves to bin its top splits on threads.
+        for (seed, random) in [(7u32, 3000usize), (11, 300_000)] {
+            let w = awkward_world(seed, random, Vec3::ZERO);
+            let mut s = seed;
+            let mut r = move || {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (s >> 8) as f32 / (1u32 << 24) as f32
+            };
+            let base = w.tris.as_ptr();
+            let queries = if random > 10_000 { 300 } else { 3000 };
+            for q in 0..queries {
+                let c = if q % 3 == 0 { Vec3::new((r() * 12.0).floor() * 64.0, (r() * 12.0).floor() * 64.0, 16.0) } else { Vec3::new(r(), r(), r() * 0.3) * 800.0 };
+                let e = Vec3::new(r(), r(), r()) * if q % 5 == 0 { 200.0 } else { 40.0 };
+                let (mut a, mut b) = (Vec::new(), Vec::new());
+                w.cells_in(c - e, c + e, |t| a.push(unsafe { (t as *const Tri).offset_from(base) }));
+                cells_in_median(&w, c - e, c + e, |t| b.push(unsafe { (t as *const Tri).offset_from(base) }));
+                assert_eq!(a, b, "query {q} around {c}");
+            }
+        }
     }
 
     #[test]
