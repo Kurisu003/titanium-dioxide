@@ -3502,7 +3502,7 @@ pub fn update_pfx(
                 _ => Vec::new(),
             };
             let n = &mut fx.nodes[ni];
-            let sheet = n.layer.and_then(|l| layers.get(l)).map(|l| l.sheet.clone()).unwrap_or_default();
+            let sheet: &[Sequence] = n.layer.and_then(|l| layers.get(l)).map_or(&[], |l| &l.sheet[..]);
             let sheet_len = |s: u16| sheet.get(s as usize).map(|q| q.frames.len() as f32).unwrap_or(1.0);
             if recap {
                 let sys = n.sys.clone();
@@ -3690,7 +3690,16 @@ pub fn update_pfx(
                     }
                 }
                 for e in &n.models[used..] {
-                    commands.entity(*e).insert(Visibility::Hidden);
+                    // Re-inserting it every frame marked every idle instance changed (and sent
+                    // its hierarchy through visibility propagation).
+                    match vis.get_mut(*e) {
+                        Ok(mut v) => {
+                            v.set_if_neq(Visibility::Hidden);
+                        }
+                        Err(_) => {
+                            commands.entity(*e).insert(Visibility::Hidden);
+                        }
+                    }
                 }
             }
         }
@@ -3873,13 +3882,17 @@ pub fn update_pfx(
                 *v = want;
             }
         }
-        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         if b.quads.is_empty() {
-            if mesh.count_vertices() != 3 {
-                *mesh = empty_mesh();
+            // Only touch a mesh that isn't empty yet: `get_mut` alone marks the asset modified,
+            // which re-uploads it (and re-checks every entity using it) the next frame.
+            if meshes.get(&layer.mesh).is_some_and(|m| m.count_vertices() != 3) {
+                if let Some(mesh) = meshes.get_mut(&layer.mesh) {
+                    *mesh = empty_mesh();
+                }
             }
             continue;
         }
+        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         if !layer.additive {
             b.quads.sort_by(|a, c| c.0.total_cmp(&a.0));
         }

@@ -1445,7 +1445,7 @@ pub fn weapon_viewmodel(
     let rs = crate::vmmotion::angles_quat(off.rot);
     let rp = crate::vmmotion::angles_quat(punch.vm);
     if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
-        *vis = if *mode == CameraMode::Cockpit && in_titan { Visibility::Inherited } else { Visibility::Hidden };
+        vis.set_if_neq(if *mode == CameraMode::Cockpit && in_titan { Visibility::Inherited } else { Visibility::Hidden });
         let yaw = s.yaw + punch.yaw.to_radians();
         let pitch = s.pitch + punch.pitch.to_radians();
         let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(punch.roll.to_radians());

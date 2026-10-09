@@ -822,11 +822,11 @@ pub fn pilot_camera(
     }
     // BT is visible from outside, unless destroyed.
     if let Ok(mut v) = vis.get_mut(titan.actor) {
-        *v = if bt_health.dead_for.is_some_and(|t| t > 1.0) { Visibility::Hidden } else { Visibility::Inherited };
+        v.set_if_neq(if bt_health.dead_for.is_some_and(|t| t > 1.0) { Visibility::Hidden } else { Visibility::Inherited });
     }
     if let Some((c, _)) = titan.cockpit {
         if let Ok(mut v) = vis.get_mut(c) {
-            *v = Visibility::Hidden;
+            v.set_if_neq(Visibility::Hidden);
         }
     }
     let s = &pilot.state;

@@ -126,7 +126,7 @@ pub fn update_damage_arcs(
     let (eye, fwd, right) = (cam.translation(), cam.forward().as_vec3(), cam.right().as_vec3());
     for (arc, mut node, mut tf, mut vis, mut grad) in &mut arcs {
         let Some(&(p, t)) = from.0.get(arc.0) else {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         };
         let to = crate::player::to_bevy(p) - eye;
@@ -136,7 +136,7 @@ pub fn update_damage_arcs(
         node.left = vh(a.sin() * radius);
         node.top = vh(-a.cos() * radius);
         tf.rotation = Rot2::radians(a);
-        *vis = Visibility::Inherited;
+        vis.set_if_neq(Visibility::Inherited);
         let alpha = (t / DAMAGE_ARC_TIME).min(1.0).powf(0.7);
         let c = Color::srgba(1.0, 0.22, 0.1, alpha);
         if let Some(Gradient::Linear(g)) = grad.0.first_mut() {
@@ -500,7 +500,7 @@ pub fn update_hud(
         n.width = percent(health.v.shield / health.v.max_shield.max(1.0) * 100.0);
     }
     if let Ok((mut n, mut v)) = doom.single_mut() {
-        *v = if doomed { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if doomed { Visibility::Inherited } else { Visibility::Hidden });
         n.width = percent(health.v.fraction() * 100.0);
     }
     for (pip, mut node, mut bg) in &mut pips {
@@ -630,14 +630,14 @@ pub fn update_hud_state(
     let (pilot, loadout) = pilots.single().map(|(h, l)| (Some(h), l)).unwrap_or((None, None));
     let in_game = game.in_play() && !menu.paused && *mode != CameraMode::Free && !hidden.0;
     if let Ok(mut v) = root.single_mut() {
-        *v = if in_game { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if in_game { Visibility::Inherited } else { Visibility::Hidden });
     }
     let in_titan = *control == Control::Titan && health.dead_for.is_none();
     for mut v in &mut titan_only {
-        *v = if in_titan { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if in_titan { Visibility::Inherited } else { Visibility::Hidden });
     }
     for mut v in &mut pilot_only {
-        *v = if *control == Control::Pilot && pilot.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if *control == Control::Pilot && pilot.is_some() { Visibility::Inherited } else { Visibility::Hidden });
     }
     if let Ok(mut img) = core_icon.single_mut() {
         let ready = core.state == CoreState::Building && core.meter >= 1.0 || core.active();
@@ -666,7 +666,7 @@ pub fn update_hud_state(
         _ => health.hurt * 2.0,
     };
     if let Ok((mut v, mut g)) = hurt.single_mut() {
-        *v = if hurt_amount > 0.01 && in_game { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if hurt_amount > 0.01 && in_game { Visibility::Inherited } else { Visibility::Hidden });
         if let Some(Gradient::Radial(r)) = g.0.first_mut() {
             if let Some(stop) = r.stops.last_mut() {
                 stop.color = Color::srgba(0.75, 0.04, 0.0, hurt_amount.clamp(0.0, 0.5));
@@ -682,7 +682,7 @@ pub fn update_hud_state(
     }
     .filter(|(def, _)| def.time > 0.0);
     if let Ok(mut v) = charge_hud.single_mut() {
-        *v = if charge.is_some() && in_game { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if charge.is_some() && in_game { Visibility::Inherited } else { Visibility::Hidden });
     }
     if let Some((def, c)) = charge {
         let n = def.levels.clamp(1, CHARGE_PIPS as u32) as usize;
@@ -721,7 +721,7 @@ pub fn hit_feedback(
         }
     }
     for (mut v, mut img) in &mut markers {
-        *v = if *timer > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+        v.set_if_neq(if *timer > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
         img.color = if killed { DOOM } else { Color::WHITE.with_alpha((*timer / 0.18).clamp(0.0, 1.0)) };
     }
 }
@@ -798,9 +798,11 @@ pub fn update_smart_hud(
                 node.width = Val::Px(r * 2.0);
                 node.height = Val::Px(r * 2.0);
                 node.margin = UiRect { left: Val::Px(-r), top: Val::Px(-r), ..default() };
-                *vis = Visibility::Inherited;
+                vis.set_if_neq(Visibility::Inherited);
             }
-            None => *vis = Visibility::Hidden,
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
         }
     }
 
@@ -825,9 +827,11 @@ pub fn update_smart_hud(
             Some((p, ..)) => {
                 node.left = Val::Px(p.x);
                 node.top = Val::Px(p.y);
-                *vis = Visibility::Inherited;
+                vis.set_if_neq(Visibility::Inherited);
             }
-            None => *vis = Visibility::Hidden,
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
         }
     }
     for (c, mut node) in &mut corners {
@@ -927,14 +931,16 @@ pub fn update_tone_hud(
             Some((p, _)) => {
                 node.left = Val::Px(p.x);
                 node.top = Val::Px(p.y);
-                *vis = Visibility::Inherited;
+                vis.set_if_neq(Visibility::Inherited);
             }
-            None => *vis = Visibility::Hidden,
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
         }
     }
     for (a, mut vis) in &mut art {
         let on = spots.get(a.0).is_some_and(|s| s.1 == a.1);
-        *vis = if on { Visibility::Inherited } else { Visibility::Hidden };
+        vis.set_if_neq(if on { Visibility::Inherited } else { Visibility::Hidden });
     }
 }
 
@@ -1029,10 +1035,10 @@ pub fn hud_boot(
         let zoom = axis(0.1, 0.0, 0.4);
         tf.scale = Vec2::new(sx / zoom, sy / zoom);
         if !flicker_visible(&BOOT_FLICKER_ON, t) {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
         }
     } else if t >= BOOT_FLICKER_OFF[BOOT_FLICKER_OFF.len() - 1] || !flicker_visible(&BOOT_FLICKER_OFF, t) {
-        *vis = Visibility::Hidden;
+        vis.set_if_neq(Visibility::Hidden);
     }
 }
 

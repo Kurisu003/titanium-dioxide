@@ -1827,7 +1827,7 @@ pub fn kit_input(
     if !mods.phased && st.phase_hidden {
         // Back from a phase in third person: show BT again (the cockpit view keeps it hidden).
         if let Ok(mut v) = vis.get_mut(titan.actor) {
-            *v = if *mode == CameraMode::Cockpit { Visibility::Hidden } else { Visibility::Inherited };
+            v.set_if_neq(if *mode == CameraMode::Cockpit { Visibility::Hidden } else { Visibility::Inherited });
         }
     }
     st.phase_hidden = mods.phased;
