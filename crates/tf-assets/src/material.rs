@@ -3,11 +3,13 @@
 use crate::rpak::{Asset, Rpak};
 use anyhow::{Context, Result};
 
+/// A material's header fields used here.
 #[derive(Debug, Clone)]
 pub struct Material {
     pub guid: u64,
     pub name: String,
     pub surface_prop: String,
+    /// GUID of the shader set (`shds`), see [`shader_set_name`].
     pub shader_set: u64,
     /// Texture GUIDs by shader slot (0 = none).
     pub textures: Vec<u64>,
@@ -112,11 +114,13 @@ impl Material {
     pub fn two_sided(&self) -> bool {
         self.raster_flags & 0x4 == 0
     }
+    /// Blending enabled in the main pass's blend state.
     pub fn blended(&self) -> bool {
         self.blend_mask & 0x1 != 0
     }
 }
 
+/// Read a `matl` asset.
 pub fn load(pak: &Rpak, a: &Asset) -> Result<Material> {
     let h = a.head.context("material has no header")?;
     let tex = pak.ptr(h + 0x98);

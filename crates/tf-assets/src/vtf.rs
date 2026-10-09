@@ -8,12 +8,15 @@
 //! and 8-byte resource entries (3-byte tag, flags, u32 offset) from 80. The high-res data (tag
 //! 0x30) stores mips smallest first, each holding every frame.
 
+use crate::bytes::{f32_at, u16_at, u32_at};
 use anyhow::{bail, Result};
 
 /// One sprite-sheet sequence: frames as (duration, [u0, v0, u1, v1]).
 #[derive(Clone, Debug, Default)]
 pub struct Sequence {
+    /// The sheet's clamp flag (hold the last frame rather than loop; not used by `rect_at`).
     pub clamp: bool,
+    /// Total duration of the frames.
     pub total: f32,
     pub frames: Vec<(f32, [f32; 4])>,
 }
@@ -35,24 +38,17 @@ impl Sequence {
     }
 }
 
+/// A decoded VTF: one mip as RGBA8 and the sprite sheet.
 pub struct Vtf {
+    /// Size of the decoded mip.
     pub width: u32,
     pub height: u32,
     /// RGBA8 (straight alpha) of the decoded mip.
     pub rgba: Vec<u8>,
+    /// Sprite-sheet sequences by sequence number (empty without a sheet).
     pub sheet: Vec<Sequence>,
     /// The file's format code (8 = A8, 13 = DXT1, 15 = DXT5, ...).
     pub format: i32,
-}
-
-fn u16_at(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([b[o], b[o + 1]])
-}
-fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
 
 /// (block width, bytes per block) of a format; uncompressed formats are 1-pixel "blocks".

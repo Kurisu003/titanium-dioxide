@@ -19,6 +19,7 @@
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
+/// A DMX attribute value (see the module docs for the type numbers).
 #[derive(Clone, Debug)]
 pub enum Value {
     Element(i32),
@@ -37,6 +38,7 @@ pub enum Value {
 }
 
 impl Value {
+    /// A number (float, int, time or bool) as f32.
     pub fn as_f32(&self) -> Option<f32> {
         match self {
             Value::Float(f) => Some(*f),
@@ -47,6 +49,8 @@ impl Value {
     }
 }
 
+/// A DMX element: its type (`DmeParticleSystemDefinition`, ...), name and attributes in file
+/// order.
 #[derive(Clone, Debug)]
 pub struct Element {
     pub type_name: String,
@@ -55,6 +59,7 @@ pub struct Element {
 }
 
 impl Element {
+    /// The first attribute named `k`.
     pub fn get(&self, k: &str) -> Option<&Value> {
         self.attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v)
     }
@@ -159,20 +164,26 @@ pub fn parse_dmx(b: &[u8]) -> Result<Vec<Element>> {
 /// One operator (emitter, initializer, operator, renderer, force or constraint).
 #[derive(Clone, Debug, Default)]
 pub struct Op {
+    /// `functionName` (the operator's kind, e.g. `emit_instantaneously`).
     pub function: String,
+    /// Every other attribute by name.
     pub params: HashMap<String, Value>,
 }
 
 impl Op {
+    /// Parameter `k` as a number, or `d`.
     pub fn f(&self, k: &str, d: f32) -> f32 {
         self.params.get(k).and_then(Value::as_f32).unwrap_or(d)
     }
+    /// Parameter `k` as an integer (truncated), or `d`.
     pub fn i(&self, k: &str, d: i32) -> i32 {
         self.params.get(k).and_then(Value::as_f32).map(|v| v as i32).unwrap_or(d)
     }
+    /// Parameter `k` as a flag (non-zero), or `d`.
     pub fn b(&self, k: &str, d: bool) -> bool {
         self.params.get(k).and_then(Value::as_f32).map(|v| v != 0.0).unwrap_or(d)
     }
+    /// Parameter `k` as a vector (the first three components of a vector4), or `d`.
     pub fn v3(&self, k: &str, d: [f32; 3]) -> [f32; 3] {
         match self.params.get(k) {
             Some(Value::Vec3(v)) => *v,
@@ -180,12 +191,14 @@ impl Op {
             _ => d,
         }
     }
+    /// Parameter `k` as an RGBA colour, or `d`.
     pub fn color(&self, k: &str, d: [u8; 4]) -> [u8; 4] {
         match self.params.get(k) {
             Some(Value::Color(c)) => *c,
             _ => d,
         }
     }
+    /// Parameter `k` as a string.
     pub fn s(&self, k: &str) -> Option<&str> {
         match self.params.get(k) {
             Some(Value::Str(s)) => Some(s),
@@ -207,14 +220,18 @@ impl Op {
     }
 }
 
+/// A child system (`DmeParticleChild`) started with its parent.
 #[derive(Clone, Debug)]
 pub struct Child {
+    /// The child system's name.
     pub name: String,
+    /// Seconds after the parent starts.
     pub delay: f32,
     /// Played when the parent is stopped rather than when it starts.
     pub end_cap: bool,
 }
 
+/// One particle system definition (`DmeParticleSystemDefinition`).
 #[derive(Clone, Debug, Default)]
 pub struct SystemDef {
     pub name: String,

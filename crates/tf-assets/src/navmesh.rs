@@ -9,8 +9,8 @@
 //!   layer, userId, polyCount, polyMapCount, vertCount, maxLinkCount, detailMeshCount,
 //!   detailVertCount, detailTriCount, bvNodeCount, offMeshConCount, offMeshBase,
 //!   walkableHeight/Radius/Climb, bmin, bmax, bvQuantFactor.
-//! - verts (3 floats), polys (48 bytes: firstLink, verts[6], neis[6], flags, vertCount,
-//!   areaAndtype, two shorts, centre[3]), polyMapCount ints per poly, links (16 bytes: ref, next, edge,
+//! - verts (3 floats), polys (48 bytes: firstLink, `verts[6]`, `neis[6]`, flags, vertCount,
+//!   areaAndtype, two shorts, `centre[3]`), polyMapCount ints per poly, links (16 bytes: ref, next, edge,
 //!   side, bmin, bmax, 4 more), then detail meshes / verts / tris, the BV tree and off-mesh
 //!   connections, which are skipped by `dataSize`.
 //!
@@ -26,16 +26,22 @@ pub struct Poly {
     pub center: [f32; 3],
     /// Indices into `NavMesh::polys` of the polys linked to this one (internal and cross-tile).
     pub links: Vec<u32>,
+    /// Detour poly flags.
     pub flags: u16,
+    /// Area id (the low 6 bits of `areaAndtype`).
     pub area: u8,
 }
 
+/// A parsed navmesh: every tile's polys in one list, with links resolved to indices into it.
 #[derive(Debug, Clone, Default)]
 pub struct NavMesh {
+    /// Every poly, tile by tile (off-mesh connection polys included, without links).
     pub polys: Vec<Poly>,
+    /// The agent the mesh was built for (from the last tile's header).
     pub walkable_height: f32,
     pub walkable_radius: f32,
     pub walkable_climb: f32,
+    /// Number of tiles in the set.
     pub tiles: usize,
     /// Off-mesh (jump) links found but not kept.
     pub off_mesh: usize,
@@ -64,6 +70,7 @@ const LINK_SIZE: usize = 16;
 /// Off-mesh connection polys (jump links) have this type in `areaAndtype`'s top bits.
 const POLYTYPE_OFFMESH: u8 = 1;
 
+/// Parse an `.nm` file.
 pub fn parse(d: &[u8]) -> Result<NavMesh> {
     if d.get(0..4) != Some(b"TESM") {
         bail!("navmesh: not an MSET file");

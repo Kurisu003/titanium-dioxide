@@ -3,6 +3,7 @@
 use crate::rpak::{Asset, Rpak};
 use anyhow::{bail, Context, Result};
 
+/// A texture's pixel format (the header's DXGI-like format index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TexFormat {
     Bc1,
@@ -23,6 +24,7 @@ pub enum TexFormat {
     Rgba8,
     Rgba8Srgb,
     R8,
+    /// A format this reader doesn't decode (the raw index).
     Other(u16),
 }
 
@@ -65,36 +67,47 @@ impl TexFormat {
         })
     }
 
+    /// Bytes of one `w` x `h` image (unknown formats count as 4 bytes per texel).
     pub fn mip_size(self, w: usize, h: usize) -> usize {
         let (b, bw, bh) = self.block().unwrap_or((4, 1, 1));
         w.div_ceil(bw) * h.div_ceil(bh) * b
     }
 }
 
+/// A texture's header.
 #[derive(Debug, Clone)]
 pub struct TextureInfo {
     pub guid: u64,
+    /// The texture's path, when the pak keeps names.
     pub name: Option<String>,
+    /// Size of mip 0.
     pub width: u32,
     pub height: u32,
     pub format: TexFormat,
+    /// Array layers (at least 1).
     pub array_size: u32,
+    /// Mips stored in the pak itself (the smallest ones).
     pub permanent_mips: u32,
+    /// Mips stored in the starpak (the largest ones).
     pub streamed_mips: u32,
 }
 
+/// A texture's loaded mip chain.
 #[derive(Debug, Clone)]
 pub struct Texture {
     pub info: TextureInfo,
     /// Mip chain, largest first, tightly packed (no alignment padding), `mips` levels.
     pub data: Vec<u8>,
     pub mips: u32,
+    /// Size of the first level in `data` (smaller than the header's when the streamed mips
+    /// weren't read).
     pub width: u32,
     pub height: u32,
 }
 
 const MIP_ALIGN: usize = 16;
 
+/// Read a `txtr` asset's header.
 pub fn info(pak: &Rpak, a: &Asset) -> Result<TextureInfo> {
     let h = a.head.context("texture has no header")?;
     Ok(TextureInfo {
@@ -112,7 +125,7 @@ pub fn info(pak: &Rpak, a: &Asset) -> Result<TextureInfo> {
 /// Load a texture's full mip chain (streamed mips come from the starpak).
 /// If the starpak is unavailable, falls back to the permanent mips only.
 pub fn load(pak: &Rpak, a: &Asset) -> Result<Texture> {
-    load_inner(pak, a, true)
+    load_inner(pak, a, true, u32::MAX)
 }
 
 /// Load at most `max` texels wide/high: the starpak is only read when the permanent mips are
@@ -120,15 +133,7 @@ pub fn load(pak: &Rpak, a: &Asset) -> Result<Texture> {
 pub fn load_max(pak: &Rpak, a: &Asset, max: u32) -> Result<Texture> {
     let i = info(pak, a)?;
     let permanent_top = (i.width >> i.streamed_mips).max(1);
-    let mut t = load_inner(pak, a, permanent_top < max.min(i.width))?;
-    while t.mips > 1 && (t.width > max || t.height > max) {
-        let n = t.info.format.mip_size(t.width as usize, t.height as usize);
-        t.data.drain(..n);
-        t.mips -= 1;
-        t.width = (t.width / 2).max(1);
-        t.height = (t.height / 2).max(1);
-    }
-    Ok(t)
+    load_inner(pak, a, permanent_top < max.min(i.width), max)
 }
 
 /// Decode the top level of a BC1 image to RGB bytes (values as stored, no sRGB conversion).
@@ -219,7 +224,9 @@ pub fn decode_bc5(data: &[u8], w: usize, h: usize) -> Vec<[u8; 2]> {
     decode_bc4(&r, w, h).into_iter().zip(decode_bc4(&g, w, h)).map(|(r, g)| [r, g]).collect()
 }
 
-fn load_inner(pak: &Rpak, a: &Asset, starpak: bool) -> Result<Texture> {
+/// The texture's mip chain from its largest available level, without the levels larger than
+/// `max` on either side (the smallest level is always kept).
+fn load_inner(pak: &Rpak, a: &Asset, starpak: bool, max: u32) -> Result<Texture> {
     let info = info(pak, a)?;
     if info.format.block().is_none() {
         bail!("unsupported texture format {:?}", info.format);
@@ -233,48 +240,48 @@ fn load_inner(pak: &Rpak, a: &Asset, starpak: bool) -> Result<Texture> {
     let aligned = |n: usize| n.div_ceil(MIP_ALIGN) * MIP_ALIGN;
     let arr = info.array_size as usize;
 
-    // Mips are stored smallest first, each padded to 16 bytes (times the array size).
-    let mut levels: Vec<Option<Vec<u8>>> = vec![None; total as usize];
+    // Mips are stored smallest first, each padded to 16 bytes (times the array size). Each
+    // level is found in place (in the pak or the starpak buffer) and copied out once.
+    let star_buf: Option<Vec<u8>>;
+    let mut levels: Vec<Option<&[u8]>> = vec![None; total as usize];
     if let Some(cpu) = a.cpu {
         let mut off = cpu;
         for i in (info.streamed_mips..total).rev() {
             let n = level_size(i);
-            levels[i as usize] = Some(pak.data[off..off + n].to_vec());
+            levels[i as usize] = Some(&pak.data[off..off + n]);
             off += aligned(n) * arr;
         }
     }
     if starpak && info.streamed_mips > 0 && a.starpak_offset >= 0 {
         let sizes: Vec<usize> = (0..info.streamed_mips).map(|i| aligned(level_size(i)) * arr).collect();
         let total_size: usize = sizes.iter().sum();
-        if let Ok(buf) = pak.read_starpak(a.starpak_offset, total_size) {
+        star_buf = pak.read_starpak(a.starpak_offset, total_size).ok();
+        if let Some(buf) = &star_buf {
             let mut off = 0;
             for i in (0..info.streamed_mips).rev() {
                 let n = level_size(i);
-                levels[i as usize] = Some(buf[off..off + n].to_vec());
+                levels[i as usize] = Some(&buf[off..off + n]);
                 off += sizes[i as usize];
             }
         }
     }
 
-    let first = levels.iter().position(|l| l.is_some()).context("texture has no mip data")?;
-    let mut data = Vec::new();
-    let mut mips = 0;
-    for l in &levels[first..] {
-        match l {
-            Some(d) => {
-                data.extend_from_slice(d);
-                mips += 1;
-            }
-            None => break,
-        }
+    // The run of levels from the largest present one, then without those above `max`.
+    let mut first = levels.iter().position(|l| l.is_some()).context("texture has no mip data")?;
+    let mut mips = levels[first..].iter().take_while(|l| l.is_some()).count();
+    let (mut width, mut height) = ((info.width >> first).max(1), (info.height >> first).max(1));
+    while mips > 1 && (width > max || height > max) {
+        first += 1;
+        mips -= 1;
+        width = (width / 2).max(1);
+        height = (height / 2).max(1);
+    }
+    let kept = &levels[first..first + mips];
+    let mut data = Vec::with_capacity(kept.iter().flatten().map(|l| l.len()).sum());
+    for l in kept.iter().flatten() {
+        data.extend_from_slice(l);
     }
     // GPU block-compressed textures need the top level to be at least one block; drop
     // trailing levels smaller than that only if the format requires it (wgpu accepts them).
-    Ok(Texture {
-        width: (info.width >> first).max(1),
-        height: (info.height >> first).max(1),
-        info,
-        data,
-        mips,
-    })
+    Ok(Texture { width, height, info, data, mips: mips as u32 })
 }

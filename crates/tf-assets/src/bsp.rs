@@ -2,10 +2,13 @@
 //!
 //! Layouts follow snake-biscuits/bsp_tool (branches/respawn/titanfall{,2}.py).
 
+use crate::bytes::{f32_at, i16_at, i32_at, u16_at, u32_at};
 use anyhow::{bail, Context, Result};
 
+/// Number of entries in the BSP header's lump directory.
 pub const NUM_LUMPS: usize = 128;
 
+/// Lump indices (positions in the lump directory) of the lumps this reader uses.
 pub mod lump {
     pub const ENTITIES: usize = 0x00;
     pub const TEXTURE_DATA: usize = 0x02;
@@ -59,6 +62,8 @@ pub struct CollisionShape {
     pub tris: Vec<[[f32; 3]; 3]>,
 }
 
+/// MESHES `flags` bits: sky and translucency, the vertex format (`VERTEX_MASK`) and
+/// non-drawn meshes.
 pub mod mesh_flags {
     pub const SKY_2D: u32 = 0x2;
     pub const SKY: u32 = 0x4;
@@ -73,35 +78,52 @@ pub mod mesh_flags {
     pub const TRIGGER: u32 = 0x40000;
 }
 
+/// One lump directory entry. `length` is 0 for lumps stored in a `.bsp_lump` file.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LumpHeader {
+    /// Byte offset of the lump in the .bsp file.
     pub offset: u32,
+    /// Byte length of the lump in the .bsp file.
     pub length: u32,
+    /// The lump's format version.
     pub version: u32,
 }
 
 /// A loaded map. Lumps are stored as raw byte vectors.
 pub struct Bsp {
+    /// The name the map was parsed under (used in error messages).
     pub name: String,
+    /// BSP format version (37 for Titanfall 2).
     pub version: u32,
+    /// The lump directory as stored in the file.
     pub headers: [LumpHeader; NUM_LUMPS],
+    /// Every lump's bytes, inline or from its `.bsp_lump` file (empty if missing).
     pub lumps: Vec<Vec<u8>>,
 }
 
+/// One render mesh (MESHES, 28 bytes): a range of MESH_INDICES drawn with one material sort.
 #[derive(Debug, Clone)]
 pub struct Mesh {
+    /// First entry in MESH_INDICES.
     pub first_index: u32,
     pub num_triangles: u32,
+    /// Index into MATERIAL_SORTS.
     pub material_sort: u16,
+    /// See [`mesh_flags`].
     pub flags: u32,
 }
 
+/// A material sort (MATERIAL_SORTS, 12 bytes): what a mesh is drawn with and where its
+/// vertices start.
 #[derive(Debug, Clone, Copy)]
 pub struct MaterialSort {
+    /// Index into TEXTURE_DATA.
     pub texture_data: i16,
     /// Index into LIGHTMAP_HEADERS (-1: none).
     pub lightmap: i16,
+    /// Index into CUBEMAPS (-1: none).
     pub cubemap: i16,
+    /// Added to every mesh index to find the vertex in the mesh's vertex lump.
     pub vertex_offset: i32,
 }
 
@@ -115,6 +137,7 @@ pub struct LightmapPage {
     pub sky_b: Vec<u8>,
 }
 
+/// A TEXTURE_DATA entry: the material's name (from the string table), size and flags.
 #[derive(Debug, Clone)]
 pub struct TextureData {
     pub name: String,
@@ -122,10 +145,12 @@ pub struct TextureData {
     pub flags: u32,
 }
 
+/// A brush model (MODELS, 32 bytes): model 0 is the world, the others brush entities.
 #[derive(Debug, Clone, Copy)]
 pub struct BrushModel {
     pub mins: [f32; 3],
     pub maxs: [f32; 3],
+    /// Its meshes are MESHES[first_mesh .. first_mesh + num_meshes].
     pub first_mesh: u32,
     pub num_meshes: u32,
 }
@@ -141,39 +166,29 @@ pub struct Vertex {
     pub lightmap_uv: Option<[f32; 2]>,
 }
 
+/// One static prop of the `sprp` game lump (64-byte records; the fields read here).
 #[derive(Debug, Clone)]
 pub struct StaticProp {
     pub origin: [f32; 3],
     /// pitch, yaw, roll in degrees (Source QAngle order).
     pub angles: [f32; 3],
     pub scale: f32,
+    /// Index into [`StaticProps::model_names`].
     pub model: u16,
+    /// The record's `solid` byte; traces go by [`Bsp::static_prop_contents`] instead.
     pub solid: u8,
     pub flags: u8,
     pub skin: u16,
 }
 
+/// The `sprp` game lump: the model dictionary and the props using it.
 #[derive(Debug, Clone, Default)]
 pub struct StaticProps {
+    /// Model paths (`models/...mdl`).
     pub model_names: Vec<String>,
     pub props: Vec<StaticProp>,
 }
 
-fn u16_at(b: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
 fn vec3_at(b: &[u8], o: usize) -> [f32; 3] {
     [f32_at(b, o), f32_at(b, o + 4), f32_at(b, o + 8)]
 }
@@ -223,10 +238,8 @@ pub(crate) fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec
 }
 
 impl Bsp {
-    /// Parse a map. `read_external` is asked for `<name>.bsp.XXXX.bsp_lump` files for lumps
-    /// that are not stored inline.
-    /// Parse a BSP; lumps stored outside it (`.bsp_lump` files) are read with `read_external`,
-    /// in parallel.
+    /// Parse a map. `read_external(i)` is asked for lump `i`'s `<name>.bsp.XXXX.bsp_lump` file
+    /// when the lump is not stored inline; lumps are read in parallel.
     pub fn parse(name: &str, data: &[u8], read_external: impl Fn(usize) -> Option<Vec<u8>> + Sync) -> Result<Self> {
         if data.len() < 16 + NUM_LUMPS * 16 || &data[0..4] != b"rBSP" {
             bail!("{name} is not a Respawn BSP");
@@ -256,14 +269,17 @@ impl Bsp {
         Ok(Self { name: name.to_string(), version, headers, lumps })
     }
 
+    /// The bytes of lump `i` (see [`lump`]).
     pub fn lump(&self, i: usize) -> &[u8] {
         &self.lumps[i]
     }
 
+    /// The entity lump's text (parse it with [`parse_entities`]).
     pub fn entities(&self) -> String {
         String::from_utf8_lossy(self.lump(lump::ENTITIES)).to_string()
     }
 
+    /// Every render mesh (MESHES).
     pub fn meshes(&self) -> Vec<Mesh> {
         let b = self.lump(lump::MESHES);
         (0..b.len() / 28)
@@ -279,6 +295,7 @@ impl Bsp {
             .collect()
     }
 
+    /// Every material sort (MATERIAL_SORTS).
     pub fn material_sorts(&self) -> Vec<MaterialSort> {
         let b = self.lump(lump::MATERIAL_SORTS);
         (0..b.len() / 12)
@@ -289,6 +306,7 @@ impl Bsp {
             .collect()
     }
 
+    /// Every TEXTURE_DATA entry with its name resolved.
     pub fn texture_data(&self) -> Vec<TextureData> {
         let b = self.lump(lump::TEXTURE_DATA);
         let table = self.lump(lump::TEXTURE_DATA_STRING_TABLE);
@@ -313,6 +331,7 @@ impl Bsp {
             .collect()
     }
 
+    /// Every brush model (MODELS).
     pub fn models(&self) -> Vec<BrushModel> {
         let b = self.lump(lump::MODELS);
         (0..b.len() / 32)
@@ -440,6 +459,8 @@ impl Bsp {
             .collect()
     }
 
+    /// MESH_INDICES: per mesh triangle corner, a vertex index relative to its material sort's
+    /// `vertex_offset`.
     pub fn mesh_indices(&self) -> Vec<u16> {
         self.lump(lump::MESH_INDICES).chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
     }
@@ -564,7 +585,6 @@ impl Bsp {
         None
     }
 
-    /// Static props from the `sprp` game lump (version 13).
     /// The static prop records as raw 64-byte slices (for inspecting unparsed fields).
     pub fn static_prop_records(&self) -> Result<Vec<Vec<u8>>> {
         let Some(d) = self.sprp_data()? else { return Ok(Vec::new()) };
@@ -594,6 +614,7 @@ impl Bsp {
             if version != 13 {
                 bail!("static prop lump version {version} unsupported");
             }
+            // Game lump offsets are relative to the start of the .bsp file.
             let base = self.headers[lump::GAME_LUMP].offset as usize;
             let s = fileofs.checked_sub(base).context("game lump offset before lump start")?;
             return Ok(Some(g.get(s..s + filelen).context("static prop lump out of range")?));
@@ -601,55 +622,34 @@ impl Bsp {
         Ok(None)
     }
 
+    /// Static props from the `sprp` game lump (version 13).
     pub fn static_props(&self) -> Result<StaticProps> {
-        let g = self.lump(lump::GAME_LUMP);
-        if g.len() < 4 {
-            return Ok(StaticProps::default());
+        let Some(d) = self.sprp_data()? else { return Ok(StaticProps::default()) };
+        let n_names = u32_at(d, 0) as usize;
+        let mut p = 4;
+        let mut model_names = Vec::with_capacity(n_names);
+        for _ in 0..n_names {
+            let raw = &d[p..p + 128];
+            let end = raw.iter().position(|&c| c == 0).unwrap_or(128);
+            model_names.push(String::from_utf8_lossy(&raw[..end]).to_string());
+            p += 128;
         }
-        let count = i32_at(g, 0) as usize;
-        for i in 0..count {
-            let o = 4 + i * 16;
-            let id = &g[o..o + 4];
-            let version = u16_at(g, o + 6);
-            let fileofs = i32_at(g, o + 8) as usize;
-            let filelen = i32_at(g, o + 12) as usize;
-            if id != b"prps" && id != b"sprp" {
-                continue;
-            }
-            if version != 13 {
-                bail!("static prop lump version {version} unsupported");
-            }
-            // Game lump offsets are relative to the start of the .bsp file.
-            let base = self.headers[lump::GAME_LUMP].offset as usize;
-            let s = fileofs.checked_sub(base).context("game lump offset before lump start")?;
-            let d = g.get(s..s + filelen).context("static prop lump out of range")?;
-            let n_names = u32_at(d, 0) as usize;
-            let mut p = 4;
-            let mut model_names = Vec::with_capacity(n_names);
-            for _ in 0..n_names {
-                let raw = &d[p..p + 128];
-                let end = raw.iter().position(|&c| c == 0).unwrap_or(128);
-                model_names.push(String::from_utf8_lossy(&raw[..end]).to_string());
-                p += 128;
-            }
-            let n_props = u32_at(d, p) as usize;
-            p += 12;
-            let mut props = Vec::with_capacity(n_props);
-            for _ in 0..n_props {
-                props.push(StaticProp {
-                    origin: vec3_at(d, p),
-                    angles: vec3_at(d, p + 12),
-                    scale: f32_at(d, p + 24),
-                    model: u16_at(d, p + 28),
-                    solid: d[p + 30],
-                    flags: d[p + 31],
-                    skin: u16_at(d, p + 32),
-                });
-                p += 64;
-            }
-            return Ok(StaticProps { model_names, props });
+        let n_props = u32_at(d, p) as usize;
+        p += 12;
+        let mut props = Vec::with_capacity(n_props);
+        for _ in 0..n_props {
+            props.push(StaticProp {
+                origin: vec3_at(d, p),
+                angles: vec3_at(d, p + 12),
+                scale: f32_at(d, p + 24),
+                model: u16_at(d, p + 28),
+                solid: d[p + 30],
+                flags: d[p + 31],
+                skin: u16_at(d, p + 32),
+            });
+            p += 64;
         }
-        Ok(StaticProps::default())
+        Ok(StaticProps { model_names, props })
     }
 }
 
