@@ -269,21 +269,31 @@ impl Zipline {
         (self.b - self.a) - Vec3::Z * 4.0 * self.sag * (1.0 - 2.0 * t)
     }
     pub fn length(&self) -> f32 {
-        (0..16).map(|i| (self.point((i + 1) as f32 / 16.0) - self.point(i as f32 / 16.0)).length()).sum()
+        let mut prev = self.point(0.0);
+        (1..=16)
+            .map(|i| {
+                let p = self.point(i as f32 / 16.0);
+                let d = (p - prev).length();
+                prev = p;
+                d
+            })
+            .sum()
     }
     /// The closest point's parameter and distance.
     pub fn closest(&self, p: Vec3) -> (f32, f32) {
         const N: usize = 48;
         let mut best = (0.0, f32::MAX);
+        let mut p0 = self.point(0.0);
         for i in 0..N {
             let (t0, t1) = (i as f32 / N as f32, (i + 1) as f32 / N as f32);
-            let (p0, p1) = (self.point(t0), self.point(t1));
+            let p1 = self.point(t1);
             let d = p1 - p0;
             let k = ((p - p0).dot(d) / d.length_squared().max(1e-6)).clamp(0.0, 1.0);
             let dist = (p0 + d * k - p).length();
             if dist < best.1 {
                 best = (t0 + (t1 - t0) * k, dist);
             }
+            p0 = p1;
         }
         best
     }
@@ -719,14 +729,17 @@ impl PilotState {
         if self.zipline.is_some() || self.zip_cooldown > 0.0 || matches!(self.mode, PilotMove::Mantle { .. }) {
             return false;
         }
+        // On the ground only the use key grabs.
+        if !use_pressed && self.on_ground() {
+            return false;
+        }
         let eye = self.eye(p);
         let top = self.pos + Vec3::Z * p.height;
-        let airborne = !self.on_ground();
         let mut best: Option<(Zipline, f32, f32)> = None;
         for line in lines {
             let (t, d) = if use_pressed { line.closest(eye) } else { line.closest(top) };
             let reach = if use_pressed { z.use_range } else { z.grab_radius };
-            if (use_pressed || airborne) && d <= reach && best.is_none_or(|b| d < b.2) {
+            if d <= reach && best.is_none_or(|b| d < b.2) {
                 best = Some((*line, t, d));
             }
         }
