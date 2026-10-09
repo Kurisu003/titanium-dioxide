@@ -342,7 +342,7 @@ mod tests {
             let mut s = PilotState::new(Vec3::new(-3000.0, -1000.0, 0.0), 0.0);
             run(&mut s, PilotInput::default(), &w, 0.2);
             s.vel.x = 380.0;
-            let crouch = PilotInput { crouch: true, ..Default::default() };
+            let crouch = PilotInput { forward: 1.0, crouch: true, ..Default::default() };
             step(&mut s, &crouch, &p, &w, 1.0 / 120.0);
             assert_eq!(s.mode, PilotMove::Slide);
             let v0 = s.horizontal_speed();
@@ -369,35 +369,86 @@ mod tests {
             assert!(s.horizontal_speed() <= p.slide_max_stop_speed + 1.0);
         }
 
-        /// Jumping out of a slide is cut to slideMaxJumpSpeed.
+        /// A jump out of a slide keeps its speed; once per boosted slide it's a long jump: a speed
+        /// within 85% of slideMaxJumpSpeed is raised to it, and jumping before the crouch has
+        /// finished takes the boost back.
         #[test]
-        fn slide_jump_speed_cap() {
+        fn slide_jump_speeds() {
             let w = arena();
             let p = PilotParams::default();
-            let mut s = PilotState::new(Vec3::new(-3000.0, -1000.0, 0.0), 0.0);
-            run(&mut s, PilotInput::default(), &w, 0.5);
-            s.vel.x = 480.0;
-            let crouch = PilotInput { crouch: true, ..Default::default() };
-            step(&mut s, &crouch, &p, &w, 1.0 / 120.0);
-            assert_eq!(s.mode, PilotMove::Slide);
+            let crouch = PilotInput { forward: 1.0, crouch: true, ..Default::default() };
+            let slide_at = |v: f32| {
+                let mut s = PilotState::new(Vec3::new(-3000.0, -1000.0, 0.0), 0.0);
+                run(&mut s, PilotInput::default(), &w, 0.5);
+                s.vel.x = v;
+                step(&mut s, &crouch, &p, &w, 1.0 / 120.0);
+                assert_eq!(s.mode, PilotMove::Slide);
+                s
+            };
+            // Fast slides keep their speed through the jump.
+            let mut s = slide_at(480.0);
+            run(&mut s, crouch, &w, 0.3);
+            let before = s.horizontal_speed();
             step(&mut s, &PilotInput { jump: true, ..crouch }, &p, &w, 1.0 / 120.0);
             assert_eq!(s.mode, PilotMove::Air);
-            assert!((s.horizontal_speed() - p.slide_max_jump_speed).abs() < 1.0, "slide jump speed {}", s.horizontal_speed());
+            assert!((s.horizontal_speed() - before).abs() < 1.0, "slide jump speed {} from {before}", s.horizontal_speed());
+            // The long jump: within 85% of slideMaxJumpSpeed, raised to it.
+            let mut s = slide_at(320.0);
+            while s.horizontal_speed() > p.slide_max_jump_speed - 5.0 {
+                step(&mut s, &crouch, &p, &w, 1.0 / 120.0);
+            }
+            step(&mut s, &PilotInput { jump: true, ..crouch }, &p, &w, 1.0 / 120.0);
+            assert!((s.horizontal_speed() - p.slide_max_jump_speed).abs() < 0.5, "long jump {}", s.horizontal_speed());
+            // Jumping during the crouch-down gives the boost back.
+            let mut s = slide_at(300.0);
+            let boost = p.slide_boost_cap - 300.0;
+            run(&mut s, crouch, &w, 0.05);
+            let before = s.horizontal_speed();
+            step(&mut s, &PilotInput { jump: true, ..crouch }, &p, &w, 1.0 / 120.0);
+            assert!((s.horizontal_speed() - (before - boost)).abs() < 1.0, "early jump {} from {before}", s.horizontal_speed());
         }
 
-        /// A sprint heading well away from where the view points doesn't become a slide
-        /// (slide_max_angle_dot).
+        /// Crouching only starts a slide with the movement input within slide_max_angle_dot of
+        /// the view's forward, wherever the Pilot is moving.
         #[test]
-        fn slide_needs_heading() {
+        fn slide_needs_forward_input() {
+            let w = arena();
+            let p = PilotParams::default();
+            let try_slide = |input: PilotInput| {
+                let mut s = PilotState::new(Vec3::new(-3000.0, -1000.0, 0.0), 0.0);
+                run(&mut s, PilotInput { forward: 1.0, sprint: true, ..Default::default() }, &w, 2.0);
+                step(&mut s, &PilotInput { crouch: true, ..input }, &p, &w, 1.0 / 120.0);
+                s.mode == PilotMove::Slide
+            };
+            assert!(try_slide(PilotInput { forward: 1.0, ..Default::default() }));
+            assert!(try_slide(PilotInput { forward: 1.0, right: 1.0, ..Default::default() }), "diagonal");
+            assert!(!try_slide(PilotInput::default()), "no input");
+            assert!(!try_slide(PilotInput { right: 1.0, ..Default::default() }), "strafe");
+            // Looking 70 degrees off the motion while holding forward still slides.
+            assert!(try_slide(PilotInput { forward: 1.0, yaw: 70f32.to_radians(), ..Default::default() }));
+        }
+
+        /// The view crouches over 0.4 s (0.2 s into a slide) and stands over 0.2 s, eased.
+        #[test]
+        fn crouch_view_timing() {
             let w = arena();
             let p = PilotParams::default();
             let mut s = PilotState::new(Vec3::new(-3000.0, -1000.0, 0.0), 0.0);
+            run(&mut s, PilotInput::default(), &w, 0.3);
+            let crouch = PilotInput { crouch: true, ..Default::default() };
+            run(&mut s, crouch, &w, 0.2);
+            assert!((s.eye(&p).z - 49.0).abs() < 2.0, "halfway down at 0.2 s: {}", s.eye(&p).z);
+            run(&mut s, crouch, &w, 0.21);
+            assert!((s.eye(&p).z - p.crouch_eye_height).abs() < 0.01);
+            run(&mut s, PilotInput::default(), &w, 0.1);
+            assert!((s.eye(&p).z - 49.0).abs() < 2.0, "halfway up at 0.1 s: {}", s.eye(&p).z);
+            run(&mut s, PilotInput::default(), &w, 0.11);
+            assert!((s.eye(&p).z - p.eye_height).abs() < 0.01);
+            // Into a slide: 0.2 s.
             run(&mut s, PilotInput { forward: 1.0, sprint: true, ..Default::default() }, &w, 2.0);
-            assert!(s.sprinting);
-            // Turn the view 70 degrees away from the motion.
-            let yaw = 70f32.to_radians();
-            step(&mut s, &PilotInput { forward: 1.0, sprint: true, crouch: true, yaw, ..Default::default() }, &p, &w, 1.0 / 120.0);
-            assert_ne!(s.mode, PilotMove::Slide);
+            run(&mut s, PilotInput { forward: 1.0, crouch: true, ..Default::default() }, &w, 0.21);
+            assert_eq!(s.mode, PilotMove::Slide);
+            assert!((s.eye(&p).z - p.crouch_eye_height).abs() < 0.01, "{}", s.eye(&p).z);
         }
 
         /// A jump within skip_time of landing is a skip: 75% of the height, landing speed kept
@@ -471,7 +522,7 @@ mod tests {
             let p = PilotParams::default();
             let mut s = PilotState::new(Vec3::new(-2000.0, -1000.0, 80.0), 0.0);
             s.vel.x = 350.0;
-            let crouch = PilotInput { crouch: true, ..Default::default() };
+            let crouch = PilotInput { forward: 1.0, crouch: true, ..Default::default() };
             for _ in 0..240 {
                 step(&mut s, &crouch, &p, &w, 1.0 / 120.0);
                 if s.mode == PilotMove::Slide {
@@ -505,8 +556,9 @@ mod tests {
             assert!(s2.vel.y < -40.0 && s2.vel.y >= -p.air_speed - 1.0 && s2.vel.x > 299.0, "strafe: {:?}", s2.vel);
         }
 
+        /// Airborne just short of the wall (a wall-run starts on contact).
         fn wallrun_entry(vel: Vec3) -> PilotState {
-            let mut s = PilotState::new(Vec3::new(-1500.0, 280.0, 100.0), 0.0);
+            let mut s = PilotState::new(Vec3::new(-1500.0, 283.5, 100.0), 0.0);
             s.mode = PilotMove::Air;
             s.vel = vel;
             s
@@ -605,42 +657,55 @@ mod tests {
             assert_eq!(s.mode, PilotMove::Air);
         }
 
-        /// After jumping off a wall, the same wall can be run again only no higher than where
-        /// the Pilot left it (wallrun_sameWall*).
+        /// The wall last left can be run again only below where that run started, without the
+        /// up-wall boost (wallrun_sameWall*, client.dll 0x180202090); falling off a wall also
+        /// locks wall-runs out for 0.5 s.
         #[test]
         fn same_wall_only_lower() {
             let w = arena();
             let p = PilotParams::default();
             let mut s = wallrun_entry(Vec3::new(340.0, 40.0, 0.0));
             let fwd = PilotInput { forward: 1.0, ..Default::default() };
+            let mut start = None;
             for _ in 0..30 {
                 step(&mut s, &fwd, &p, &w, 1.0 / 120.0);
+                if matches!(s.mode, PilotMove::WallRun { .. }) {
+                    start.get_or_insert(s.pos.z);
+                }
             }
             assert!(matches!(s.mode, PilotMove::WallRun { .. }));
-            let left = s.pos.z;
+            let start = start.unwrap();
             step(&mut s, &PilotInput { jump: true, ..fwd }, &p, &w, 1.0 / 120.0);
             assert_eq!(s.mode, PilotMove::Air);
-            // Back at the wall above the jump-off point: no catch.
+            // Back at the wall above where the run started: no catch.
             let back = |s: &mut PilotState, z: f32| {
-                s.pos = Vec3::new(s.pos.x, 280.0, z);
+                s.pos = Vec3::new(s.pos.x, 283.5, z);
                 s.vel = Vec3::new(300.0, 40.0, -10.0);
                 for _ in 0..3 {
                     step(s, &fwd, &p, &w, 1.0 / 120.0);
                 }
             };
-            back(&mut s, left + 40.0);
+            back(&mut s, start + 40.0);
             assert_eq!(s.mode, PilotMove::Air, "same wall, higher");
-            // Below it: caught.
-            back(&mut s, left - 40.0);
+            // Below it: caught, but not boosted up the wall.
+            back(&mut s, start - 20.0);
             assert!(matches!(s.mode, PilotMove::WallRun { .. }), "same wall, lower: {:?}", s.mode);
-            // Falling off (not jumping) blocks that wall until the ground.
+            assert!(s.vel.z < 30.0, "no up-wall boost on the same wall: {:?}", s.vel);
+            // Falling off (not jumping): no wall-run for the next half second.
             for _ in 0..3 {
                 step(&mut s, &PilotInput { crouch: true, ..fwd }, &p, &w, 1.0 / 120.0);
             }
             assert_eq!(s.mode, PilotMove::Air);
-            let below = s.pos.z - 40.0;
-            back(&mut s, below);
-            assert_eq!(s.mode, PilotMove::Air, "dropped off: blocked");
+            let low = start - 40.0;
+            back(&mut s, low);
+            assert_eq!(s.mode, PilotMove::Air, "dropped off: locked out");
+            // Half a second later (kept in the air), it may.
+            s.pos = Vec3::new(s.pos.x, 0.0, 400.0);
+            for _ in 0..60 {
+                step(&mut s, &PilotInput::default(), &p, &w, 1.0 / 120.0);
+            }
+            back(&mut s, low);
+            assert!(matches!(s.mode, PilotMove::WallRun { .. }), "lockout over: {:?}", s.mode);
         }
 
         /// With the wall-hang kit, aiming on a wall hangs there until the limit.
@@ -710,7 +775,7 @@ mod tests {
             }
             let p = PilotParams::default();
             let th = (-105.0f32).to_radians();
-            let mut st = PilotState::new(c + Vec3::new(th.cos(), th.sin(), 0.0) * (r + 20.0) + Vec3::Z * 100.0, 0.0);
+            let mut st = PilotState::new(c + Vec3::new(th.cos(), th.sin(), 0.0) * (r + 17.0) + Vec3::Z * 100.0, 0.0);
             st.mode = PilotMove::Air;
             st.vel = Vec3::new(-th.sin(), th.cos(), 0.0) * 350.0 - Vec3::new(th.cos(), th.sin(), 0.0) * 40.0 + Vec3::Z * 50.0;
             let mut first = None;

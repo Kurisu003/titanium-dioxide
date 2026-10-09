@@ -698,7 +698,15 @@ pub fn simulate_pilot(
         let before = pilot.state.mode;
         let jumps = pilot.state.jumps;
         let fall = pilot.state.vel.z;
+        let was_crouched = pilot.state.crouched;
         pilot::step(&mut pilot.state, &step_input, &params, &world.0, dt / n as f32);
+        // Crouching down and standing up on the ground (sound_standToCrouch /
+        // sound_crouchToStand, pilot_solo.set; Duck plays them, client.dll 0x1801f56fc /
+        // 0x1801f594d). A slide starts with the crouch sound too.
+        let grounded_now = matches!(pilot.state.mode, PilotMove::Ground | PilotMove::Slide);
+        if grounded_now && matches!(before, PilotMove::Ground | PilotMove::Slide) && pilot.state.crouched != was_crouched {
+            crate::audio::event(&mut commands, if pilot.state.crouched { "Pilot_CrouchDown_SP_1P" } else { "Pilot_CrouchStand_SP_1P" });
+        }
         // Movement sounds.
         use crate::audio::{cue, Cue};
         let now = pilot.state.mode;
@@ -838,13 +846,16 @@ pub fn pilot_camera(
             // Spring the dip back.
             f.dip_vel += (-f.dip * 180.0 - f.dip_vel * 22.0) * dt;
             f.dip += f.dip_vel * dt;
-            // Smooth step-ups/downs on the ground; follow exactly in the air.
-            let target_z = pilot_eye.z;
-            let eye_z = match f.eye_z {
+            // Smooth step-ups/downs on the ground; follow exactly in the air. (The feet are
+            // smoothed: the crouch's view height already has the game's own timing.)
+            let eye_off = s.eye_offset(&pilot_settings.0);
+            let target_z = pilot_eye.z - eye_off;
+            let feet_z = match f.eye_z {
                 Some(z) if grounded && (target_z - z).abs() < 40.0 => z + (target_z - z) * (1.0 - (-dt * 18.0).exp()),
                 _ => target_z,
             };
-            f.eye_z = Some(eye_z);
+            f.eye_z = Some(feet_z);
+            let eye_z = feet_z + eye_off;
             // Sprinting lowers the view (sprintViewOffset) and leans into turns (sprinttiltMaxRoll).
             // The sim times the offset (sprintStartDelay / StartDuration / StartFastDuration /
             // EndDuration); the smoothstep curve over those times is a guess.
@@ -885,21 +896,31 @@ pub fn pilot_camera(
                 right.dot(Vec3::new(n.x, n.y, 0.0)) * WALL_MAX_VIEW_TILT.to_radians()
             });
             f.wall_roll = blend(f.wall_roll, wall_roll, WALL_VIEW_TILT_SPEED);
-            // Sliding sideways tilts the view (client.dll slide_viewTiltSide 15 degrees at
-            // slide_viewTiltPlayerSpeed 400 of sideways speed, easing in at
-            // slide_viewTiltIncreaseSpeed 5 and out at slide_viewTiltDecreaseSpeed 2.5; tilting
-            // toward the slide is a guess at the sign).
-            let slide_roll = if s.mode == PilotMove::Slide {
-                let right = Vec3::new(s.yaw.sin(), -s.yaw.cos(), 0.0);
-                (right.dot(Vec3::new(s.vel.x, s.vel.y, 0.0)) / 400.0).clamp(-1.0, 1.0) * 15f32.to_radians()
+            // Sliding tilts the view (client.dll CalcViewRoll, 0x1802c1970 and 0x1802c31a0): a
+            // tilt vector, the velocity turned 90 degrees left and scaled from 0 at
+            // slideStopSpeed to 1 at slide_viewTiltPlayerSpeed (400), moves straight toward that
+            // target (zero when not sliding) at slide_viewTiltIncreaseSpeed (5/s) while growing
+            // and slide_viewTiltDecreaseSpeed (2.5/s) while shrinking; the roll is
+            // -slide_viewTiltSide (15 degrees) times its dot with the view's forward. Sliding
+            // straight doesn't tilt; looking off to the side of the slide does.
+            let target = if s.mode == PilotMove::Slide {
+                let v = tf_sim::glam::Vec2::new(s.vel.x, s.vel.y);
+                let sp = v.length();
+                let k = ((sp - pilot_settings.0.slide_stop_speed) / (400.0 - pilot_settings.0.slide_stop_speed)).clamp(0.0, 1.0);
+                if sp > 0.0 { tf_sim::glam::Vec2::new(-v.y, v.x) / sp * k } else { tf_sim::glam::Vec2::ZERO }
             } else {
-                0.0
+                tf_sim::glam::Vec2::ZERO
             };
-            let rate = if slide_roll.abs() > f.slide_roll.abs() { 5.0 } else { 2.5 };
-            f.slide_roll = blend(f.slide_roll, slide_roll, rate);
+            let step = if target.length_squared() > f.slide_tilt.length_squared() { 5.0 } else { 2.5 } * dt;
+            let d = target - f.slide_tilt;
+            f.slide_tilt = if d.length() > step { f.slide_tilt + d.normalize() * step } else { target };
+            let fwd_dot = s.pitch.cos() * (s.yaw.cos() * f.slide_tilt.x + s.yaw.sin() * f.slide_tilt.y);
+            f.slide_roll = -15f32.to_radians() * fwd_dot;
             f.roll = f.wall_roll + tilt + f.slide_roll;
-            // Slides widen the view (slideFOVScale 1.1 over slideFOVLerpIn/OutTime 0.25 s).
-            f.slide_fov = blend(f.slide_fov, if s.mode == PilotMove::Slide { 1.0 } else { 0.0 }, 4.0);
+            // Slides widen the view (slideFOVScale 1.1, lerped in over slideFOVLerpInTime and out
+            // over slideFOVLerpOutTime, 0.25 s each; a linear lerp is a reading of the keys' text).
+            let want = if s.mode == PilotMove::Slide { 1.0 } else { 0.0 };
+            f.slide_fov = if want > f.slide_fov { (f.slide_fov + dt / 0.25).min(want) } else { (f.slide_fov - dt / 0.25).max(want) };
             if let Projection::Perspective(pp) = projection.as_mut() {
                 pp.fov *= 1.0 + 0.1 * f.slide_fov;
             }
@@ -987,6 +1008,7 @@ pub struct CamFeel {
     tilt_vel: f32,
     slide_fov: f32,
     slide_roll: f32,
+    slide_tilt: tf_sim::glam::Vec2,
 }
 
 /// The cockpit boot after embarking (ServerCallback_TitanCockpitBoot, cl_titan_cockpit.nut):

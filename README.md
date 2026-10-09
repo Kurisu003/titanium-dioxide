@@ -325,22 +325,37 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     engine describes each player setting and convar). Where the text says what a key does, the
     sim does that; the exact formulas behind the text are engine code, so the shapes below are
     our reading of it.
-  - Slides use the engine's player-settings defaults where `pilot_solo.set`/`pilot_base.set`
-    don't set them: `slideSpeedBoost` 150, `slideRequiredStartSpeed` 200, `slideSpeedBoostCap`
-    400 (the boost never takes you past it), `slideStopSpeed` 125 and a `slideJumpHeight` of 50
-    out of a slide. While sliding, speed drops by `slidedecel` 50 per second ("fixed velocity
-    lost per second") and keeps `slidevelocitydecay` 0.7 of itself per second ("percentage of
-    velocity retained per second"), both from `pilot_base.set`; movement input steers with
-    `slideAccel` 50. Letting go of crouch above `slideMaxStopSpeed` 350 ("slide may not end while
-    above this speed") keeps the slide going at `slideWantToStopDecel` 400 until it can end.
-    Jumping out of a slide cuts speed to `slideMaxJumpSpeed` 350. A slide gets the boost only if
-    the last one started at least `slide_boost_cooldown` 2 s ago ("Min time between slides
-    before getting another boost"). A sprint only becomes a slide when moving within
-    `slide_max_angle_dot` 0.6 of the view's forward. Sliding up a step costs
+  - Slides follow client.dll's slide code (StartSlide 0x18020af70, WalkMove 0x18020d9f9,
+    Friction 0x1801f8090, the jump handler 0x180200609, Duck 0x1801f5500), with the engine's
+    player-settings defaults where `pilot_solo.set`/`pilot_base.set` don't set them. A slide
+    starts when crouch goes down on the ground (or on landing with crouch held) at a horizontal
+    speed of at least `slideRequiredStartSpeed` 200, with the movement input within
+    `slide_max_angle_dot` 0.6 of the view's forward: no input, a strafe or a backpedal just
+    crouches; where the Pilot is moving doesn't matter. If the last slide started more than
+    `slide_boost_cooldown` 2 s ago it adds `slideSpeedBoost` 150, not past
+    `slideSpeedBoostCap` 400, and allows one long jump. While sliding, the part of the input
+    along the slide is dropped (input only steers across it, at `slideAccel` 50 without gaining
+    speed, or brakes against it); speed drops by `slidedecel` 50 per second, or
+    `slideWantToStopDecel` 400 when crouch is let go or the input pushes against the slide, and
+    then keeps `slidevelocitydecay` 0.7 of itself per second. The slide ends below
+    `slideStopSpeed` 125, or when crouch is let go at or below `slideMaxStopSpeed` 350. A jump
+    out of a slide is `slideJumpHeight` 50 high and keeps the slide's speed; the long jump
+    raises a speed within 85% of `slideMaxJumpSpeed` 350 to 350, and jumping during the
+    crouch-down (the first 0.2 s) takes the boost back. Sliding up a step costs
     `slide_step_velocity_reduction` 10 per unit of step height (telling a step from a ramp by a
-    flat top is ours). Sliding sideways tilts the view up to `slide_viewTiltSide` 15 degrees at
-    400 u/s of sideways speed (`slide_viewTiltIncreaseSpeed` 5 / `DecreaseSpeed` 2.5; the sign is
-    a guess).
+    flat top is ours). The view goes down into a crouch over 0.4 s (0.2 s when the crouch
+    starts a slide) and back up over 0.2 s, eased with Duck's smoothstep. Slides tilt the view
+    as `CalcViewRoll` does: a tilt vector (the velocity turned 90 degrees left, scaled from 0 at
+    `slideStopSpeed` to 1 at `slide_viewTiltPlayerSpeed` 400) moves toward its target at
+    `slide_viewTiltIncreaseSpeed` 5 / `DecreaseSpeed` 2.5 per second, and the roll is
+    `slide_viewTiltSide` 15 degrees times its dot with the view's forward, so a straight slide
+    doesn't tilt and looking off to the side of it does. `slideFOVScale` 1.1 is lerped in and out
+    over `slideFOVLerpInTime`/`OutTime` 0.25 s (linear: our reading of the keys). Sounds: the
+    crouch-down and stand-up sounds (`sound_standToCrouch`/`sound_crouchToStand`) and
+    `jumpjet_slide_start_1p` at the start. Not verified or modelled: the wish speed the slide
+    steers with (we use the crouch speed; it only matters for tiny inputs), the slide loop sound
+    (`sound_slide_prefix` "pilotslide" by surface), the hull staying standing until the crouch
+    finishes, and the slide effects table.
   - Jumps: a jump within `skip_time` 0.1 s of landing is a "skip": `skip_jump_height_fraction`
     0.75 of the height, keeping the landing speed less `skip_speed_reduce` 12, which doesn't cut
     below `skip_speed_retain` 450 (restoring the landing speed through those ground ticks is our
@@ -353,19 +368,33 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     acceleration along the wall from forward input, and up it from `wallrun_upwardAutoPush` 0.65
     ("automatic up-the-wall input applied when the player pushes forward along the wall"; we
     scale it by `wallrunMaxSpeedVertical`), against gravity that "starts at 0 and ramps up to
-    full" over `wallrun_gravityRampUpTime` 1 s. Starting a run adds `wallrun_upWallBoost` 250
-    upward (capped at `wallrunMaxSpeedVertical`). At `wallrun_slipstarttime` 1.5 s the run slips:
+    full" over `wallrun_gravityRampUpTime` 1 s. At `wallrun_slipstarttime` 1.5 s the run slips:
     it loses `wallrun_slipslowdown` 50% of its velocity, gets a `wallrun_slipvel` 70 push down,
     and turns "completely gravity based" over `wallrun_slipduration` 1 s; with no input at all at
     least `wallrun_noInputSlipFrac` 0.7 of the slip applies. Falling off (time limit, crouch, the
-    wall ending, or pushing away from it for `wallrun_pushAwayFallOffTime` 0.05 s) adds
-    `wallrun_fallAwaySpeed` 70 away from the wall; what counts as pushing away (input more than
-    30 degrees off the wall) is a guess. Walls can be caught from any angle
-    (`wallrun_minAngle_air` 180). After jumping off a wall, the same wall (normals within
-    `wallrun_sameWallDot` 0.9) can be run again only no higher than where you left it
-    (`wallrun_sameWallHeight` 0, `wallrun_sameWallDist` 100 / `wallrun_sameWallSlope` 0); after
-    falling off one, it stays blocked until you touch the ground (ours). Curved walls: the run
-    turns with the wall it senses, at most `wallrun_rotateMaxRate` 3 rad/s, and lets go when the
+    knee-height probe losing the wall, or pushing away from it, input more than 0.7 along the
+    wall's normal, for `wallrun_pushAwayFallOffTime` 0.05 s) adds `wallrun_fallAwaySpeed` 70
+    away from the wall.
+  - Starting a wall-run follows client.dll (AirMove 0x1801f2628, TryStartWallrun 0x18020b390,
+    CanWallrun 0x180202090). It starts only when the airborne move runs into the wall (no
+    proximity sense), with no speed, input or view requirement: the velocity just needs some
+    component into the wall (`wallrun_minAngle_air` 180), the surface's normal z must be between
+    -0.35 and 0.7, and two probes, at knee height (+16) and mid-hull, each a cube of the hull's
+    half-width, must find the wall within `wallrun_allowed_wall_dist` 13 of the hull's face.
+    When only the probes failed, it is tried once more `wallrun_retry_interval` 0.07 s later if
+    the Pilot is still at the wall's plane. There is no wall-run for 0.5 s after leaving the
+    ground without jumping or after falling off a wall (a jump has no lockout). Pushing and
+    looking squarely into a wall (`automantle_maxangle_push`/`_view` 50 degrees) needs a third,
+    head-height probe to find the wall too, so walls short enough to mantle aren't run. Starting
+    adds `wallrun_upWallBoost` 250 along the wall's up direction, topping up what is already
+    going that way (not capped). The wall last left (normals within `wallrun_sameWallDot` 0.9,
+    remembered until landing) can be run again only below where that run started
+    (`wallrun_sameWallHeight` 0), and gets no boost; the boost is also skipped after landing
+    or falling off a wall until the next jump. Our hull is two spheres, so the hull's contacts
+    and a 3x3 grid of rays stand in for the game's box traces. `tf-sim/tests/wallrun_sweep.rs`
+    jumps at a wall from 1080 combinations of angle, speed, distance, view and input and checks
+    that every jump that reaches the wall in the air starts a run. Curved walls: the run
+    turns with the wall the probe finds, at most `wallrun_rotateMaxRate` 3 rad/s, and lets go when the
     wall turns away by more than `wallrun_angleChangeMinCos` 0.8 (37 degrees; a 45-degree
     chamfer drops you onto the chamfer as a new wall). The `func_wallrun_curve` hint surfaces
     aren't read. Not modelled: the wall-jump repel
