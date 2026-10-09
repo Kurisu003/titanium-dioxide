@@ -1,7 +1,7 @@
 //! Pilot movement: walk, sprint, crouch, slide, jump, double jump, wall-running and the grapple.
-//! Values from `scripts/players/mp/pilot_solo.set` (SP); fields it leaves out use the engine's
-//! player-settings defaults from client.dll (acceleration 2500, airSpeed 60, airAcceleration 500)
-//! and its convars (sv_friction 4, sv_stopspeed 100).
+//! Values from `scripts/players/mp/pilot_mp.set` (the base of every multiplayer Pilot class);
+//! fields it leaves out use the engine's player-settings defaults from client.dll (acceleration
+//! 2500, deceleration -1, airSpeed 60, airAcceleration 500) and its convars.
 
 use crate::collision::{CollisionWorld, Trace, CLIP_PILOT, DIST_EPSILON};
 use glam::{Vec2, Vec3};
@@ -25,12 +25,20 @@ pub struct PilotParams {
     /// down" (pilot_base.set 9.2).
     pub pitch_offset_scale: f32,
     pub crouch_speed: f32,
+    /// Stance `acceleration` (Accelerate, client.dll 0x1801f0ac0: up to this many u/s per
+    /// second along the input).
     pub ground_accel: f32,
-    pub friction: f32,
+    /// Stance `deceleration`: how fast Friction (0x1801f8090) takes away the velocity that isn't
+    /// along the input, linearly. The settings' -1 means acceleration * 0.6 (GetDeceleration
+    /// 0x1801fcf10).
+    pub ground_decel: f32,
     pub air_accel: f32,
     /// Speed the player can adjust to in the air (airSpeed): Source-style air control.
     pub air_speed: f32,
     pub jump_height: f32,
+    /// sv_gravity: jump speeds are sqrt(2 * sv_gravity * height), without the gravityscale that
+    /// `gravity` carries (jump handler 0x180200cf9), so jumps go height / gravityscale high.
+    pub jump_gravity: f32,
     pub double_jump_height: f32,
     pub double_jump_horz: f32,
     pub gravity: f32,
@@ -75,8 +83,15 @@ pub struct PilotParams {
     /// superjump_min_height_fraction: a double jump while already rising fast still adds this
     /// fraction of its height.
     pub double_jump_min_frac: f32,
-    /// sv_stopspeed: friction works on at least this speed.
+    /// sv_stopspeed: friction works on at least this speed (the wall-run's friction).
     pub stop_speed: f32,
+    /// jump_keyboardgraceperiodmin / max, jump_keyboardgrace_strength and jump_keyboardgrace_max
+    /// (AirMove 0x1801f1d62): for `max` seconds after a jump the movement keys turn the
+    /// horizontal velocity toward their direction at the same speed, by `strength` until `min`
+    /// and fading out to `max`, changing it by at most `cap` x the sprint speed per tick.
+    pub keyboard_grace: (f32, f32),
+    pub keyboard_grace_strength: f32,
+    pub keyboard_grace_cap: f32,
     pub wallrun_time: f32,
     pub wallrun_max_h: f32,
     pub wallrun_max_v: f32,
@@ -412,8 +427,8 @@ pub enum GrappleEvent {
 impl Default for PilotParams {
     fn default() -> Self {
         Self {
-            walk_speed: 162.5,
-            sprint_speed: 243.0, // pilot_solo.set stand.sprintspeed
+            walk_speed: 173.5,   // pilot_mp.set stand.speed
+            sprint_speed: 260.0, // pilot_mp.set stand.sprintspeed
             sprint_start_delay: 0.2,
             sprint_start: 0.8,
             sprint_start_fast: 0.2,
@@ -422,13 +437,14 @@ impl Default for PilotParams {
             pitch_offset_scale: 9.2,
             crouch_speed: 80.0,
             ground_accel: 2500.0, // stance `acceleration` default (client.dll)
-            friction: 4.0,        // sv_friction (client.dll)
-            air_accel: 500.0,     // airAcceleration default; pilot_solo.set has 540 commented out
-            air_speed: 60.0,      // airSpeed default; pilot_solo.set has 70 commented out
+            ground_decel: 1500.0, // stance `deceleration` default -1: acceleration * 0.6
+            air_accel: 500.0,     // airAcceleration default
+            air_speed: 60.0,      // airSpeed default
             jump_height: 60.0,
+            jump_gravity: 750.0, // sv_gravity
             double_jump_height: 60.0, // superjumpMaxHeight
             double_jump_horz: 180.0,  // superjumpHorzSpeed
-            gravity: 750.0 * 0.75,    // sv_gravity * gravityscale
+            gravity: 750.0 * 0.8,     // sv_gravity * gravityscale (pilot_mp.set 0.8)
             // The player-settings defaults (client.dll); pilot_solo/pilot_base.set don't set them.
             slide_boost: 150.0,     // slideSpeedBoost
             slide_min_speed: 200.0, // slideRequiredStartSpeed
@@ -451,23 +467,26 @@ impl Default for PilotParams {
             skip_speed_retain: 450.0,   // skip_speed_retain
             double_jump_min_frac: 0.25, // superjump_min_height_fraction
             stop_speed: 100.0,          // sv_stopspeed
+            keyboard_grace: (0.2, 0.5), // jump_keyboardgraceperiodmin / max
+            keyboard_grace_strength: 0.7,
+            keyboard_grace_cap: 0.7,
             wallrun_time: 1.75,
-            wallrun_max_h: 340.0,
+            wallrun_max_h: 420.0, // pilot_mp.set wallrunMaxSpeedHorizontal
             wallrun_max_v: 225.0,
-            wallrun_accel_h: 1400.0,
+            wallrun_accel_h: 1500.0,
             wallrun_accel_v: 360.0,   // wallrunAccelerateVertical
             wallrun_hang_time: 4.0,   // wallrun_hangTimeLimit (pilot_base.set)
-            wallhang_on_ads: false,   // pilot_solo.set wallrunAdsType "ADS"
+            wallhang_on_ads: false,   // pilot_mp.set wallrunAdsType "ADS"
             impact_speed: 380.0,      // impactSpeed
             wallrun_jump_out: 205.0,
             wallrun_jump_up: 230.0,
-            wallrun_jump_input: 75.0,
+            wallrun_jump_input: 80.0,
             wallrun: WallrunParams::default(),
             radius: 16.0,
             height: 72.0,
             crouch_height: 47.0,
             eye_height: 60.0,
-            crouch_eye_height: 38.0,
+            crouch_eye_height: 32.0, // pilot_mp.set crouch.viewheight
             step_height: 18.0,
             step_test_dist: 10.0,
             pitch_max_up: 85.0,
@@ -555,6 +574,8 @@ pub struct PilotState {
     /// Seconds since the last landing, and the horizontal speed then (for skips).
     since_land: f32,
     land_speed: f32,
+    /// Seconds since the last jump (ground, double or wall jump): the keyboard grace.
+    since_jump: f32,
     pub jumps: u32,
     /// Where the grapple hook is stuck, from landing until it lets go.
     pub grapple: Option<Vec3>,
@@ -612,6 +633,7 @@ impl PilotState {
             jump_grace: 0.0,
             since_land: 99.0,
             land_speed: 0.0,
+            since_jump: 99.0,
             jumps: 0,
             grapple: None,
             hook: None,
@@ -868,8 +890,58 @@ fn jump_off_wall(s: &mut PilotState, normal: Vec3) {
     s.mode = PilotMove::Air;
     s.last_wall = Some(normal);
     s.since_ground = 99.0;
+    s.since_jump = 0.0;
     s.wallrun_no_boost = false;
     s.jumps += 1;
+}
+
+/// The double jump (client.dll jump handler 0x180200200, superjump branch). Vertical: rising
+/// slower than a jump of superjump_min_height_fraction of superjumpMaxHeight would still add,
+/// the vertical speed is replaced by a full superjump (sqrt(2 * sv_gravity * height)); rising
+/// faster, that fraction's speed is added to it (0x1802007ba). Horizontal: the input times
+/// superjumpHorzSpeed is added, and the old velocity loses as much speed as that adds (down to
+/// zero), keeping its direction (0x180200f7c).
+fn superjump(s: &mut PilotState, wish: Vec2, p: &PilotParams) {
+    s.double_jump_available = false;
+    let g = p.jump_gravity;
+    let mut height = p.double_jump_height;
+    let rising = s.vel.z.max(0.0).powi(2) / (2.0 * g);
+    if height > height * p.double_jump_min_frac + rising {
+        s.vel.z = 0.0;
+    } else {
+        height *= p.double_jump_min_frac;
+    }
+    s.vel.z += (2.0 * g * height).sqrt();
+    let add = wish * p.double_jump_horz;
+    let h = hv(s.vel);
+    let keep = if h.length() > add.length() { 1.0 - add.length() / h.length() } else { 0.0 };
+    let h = h * keep + add;
+    s.vel.x = h.x;
+    s.vel.y = h.y;
+    s.since_jump = 0.0;
+    s.jumps += 1;
+}
+
+/// AirMove's keyboard grace (client.dll 0x1801f1d62): within jump_keyboardgraceperiodmax of
+/// the last jump, the movement keys (the buttons, not their analog amount) turn the horizontal
+/// velocity toward their direction, keeping its speed: by jump_keyboardgrace_strength up to
+/// jump_keyboardgraceperiodmin, fading to nothing at the max, and changing the velocity by at
+/// most jump_keyboardgrace_max x the standing sprint speed per tick. The game takes the keys
+/// along the view's forward and right; flattening them here ignores the view's pitch.
+fn keyboard_grace(h: Vec2, fwd: Vec2, right: Vec2, input: &PilotInput, since_jump: f32, p: &PilotParams) -> Vec2 {
+    let key = |x: f32| if x > 0.01 { 1.0 } else if x < -0.01 { -1.0 } else { 0.0 };
+    let keys = fwd * key(input.forward) + right * key(input.right);
+    let speed = h.length();
+    if keys == Vec2::ZERO || speed < 1e-3 {
+        return h;
+    }
+    let (min, max) = p.keyboard_grace;
+    let frac = ((max - since_jump) / (max - min)).clamp(0.0, 1.0) * p.keyboard_grace_strength;
+    let cur = h / speed;
+    let dir = cur + (keys.normalize() - cur) * frac;
+    let target = if dir.length() > 1e-4 { dir.normalize() * speed } else { dir };
+    let delta = (target - h).clamp_length_max(p.sprint_speed * p.keyboard_grace_cap);
+    h + delta
 }
 
 pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &CollisionWorld, dt: f32) {
@@ -881,10 +953,11 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     if wish.length() > 1.0 {
         wish = wish.normalize();
     }
-    let jump_v = |h: f32| (2.0 * p.gravity * h).sqrt();
+    let jump_v = |h: f32| (2.0 * p.jump_gravity * h).sqrt();
     s.zip_cooldown = (s.zip_cooldown - dt).max(0.0);
     s.jump_grace = (s.jump_grace - dt).max(0.0);
     s.since_land += dt;
+    s.since_jump += dt;
     s.since_slide += dt;
     s.since_ground += dt;
     if let Some(r) = &mut s.wallrun_retry {
@@ -1036,16 +1109,12 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 } else {
                     p.walk_speed
                 };
-                // Source-style friction then acceleration toward the wished velocity.
-                let sp = h.length();
-                if sp > 0.0 {
-                    let drop = sp.max(p.stop_speed) * p.friction * dt;
-                    h *= ((sp - drop) / sp).max(0.0);
-                }
-                let room = (max - h.dot(wish)).max(0.0);
-                if wish != Vec2::ZERO && room > 0.0 {
-                    h += wish * (p.ground_accel * dt).min(room);
-                }
+                // Respawn's WalkMove (client.dll 0x18020cc30): Friction keeps the velocity along
+                // the input up to the wish speed and takes the rest away at the deceleration
+                // (1500 u/s^2, linear: no sv_friction/sv_stopspeed); Accelerate adds up to the
+                // acceleration along the input. The pilot settings set no sprintAcceleration,
+                // lowAcceleration or sprintDeceleration, so the same two rates hold at any speed.
+                h = crate::titan::walk_move(h, wish, max, p.ground_accel, p.ground_decel, dt);
             }
             s.vel.x = h.x;
             s.vel.y = h.y;
@@ -1082,21 +1151,20 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 s.mode = PilotMove::Air;
                 s.crouched = false;
                 s.since_ground = 99.0;
+                s.since_jump = 0.0;
                 s.wallrun_no_boost = false;
                 s.jumps += 1;
             }
         }
         PilotMove::Air => {
             s.crouched = false;
-            let mut h = hv(s.vel);
-            // Source air acceleration: only the speed along the wish direction is capped (at
-            // airSpeed), so momentum carries and strafing curves the path.
-            if wish != Vec2::ZERO {
-                let dir = wish.normalize();
-                let add = p.air_speed * wish.length() - h.dot(dir);
-                if add > 0.0 {
-                    h += dir * (p.air_accel * dt).min(add);
-                }
+            // AirAccelerate (client.dll 0x1801f19a0): Source air acceleration, only the speed
+            // along the wish direction is capped (at airSpeed), so momentum carries and strafing
+            // curves the path.
+            let mut h = crate::titan::air_move(hv(s.vel), wish, p.air_speed, p.air_accel, dt);
+            // Keyboard grace (AirMove 0x1801f1d62): just after a jump the keys turn the velocity.
+            if s.since_jump < p.keyboard_grace.1 {
+                h = keyboard_grace(h, fwd, right, input, s.since_jump, p);
             }
             s.vel.x = h.x;
             s.vel.y = h.y;
@@ -1106,20 +1174,11 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 s.jump_grace = 0.0;
                 s.vel.z = jump_v(p.jump_height);
                 s.since_ground = 99.0;
+                s.since_jump = 0.0;
                 s.wallrun_no_boost = false;
                 s.jumps += 1;
             } else if input.jump && s.double_jump_available {
-                s.double_jump_available = false;
-                // Already rising fast, it still adds superjump_min_height_fraction of its height.
-                let keep = (s.vel.z.max(0.0).powi(2) + 2.0 * p.gravity * p.double_jump_height * p.double_jump_min_frac).sqrt();
-                s.vel.z = jump_v(p.double_jump_height).max(keep);
-                if wish != Vec2::ZERO {
-                    let sp = h.length().max(p.double_jump_horz);
-                    let v = wish * sp;
-                    s.vel.x = v.x;
-                    s.vel.y = v.y;
-                }
-                s.jumps += 1;
+                superjump(s, wish, p);
             }
         }
         PilotMove::Mantle { from, to, time } => {
@@ -1827,10 +1886,7 @@ fn grapple_step(s: &mut PilotState, input: &PilotInput, wish: Vec2, p: &PilotPar
     }
     // Jumping while pulled is an ordinary (double) jump; the pull goes on (grapple_jumpFrac 1).
     if input.jump && s.double_jump_available {
-        s.double_jump_available = false;
-        let keep = (s.vel.z.max(0.0).powi(2) + 2.0 * p.gravity * p.double_jump_height * p.double_jump_min_frac).sqrt();
-        s.vel.z = (2.0 * p.gravity * p.double_jump_height).sqrt().max(keep);
-        s.jumps += 1;
+        superjump(s, Vec2::ZERO, p);
     }
     s.mode = PilotMove::Air;
     s.crouched = false;

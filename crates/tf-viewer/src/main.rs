@@ -416,12 +416,14 @@ fn campaign_arena(gd: &GameData, map: &str) -> Option<(Vec3, f32, Vec<Vec3>)> {
     Some((origin, yaw, Vec::new()))
 }
 
-/// Pilot movement from the campaign pilot's .set file (pilot_solo.set over pilot_base.set).
+/// Pilot movement from the multiplayer pilot's .set file (pilot_mp.set over pilot_base.set: every
+/// MP Pilot class is pilot_mp.set plus models and footsteps), as in a Northstar match.
 fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
     let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
     let d = tf_sim::pilot::PilotParams::default();
-    let Some(s) = PlayerSettings::load("scripts/players/mp/pilot_solo.set", true, &mut read) else { return d };
+    let Some(s) = PlayerSettings::load("scripts/players/mp/pilot_mp.set", true, &mut read) else { return d };
     let view = |k: &str, def: f32| s.vec3(k).map(|v| v[2]).unwrap_or(def);
+    let ground_accel = s.f32("stand.acceleration", d.ground_accel);
     tf_sim::pilot::PilotParams {
         walk_speed: s.f32("stand.speed", d.walk_speed),
         sprint_speed: s.f32("stand.sprintspeed", d.sprint_speed),
@@ -432,13 +434,15 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
         sprint_end: s.f32("global.sprintendduration", d.sprint_end),
         sprint_view_offset: s.f32("global.sprintviewoffset", d.sprint_view_offset),
         pitch_offset_scale: s.f32("global.pitchoffsetscale", d.pitch_offset_scale),
-        ground_accel: s.f32("stand.acceleration", d.ground_accel),
+        ground_accel,
+        // deceleration -1 (the default): acceleration * 0.6 (GetDeceleration 0x1801fcf10).
+        ground_decel: Some(s.f32("stand.deceleration", -1.0)).filter(|v| *v >= 0.0).unwrap_or(ground_accel * 0.6),
         air_speed: s.f32("global.airspeed", d.air_speed),
         air_accel: s.f32("global.airacceleration", d.air_accel),
         jump_height: s.f32("global.jumpheight", d.jump_height),
         double_jump_height: s.f32("global.superjumpmaxheight", d.double_jump_height),
         double_jump_horz: s.f32("global.superjumphorzspeed", d.double_jump_horz),
-        gravity: 750.0 * s.f32("global.gravityscale", 0.75),
+        gravity: d.jump_gravity * s.f32("global.gravityscale", d.gravity / d.jump_gravity),
         slide_boost: s.f32("global.slidespeedboost", d.slide_boost),
         slide_min_speed: s.f32("global.sliderequiredstartspeed", d.slide_min_speed),
         slide_decel: s.f32("global.slidedecel", d.slide_decel),

@@ -1,5 +1,5 @@
 //! Player settings (`scripts/players/**/*.set`): Valve-style keyvalues with `#base`
-//! inheritance, `[$sp]`/`[$mp]` conditions and `ClassMods` blocks.
+//! inheritance, `[$sp]`/`[$mp]` conditions and `ClassMods`/`PoseMods` blocks.
 
 use std::collections::HashMap;
 
@@ -57,8 +57,9 @@ impl PlayerSettings {
                         ok = (cond == "[$sp]") == sp || (cond != "[$sp]" && cond != "[$mp]");
                         i += 1;
                     }
-                    // Skip the outer class block name and anything inside ClassMods.
-                    if !ok || stack.iter().any(|s| s.eq_ignore_ascii_case("ClassMods")) {
+                    // Skip the outer class block name and anything inside ClassMods or PoseMods
+                    // (pilot_mp.set's per-mod stance overrides, e.g. coliseum's speeds).
+                    if !ok || stack.iter().any(|s| s.eq_ignore_ascii_case("ClassMods") || s.eq_ignore_ascii_case("PoseMods")) {
                         continue;
                     }
                     let section = if stack.len() >= 2 { stack[1].as_str() } else { "" };
@@ -215,5 +216,30 @@ mod tests {
         assert_eq!(m.get(".ammo_clip_size"), Some("30"));
         assert_eq!(m.get("sp_base.damage_near_value"), Some("30"));
         assert_eq!(s.get(".reload_time"), Some("2.0"));
+    }
+
+    /// pilot_mp.set's PoseMods (coliseum's stance speeds) only apply with that mod.
+    #[test]
+    fn pose_mods_are_skipped() {
+        let text = r#""pilot_mp"
+{
+    "stand"
+    {
+        speed 173.5
+        sprintspeed 260
+        PoseMods
+        {
+            coliseum
+            {
+                speed 250
+                sprintspeed 375
+            }
+        }
+    }
+}"#;
+        let mut read = |_: &str| Some(text.to_string());
+        let s = PlayerSettings::load("p.set", false, &mut read).unwrap();
+        assert_eq!(s.f32("stand.speed", 0.0), 173.5);
+        assert_eq!(s.f32("stand.sprintspeed", 0.0), 260.0);
     }
 }
