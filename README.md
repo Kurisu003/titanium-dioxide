@@ -342,8 +342,34 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   - Pick the map in the main menu; the game relaunches into it.
   - The 3D skybox is drawn by its own camera, as in Source, so skybox geometry never covers the map.
 - **Pilot movement:**
-  - All values come from `pilot_solo.set`: walk 162.5, sprint 243, jump 60, double jump and
-    wall-running values.
+  - All values come from `pilot_mp.set` (over `pilot_base.set`), the settings every
+    multiplayer Pilot class uses (the class files only add models and footsteps), as in a
+    Northstar match: walk `stand.speed` 173.5, sprint `stand.sprintspeed` 260, crouch 80,
+    `gravityscale` 0.8, `jumpheight` 60, superjump 60 / 180, wall-running at up to
+    `wallrunMaxSpeedHorizontal` 420 with `wallrunAccelerateHorizontal` 1500 and
+    `wallrunJumpInputDirSpeed` 80, crouch view height 32. `PoseMods` blocks (coliseum's speeds)
+    only apply with their mod and are skipped.
+  - Ground movement is Respawn's WalkMove (client.dll 0x18020cc30), as for BT: Friction
+    (0x1801f8090) keeps the velocity along the input up to the wish speed and takes the rest away
+    linearly at the stance deceleration, which the pilot settings leave at -1, meaning
+    acceleration x 0.6 = 1500 u/s^2 (GetDeceleration 0x1801fcf10); Accelerate (0x1801f0ac0) adds
+    up to 2500 u/s^2 along the input. sv_friction and sv_stopspeed aren't used. So a sprint stops in
+    0.17 s over 22 units, top speed is reached in about 0.1 s, and turning keeps the speed.
+  - Jumps take off at sqrt(2 x sv_gravity x height) (jump handler 0x180200cf9) while gravity in
+    flight is sv_gravity x gravityscale (0x1801f74b3): a 60-unit jump takes off at 300 u/s and
+    goes 75 units high for 1 s. The double jump (0x1802007ba) replaces the vertical speed with a
+    full superjump unless rising faster than a quarter-height jump would add, in which case it adds
+    that quarter (`superjump_min_height_fraction` 0.25); horizontally it adds 180 along the input
+    and takes as much off the old velocity, keeping its direction (0x180200f7c).
+  - The keyboard grace (AirMove 0x1801f1d62): for `jump_keyboardgraceperiodmax` 0.5 s after any
+    jump (ground, double, wall), held movement keys turn the horizontal velocity toward their
+    direction at the same speed, by `jump_keyboardgrace_strength` 0.7 per tick until
+    `jump_keyboardgraceperiodmin` 0.2 s and fading out by 0.5 s, each tick's change capped at
+    `jump_keyboardgrace_max` 0.7 x the sprint speed. Not modelled: the game takes the keys along
+    the view's pitched forward (we flatten it), and only key presses count there (we also let a
+    stick do it).
+  - The real game's FOV is `cl_fovScale` x 70 (horizontal at 4:3, clamped to 1.7 by client.dll
+    0x1802c59f0); set the same scale in our settings menu to compare side by side.
   - What the movement keys mean comes from their help strings in the game's `client.dll` (the
     engine describes each player setting and convar). Where the text says what a key does, the
     sim does that; the exact formulas behind the text are engine code, so the shapes below are
@@ -1263,13 +1289,13 @@ playlist, `[$sp]`) variants:
 Press X in BT to disembark (BT plays his dismount, you climb out over the hatch and drop from it
 with BT's velocity, as the game only unparents you there, landing in embark range) and X near BT to
 embark (he kneels while you climb in). On foot you have the R-201 viewmodel with the pilot's arms,
-SP pilot movement from `pilot_solo.set` (walk 162.5, jump 60, double jump, slide boost, wall-running
-at up to 340 units/s for 1.75 s with wall jumps; the view rolls away from the wall by up to
+MP pilot movement from `pilot_mp.set` (walk 173.5, jump 60, double jump, slide boost, wall-running
+at up to 420 units/s for 1.75 s with wall jumps; the view rolls away from the wall by up to
 15 degrees at rate 6, starting 0.25 s before reaching it - `client.dll`'s `wallrun_maxViewTilt`,
 `wallrun_viewTiltSpeed` and `wallrun_viewTiltPredictTime` defaults, with the rate treated as
-exponential; sprint 243 from `stand.sprintspeed`; fields the file leaves out take the engine's
-player-settings defaults read from `client.dll` - ground acceleration 2500, airSpeed 60,
-airAcceleration 500, sv_friction 4; see `tools/settings_defaults.py` and `tools/cvar_defaults.py`;
+exponential; sprint 260 from `stand.sprintspeed`; fields the file leaves out take the engine's
+player-settings defaults read from `client.dll` - ground acceleration 2500, deceleration
+2500 x 0.6, airSpeed 60, airAcceleration 500; see `tools/settings_defaults.py` and `tools/cvar_defaults.py`;
 the sprint lean follows `sprinttilt_turnrange` 120 deg/s, `sprinttilt_maxvel` 2 and
 `sprinttilt_accel` 35, steering guessed), and T calls BT down with a Titanfall at your crosshair (never closer than 600 units). He rides the
 root motion of `at_hotdrop_drop_2knee_turbo` down from about 11,000 units up, as
