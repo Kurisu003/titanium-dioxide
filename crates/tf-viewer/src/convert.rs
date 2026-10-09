@@ -20,6 +20,8 @@ pub struct Cache {
     pub uber: HashMap<AssetId<StandardMaterial>, crate::uber::UberInfo>,
     /// Textures decoded ahead on worker threads (`prefetch_material`).
     pub prepared: Prepared,
+    /// Actor templates' asset-free parts built ahead on worker threads (`actor::prefetch_actors`).
+    pub templates: std::sync::Mutex<HashMap<String, anyhow::Result<crate::actor::TemplateData>>>,
 }
 
 /// What a texture decode depends on: the plain texture (pak hint, guid), the combined

@@ -397,6 +397,22 @@ fn main() {
         .run();
 }
 
+/// An enemy's sequences: locomotion, death, Titanfall, and the execution victim sequences.
+fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
+    let c = targets::enemy_clips(&kit.model);
+    let mut seq_list: Vec<&'static str> = vec![c[0], c[1], c[2], c[3]];
+    if kit.infantry {
+        seq_list.extend(executions::human_victim_sequences());
+    } else {
+        seq_list.extend(["at_IDLE_2", "at_hotdrop_drop_2knee_turbo", "at_hotdrop_quickstand"]);
+        if kit.model.contains("titan_medium") {
+            seq_list.push("at_rodeo_ride_R_hijack_battery");
+        }
+        seq_list.extend(executions::titan_victim_sequences());
+    }
+    seq_list
+}
+
 /// How many grunts can be on the field at once.
 const GRUNT_POOL: usize = 12;
 
@@ -724,9 +740,65 @@ fn setup(
         Err(e) => log::error!("map {}: {e:#}", args.map),
     }
     ph.mark("probes, reflections, particle light");
+    // The actors' templates (models, clips, meshes, textures) build on every core while the
+    // collision hierarchy does; spawning them below only adds their assets.
+    let bt_spec = ActorSpec {
+        path: "models/titans/buddy/titan_buddy.mdl",
+        sequences: &[
+            "bt_combat_idle",
+            "bt_combat_walk_forward",
+            "bt_combat_walk_backward",
+            "bt_combat_walk_left",
+            "bt_combat_walk_right",
+            "bt_combat_sprint_forward_noaim",
+            "at_player_melee_punch_01",
+            "bt_synced_titan_execute_flip_takedown_A",
+            "bt_synced_titan_execute_kickshoot_A",
+            "bt_synced_titan_execute_pilot_rip_A",
+            "at_dismount_stand",
+            "at_dismount_crouch",
+            "at_MP_disembark_back2idle",
+            "at_mount_stand_front",
+            "at_mount_stand_behind",
+            "at_mount_stand_left",
+            "at_mount_stand_right",
+            "at_MP_eject_stand_start",
+            "at_hotdrop_drop_2knee_turbo",
+            "at_hotdrop_quickstand",
+            "?CQB_CrouchIdle_MP",
+            "?bt_vortex_arm_pose_add",
+            "?bt_vortex_ion_arm_pose_add",
+        ],
+        // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
+        grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],
+        body: &[],
+    };
+    let cockpit_spec = ActorSpec {
+        path: "models/weapons/arms/pov_titan_medium_cockpit.mdl",
+        sequences: &["atpov_cockpit_hatch_close_idle"],
+        grids: &[],
+        body: &[],
+    };
+    let vm_spec = ActorSpec {
+        path: "models/weapons/titan_xo16_shorty/atpov_xo16shorty.mdl",
+        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
+        grids: &["idle_seq", "attack_seq"],
+        body: &[],
+    };
+    let arms_spec = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
+    let gun_spec = ActorSpec { path: "models/weapons/titan_xo16_shorty/w_xo16shorty.mdl", sequences: &[], grids: &[], body: &[] };
+    let enemy_seqs: Vec<(Vec<&str>, [&str; 2])> = kits.iter().map(|k| (enemy_sequences(k), targets::aim_grids(&k.model))).collect();
+    let mut specs = vec![bt_spec, cockpit_spec, vm_spec, arms_spec, gun_spec];
+    for (kit, (seqs, grids)) in kits.iter().zip(&enemy_seqs) {
+        specs.push(ActorSpec { path: &kit.model, sequences: seqs, grids, body: &[] });
+        specs.push(ActorSpec { path: &kit.weapon.playermodel, sequences: &[], grids: &[], body: &[] });
+    }
     let tb = std::time::Instant::now();
-    collision.finish();
-    log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+    std::thread::scope(|scope| {
+        scope.spawn(|| actor::prefetch_actors(&gd, &cache, &specs));
+        collision.finish();
+        log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+    });
     // TF_COLLISION_DUMP=<file>: save the movement collision for offline tests (tf-sim's
     // `pilotscan` example).
     if let Some(p) = std::env::var_os("TF_COLLISION_DUMP") {
@@ -758,37 +830,7 @@ fn setup(
         &mut commands,
         anchor,
         &gd,
-        &ActorSpec {
-            path: "models/titans/buddy/titan_buddy.mdl",
-            sequences: &[
-                "bt_combat_idle",
-                "bt_combat_walk_forward",
-                "bt_combat_walk_backward",
-                "bt_combat_walk_left",
-                "bt_combat_walk_right",
-                "bt_combat_sprint_forward_noaim",
-                "at_player_melee_punch_01",
-                "bt_synced_titan_execute_flip_takedown_A",
-                "bt_synced_titan_execute_kickshoot_A",
-                "bt_synced_titan_execute_pilot_rip_A",
-                "at_dismount_stand",
-                "at_dismount_crouch",
-                "at_MP_disembark_back2idle",
-                "at_mount_stand_front",
-                "at_mount_stand_behind",
-                "at_mount_stand_left",
-                "at_mount_stand_right",
-                "at_MP_eject_stand_start",
-                "at_hotdrop_drop_2knee_turbo",
-                "at_hotdrop_quickstand",
-                "?CQB_CrouchIdle_MP",
-                "?bt_vortex_arm_pose_add",
-                "?bt_vortex_ion_arm_pose_add",
-            ],
-            // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
-            grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],
-            body: &[],
-        },
+        &bt_spec,
         &mut cache,
         &mut meshes,
         &mut images,
@@ -803,12 +845,7 @@ fn setup(
         &mut commands,
         cockpit_anchor,
         &gd,
-        &ActorSpec {
-            path: "models/weapons/arms/pov_titan_medium_cockpit.mdl",
-            sequences: &["atpov_cockpit_hatch_close_idle"],
-            grids: &[],
-            body: &[],
-        },
+        &cockpit_spec,
         &mut cache,
         &mut meshes,
         &mut images,
@@ -829,12 +866,7 @@ fn setup(
         &mut commands,
         vm_anchor,
         &gd,
-        &ActorSpec {
-            path: "models/weapons/titan_xo16_shorty/atpov_xo16shorty.mdl",
-            sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
-            grids: &["idle_seq", "attack_seq"],
-            body: &[],
-        },
+        &vm_spec,
         &mut cache,
         &mut meshes,
         &mut images,
@@ -847,7 +879,7 @@ fn setup(
                 &mut commands,
                 vm_anchor,
                 &gd,
-                &ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] },
+                &arms_spec,
                 &mut cache,
                 &mut meshes,
                 &mut images,
@@ -870,7 +902,7 @@ fn setup(
             &mut commands,
             hand,
             &gd,
-            &ActorSpec { path: "models/weapons/titan_xo16_shorty/w_xo16shorty.mdl", sequences: &[], grids: &[], body: &[] },
+            &gun_spec,
             &mut cache,
             &mut meshes,
             &mut images,
@@ -973,18 +1005,7 @@ fn setup(
     for i in 0..(titan_classes * 2 + grunt_class.map_or(0, |_| GRUNT_POOL)) as u64 {
         let class = if (i as usize) < titan_classes * 2 { i as usize % titan_classes } else { grunt_class.unwrap() };
         let kit = &kits[class];
-        let c = targets::enemy_clips(&kit.model);
-        // Locomotion, death, Titanfall, and the execution victim sequences.
-        let mut seq_list: Vec<&str> = vec![c[0], c[1], c[2], c[3]];
-        if kit.infantry {
-            seq_list.extend(executions::human_victim_sequences());
-        } else {
-            seq_list.extend(["at_IDLE_2", "at_hotdrop_drop_2knee_turbo", "at_hotdrop_quickstand"]);
-            if kit.model.contains("titan_medium") {
-                seq_list.push("at_rodeo_ride_R_hijack_battery");
-            }
-            seq_list.extend(executions::titan_victim_sequences());
-        }
+        let seq_list = enemy_sequences(kit);
         let seqs: &[&str] = &seq_list;
         let e_anchor = commands.spawn((Transform::from_translation(bt_pos), Visibility::Hidden)).id();
         commands.entity(root).add_child(e_anchor);
