@@ -1233,6 +1233,13 @@ from everything that moves. Bevy skips a hierarchy in which nothing moved, but u
 root it recomputed all ~47k static children every frame (main thread: transform propagation
 3.7 -> 1.1 ms on Angel City).
 
+The 2D cameras (the HUD and the weapon screens rendered to textures) have no render layers.
+Bevy's visibility pass tests every entity against every camera's frustum, and with the default
+layer those orthographic boxes, which reach deep into the map, took in ~10k props on Angel City,
+marked them visible and sent them to the render world for nothing (the UI doesn't use render
+layers or that pass). Angel City at 1920x1080: about 86 -> 89 fps on average (small; within run
+noise).
+
 Bevy rebuilds every mesh bind group every frame, and with lightmaps that is one per lightmap
 slab (four lightmapped entities) per render phase: ~750 bind groups created and dropped per frame
 for Angel City's 419 world batches. `bindcache.rs` keeps the last two sets (the skin buffers
