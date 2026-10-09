@@ -621,6 +621,7 @@ fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
 }
 
 /// What an actor should load: plain sequences and additive grids.
+#[derive(Clone, Copy)]
 pub struct ActorSpec<'a> {
     pub path: &'a str,
     pub sequences: &'a [&'a str],
@@ -654,7 +655,7 @@ pub fn spawn_actor(
     materials: &mut Assets<StandardMaterial>,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
 ) -> Result<Spawned> {
-    let key = format!("{}|{:?}|{:?}|{:?}", spec.path, spec.sequences, spec.grids, spec.body);
+    let key = spec_key(spec);
     let tpl = match cache.actors.get(&key) {
         Some(t) => t.clone(),
         None => {
@@ -758,6 +759,46 @@ pub fn prefetch_models(gd: &GameData, paths: &[String]) {
     log::info!("prefetched {} models and {} includes in {:?}", paths.len(), includes.len(), t.elapsed());
 }
 
+fn spec_key(spec: &ActorSpec) -> String {
+    format!("{}|{:?}|{:?}|{:?}", spec.path, spec.sequences, spec.grids, spec.body)
+}
+
+/// The part of an actor template that needs no Bevy assets (the model, clips, grids and
+/// meshes), so it can be built on any thread (`prefetch_actors`).
+pub struct TemplateData {
+    bones: Vec<(String, i32, Vec3, Quat)>,
+    clips: Vec<Clip>,
+    by_name: HashMap<String, usize>,
+    grids: HashMap<String, AimGrid>,
+    inverse: Vec<Mat4>,
+    /// (material name, triangles, body part, mesh)
+    parts: Vec<(String, usize, usize, Mesh)>,
+    includes: usize,
+    bone_count: usize,
+    took: (std::time::Duration, std::time::Duration, std::time::Duration),
+}
+
+/// Build the templates of `specs` (their asset-free part, textures included) on every core,
+/// ahead of `spawn_actor`, which then only adds their assets.
+pub fn prefetch_actors(gd: &GameData, cache: &Cache, specs: &[ActorSpec]) {
+    let t = std::time::Instant::now();
+    let mut keys = std::collections::HashSet::new();
+    let todo: Vec<(&ActorSpec, String)> = specs
+        .iter()
+        .map(|s| (s, spec_key(s)))
+        .filter(|(_, k)| !cache.actors.contains_key(k) && !cache.templates.lock().is_ok_and(|m| m.contains_key(k)) && keys.insert(k.clone()))
+        .collect();
+    let built = crate::world::parallel_map(&todo, |(spec, _)| template_data(gd, spec, cache));
+    if let Ok(mut map) = cache.templates.lock() {
+        for ((_, key), data) in todo.iter().zip(built) {
+            if let Some(data) = data {
+                map.insert(key.clone(), data);
+            }
+        }
+    }
+    log::info!("prefetched {} actor templates in {:?}", todo.len(), t.elapsed());
+}
+
 fn build_template(
     gd: &GameData,
     spec: &ActorSpec,
@@ -767,6 +808,43 @@ fn build_template(
     materials: &mut Assets<StandardMaterial>,
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
 ) -> Result<ActorTemplate> {
+    let t = std::time::Instant::now();
+    let prepared = cache.templates.lock().ok().and_then(|mut m| m.remove(&spec_key(spec)));
+    let data = match prepared {
+        Some(d) => d?,
+        None => template_data(gd, spec, cache)?,
+    };
+    let path = spec.path;
+    let inverse = bindposes.add(SkinnedMeshInverseBindposes::from(data.inverse));
+    let mut parts = Vec::new();
+    let mut tris = 0;
+    for (mat_name, n, part, mesh) in data.parts {
+        let mat = convert::material(gd, cache, images, materials, &mat_name, false);
+        tris += n;
+        parts.push((meshes.add(mesh), mat, part));
+    }
+    let (took, t_parse, t_anim) = data.took;
+    log::info!(
+        "{path}: {} bones, {tris} triangles, {} includes, {} clips, grids {:?} in {:?} (parse {:?}, animations {:?})",
+        data.bone_count,
+        data.includes,
+        data.clips.len(),
+        data.grids.keys().collect::<Vec<_>>(),
+        took + t.elapsed(),
+        t_parse,
+        t_anim
+    );
+    Ok(ActorTemplate {
+        bones: Arc::new(data.bones),
+        clips: Arc::new(data.clips),
+        by_name: Arc::new(data.by_name),
+        grids: Arc::new(data.grids),
+        parts: Arc::new(parts),
+        inverse,
+    })
+}
+
+fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<TemplateData> {
     let t = std::time::Instant::now();
     let path = spec.path;
     let model = parsed_model(gd, path)?;
@@ -926,10 +1004,8 @@ fn build_template(
             )
         })
         .collect();
-    let inverse = bindposes.add(SkinnedMeshInverseBindposes::from(inverse));
-    let mut parts = Vec::new();
-    let mut tris = 0;
-    // Meshes (tangent generation is most of the work) on every core; materials here.
+    // Meshes (tangent generation is most of the work) on every core; materials on the main
+    // thread (`build_template`).
     let mut mesh_data = model.meshes(spec.body)?;
     hide_behind_screen(&model, &mut mesh_data, spec.sequences.first().copied());
     let mds: Vec<std::sync::Mutex<Option<tf_assets::mdl::MeshData>>> = mesh_data.into_iter().map(|m| std::sync::Mutex::new(Some(m))).collect();
@@ -944,38 +1020,19 @@ fn build_template(
         if hidden || mat_name.contains("debugempty") || mat_name.to_ascii_lowercase().contains("_int_screen") {
             return None;
         }
+        // The material's textures decode here too (the main thread only adds them).
+        convert::prefetch_material(gd, prep, &mat_name, false);
         let n = md.indices.len() / 3;
         let part = md.bodypart;
         Some((mat_name, n, part, convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, Some((md.joints, md.weights)))))
     });
-    for (mat_name, n, part, mesh) in built.into_iter().flatten().flatten() {
-        let mat = convert::material(gd, cache, images, materials, &mat_name, false);
-        tris += n;
-        parts.push((meshes.add(mesh), mat, part));
-    }
-    log::info!(
-        "{path}: {} bones, {tris} triangles, {} includes, {} clips, grids {:?} in {:?} (parse {:?}, animations {:?})",
-        model.bones.len(),
-        includes.len(),
-        clips.len(),
-        grids.keys().collect::<Vec<_>>(),
-        t.elapsed(),
-        t_parse,
-        t_anim - t_parse
-    );
+    let parts: Vec<(String, usize, usize, Mesh)> = built.into_iter().flatten().flatten().collect();
     let bones = model
         .bones
         .iter()
         .map(|b| (b.name.clone(), b.parent, Vec3::from(b.pos), Quat::from_array(b.quat).normalize()))
         .collect();
-    Ok(ActorTemplate {
-        bones: Arc::new(bones),
-        clips: Arc::new(clips),
-        by_name: Arc::new(by_name),
-        grids: Arc::new(grids),
-        parts: Arc::new(parts),
-        inverse,
-    })
+    Ok(TemplateData { bones, clips, by_name, grids, inverse, parts, includes: includes.len(), bone_count: model.bones.len(), took: (t.elapsed(), t_parse, t_anim - t_parse) })
 }
 
 /// The last pose evaluated for each actor, with the inputs it came from ([`Actor::pose_key`]).

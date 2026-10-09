@@ -119,6 +119,11 @@ pub fn spawn_world(
         tris += m.num_triangles as usize;
     }
     let n = batches.len();
+    // In key order, so the collision triangles (and with them the BVH, the nav grids' probes
+    // and anything else that breaks ties by triangle order) are the same on every run: a
+    // HashMap's order changes from run to run.
+    let mut batches: Vec<_> = batches.into_iter().collect();
+    batches.sort_unstable_by_key(|(k, _)| *k);
     // Collision on this thread, then the meshes (tangent generation is most of the work) on
     // every core.
     let batches: Vec<((i16, bool, i16), std::sync::Mutex<Option<Batch>>)> = batches
@@ -138,9 +143,12 @@ pub fn spawn_world(
         let name = &texdata[td as usize].name;
         !blend && name.to_ascii_lowercase().ends_with("_bm") && std::env::var_os("TF_NO_BM").is_none()
     };
+    let prep: &Cache = cache;
     let built = parallel_map(&batches, |((td, _, page), b)| {
         let b = b.lock().ok()?.take()?;
         let blend = b.blend;
+        // The material's textures decode here too (the main thread only adds them).
+        convert::prefetch_material(gd, prep, &texdata[*td as usize].name, blend);
         let mut mesh = convert::build_mesh(b.pos, b.nrm, b.uv, b.idx, None);
         if *page >= 0 {
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, b.lm);
@@ -384,6 +392,7 @@ pub fn spawn_static_props(
     let mut failed = 0;
     // Parse the models and build their meshes (tangents included) on every core; materials
     // and asset handles are made on this thread afterwards.
+    let prep: &Cache = cache;
     let parsed = parallel_map(&sp.model_names, |name| -> anyhow::Result<PropModel> {
         if name.starts_with("models/vistas/") {
             anyhow::bail!("vista (built by sky.rs)");
@@ -397,7 +406,14 @@ pub fn spawn_static_props(
         if name.to_ascii_lowercase().contains("godray") && !crate::uber::enabled() {
             anyhow::bail!("godray volume (not drawn)");
         }
-        static_model_data(gd, name)
+        let pm = static_model_data(gd, name)?;
+        // The materials' textures decode here too (the main thread only adds them).
+        for (_, parts) in &pm.lods {
+            for (mat_name, _) in parts {
+                convert::prefetch_material(gd, prep, mat_name, false);
+            }
+        }
+        Ok(pm)
     });
     for (mi, r) in parsed.into_iter().enumerate() {
         match r.unwrap_or_else(|| Err(anyhow::anyhow!("worker panicked"))) {

@@ -288,10 +288,12 @@ pub fn load_particles(
             }
         }
     };
+    // The textures decode on every core; the assets are made here, in the table's order.
+    let decoded = crate::world::parallel_map(TEXTURES, |&(_, path, ramp, _, max)| read(path, max).map(|v| (v, ramp.and_then(|r| read(r, 256)))));
     let mut layers = Vec::new();
-    for &(tex, path, ramp, additive, max) in TEXTURES {
-        let Some(mut v) = read(path, max) else { continue };
-        if let Some(r) = ramp.and_then(|r| read(r, 256)) {
+    for (&(tex, _, _, additive, _), d) in TEXTURES.iter().zip(decoded) {
+        let Some((mut v, ramp)) = d.flatten() else { continue };
+        if let Some(r) = ramp {
             // $texColorFromAlpha: the colour comes from the ramp, indexed by the texture's alpha.
             let row = (r.height / 2) as usize * r.width as usize;
             for px in v.rgba.chunks_exact_mut(4) {

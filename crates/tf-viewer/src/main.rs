@@ -397,6 +397,22 @@ fn main() {
         .run();
 }
 
+/// An enemy's sequences: locomotion, death, Titanfall, and the execution victim sequences.
+fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
+    let c = targets::enemy_clips(&kit.model);
+    let mut seq_list: Vec<&'static str> = vec![c[0], c[1], c[2], c[3]];
+    if kit.infantry {
+        seq_list.extend(executions::human_victim_sequences());
+    } else {
+        seq_list.extend(["at_IDLE_2", "at_hotdrop_drop_2knee_turbo", "at_hotdrop_quickstand"]);
+        if kit.model.contains("titan_medium") {
+            seq_list.push("at_rodeo_ride_R_hijack_battery");
+        }
+        seq_list.extend(executions::titan_victim_sequences());
+    }
+    seq_list
+}
+
 /// How many grunts can be on the field at once.
 const GRUNT_POOL: usize = 12;
 
@@ -576,6 +592,16 @@ fn titan_params(gd: &GameData, path: &str) -> TitanParams {
     }
 }
 
+/// Load profiling: each `mark` logs the time since the previous one.
+struct Phases(std::time::Instant);
+
+impl Phases {
+    fn mark(&mut self, what: &str) {
+        log::info!("load phase: {what} {:?}", self.0.elapsed());
+        self.0 = std::time::Instant::now();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
@@ -588,6 +614,7 @@ fn setup(
     mut blends: ResMut<Assets<convert::BlendMaterial>>,
 ) {
     let t = std::time::Instant::now();
+    let mut ph = Phases(t);
     let mut gd = GameData::new(&args.game);
     // frontend holds resource/ files such as the closed captions.
     for v in [args.map.as_str(), "sp_beacon", "mp_common", "frontend"] {
@@ -595,16 +622,9 @@ fn setup(
             log::warn!("vpk {v}: {e:#}");
         }
     }
-    for p in [format!("{}.rpak", args.map), "common.rpak".to_string()] {
-        if let Err(e) = gd.add_rpak(&p) {
-            log::warn!("rpak {p}: {e:#}");
-        }
-    }
-    if std::env::var_os("TF_NO_PATCH_PAKS").is_none() {
-        for stem in ["common", "common_mp"] {
-            gd.add_rpak_patches(stem);
-        }
-    }
+    let patch_stems: &[&str] = if std::env::var_os("TF_NO_PATCH_PAKS").is_none() { &["common", "common_mp"] } else { &[] };
+    gd.add_rpaks(&[format!("{}.rpak", args.map), "common.rpak".to_string()], patch_stems);
+    ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());
     let params = titan_params(&gd, "scripts/players/mp/titan_buddy.set");
@@ -644,16 +664,25 @@ fn setup(
         );
     }
     commands.insert_resource(args.difficulty);
-    let mut sfx = audio::Sfx::open(&args.game);
-    let ts = std::time::Instant::now();
-    let mut cues: Vec<audio::Cue> = audio::ALL_CUES.to_vec();
-    cues.extend((0..pilotweapon::ARSENAL.len()).flat_map(|i| [audio::GunPart::First, audio::GunPart::Shot, audio::GunPart::Tail].map(|p| audio::Cue::Gun(i as u8, p))));
-    sfx.preload(&cues);
-    sfx.load_game_data(&gd);
-    sfx.preload_events(kits.iter().filter_map(|k| k.ability.as_ref()).map(|a| a.sound.as_str()).filter(|s| !s.is_empty()));
-    sfx.preload_code_events();
-    log::info!("sounds decoded in {:?}", ts.elapsed());
-    commands.insert_resource(sfx);
+    ph.mark("settings and kits");
+    // The sounds decode on their own thread, with their own VPK handles, while the map loads
+    // (joined at the end of setup).
+    let sounds = {
+        let (game, sgd) = (args.game.clone(), gd.vpks_only());
+        let ability_sounds: Vec<String> = kits.iter().filter_map(|k| k.ability.as_ref()).map(|a| a.sound.clone()).filter(|s| !s.is_empty()).collect();
+        std::thread::spawn(move || {
+            let mut sfx = audio::Sfx::open(&game);
+            let ts = std::time::Instant::now();
+            let mut cues: Vec<audio::Cue> = audio::ALL_CUES.to_vec();
+            cues.extend((0..pilotweapon::ARSENAL.len()).flat_map(|i| [audio::GunPart::First, audio::GunPart::Shot, audio::GunPart::Tail].map(|p| audio::Cue::Gun(i as u8, p))));
+            sfx.preload(&cues);
+            sfx.load_game_data(&sgd);
+            sfx.preload_events(ability_sounds.iter().map(String::as_str));
+            sfx.preload_code_events();
+            log::info!("sounds decoded in {:?}", ts.elapsed());
+            sfx
+        })
+    };
     if let Some(v) = args.volume {
         commands.insert_resource(crate::audio::MasterVolume::new(bevy::audio::Volume::Linear(v.clamp(0.0, 1.0))));
     }
@@ -681,6 +710,7 @@ fn setup(
     let mut sweep: Option<CollisionWorld> = None;
     match gd.read_map(&args.map) {
         Ok(bsp) => {
+            ph.mark("bsp read");
             world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
             if std::env::var_os("TF_NO_MAP_COLLISION").is_none() {
                 world::add_game_collision(&bsp, &mut collision);
@@ -692,10 +722,12 @@ fn setup(
                 world::add_game_collision(&bsp, &mut extra);
                 sweep = Some(extra);
             }
+            ph.mark("world and map collision");
             if args.props {
                 world::spawn_static_props(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut collision);
                 sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
             }
+            ph.mark("props and sky");
             // Baked probes replace the flat ambient term for everything without a lightmap.
             if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images) {
                 commands.insert_resource(GlobalAmbientLight { brightness: 0.0, ..map_env.ambient() });
@@ -707,9 +739,66 @@ fn setup(
         }
         Err(e) => log::error!("map {}: {e:#}", args.map),
     }
+    ph.mark("probes, reflections, particle light");
+    // The actors' templates (models, clips, meshes, textures) build on every core while the
+    // collision hierarchy does; spawning them below only adds their assets.
+    let bt_spec = ActorSpec {
+        path: "models/titans/buddy/titan_buddy.mdl",
+        sequences: &[
+            "bt_combat_idle",
+            "bt_combat_walk_forward",
+            "bt_combat_walk_backward",
+            "bt_combat_walk_left",
+            "bt_combat_walk_right",
+            "bt_combat_sprint_forward_noaim",
+            "at_player_melee_punch_01",
+            "bt_synced_titan_execute_flip_takedown_A",
+            "bt_synced_titan_execute_kickshoot_A",
+            "bt_synced_titan_execute_pilot_rip_A",
+            "at_dismount_stand",
+            "at_dismount_crouch",
+            "at_MP_disembark_back2idle",
+            "at_mount_stand_front",
+            "at_mount_stand_behind",
+            "at_mount_stand_left",
+            "at_mount_stand_right",
+            "at_MP_eject_stand_start",
+            "at_hotdrop_drop_2knee_turbo",
+            "at_hotdrop_quickstand",
+            "?CQB_CrouchIdle_MP",
+            "?bt_vortex_arm_pose_add",
+            "?bt_vortex_ion_arm_pose_add",
+        ],
+        // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
+        grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],
+        body: &[],
+    };
+    let cockpit_spec = ActorSpec {
+        path: "models/weapons/arms/pov_titan_medium_cockpit.mdl",
+        sequences: &["atpov_cockpit_hatch_close_idle"],
+        grids: &[],
+        body: &[],
+    };
+    let vm_spec = ActorSpec {
+        path: "models/weapons/titan_xo16_shorty/atpov_xo16shorty.mdl",
+        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
+        grids: &["idle_seq", "attack_seq"],
+        body: &[],
+    };
+    let arms_spec = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
+    let gun_spec = ActorSpec { path: "models/weapons/titan_xo16_shorty/w_xo16shorty.mdl", sequences: &[], grids: &[], body: &[] };
+    let enemy_seqs: Vec<(Vec<&str>, [&str; 2])> = kits.iter().map(|k| (enemy_sequences(k), targets::aim_grids(&k.model))).collect();
+    let mut specs = vec![bt_spec, cockpit_spec, vm_spec, arms_spec, gun_spec];
+    for (kit, (seqs, grids)) in kits.iter().zip(&enemy_seqs) {
+        specs.push(ActorSpec { path: &kit.model, sequences: seqs, grids, body: &[] });
+        specs.push(ActorSpec { path: &kit.weapon.playermodel, sequences: &[], grids: &[], body: &[] });
+    }
     let tb = std::time::Instant::now();
-    collision.finish();
-    log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+    std::thread::scope(|scope| {
+        scope.spawn(|| actor::prefetch_actors(&gd, &cache, &specs));
+        collision.finish();
+        log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+    });
     // TF_COLLISION_DUMP=<file>: save the movement collision for offline tests (tf-sim's
     // `pilotscan` example).
     if let Some(p) = std::env::var_os("TF_COLLISION_DUMP") {
@@ -721,6 +810,7 @@ fn setup(
         world::collision_sweep(&collision, &extra);
     }
 
+    ph.mark("collision BVH");
     let (mut bt_pos, bt_yaw, placements) = match titan_spawn(&gd, &args.map) {
         Some((p, y)) => (p, y, Vec::new()),
         None => campaign_arena(&gd, &args.map).unwrap_or((Vec3::ZERO, 0.0, Vec::new())),
@@ -740,37 +830,7 @@ fn setup(
         &mut commands,
         anchor,
         &gd,
-        &ActorSpec {
-            path: "models/titans/buddy/titan_buddy.mdl",
-            sequences: &[
-                "bt_combat_idle",
-                "bt_combat_walk_forward",
-                "bt_combat_walk_backward",
-                "bt_combat_walk_left",
-                "bt_combat_walk_right",
-                "bt_combat_sprint_forward_noaim",
-                "at_player_melee_punch_01",
-                "bt_synced_titan_execute_flip_takedown_A",
-                "bt_synced_titan_execute_kickshoot_A",
-                "bt_synced_titan_execute_pilot_rip_A",
-                "at_dismount_stand",
-                "at_dismount_crouch",
-                "at_MP_disembark_back2idle",
-                "at_mount_stand_front",
-                "at_mount_stand_behind",
-                "at_mount_stand_left",
-                "at_mount_stand_right",
-                "at_MP_eject_stand_start",
-                "at_hotdrop_drop_2knee_turbo",
-                "at_hotdrop_quickstand",
-                "?CQB_CrouchIdle_MP",
-                "?bt_vortex_arm_pose_add",
-                "?bt_vortex_ion_arm_pose_add",
-            ],
-            // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
-            grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],
-            body: &[],
-        },
+        &bt_spec,
         &mut cache,
         &mut meshes,
         &mut images,
@@ -785,12 +845,7 @@ fn setup(
         &mut commands,
         cockpit_anchor,
         &gd,
-        &ActorSpec {
-            path: "models/weapons/arms/pov_titan_medium_cockpit.mdl",
-            sequences: &["atpov_cockpit_hatch_close_idle"],
-            grids: &[],
-            body: &[],
-        },
+        &cockpit_spec,
         &mut cache,
         &mut meshes,
         &mut images,
@@ -811,12 +866,7 @@ fn setup(
         &mut commands,
         vm_anchor,
         &gd,
-        &ActorSpec {
-            path: "models/weapons/titan_xo16_shorty/atpov_xo16shorty.mdl",
-            sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
-            grids: &["idle_seq", "attack_seq"],
-            body: &[],
-        },
+        &vm_spec,
         &mut cache,
         &mut meshes,
         &mut images,
@@ -829,7 +879,7 @@ fn setup(
                 &mut commands,
                 vm_anchor,
                 &gd,
-                &ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] },
+                &arms_spec,
                 &mut cache,
                 &mut meshes,
                 &mut images,
@@ -844,6 +894,7 @@ fn setup(
         }
         Err(e) => log::warn!("viewmodel: {e:#}"),
     }
+    ph.mark("BT, cockpit, viewmodel");
     let mut world_gun = None;
     if let Some(hand) = bt.as_ref().ok().and_then(|b| b.joint("ja_c_propGun")) {
         commands.insert_resource(weapons::BtHand(hand));
@@ -851,7 +902,7 @@ fn setup(
             &mut commands,
             hand,
             &gd,
-            &ActorSpec { path: "models/weapons/titan_xo16_shorty/w_xo16shorty.mdl", sequences: &[], grids: &[], body: &[] },
+            &gun_spec,
             &mut cache,
             &mut meshes,
             &mut images,
@@ -892,8 +943,11 @@ fn setup(
     let bt_ground = collision.raycast(sv(bt_pos + Vec3::Z * 50.0), down, 2000.0).map(|h| h.point.z).unwrap_or(bt_pos.z);
     // The game's navmesh where the map ships one (campaign maps); a grid probed from the
     // collision mesh around the arena otherwise (MP maps have no client navmesh).
+    ph.mark("world gun, pilot");
     let nav_titan = nav::Nav::load(&gd, &args.map, "large").unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 6000.0, nav::Agent::TITAN));
+    ph.mark("titan nav");
     let nav_small = nav::Nav::load(&gd, &args.map, "small").unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 4000.0, nav::Agent::GRUNT));
+    ph.mark("grunt nav");
     let mut spots: Vec<Vec3> = Vec::new();
     // The campaign's own Titan placements near the arena come first.
     for p in placements.iter().filter(|p| p.distance(bt_pos) > 1200.0 && p.distance(bt_pos) < 6000.0) {
@@ -923,6 +977,7 @@ fn setup(
     }
     // Only spots a Titan can walk to the player from (a gantry or a roof the ring probes
     // landed on would leave it pacing up there).
+    ph.mark("spawn spot probes");
     let reachable: Vec<Vec3> = spots.iter().copied().filter(|s| nav_titan.path(*s, bt_pos).is_some()).collect();
     if reachable.len() < spots.len() {
         log::info!("{} of {} enemy spawn spots have no walking route to the player, dropped", spots.len() - reachable.len(), spots.len());
@@ -939,6 +994,7 @@ fn setup(
 
     // A pool of enemy Titans, two of each class (hidden until a wave needs them), each holding
     // its class's weapon.
+    ph.mark("spawn spot routes");
     let mut prefetch: Vec<String> = kits.iter().flat_map(|k| [k.model.clone(), k.weapon.playermodel.clone()]).collect();
     prefetch.sort();
     prefetch.dedup();
@@ -949,18 +1005,7 @@ fn setup(
     for i in 0..(titan_classes * 2 + grunt_class.map_or(0, |_| GRUNT_POOL)) as u64 {
         let class = if (i as usize) < titan_classes * 2 { i as usize % titan_classes } else { grunt_class.unwrap() };
         let kit = &kits[class];
-        let c = targets::enemy_clips(&kit.model);
-        // Locomotion, death, Titanfall, and the execution victim sequences.
-        let mut seq_list: Vec<&str> = vec![c[0], c[1], c[2], c[3]];
-        if kit.infantry {
-            seq_list.extend(executions::human_victim_sequences());
-        } else {
-            seq_list.extend(["at_IDLE_2", "at_hotdrop_drop_2knee_turbo", "at_hotdrop_quickstand"]);
-            if kit.model.contains("titan_medium") {
-                seq_list.push("at_rodeo_ride_R_hijack_battery");
-            }
-            seq_list.extend(executions::titan_victim_sequences());
-        }
+        let seq_list = enemy_sequences(kit);
         let seqs: &[&str] = &seq_list;
         let e_anchor = commands.spawn((Transform::from_translation(bt_pos), Visibility::Hidden)).id();
         commands.entity(root).add_child(e_anchor);
@@ -992,6 +1037,7 @@ fn setup(
             Err(e) => log::warn!("enemy titan: {e:#}"),
         }
     }
+    ph.mark("enemies");
     if !cache.missing_materials.is_empty() {
         log::warn!("{} materials not found, e.g. {:?}", cache.missing_materials.len(), &cache.missing_materials[..cache.missing_materials.len().min(8)]);
     }
@@ -1039,12 +1085,20 @@ fn setup(
     // The sun also lights the first-person models (their own camera and layer, vmcam.rs).
     commands.spawn((map_env.sun(), bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER])));
     vmcam::spawn_camera(&mut commands);
+    ph.mark("rest");
+    match sounds.join() {
+        Ok(sfx) => commands.insert_resource(sfx),
+        Err(_) => log::error!("sound loader panicked"),
+    }
+    ph.mark("waiting for sounds");
     log::info!(
-        "texture loads {:.2}s, spec/gloss {:.2}s",
+        "materials {:.2}s: texture loads {:.2}s, spec/gloss {:.2}s",
+        convert::MAT_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
         convert::TEX_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,
         convert::SPEC_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6
     );
     log::info!("scene ready in {:?}", t.elapsed());
+    cache.prepared.clear();
     // Keep the game data and caches for things loaded later (e.g. weapon viewmodels).
     commands.insert_resource(gd);
     commands.insert_resource(cache);
