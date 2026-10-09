@@ -649,17 +649,24 @@ fn setup(
     }
     commands.insert_resource(args.difficulty);
     ph.mark("settings and kits");
-    let mut sfx = audio::Sfx::open(&args.game);
-    let ts = std::time::Instant::now();
-    let mut cues: Vec<audio::Cue> = audio::ALL_CUES.to_vec();
-    cues.extend((0..pilotweapon::ARSENAL.len()).flat_map(|i| [audio::GunPart::First, audio::GunPart::Shot, audio::GunPart::Tail].map(|p| audio::Cue::Gun(i as u8, p))));
-    sfx.preload(&cues);
-    sfx.load_game_data(&gd);
-    sfx.preload_events(kits.iter().filter_map(|k| k.ability.as_ref()).map(|a| a.sound.as_str()).filter(|s| !s.is_empty()));
-    sfx.preload_code_events();
-    log::info!("sounds decoded in {:?}", ts.elapsed());
-    commands.insert_resource(sfx);
-    ph.mark("sounds");
+    // The sounds decode on their own thread, with their own VPK handles, while the map loads
+    // (joined at the end of setup).
+    let sounds = {
+        let (game, sgd) = (args.game.clone(), gd.vpks_only());
+        let ability_sounds: Vec<String> = kits.iter().filter_map(|k| k.ability.as_ref()).map(|a| a.sound.clone()).filter(|s| !s.is_empty()).collect();
+        std::thread::spawn(move || {
+            let mut sfx = audio::Sfx::open(&game);
+            let ts = std::time::Instant::now();
+            let mut cues: Vec<audio::Cue> = audio::ALL_CUES.to_vec();
+            cues.extend((0..pilotweapon::ARSENAL.len()).flat_map(|i| [audio::GunPart::First, audio::GunPart::Shot, audio::GunPart::Tail].map(|p| audio::Cue::Gun(i as u8, p))));
+            sfx.preload(&cues);
+            sfx.load_game_data(&sgd);
+            sfx.preload_events(ability_sounds.iter().map(String::as_str));
+            sfx.preload_code_events();
+            log::info!("sounds decoded in {:?}", ts.elapsed());
+            sfx
+        })
+    };
     if let Some(v) = args.volume {
         commands.insert_resource(crate::audio::MasterVolume::new(bevy::audio::Volume::Linear(v.clamp(0.0, 1.0))));
     }
@@ -1056,6 +1063,11 @@ fn setup(
     commands.spawn((map_env.sun(), bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER])));
     vmcam::spawn_camera(&mut commands);
     ph.mark("rest");
+    match sounds.join() {
+        Ok(sfx) => commands.insert_resource(sfx),
+        Err(_) => log::error!("sound loader panicked"),
+    }
+    ph.mark("waiting for sounds");
     log::info!(
         "materials {:.2}s: texture loads {:.2}s, spec/gloss {:.2}s",
         convert::MAT_US.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6,

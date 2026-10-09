@@ -28,6 +28,22 @@ impl GameData {
         Self { root: root.as_ref().to_path_buf(), vpks: Vec::new(), vpk_paths: Vec::new(), paks: Vec::new(), materials: HashMap::new(), textures: HashMap::new() }
     }
 
+    /// Another handle on the same VPKs (no paks), for a loader on another thread: `read_file`
+    /// finds the same files.
+    pub fn vpks_only(&self) -> Self {
+        let mut gd = Self::new(&self.root);
+        for p in &self.vpk_paths {
+            match Vpk::open(p) {
+                Ok(v) => {
+                    gd.vpks.push(v);
+                    gd.vpk_paths.push(p.clone());
+                }
+                Err(e) => log::warn!("vpk {}: {e:#}", p.display()),
+            }
+        }
+        gd
+    }
+
     /// Open `vpk/englishclient_<name>.bsp.pak000_dir.vpk`.
     pub fn add_vpk(&mut self, name: &str) -> Result<()> {
         let p = self.root.join("vpk").join(format!("englishclient_{name}.bsp.pak000_dir.vpk"));
