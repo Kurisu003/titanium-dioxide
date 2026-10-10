@@ -1335,18 +1335,21 @@ const NON_JUMP_VELOCITY: f32 = 140.0;
 /// The Pilot's collision hull: an axis-aligned box, pilot_base.set's stand hull_min/hull_max
 /// "-16 -16 0" / "16 16 72" (crouch "16 16 47"), traced against the world and the player clips
 /// as the engine's player movement does (client.dll 0x1801fbdc0). It carries the settings the
-/// moves read (step height, stepTestDist).
+/// moves read (step height, stepTestDist) and the Pilot's up direction (player+0x2494): +Z,
+/// or the wall's normal while wall-running, the wall then being the floor that StepMove and
+/// the blocked-move handling measure from (IsWallRunning, 0x1802c9350, is just up.z < 1).
 struct Hull<'a> {
     world: &'a CollisionWorld,
     p: &'a PilotParams,
     mins: Vec3,
     maxs: Vec3,
+    up: Vec3,
 }
 
 impl<'a> Hull<'a> {
     fn new(world: &'a CollisionWorld, p: &'a PilotParams, crouched: bool) -> Self {
         let h = if crouched { p.crouch_height } else { p.height };
-        Self { world, p, mins: Vec3::new(-p.radius, -p.radius, 0.0), maxs: Vec3::new(p.radius, p.radius, h) }
+        Self { world, p, mins: Vec3::new(-p.radius, -p.radius, 0.0), maxs: Vec3::new(p.radius, p.radius, h), up: Vec3::Z }
     }
     fn trace(&self, a: Vec3, b: Vec3) -> Trace {
         self.world.trace_box(a, b, self.mins, self.maxs, CLIP_PILOT)
@@ -1481,22 +1484,28 @@ fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: O
 /// (TryPlayerMove, with the blocked trace `first`) and lifted by the step height (+
 /// DIST_EPSILON) and dropped back down by the height lifted plus the step height. The lifted
 /// one is kept when it got further across the ground (more than 1/0.999 of the plain move's
-/// distance) and came down on a floor. Coming down on something steep is still a step when
-/// stepTestDist further along there is floor (steep bits shorter than that, like a bevelled
-/// curb, are ignored), or when that spot is not much higher than where the plain move ended
-/// (at most about 45 degrees up from it, 0.49 = sin^2), with the first landing no more than
-/// twice as high (at least a tenth of the step) as that spot. Returns the height stepped up.
+/// distance) and came down on a floor. "Up", "height" and "floor" are along the hull's up
+/// direction (the pointer StepMove takes, player+0x2494: on a wall-run the wall's normal, so a
+/// wall-run steps out over trims and frames on the wall as a walk steps up a curb). Coming
+/// down on something steep is still a step when stepTestDist further along there is floor
+/// (steep bits shorter than that, like a bevelled curb, are ignored), or when that spot is not
+/// much higher than where the plain move ended (at most about 45 degrees up from it, 0.49 =
+/// sin^2), with the first landing no more than twice as high (at least a tenth of the step)
+/// as that spot. Returns the height stepped up.
 fn step_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Trace, hits: &mut Touched) -> f32 {
     let p = h.p;
     if *vel == Vec3::ZERO {
         return 0.0;
     }
-    let (start, v0) = (*pos, *vel);
-    let planar = |a: Vec3, b: Vec3| (a - b).truncate().length_squared();
+    let (start, v0, upv) = (*pos, *vel, h.up);
+    let planar = |a: Vec3, b: Vec3| {
+        let d = a - b;
+        (d - upv * d.dot(upv)).length_squared()
+    };
     try_player_move(h, pos, vel, time, Some(first), hits);
     let down = *pos;
     let lift = p.step_height + DIST_EPSILON;
-    let tr = h.trace(start, start + Vec3::Z * lift);
+    let tr = h.trace(start, start + upv * lift);
     let (top, lifted) = if tr.start_solid { (start, 0.0) } else { (tr.end, tr.fraction * lift) };
     let (mut up, mut up_vel) = (top, v0);
     try_player_move(h, &mut up, &mut up_vel, time, None, &mut Touched::default());
@@ -1504,34 +1513,35 @@ fn step_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Trace, 
         return 0.0;
     }
     let drop = lifted + p.step_height + DIST_EPSILON;
-    let tr = h.trace(up, up - Vec3::Z * drop);
+    let tr = h.trace(up, up - upv * drop);
     let land = if tr.start_solid { up } else { tr.end };
-    if tr.normal.z < WALKABLE_Z {
+    if tr.normal.dot(upv) < WALKABLE_Z {
         let gap = planar(land, down);
         if gap <= 0.0 {
             return 0.0;
         }
         let (spot, nz, tested) = if gap < p.step_test_dist * p.step_test_dist {
-            let (mut q, mut qv) = (top, Vec3::new(v0.x, v0.y, v0.z.max(0.0)));
+            let (mut q, mut qv) = (top, v0 - upv * v0.dot(upv).min(0.0));
             try_player_move(h, &mut q, &mut qv, p.step_test_dist / v0.length(), None, &mut Touched::default());
-            let t2 = h.trace(q, q - Vec3::Z * drop);
-            (t2.end, t2.normal.z, true)
+            let t2 = h.trace(q, q - upv * drop);
+            (t2.end, t2.normal.dot(upv), true)
         } else {
-            (land, tr.normal.z, false)
+            (land, tr.normal.dot(upv), false)
         };
         let mut ok = tested && nz >= WALKABLE_Z;
         if !ok && nz > 0.0 {
             let d = spot - down;
-            let flat = d.truncate().length_squared();
-            ok = d.z <= 0.0 || flat / (flat + d.z * d.z) > 0.49;
+            let dz = d.dot(upv);
+            let flat = planar(spot, down);
+            ok = dz <= 0.0 || flat / (flat + dz * dz) > 0.49;
         }
-        if !ok || (land.z - start.z).abs() > (2.0 * (spot.z - start.z).abs()).max(0.1 * p.step_height) {
+        if !ok || (land - start).dot(upv).abs() > (2.0 * (spot - start).dot(upv).abs()).max(0.1 * p.step_height) {
             return 0.0;
         }
     }
     *pos = land;
     *vel = up_vel;
-    land.z - start.z
+    (land - start).dot(upv)
 }
 
 /// What a move does when its trace `tr` hits something (client.dll 0x1802055b0). A floor
@@ -1627,8 +1637,15 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
         let tr = h.trace(s.pos, dest);
         if !tr.hit() {
             s.pos = dest;
-        } else if matches!(s.mode, PilotMove::WallRun { .. }) {
-            try_player_move(&h, &mut s.pos, &mut s.vel, dt, Some(tr), &mut hits);
+        } else if let PilotMove::WallRun { normal, .. } = s.mode {
+            // On a wall-run the wall is the ground (the dispatcher, 0x1801f9621, runs the
+            // surface move 0x18020cc30 with the Pilot's up vector turned to the wall's normal),
+            // so what blocks the run goes through StepMove measured from the wall: trims,
+            // frames and pillars up to the step height out from it are stepped over. The plain
+            // move inside StepMove is the slide along the wall as before; the stepped one is
+            // only taken when it gets further along the wall.
+            let hw = Hull { up: normal.normalize_or(Vec3::Z), ..Hull::new(world, p, s.crouched) };
+            step_move(&hw, &mut s.pos, &mut s.vel, dt, tr, &mut hits);
         } else {
             // Falling slowly (under 300 u/s across) into something steep, a while after leaving
             // the ground: just slide along it, without climbing, unless there is floor within

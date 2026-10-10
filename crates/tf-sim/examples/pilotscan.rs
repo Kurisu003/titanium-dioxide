@@ -7,6 +7,7 @@
 //! `pilotscan <dump> compare <dump B> <x0> <y0> <x1> <y1> <samples> [seed]` runs the same
 //! sprints (spots clear in both) over two dumps, e.g. before and after a collision change, and
 //! lists the runs that stop in only one of them. Also: `replays <file>` (spots to rerun),
+//! `rec <TF_RECORD log> <t0> <t1>` (re-run part of a play session from the recorded state),
 //! `walls x0 y0 x1 y1 [angle]` (wall-slide test spots), `uncovered <cm dump>` (solid triangles
 //! the map's own collision lacks), `withcm <cm dump> <out>` (a dump moving on the map's own
 //! collision).
@@ -487,6 +488,73 @@ fn main() {
                     hi = hi.max(t.a.max(t.b).max(t.c));
                 }
                 println!("{name}: {lo} .. {hi}");
+            }
+        }
+        "rec" => {
+            // Re-run part of a TF_RECORD log: from the recorded Pilot at the first frame at or
+            // after t0 (airborne), each later frame's input (yaw, forward, right, sprint, jump,
+            // crouch, ADS) stepped as the viewer does (substeps of at most 1/120 s), printing the
+            // simulated and recorded position and velocity.
+            let text = std::fs::read_to_string(&a[3]).expect("recording");
+            let (t0, t1) = (f(4), f(5));
+            let vec = |l: &str, key: &str| -> Option<Vec3> {
+                let s = &l[l.find(key)? + key.len()..];
+                let v: Vec<f32> = s[..s.find(')')?].split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
+            };
+            let mut s: Option<PilotState> = None;
+            let mut last_t = 0.0;
+            for l in text.lines() {
+                let c: Vec<&str> = l.split_whitespace().collect();
+                let Some(t) = c.first().and_then(|x| x.parse::<f32>().ok()) else { continue };
+                if t < t0 || !l.contains("ctl=Pilot") {
+                    continue;
+                }
+                if t > t1 {
+                    break;
+                }
+                let (rp, rv) = (vec(l, "pilot=(").unwrap(), vec(l, "pvel=(").unwrap());
+                let num = |i: usize| c[i].parse::<f32>().unwrap();
+                let flags = c[5].parse::<u32>().unwrap();
+                let Some(st) = s.as_mut() else {
+                    let mut st = PilotState::new(rp, num(1));
+                    st.vel = rv;
+                    st.mode = PilotMove::Air;
+                    s = Some(st);
+                    last_t = t;
+                    continue;
+                };
+                let dt = (t - last_t).min(0.1);
+                last_t = t;
+                let n = (dt * 120.0).ceil().max(1.0) as usize;
+                let i = PilotInput {
+                    forward: num(3),
+                    right: num(4),
+                    yaw: num(1),
+                    pitch: num(2),
+                    sprint: flags & 1 != 0,
+                    crouch: flags & (1 << 11) != 0,
+                    jump: false,
+                    ads: flags & (1 << 20) != 0,
+                };
+                for k in 0..n {
+                    step(st, &PilotInput { jump: flags & (1 << 10) != 0 && k == 0, ..i }, &p, &w, dt / n as f32);
+                }
+                let h = |v: Vec3| v.truncate().length();
+                println!(
+                    "t {t:6.3} sim {:7.1} {:7.1} {:6.1} h {:4.0} vz {:4.0} {:<40} rec {:7.1} {:7.1} {:6.1} h {:4.0} vz {:4.0}",
+                    st.pos.x,
+                    st.pos.y,
+                    st.pos.z,
+                    h(st.vel),
+                    st.vel.z,
+                    format!("{:?}", st.mode).chars().take(40).collect::<String>(),
+                    rp.x,
+                    rp.y,
+                    rp.z,
+                    h(rv),
+                    rv.z
+                );
             }
         }
         _ => eprintln!("unknown mode"),

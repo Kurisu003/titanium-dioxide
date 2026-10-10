@@ -375,7 +375,15 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     StayOnGround (0x180207860) then keeps the Pilot on stairs and slopes going down (up to 18).
     In the air, hitting a ledge also tries StepMove, so a jump that rises past a lip lands on
     it. So anything up to 18 units is run over at full speed, and taller ledges stop you at the
-    face. Automantle on the ground needs jump held (0x180209ed0 checks `IN_JUMP` there and for
+    face. Wall-running is the same move with the wall as the floor: the Pilot's up vector
+    (player+0x2494, which StepMove and HandleBlocked measure "up" and "walkable" from; the
+    wall-run turns it to the wall's normal, 0x1802068c0, and IsWallRunning 0x1802c9350 is just
+    up.z < 1) is the wall's normal, so StepMove lifts the hull 18 out from the wall, moves and
+    drops it back. Trims, window frames, pillars and clip boxes up to 18 out from the wall are
+    run past at full speed (on Angel City a 1.4-unit player clip box stopped runs dead), deeper
+    ones stop the run. While wall-running StayOnGround doesn't move the Pilot (0x1802078b5).
+    `tf-sim/tests/wallrun_ledges.rs` checks trims 2-24 out, flutes, a pillar, window frames and
+    a cornice; `pilotscan <dump> rec <TF_RECORD log> t0 t1` re-runs part of a play session. Automantle on the ground needs jump held (0x180209ed0 checks `IN_JUMP` there and for
     0.25 s after leaving the ground); before this, running into any knee-high ledge started a
     1 s climb. Not modelled or guessed: the slow-fall case's flag (0x2b7c) is ignored, the
     `boostEnabled` air step-up doubling (boost Pilot classes only) is left out, the step's
