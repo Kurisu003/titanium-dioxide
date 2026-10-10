@@ -7,6 +7,7 @@ version.workspace = true
 tf-assets = { path = "../tf-assets" }
 tf-sim = { path = "../tf-sim" }
 anyhow = "1"
+bytemuck = "1"
 bevy = { version = "0.18", features = ["free_camera", "pbr_specular_textures"] }
 log = "0.4"
 

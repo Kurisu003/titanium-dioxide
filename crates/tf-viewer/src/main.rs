@@ -50,6 +50,7 @@ mod ruiscreen;
 mod sky;
 mod spread;
 mod smartammo;
+mod spritebuf;
 mod targets;
 mod titankit;
 mod uber;
@@ -268,6 +269,7 @@ fn main() {
         .add_plugins(propbatch::PropBatchPlugin)
         .add_plugins(convert::TransparentOrderPlugin)
         .add_plugins(pfx::SoftMaterialPlugin)
+        .add_plugins(spritebuf::SpriteBufPlugin)
         .add_plugins(uber::UberPlugin)
         .add_plugins(fxuber::FxUberPlugin)
         .add_plugins(cloak::CloakPlugin)

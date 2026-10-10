@@ -4689,6 +4689,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "bytemuck",
  "log",
  "tf-assets",
  "tf-sim",
