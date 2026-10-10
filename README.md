@@ -1219,6 +1219,15 @@ collision triangles (`TF_COLLISION_DUMP`), the BVH, the nav grids and the spawn 
 the same on every run (they used to follow a HashMap's per-run order). `RUST_LOG=info` logs
 each phase of `setup` as `load phase: <what> <time>`.
 
+Loading takes two frames: `setup_world` builds the game data, world, props, sky and probes and
+spawns the cameras and the sun, and `setup` builds the rest (collision hierarchy, BT, viewmodels,
+nav grids, enemies) in the next frame, while the render world uploads the map's meshes and
+textures (371 MB and 2.2 GB on Angel City) and compiles its shaders. In one frame all of that
+waited until the end; Angel City goes from about 9.2-10.5 s to 8.7-10 s from launch to playable
+(shared machine, noisy), and the warm-up below from 56-82 frames to 34-40. What is left there is
+mostly Bevy composing the ~26 PBR shader variants one at a time (~40 ms each, behind its shader
+cache's lock) after the uploads.
+
 The loading screen then stays up while the world warms up behind it (`ui::loading_tick`): every
 first-person model is shown (they skip frustum culling, so they count from wherever they sit),
 the viewmodel camera already has the reflection cubemap, and the screen waits until no render
