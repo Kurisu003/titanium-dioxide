@@ -422,18 +422,41 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     movement, so bolts, trims and sandbag folds stopped the Pilot. The models' embedded `.phy`
     (vphysics) data is not what these traces use.
   - Jumps take off at sqrt(2 x sv_gravity x height) (jump handler 0x180200cf9) while gravity in
-    flight is sv_gravity x gravityscale (0x1801f74b3): a 60-unit jump takes off at 300 u/s and
-    goes 75 units high for 1 s. The double jump (0x1802007ba) replaces the vertical speed with a
+    flight is sv_gravity x gravityscale (0x1801f74b3): a 60-unit jump takes off at 300 u/s. As in
+    Source, each airborne step takes half its gravity before the move and half after, and the
+    jump is added to a vertical speed that already lost the first half, then finishes that
+    tick's gravity itself (the jump handler's common exit, 0x1802010d6), so the jump step ends
+    1.5 steps of gravity under 300: 293.7 at 141 fps, and the jump peaks 73.9 units up after
+    0.99 s, as a capture of the real game shows (below). The double jump (0x1802007ba) replaces the vertical speed with a
     full superjump unless rising faster than a quarter-height jump would add, in which case it adds
     that quarter (`superjump_min_height_fraction` 0.25); horizontally it adds 180 along the input
     and takes as much off the old velocity, keeping its direction (0x180200f7c).
   - The keyboard grace (AirMove 0x1801f1d62): for `jump_keyboardgraceperiodmax` 0.5 s after any
-    jump (ground, double, wall), held movement keys turn the horizontal velocity toward their
-    direction at the same speed, by `jump_keyboardgrace_strength` 0.7 per tick until
-    `jump_keyboardgraceperiodmin` 0.2 s and fading out by 0.5 s, each tick's change capped at
-    `jump_keyboardgrace_max` 0.7 x the sprint speed. Not modelled: the game takes the keys along
-    the view's pitched forward (we flatten it), and only key presses count there (we also let a
-    stick do it).
+    jump (ground, double, wall), a movement key going down turns the horizontal velocity toward
+    the held keys' direction at the same speed, by `jump_keyboardgrace_strength` 0.7 until
+    `jump_keyboardgraceperiodmin` 0.2 s and fading out by 0.5 s, the change capped at
+    `jump_keyboardgrace_max` 0.7 x the sprint speed. It happens once, on the tick of the press:
+    the test is on the move data's pressed buttons (`[mv+0x20] & 0x618`, forward, back, left,
+    right), which earlier notes read as the held keys, so it turned the velocity every tick and
+    a back press flipped a jump around. The capture: back pressed 0.2 s into a 260 u/s jump takes
+    182 off on that frame, then air acceleration brakes the rest through zero. Not modelled: the
+    game takes the keys along the view's pitched forward (we flatten it), and only buttons count
+    there (here a stick leaving the center counts as a press).
+  - A capture of the real game is the reference for all of this: the TD.MoveRef Northstar mod
+    ran 31 scripted sequences (run, sprint, walk, crouch, back, strafe, diagonals, reversing,
+    snap and smooth turns, jumps with air strafing, air braking and air turns, double jumps at
+    two timings, a bunny hop chain, slides, slide jumps and slide hops) as pilot_grapple_male on
+    mp_forwardbase_kodai and logged the predicted player every client frame. The real game runs
+    one movement step per client frame with that frame's time (the server's states equal the
+    client's frames bit for bit; the 60 Hz server tick doesn't enter into it), so the viewer
+    now steps the Pilot once per frame too (splitting only frames over 1/30 s) instead of in
+    1/120 s substeps. `cargo run --release -p tf-sim --example moveref <kodai dump> <replay>`
+    replays a sequence's inputs (per frame, from the capture) over a Kodai collision dump, and
+    ours matches the capture within its timing noise on every ground number (top speeds,
+    2500 u/s^2 starts, 1500 u/s^2 stops, turns), jumps, air control, double jumps, hops and
+    slide curves; `tf-sim/tests/capture_ref.rs` checks the key numbers at the capture's 141 fps.
+    The capture can't confirm the slide jump itself (every scripted slide jump let go of crouch
+    on the jump's frame, which loses the jump).
   - The real game's FOV is `cl_fovScale` x 70 (horizontal at 4:3, clamped to 1.7 by client.dll
     0x1802c59f0); set the same scale in our settings menu to compare side by side.
   - What the movement keys mean comes from their help strings in the game's `client.dll` (the
@@ -457,7 +480,14 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     out of a slide is `slideJumpHeight` 50 high and keeps the slide's speed; the long jump
     raises a speed within 85% of `slideMaxJumpSpeed` 350 to 350, and jumping before the Pilot
     is fully ducked (within 0.4 s of the slide's start) takes the boost back (jump handler
-    0x180200655: `m_duckState` not 2). The duck carries on in the air, so crouch held through a
+    0x180200655: `m_duckState` not 2). Letting go of crouch starts the unduck (`m_duckState` 3,
+    200 ms from fully ducked), during which jumps are lost unless still sliding (0x1802003f4): in
+    the capture, crouch let go and jump pressed on the same frame of a slide below 350 doesn't
+    jump. Ducked in the air (crouch held for Duck's 400 ms), the hull turns crouched with its
+    middle kept, so the feet rise 12.5 units (FinishDuck 0x1801f7290) and the jump lands later;
+    standing back up in the air lowers them again if there is room. A landing while ducking
+    starts the slide on the landing tick itself (SetGroundEntity 0x1801fa1c6). The duck carries
+    on in the air, so crouch held through a
     jump lands fully ducked: landing into a slide adds the boost (SetGroundEntity 0x1801fa1c6)
     and hopping straight out keeps it. Every slide start restarts the cooldown, boosted or not
     (0x18020b213), so a slide-hop chain gets one boost and then carries it, losing only the
@@ -481,7 +511,7 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     `skip_speed_retain` 450 (client.dll 0x1802009b6 takes the speed at the jump: friction since
     landing stays lost). `jump_graceperiod` 0.2 s after walking off a ledge still gives a normal jump. A
     double jump while already rising fast still adds `superjump_min_height_fraction` 0.25 of its
-    height. Not modelled: `jump_keyboardgrace*` (redirecting a jump with keys just after it).
+    height.
   - Wall-running is ground movement on the wall's plane, as the keys' text describes:
     `wallrunFriction` 4 ("Base friction applied while wall running", applied Source-style to the
     speed along and up the wall, so entry speed above `wallrunMaxSpeedHorizontal` bleeds off),
@@ -520,7 +550,12 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     aren't read. Not modelled: the wall-jump repel
     (`wallrun_repel*`), `wallrun_avoid_wall_top_decel`, wall-hang slipping
     (`wallrun_hangslip*`, `wallrun_hangStopTime`) and `player_extraairaccelleration`.
-  - Air control is Source-style (engine defaults `airSpeed 60`, `airAcceleration 500`). Automantle
+  - Air control is Source-style (engine defaults `airSpeed 60`, `airAcceleration 500`). Already
+    faster than `airSpeed` along the input, the velocity turns toward it at
+    `player_extraairaccelleration` 2 u/s^2, capped at the old speed counted in 3D (AirAccelerate
+    0x1801f19a0), so holding forward in a jump trades a little vertical speed for horizontal: the
+    capture's jumps gain 0.5-1 u/s across, and a standing jump steered forward lands at 61.
+    Automantle
     takes `automantle_duration_*` 1.11/1.0/0.5/0.35 s depending on how far the eye is above the
     ledge (`automantle_height_below/level/above` -10/10/30). In first person the gun goes away
     and the arms play the matching `ptpov_WallMantle_Below/Level/Above/HighAbove` (or its

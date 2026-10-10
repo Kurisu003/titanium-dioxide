@@ -691,7 +691,10 @@ pub fn simulate_pilot(
         ads: input.pilot_ads && !frozen,
     };
     let jump = std::mem::take(&mut input.jump) && !frozen;
-    let n = (dt * 120.0).ceil().max(1.0) as usize;
+    // One movement step per frame with the frame's time, as the real game runs one user command
+    // per client frame (a capture of it at 141 fps: the server's states are the client's frames
+    // bit for bit, not 60 Hz ticks); only hitches over 1/30 s are split.
+    let n = (dt * 30.0).ceil().max(1.0) as usize;
     for i in 0..n {
         let mut step_input = pi;
         step_input.jump = jump && i == 0;

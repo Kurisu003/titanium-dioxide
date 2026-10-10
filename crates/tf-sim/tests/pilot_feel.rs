@@ -130,10 +130,13 @@ fn jump_takeoff_and_height() {
     println!("jump takeoff {v0:.1} u/s, apex {top:.1}, air time {air:.3}s");
     // The jump handler (0x180200cf9) takes sqrt(2 * sv_gravity * jumpheight) without the
     // gravityscale, which only scales the gravity applied in flight (0x1801f74b3): 300 u/s,
-    // 60 / 0.8 = 75 units high, 2 * 300 / 600 = 1 s in the air.
-    assert!((v0 - 300.0).abs() < 1.0, "takeoff {v0}");
-    assert!((top - 75.0).abs() < 2.0, "apex {top}");
-    assert!((air - 1.0).abs() < 0.03, "air time {air}");
+    // 60 / 0.8 = 75 units high, 2 * 300 / 600 = 1 s in the air. The jump tick ends 1.5 ticks
+    // of gravity under that (StartGravity's half, the jump's own FinishGravity and the move's):
+    // the real game's capture logs 293.7 on the jump frame at 141 fps, and the jump peaks
+    // 73.8-73.9 units up after 0.99 s in the air.
+    assert!((v0 - (300.0 - 1.5 * p.gravity * DT)).abs() < 0.5, "takeoff {v0}");
+    assert!((top - 73.85).abs() < 0.5, "apex {top}");
+    assert!((air - 0.99).abs() < 0.02, "air time {air}");
 }
 
 /// The double jump at the apex of a jump: superjumpMaxHeight from zero vertical speed, so 75
@@ -148,17 +151,23 @@ fn double_jump() {
         step(&mut s, &sprint(), &p, &w, DT);
     }
     step(&mut s, &PilotInput { jump: true, ..sprint() }, &p, &w, DT);
-    while s.vel.z > 0.0 {
+    // Just past the apex (and the first jump's 0.5 s keyboard grace), right goes down...
+    while s.vel.z > -15.0 {
         step(&mut s, &sprint(), &p, &w, DT);
     }
+    let right = PilotInput { right: 1.0, ..Default::default() };
+    step(&mut s, &right, &p, &w, DT);
     let z0 = s.pos.z;
     let h0 = s.horizontal_speed();
-    // Double jump pushing right only.
-    let right = PilotInput { right: 1.0, ..Default::default() };
+    // ...and the double jump pushes right only (a key going down on the double jump's own tick
+    // would also get the new jump's keyboard grace, as in the game: the jump handler restarts
+    // the grace timer at its common exit, 0x180201113).
     step(&mut s, &PilotInput { jump: true, ..right }, &p, &w, DT);
     let v = s.vel;
     println!("double jump: vz {:.1}, horizontal {:?} from {h0:.1}", v.z, (v.x, v.y));
-    assert!((v.z - 300.0).abs() < 2.0, "double jump vz {}", v.z);
+    // A full superjump replaces the vertical speed (the capture: 295.8 on that frame at 141
+    // fps, 300 less one tick of gravity).
+    assert!((v.z - (300.0 - p.gravity * DT)).abs() < 0.5, "double jump vz {}", v.z);
     assert!((v.x - (h0 - 180.0)).abs() < 3.0 && (v.y + 180.0).abs() < 3.0, "double jump horizontal {v:?}");
     let mut top = s.pos.z;
     while s.vel.z > 0.0 {
@@ -169,7 +178,7 @@ fn double_jump() {
 }
 
 /// jump_keyboardgrace (AirMove 0x1801f1d62): pressing a key just after a jump turns the
-/// velocity toward it at the same speed.
+/// velocity toward it, once, on the tick the key goes down.
 #[test]
 fn keyboard_grace_after_jump() {
     let (p, w) = (PilotParams::default(), floor());
@@ -185,9 +194,11 @@ fn keyboard_grace_after_jump() {
     }
     let angle = (-s.vel.y).atan2(s.vel.x).to_degrees();
     println!("0.1 s of right after a sprint jump: heading {angle:.1} deg, speed {:.1}", s.horizontal_speed());
-    // The first tick turns it furthest; its change is capped at 0.7 x 260 = 182 u/s along the
-    // chord, which costs some speed (to about 220).
-    assert!(angle > 85.0 && (s.horizontal_speed() - 220.0).abs() < 5.0, "heading {angle}, speed {}", s.horizontal_speed());
+    // The press turns it once, by at most 0.7 x 260 = 182 u/s along the chord (to 44 degrees
+    // and about 222 u/s); holding the key doesn't turn it further. The real game's capture
+    // (sprint jump, then forward let go and right pressed 0.2 s in) lands 44.4 degrees off
+    // the takeoff heading at 224 u/s.
+    assert!((angle - 44.4).abs() < 1.5 && (s.horizontal_speed() - 222.0).abs() < 3.0, "heading {angle}, speed {}", s.horizontal_speed());
     // Well after a jump (0.5 s) the keys only steer at airAcceleration.
     let mut s = PilotState::new(Vec3::new(0.0, 0.0, 400.0), 0.0);
     s.vel.x = 260.0;
