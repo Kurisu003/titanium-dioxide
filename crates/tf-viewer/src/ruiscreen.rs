@@ -52,10 +52,18 @@ pub struct Built {
     ui_root: Entity,
     text: Entity,
     shown: Option<u32>,
+    /// Frames left to keep rendering the counter after its text last changed.
+    hot: u32,
 }
 
+/// How many frames a counter's camera keeps rendering after its text changed (and until the
+/// text has been laid out), before it stops: the texture keeps what it drew last.
+const HOT_FRAMES: u32 = 30;
+
 /// Build each gun's screens once its viewmodel's joints exist, and keep the counters' text on
-/// the rounds in the clip.
+/// the rounds in the clip. A counter's camera only renders for a while after its text changed:
+/// the texture keeps the last picture, and drawing the same digits every frame cost two
+/// cameras' worth of render graph, UI preparation and command buffers.
 #[allow(clippy::too_many_arguments)]
 pub fn weapon_screens(
     mut commands: Commands,
@@ -66,6 +74,9 @@ pub fn weapon_screens(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut texts: Query<&mut Text>,
+    layouts: Query<&bevy::text::TextLayoutInfo>,
+    mut cameras: Query<&mut Camera>,
+    ui_scale: Res<UiScale>,
     mut built: Local<HashMap<(Entity, usize), Built>>,
 ) {
     let Ok(loadout) = loadouts.single() else { return };
@@ -99,6 +110,18 @@ pub fn weapon_screens(
                 if let Ok(mut t) = texts.get_mut(b.text) {
                     t.0 = gun.ammo.to_string();
                     b.shown = Some(gun.ammo);
+                    b.hot = HOT_FRAMES;
+                }
+            }
+            let laid_out = b.shown.is_some() && layouts.get(b.text).is_ok_and(|l| !l.glyphs.is_empty());
+            if ui_scale.is_changed() {
+                b.hot = HOT_FRAMES;
+            }
+            let active = b.hot > 0 || !laid_out;
+            b.hot = b.hot.saturating_sub(1);
+            if let Ok(mut cam) = cameras.get_mut(b.camera) {
+                if cam.is_active != active {
+                    cam.is_active = active;
                 }
             }
         }
@@ -171,5 +194,5 @@ fn build(
     let m = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster)).id();
     commands.entity(joint).add_child(m);
     log::debug!("weapon screen {} on {bone}: {} faces, {w}x{h}", screen.ui, screen.faces.len());
-    Some(Built { camera, ui_root, text, shown: None })
+    Some(Built { camera, ui_root, text, shown: None, hot: HOT_FRAMES })
 }

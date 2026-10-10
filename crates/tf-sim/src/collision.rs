@@ -4,6 +4,7 @@
 use glam::Vec3;
 use std::sync::OnceLock;
 
+/// A triangle and its unit normal (along `(b - a) x (c - a)`).
 #[derive(Clone, Copy)]
 pub struct Tri {
     pub a: Vec3,
@@ -12,12 +13,15 @@ pub struct Tri {
     pub n: Vec3,
 }
 
+/// A map's collision: solid triangles, and the clip and detail sets.
 #[derive(Default)]
 pub struct CollisionWorld {
+    /// Solid triangles: every query hits them.
     pub tris: Vec<Tri>,
     bvh: OnceLock<Bvh>,
     /// Invisible clip surfaces from the map's own collision (`CLIP_PILOT`, `CLIP_TITAN`): they
-    /// stop movement (`push_sphere_moving`, `raycast_moving`) but not shots or other traces.
+    /// stop movement (`trace_box`, `push_sphere_moving`, `raycast_moving`) but not shots or
+    /// other traces.
     pub clips: [Option<Box<CollisionWorld>>; 2],
     /// Surfaces only shots and other non-movement traces hit (`raycast`, `push_sphere`), not
     /// movement (`trace_box`, `raycast_moving`, `push_sphere_moving`): static props' render
@@ -34,6 +38,8 @@ pub struct CollisionWorld {
 pub const CLIP_PILOT: usize = 0;
 pub const CLIP_TITAN: usize = 1;
 
+/// A ray's hit: how far along it (in units of its direction), where, and the surface normal
+/// facing the ray.
 #[derive(Debug, Clone, Copy)]
 pub struct Hit {
     pub t: f32,
@@ -71,6 +77,9 @@ struct Bvh {
     median: Vec<Node>,
     /// Triangle indices, grouped by median-tree leaf.
     order: Vec<u32>,
+    /// The triangles in that order, with the search tree (not for `median_only`, whose sets are
+    /// big): queries read a leaf's triangles side by side instead of through `order`.
+    sorted: Vec<Tri>,
     /// The median-tree leaves' top heights (`max.z`, -0 as 0), sorted, for `raycast_replay`.
     tops: Vec<f32>,
 }
@@ -85,14 +94,53 @@ impl Bvh {
         }
         let mut leaves: Vec<Node> = median.iter().copied().filter(|n| n.count > 0).collect();
         let mut tops: Vec<f32> = leaves.iter().map(|l| l.max.z + 0.0).collect();
+        let mut sorted = Vec::new();
         let nodes = std::thread::scope(|scope| {
             scope.spawn(|| {
                 tops.sort_unstable_by(f32::total_cmp);
                 tops.dedup();
+                sorted = order.iter().map(|&i| tris[i as usize]).collect();
             });
             sah_build(&mut leaves)
         });
-        Self { nodes, leaves, median, order, tops }
+        Self { nodes, leaves, median, order, sorted, tops }
+    }
+
+    /// Walk the search tree for the median-tree leaves overlapping the box (in no particular
+    /// order).
+    fn search(&self, min: Vec3, max: Vec3, mut f: impl FnMut(&Node)) {
+        if !overlaps(&self.nodes[0], min, max) {
+            return;
+        }
+        let mut stack = [0u32; STACK];
+        let mut sp = 1;
+        while sp > 0 {
+            sp -= 1;
+            let n = self.nodes[stack[sp] as usize];
+            if n.count > 0 {
+                for leaf in &self.leaves[n.start as usize..(n.start + n.count) as usize] {
+                    if overlaps(leaf, min, max) {
+                        f(leaf);
+                    }
+                }
+            } else {
+                // Children are tested here, so only overlapping ones are pushed.
+                for c in [n.start, n.start + 1] {
+                    if overlaps(&self.nodes[c as usize], min, max) {
+                        stack[sp] = c;
+                        sp += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The triangle at position `at` of `order`.
+    fn tri<'a>(&'a self, tris: &'a [Tri], at: u32) -> &'a Tri {
+        match self.sorted.get(at as usize) {
+            Some(t) => t,
+            None => &tris[self.order[at as usize] as usize],
+        }
     }
 
     /// Whether the median-tree ray walk (`raycast_median`: nearer child first, the left one
@@ -306,7 +354,7 @@ fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, Bounds, Bounds)
         // Best (cost, axis, first bin of the right half).
         let mut best: Option<(f32, usize, usize)> = None;
         for axis in 0..3 {
-            if !(ext[axis] > 0.0) {
+            if ext[axis].is_nan() || ext[axis] <= 0.0 {
                 continue;
             }
             let mut right_cost = [0f32; SAH_BINS];
@@ -318,14 +366,14 @@ fn sah_split(prims: &mut [Node], depth: usize) -> Option<(usize, Bounds, Bounds)
                 right_cost[i] = if cnt > 0 { half_area(lo, hi) * cnt as f32 } else { 0.0 };
             }
             let (mut lo, mut hi, mut cnt) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN), 0u32);
-            for i in 1..SAH_BINS {
+            for (i, &right) in right_cost.iter().enumerate().skip(1) {
                 lo = lo.min(bins.lo[axis][i - 1]);
                 hi = hi.max(bins.hi[axis][i - 1]);
                 cnt += bins.n[axis][i - 1];
                 if cnt == 0 || cnt as usize == n {
                     continue;
                 }
-                let cost = half_area(lo, hi) * cnt as f32 + right_cost[i];
+                let cost = half_area(lo, hi) * cnt as f32 + right;
                 if best.is_none_or(|b| cost < b.0) {
                     best = Some((cost, axis, i));
                 }
@@ -542,19 +590,6 @@ fn ray_box(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> 
     (tmin <= tmax).then_some(tmin)
 }
 
-/// `ray_box` that doesn't miss a box containing one `ray_box` reaches (but see the level rays
-/// in `raycast_replay`): a slab the ray lies exactly on the face of (0 * inf) counts as passed.
-fn ray_box_wide(o: Vec3, inv: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> {
-    let t1 = (min - o) * inv;
-    let t2 = (max - o) * inv;
-    let on_face = t1.is_nan_mask() | t2.is_nan_mask();
-    let lo = Vec3::select(on_face, Vec3::NEG_INFINITY, t1.min(t2));
-    let hi = Vec3::select(on_face, Vec3::INFINITY, t1.max(t2));
-    let tmin = lo.max_element().max(0.0);
-    let tmax = hi.min_element().min(max_t);
-    (tmin <= tmax).then_some(tmin)
-}
-
 /// Rays up to this long (game units) replay the median-tree walk over the leaves they reach
 /// (`raycast_replay`); longer ones, which the walk's limit cuts short, walk the median tree.
 const SHORT_RAY: f32 = 400.0;
@@ -584,6 +619,16 @@ impl<T: Copy + Default, const N: usize> SmallBuf<T, N> {
         }
     }
 
+    /// The items (in push order while they fit on the stack; `as_mut_slice` keeps that order).
+    fn as_slice(&self) -> &[T] {
+        if self.rest.is_empty() {
+            &self.first[..self.len]
+        } else {
+            assert!(self.len == 0, "as_mut_slice first");
+            &self.rest
+        }
+    }
+
     fn as_mut_slice(&mut self) -> &mut [T] {
         if self.rest.is_empty() {
             return &mut self.first[..self.len];
@@ -604,7 +649,7 @@ impl CollisionWorld {
     pub fn add(&mut self, a: Vec3, b: Vec3, c: Vec3) {
         let n = (b - a).cross(c - a);
         let len = n.length();
-        if !(len > 1e-6) {
+        if len.is_nan() || len <= 1e-6 {
             return; // degenerate
         }
         self.tris.push(Tri { a, b, c, n: n / len });
@@ -703,7 +748,7 @@ impl CollisionWorld {
 
     /// `push_sphere` that also pushes out of clip set `which`.
     pub fn push_sphere_moving(&self, center: Vec3, radius: f32, max_normal_z: f32, which: usize) -> (Vec3, Vec3) {
-        push_sphere_in(&self.with_clip(which), center, radius, max_normal_z)
+        push_sphere_in(&self.with_clip(which)[..], center, radius, max_normal_z)
     }
 
     /// Visit the triangles of every median-tree leaf whose box overlaps the box, in that
@@ -713,39 +758,45 @@ impl CollisionWorld {
         if bvh.nodes.is_empty() {
             return self.cells_in_median(bvh, min, max, f);
         }
-        if !overlaps(&bvh.nodes[0], min, max) {
-            return;
-        }
         // The overlapping leaves' (start, count) ranges of `order`.
         let mut found: SmallBuf<(u32, u32), 64> = SmallBuf::new();
-        let mut stack = [0u32; STACK];
-        let mut sp = 1;
-        while sp > 0 {
-            sp -= 1;
-            let n = bvh.nodes[stack[sp] as usize];
-            if n.count > 0 {
-                for leaf in &bvh.leaves[n.start as usize..(n.start + n.count) as usize] {
-                    if overlaps(leaf, min, max) {
-                        found.push((leaf.start, leaf.count));
-                    }
-                }
-            } else {
-                // Children are tested here, so only overlapping ones are pushed.
-                for c in [n.start, n.start + 1] {
-                    if overlaps(&bvh.nodes[c as usize], min, max) {
-                        stack[sp] = c;
-                        sp += 1;
-                    }
-                }
-            }
-        }
+        bvh.search(min, max, |leaf| found.push((leaf.start, leaf.count)));
         let found = found.as_mut_slice();
         found.sort_unstable_by_key(|&(start, _)| std::cmp::Reverse(start));
         for &(start, count) in found.iter() {
-            for &i in &bvh.order[start as usize..(start + count) as usize] {
-                f(&self.tris[i as usize]);
+            for tri in &bvh.sorted[start as usize..(start + count) as usize] {
+                f(tri);
             }
         }
+    }
+
+    /// The median-tree leaves overlapping the box, in that tree's depth-first order (`cells_in`
+    /// visits their triangles).
+    fn leaves_in<const N: usize>(&self, min: Vec3, max: Vec3, out: &mut SmallBuf<Node, N>) {
+        let bvh = self.bvh();
+        if bvh.nodes.is_empty() {
+            // The median walk (`cells_in_median`) meets them in that order.
+            let mut stack = [0u32; 64];
+            let mut sp = if bvh.median.is_empty() { 0 } else { 1 };
+            while sp > 0 {
+                sp -= 1;
+                let n = bvh.median[stack[sp] as usize];
+                if !overlaps(&n, min, max) {
+                    continue;
+                }
+                if n.count > 0 {
+                    out.push(n);
+                } else if sp + 2 <= stack.len() {
+                    stack[sp] = n.start;
+                    stack[sp + 1] = n.start + 1;
+                    sp += 2;
+                }
+            }
+            out.as_mut_slice();
+            return;
+        }
+        bvh.search(min, max, |leaf| out.push(*leaf));
+        out.as_mut_slice().sort_unstable_by_key(|n| std::cmp::Reverse(n.start));
     }
 
     /// `cells_in` by walking the median tree, right child first.
@@ -762,8 +813,8 @@ impl CollisionWorld {
                 continue;
             }
             if n.count > 0 {
-                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
-                    f(&self.tris[i as usize]);
+                for at in n.start..n.start + n.count {
+                    f(bvh.tri(&self.tris, at));
                 }
             } else if sp + 2 <= stack.len() {
                 stack[sp] = n.start;
@@ -786,7 +837,7 @@ impl CollisionWorld {
             return None;
         }
         if !bvh.nodes.is_empty() && dir.length() * max_t <= SHORT_RAY {
-            self.raycast_replay(bvh, origin, dir, max_t)
+            self.raycast_replay(bvh, origin, dir, max_t, None)
         } else {
             self.raycast_median(bvh, origin, dir, max_t)
         }
@@ -800,7 +851,9 @@ impl CollisionWorld {
     /// the walk's order (`ray_after`) keeping the limit as the walk does: the same result, ties
     /// and hits a hair in front of their leaf's box included, without walking the median
     /// tree's overlapping boxes.
-    fn raycast_replay(&self, bvh: &Bvh, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
+    /// `region`: a box and the leaves overlapping it, which serve instead of the search tree
+    /// when the ray's box is inside it (see `Region`).
+    fn raycast_replay(&self, bvh: &Bvh, origin: Vec3, dir: Vec3, max_t: f32, region: Option<(Vec3, Vec3, &[Node])>) -> Option<Hit> {
         let inv = Vec3::ONE / dir;
         // `ray_box` is monotone in the box (a box containing one the ray reaches is reached
         // too) except where a slab is 0 * inf: a ray that doesn't move along an axis and lies
@@ -811,48 +864,45 @@ impl CollisionWorld {
         if !(origin.is_finite() && dir.is_finite()) || (!inv.z.is_finite() && bvh.tops.binary_search_by(|z| z.total_cmp(&(origin.z + 0.0))).is_ok()) {
             return self.raycast_median(bvh, origin, dir, max_t);
         }
+        // The search tree is walked, and its leaves screened before `ray_box`, with the ray's
+        // box padded: every box `ray_box` reaches overlaps it, so the cheaper test drops none of
+        // them. Off the padded range on an axis, `ray_box` misses: behind the origin both slab
+        // distances are negative, beyond the end the nearer one exceeds `max_t` by far more
+        // than a ray this short can round, and a ray that doesn't move along the axis lies
+        // within the slab or misses it (the 0 * inf slabs above are on a face, within range).
+        let end = origin + dir * max_t;
+        let pad = Vec3::splat(1.0 + 1e-5 * origin.abs().max_element());
+        let (lo, hi) = (origin.min(end) - pad, origin.max(end) + pad);
         // Hit leaves (the leaf, its first hit, hit count) and the hits (position in `order`, t).
         let mut leaves: SmallBuf<(Node, u32, u32), 16> = SmallBuf::new();
         let mut hits: SmallBuf<(u32, f32), 32> = SmallBuf::new();
-        if ray_box_wide(origin, inv, bvh.nodes[0].min, bvh.nodes[0].max, max_t).is_some() {
-            let mut stack = [0u32; STACK];
-            let mut sp = 1;
-            while sp > 0 {
-                sp -= 1;
-                let n = bvh.nodes[stack[sp] as usize];
-                if n.count > 0 {
-                    for leaf in &bvh.leaves[n.start as usize..(n.start + n.count) as usize] {
-                        if ray_box(origin, inv, leaf.min, leaf.max, max_t).is_none() {
-                            continue;
-                        }
-                        let first = hits.len() as u32;
-                        for at in leaf.start..leaf.start + leaf.count {
-                            let tri = &self.tris[bvh.order[at as usize] as usize];
-                            if let Some(t) = ray_tri(origin, dir, tri) {
-                                if t <= max_t {
-                                    hits.push((at, t));
-                                }
-                            }
-                        }
-                        if hits.len() as u32 > first {
-                            // The ray lies on a face of this box (see above). Rare; let the
-                            // walk sort it out.
-                            if ((leaf.min - origin) * inv).is_nan() || ((leaf.max - origin) * inv).is_nan() {
-                                return self.raycast_median(bvh, origin, dir, max_t);
-                            }
-                            leaves.push((*leaf, first, hits.len() as u32 - first));
-                        }
-                    }
-                } else {
-                    for c in [n.start, n.start + 1] {
-                        let child = bvh.nodes[c as usize];
-                        if ray_box_wide(origin, inv, child.min, child.max, max_t).is_some() {
-                            stack[sp] = c;
-                            sp += 1;
-                        }
+        let mut on_face = false;
+        let visit = |leaf: &Node| {
+            if on_face || ray_box(origin, inv, leaf.min, leaf.max, max_t).is_none() {
+                return;
+            }
+            let first = hits.len() as u32;
+            for at in leaf.start..leaf.start + leaf.count {
+                let tri = &bvh.sorted[at as usize];
+                if let Some(t) = ray_tri(origin, dir, tri) {
+                    if t <= max_t {
+                        hits.push((at, t));
                     }
                 }
             }
+            if hits.len() as u32 > first {
+                // The ray lies on a face of this box (see above). Rare; let the walk sort it
+                // out.
+                on_face = ((leaf.min - origin) * inv).is_nan() || ((leaf.max - origin) * inv).is_nan();
+                leaves.push((*leaf, first, hits.len() as u32 - first));
+            }
+        };
+        match region {
+            Some((rlo, rhi, list)) if lo.cmpge(rlo).all() && hi.cmple(rhi).all() => list.iter().filter(|l| overlaps(l, lo, hi)).for_each(visit),
+            _ => bvh.search(lo, hi, visit),
+        }
+        if on_face {
+            return self.raycast_median(bvh, origin, dir, max_t);
         }
         let leaves = leaves.as_mut_slice();
         // Into walk order (insertion sort: there are seldom more than a few).
@@ -878,7 +928,7 @@ impl CollisionWorld {
             }
         }
         best.map(|(at, t)| {
-            let tri = &self.tris[bvh.order[at as usize] as usize];
+            let tri = &bvh.sorted[at as usize];
             let nrm = if tri.n.dot(dir) > 0.0 { -tri.n } else { tri.n };
             Hit { t, point: origin + dir * t, normal: nrm }
         })
@@ -892,7 +942,7 @@ impl CollisionWorld {
         // Each entry keeps its box's entry distance from when it was pushed: whether the ray
         // reaches a box depends on the limit only through `entry <= limit` (`ray_box`), so the
         // box needn't be tested again when it is popped.
-        let Some(t_root) = ray_box(origin, inv, bvh.median[0].min, bvh.median[0].max, limit) else { return None };
+        let t_root = ray_box(origin, inv, bvh.median[0].min, bvh.median[0].max, limit)?;
         let mut stack = [(0u32, 0f32); 64];
         stack[0] = (0, t_root);
         let mut sp = 1;
@@ -904,8 +954,8 @@ impl CollisionWorld {
             }
             let n = bvh.median[ni as usize];
             if n.count > 0 {
-                for &i in &bvh.order[n.start as usize..(n.start + n.count) as usize] {
-                    let tri = &self.tris[i as usize];
+                for at in n.start..n.start + n.count {
+                    let tri = bvh.tri(&self.tris, at);
                     if let Some(t) = ray_tri(origin, dir, tri) {
                         if t <= limit {
                             limit = t;
@@ -937,7 +987,7 @@ impl CollisionWorld {
     /// has z above `max_normal_z` (floors are handled by ground snapping).
     /// Returns the total correction and the summed contact normals.
     pub fn push_sphere(&self, center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
-        push_sphere_in(&[Some(self), self.detail.as_deref()], center, radius, max_normal_z)
+        push_sphere_in(&[Some(self), self.detail.as_deref()][..], center, radius, max_normal_z)
     }
 }
 
@@ -954,8 +1004,93 @@ fn nearer(a: Option<Hit>, b: Option<Hit>) -> Option<Hit> {
 /// every triangle the exact test would accept still reaches it.
 const PLANE_SLACK: f32 = 0.25;
 
+/// Where box queries find their triangles: `CollisionWorld::cells_in` over several worlds, or
+/// a `Region` of them.
+trait Cells {
+    fn cells(&self, min: Vec3, max: Vec3, f: impl FnMut(&Tri));
+}
+
+impl Cells for [Option<&CollisionWorld>] {
+    fn cells(&self, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
+        for w in self.iter().flatten() {
+            w.cells_in(min, max, &mut f);
+        }
+    }
+}
+
+/// The median-tree leaves of the movement sets (`with_clip`) that overlap a box, for several
+/// box queries inside it (a Titan's body spheres and their pushes): those filter the leaves
+/// instead of walking the trees. A leaf that overlaps a box inside the region's box overlaps
+/// the region's too, so they visit exactly the leaves `cells_in` would, in the same order.
+pub(crate) struct Region<'a> {
+    lo: Vec3,
+    hi: Vec3,
+    sets: [(Option<&'a CollisionWorld>, SmallBuf<Node, 64>); 2],
+}
+
+impl Cells for Region<'_> {
+    fn cells(&self, min: Vec3, max: Vec3, mut f: impl FnMut(&Tri)) {
+        if !(min.cmpge(self.lo).all() && max.cmple(self.hi).all()) {
+            // Outside the region: walk the trees.
+            for (w, _) in &self.sets {
+                if let Some(w) = w {
+                    w.cells_in(min, max, &mut f);
+                }
+            }
+            return;
+        }
+        for (w, leaves) in &self.sets {
+            let Some(w) = w else { continue };
+            let bvh = w.bvh();
+            for leaf in leaves.as_slice() {
+                if overlaps(leaf, min, max) {
+                    for at in leaf.start..leaf.start + leaf.count {
+                        f(bvh.tri(&w.tris, at));
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Region<'_> {
+    /// `CollisionWorld::raycast_moving` in the region's sets.
+    pub(crate) fn raycast(&self, origin: Vec3, dir: Vec3, max_t: f32) -> Option<Hit> {
+        let [a, b] = &self.sets;
+        let cast = |(w, leaves): &(Option<&CollisionWorld>, SmallBuf<Node, 64>)| {
+            let w = (*w)?;
+            let bvh = w.bvh();
+            if !bvh.nodes.is_empty() && !bvh.median.is_empty() && dir.length() * max_t <= SHORT_RAY {
+                w.raycast_replay(bvh, origin, dir, max_t, Some((self.lo, self.hi, leaves.as_slice())))
+            } else {
+                w.raycast_tris(origin, dir, max_t)
+            }
+        };
+        nearer(cast(a), cast(b))
+    }
+
+    /// `CollisionWorld::push_sphere_moving` in the region's sets.
+    pub(crate) fn push_sphere(&self, center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
+        push_sphere_in(self, center, radius, max_normal_z)
+    }
+}
+
+impl CollisionWorld {
+    /// The region `lo..hi` of this world and clip set `which`, for movement box queries in it.
+    pub(crate) fn region_moving(&self, lo: Vec3, hi: Vec3, which: usize) -> Region<'_> {
+        let sets = self.with_clip(which).map(|w| {
+            let mut leaves = SmallBuf::new();
+            if let Some(w) = w {
+                w.leaves_in(lo, hi, &mut leaves);
+            }
+            (w, leaves)
+        });
+        Region { lo, hi, sets }
+    }
+}
+
 /// `CollisionWorld::push_sphere` against several worlds at once.
-fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
+fn push_sphere_in<C: Cells + ?Sized>(worlds: &C, center: Vec3, radius: f32, max_normal_z: f32) -> (Vec3, Vec3) {
     let mut c = center;
     let mut normals = Vec3::ZERO;
     for _ in 0..4 {
@@ -985,39 +1120,13 @@ fn push_sphere_in(worlds: &[Option<&CollisionWorld>], center: Vec3, radius: f32,
             }
             normals += n;
         };
-        for w in worlds.iter().flatten() {
-            w.cells_in(c - r, c + r, &mut visit);
-        }
+        worlds.cells(c - r, c + r, &mut visit);
         if push.length_squared() < 1e-4 {
             break;
         }
         c += push;
     }
     (c - center, normals)
-}
-
-impl CollisionWorld {
-    /// Nearest steep surface (|normal.z| below `max_normal_z`) within `radius` of `center`.
-    /// Returns the outward normal (horizontal) and the distance.
-    pub fn nearest_wall(&self, center: Vec3, radius: f32, max_normal_z: f32) -> Option<(Vec3, f32)> {
-        let mut best: Option<(Vec3, f32)> = None;
-        let r = Vec3::splat(radius);
-        self.cells_in(center - r, center + r, |tri| {
-            if tri.n.z.abs() > max_normal_z || (center - tri.a).dot(tri.n).abs() > radius + PLANE_SLACK {
-                return;
-            }
-            let p = closest_point_on_tri(center, tri);
-            let d = center - p;
-            let dist = d.length();
-            if dist < radius && dist > 1e-4 && best.is_none_or(|b| dist < b.1) {
-                let n = Vec3::new(d.x, d.y, 0.0).normalize_or_zero();
-                if n != Vec3::ZERO {
-                    best = Some((n, dist));
-                }
-            }
-        });
-        best
-    }
 }
 
 /// A box swept through the world: the parts of the engine's trace_t that player movement reads.
@@ -1034,6 +1143,7 @@ pub struct Trace {
 }
 
 impl Trace {
+    /// Something was in the way.
     pub fn hit(&self) -> bool {
         self.fraction < 1.0
     }
@@ -1064,7 +1174,7 @@ impl CollisionWorld {
         let tie = 0.01 / d.length().max(1e-6);
         let mut solid: Option<Vec3> = None;
         for w in self.with_clip(which).iter().flatten() {
-            w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tri, lo, hi) {
+            w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tie, tri, lo, hi) {
                 Sweep::Miss => {}
                 Sweep::Inside(mtv) => {
                     if d.dot(mtv) < 0.0 || d == Vec3::ZERO {
@@ -1105,32 +1215,27 @@ enum Sweep {
 /// `sweep_box_tri` for a triangle that may lie outside `lo..hi`, the swept box's bounds
 /// padded by a unit: one entirely outside them (the leaf's box overlapped, the triangle doesn't)
 /// misses on that world axis, so the full test is skipped.
-fn sweep_box_tri_in(c: Vec3, e: Vec3, d: Vec3, t: &Tri, lo: Vec3, hi: Vec3) -> Sweep {
+fn sweep_box_tri_in(c: Vec3, e: Vec3, d: Vec3, tie: f32, t: &Tri, lo: Vec3, hi: Vec3) -> Sweep {
     if t.a.max(t.b).max(t.c).cmplt(lo).any() || t.a.min(t.b).min(t.c).cmpgt(hi).any() {
         return Sweep::Miss;
     }
-    sweep_box_tri(c, e, d, t)
+    sweep_box_tri(c, e, d, tie, t)
 }
 
 /// Separating-axis sweep of a box (centre `c`, half extents `e`, moving by `d`) against a
-/// triangle: the box's three axes, the triangle's normal and the nine edge cross products.
-fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
+/// triangle: the box's three axes, the triangle's normal and the nine edge cross products. An
+/// edge-edge axis only takes over the entry from a face axis when it enters `tie` (0.01 units
+/// travelled, as a fraction of the move) later.
+fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, tie: f32, t: &Tri) -> Sweep {
     let v = [t.a - c, t.b - c, t.c - c];
     let edges = [v[1] - v[0], v[2] - v[1], v[0] - v[2]];
     let (mut t_enter, mut t_exit) = (f32::NEG_INFINITY, f32::INFINITY);
     let mut n_enter = Vec3::ZERO;
     let mut face = true;
-    // An edge-edge axis only takes over the entry from a face axis when it enters this much
-    // (in units travelled) later.
-    let tie = 0.01 / d.length().max(1e-6);
     let mut inside = true;
     let (mut depth, mut mtv) = (f32::INFINITY, Vec3::ZERO);
-    let mut test = |axis: Vec3, is_face: bool| -> bool {
-        let len2 = axis.length_squared();
-        if len2 < 1e-10 {
-            return true;
-        }
-        let l = axis / len2.sqrt();
+    // Separation along the unit axis `l`.
+    let mut test = |l: Vec3, is_face: bool| -> bool {
         let (p0, p1, p2) = (v[0].dot(l), v[1].dot(l), v[2].dot(l));
         let r = e.x * l.x.abs() + e.y * l.y.abs() + e.z * l.z.abs();
         // The box's centre at t is s = t * dl along l; it overlaps while lo < s < hi.
@@ -1166,13 +1271,19 @@ fn sweep_box_tri(c: Vec3, e: Vec3, d: Vec3, t: &Tri) -> Sweep {
         }
         true
     };
+    // An axis too short to have a direction separates nothing. (The box's own axes are unit
+    // length already: normalizing them would change nothing.)
+    let unit = |axis: Vec3| {
+        let len2 = axis.length_squared();
+        (len2 >= 1e-10).then(|| axis / len2.sqrt())
+    };
     let n = (v[1] - v[0]).cross(v[2] - v[0]);
-    if !(test(Vec3::X, true) && test(Vec3::Y, true) && test(Vec3::Z, true) && test(n, true)) {
+    if !(test(Vec3::X, true) && test(Vec3::Y, true) && test(Vec3::Z, true) && unit(n).is_none_or(|l| test(l, true))) {
         return Sweep::Miss;
     }
     for ed in edges {
         for ax in [Vec3::X, Vec3::Y, Vec3::Z] {
-            if !test(ax.cross(ed), false) {
+            if !unit(ax.cross(ed)).is_none_or(|l| test(l, false)) {
                 return Sweep::Miss;
             }
         }
@@ -1346,15 +1457,53 @@ mod tests {
                 s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 (s >> 8) as f32 / (1u32 << 24) as f32
             };
-            let base = w.tris.as_ptr();
+            // Triangles by their index in `w.tris`.
+            let bvh = w.bvh();
+            let index = |t: &Tri| match bvh.sorted.as_ptr_range().contains(&(t as *const Tri)) {
+                true => bvh.order[unsafe { (t as *const Tri).offset_from(bvh.sorted.as_ptr()) } as usize] as isize,
+                false => unsafe { (t as *const Tri).offset_from(w.tris.as_ptr()) },
+            };
             let queries = if random > 10_000 { 300 } else { 3000 };
             for q in 0..queries {
                 let c = if q % 3 == 0 { Vec3::new((r() * 12.0).floor() * 64.0, (r() * 12.0).floor() * 64.0, 16.0) } else { Vec3::new(r(), r(), r() * 0.3) * 800.0 };
                 let e = Vec3::new(r(), r(), r()) * if q % 5 == 0 { 200.0 } else { 40.0 };
                 let (mut a, mut b) = (Vec::new(), Vec::new());
-                w.cells_in(c - e, c + e, |t| a.push(unsafe { (t as *const Tri).offset_from(base) }));
-                w.cells_in_median(w.bvh(), c - e, c + e, |t| b.push(unsafe { (t as *const Tri).offset_from(base) }));
+                w.cells_in(c - e, c + e, |t| a.push(index(t)));
+                w.cells_in_median(bvh, c - e, c + e, |t| b.push(index(t)));
                 assert_eq!(a, b, "query {q} around {c}");
+            }
+        }
+    }
+
+    #[test]
+    fn region_queries_match_the_world_queries() {
+        // A region's pushes and rays give exactly what the world's own give, inside the
+        // region's box and (searching the trees) outside it.
+        let mut w = awkward_world(5, 4000, Vec3::ZERO);
+        for t in awkward_world(9, 500, Vec3::new(30.0, 20.0, 8.0)).tris {
+            w.add_clip(CLIP_TITAN, t.a, t.b, t.c);
+        }
+        w.finish();
+        let mut s = 17u32;
+        let mut r = move || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (s >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        let hit = |h: Option<Hit>| h.map(|h| bits(&[h.t, h.point.x, h.point.y, h.point.z, h.normal.x, h.normal.y, h.normal.z]));
+        for q in 0..3000 {
+            let c = Vec3::new(r(), r(), r() * 0.3) * 800.0;
+            let e = Vec3::new(r(), r(), r()) * 150.0;
+            let region = w.region_moving(c - e, c + e, CLIP_TITAN);
+            for _ in 0..4 {
+                let p = c + (Vec3::new(r(), r(), r()) * 2.0 - Vec3::ONE) * e * 1.3;
+                let rad = 5.0 + r() * 60.0;
+                let (a, an) = region.push_sphere(p, rad, 0.7);
+                let (b, bn) = w.push_sphere_moving(p, rad, 0.7, CLIP_TITAN);
+                assert_eq!(bits(&[a.x, a.y, a.z, an.x, an.y, an.z]), bits(&[b.x, b.y, b.z, bn.x, bn.y, bn.z]), "push {q} at {p}");
+                let d = if q % 2 == 0 { -Vec3::Z } else { Vec3::new(r() - 0.5, r() - 0.5, r() - 0.5) };
+                let len = r() * r() * 300.0;
+                assert_eq!(hit(region.raycast(p, d, len)), hit(w.raycast_moving(p, d, len, CLIP_TITAN)), "ray {q} from {p} along {d}");
             }
         }
     }
@@ -1396,7 +1545,7 @@ mod tests {
                 _ => Vec3::new(r() - 0.5, r() - 0.5, r() - 0.5) * 2.0,
             };
             let max_t = [5.0, 50.0, 200.0, 1000.0][q % 4] * r();
-            let a = w.raycast_replay(bvh, o, d, max_t);
+            let a = w.raycast_replay(bvh, o, d, max_t, None);
             let b = w.raycast_median(bvh, o, d, max_t);
             assert_eq!(bits(a), bits(b), "ray {q} from {o} along {d} up to {max_t}");
             hits += a.is_some() as usize;

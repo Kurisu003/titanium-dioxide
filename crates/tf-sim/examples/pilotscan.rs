@@ -119,7 +119,7 @@ fn input(yaw: f32, g: Gait, tick: usize) -> PilotInput {
         yaw,
         sprint: g != Gait::Walk && g != Gait::Crouch,
         crouch: g == Gait::Crouch,
-        jump: g == Gait::Jump && tick % 60 == 0,
+        jump: g == Gait::Jump && tick.is_multiple_of(60),
         ..Default::default()
     }
 }
@@ -455,7 +455,7 @@ fn main() {
             }
             println!("{n} of {} solid triangles have no map collision within 1 unit ({steep} steep), {:.0} square units", w.tris.len(), area);
             let mut cells: Vec<_> = cells.into_iter().collect();
-            cells.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+            cells.sort_by_key(|c| std::cmp::Reverse(c.1 .0));
             for ((x, y, z), (k, ar)) in cells.iter().take(40) {
                 println!("  cell {} {} {}: {k} triangles, {ar:.0} sq units", x * 256 + 128, y * 256 + 128, z * 256 + 128);
             }

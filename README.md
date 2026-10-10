@@ -1294,6 +1294,25 @@ high made a new buffer (and a 5 ms rebuild, ~15 times a minute on foot); they no
 again (rebuilds on the Angel City run: 146 -> 8).
 Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
 
+Bevy draws each shadow cascade in one batch set per material (200-540 per cascade on Angel
+City), but an opaque material's shadow pipeline has no fragment shader and never reads the
+material. `shadowbatch.rs` queues those meshes in one set per pipeline instead (60-150 sets
+remain per cascade, mostly alpha-tested materials, which keep theirs): about 2.3-3.6 -> 0.9-1.4 ms
+of CPU per cascade. The depth written is the same (screenshots with time frozen, flipping between
+the two every 4 s, match bit for bit). `TF_SHADOW_BY_MATERIAL=1` turns it off.
+
+The render thread walks the render graph one node at a time, and with wgpu 27 a pass's commands
+are only validated and encoded when its command encoder is finished. Bevy's opaque, prepass,
+shadow and bloom passes are encoded on worker threads, but its transparent pass went into the
+graph's own encoder, so every sorted translucent draw was encoded serially. `transparentpass.rs`
+puts it in a worker task like the others (same commands, submitted in the same order): the graph
+walk went from about 4.0 to 3.1 ms. `TF_SERIAL_TRANSPARENT=1` keeps Bevy's node.
+
+The guns' ammo counters (`ruiscreen.rs`) render through small UI cameras into textures. Those
+cameras now render only for 30 frames after a counter's text changes (and until it is laid
+out); the texture keeps the last picture. Drawing the same digits every frame cost the render
+thread about 1 ms (two cameras' graph, UI preparation and command buffers).
+
 The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
@@ -1308,10 +1327,24 @@ built under the loading screen instead of on the first frame of play (a 430-590 
 Collision queries reject more work exactly (same results bit for bit): Titan steps ~35% and
 Pilot steps ~40% cheaper offline. With wave 3 enemies on Angel City: 58 -> 72 fps average at
 1920x1080 (noisy, shared machine).
+
+Enemy moves and actor poses run on every core: each enemy's decisions and movement (steering
+and route raycasts, the 120 Hz Titan steps) read only that enemy and the world, so they are
+worked out in parallel, and the attacks that follow still run one enemy at a time in the same
+order (anything else that depends on an earlier enemy's attack waits for it); the actors whose
+pose inputs changed are evaluated in parallel. The HUD writes UI node sizes and positions only
+when they change (52 -> 5 nodes re-marked per frame, each sending the HUD through Taffy's
+layout). Angel City, wave 3, 1920x1080 profile: the Update schedule 6.0-6.4 -> 3.7-4.4 ms,
+`update_enemies` 2.7-3.0 -> 0.9-1.1 ms, `animate_actors` 0.6 -> 0.4 ms, `ui_layout_system`
+0.65 -> 0.35 ms; uncapped 66-73 -> 72-83 fps over three alternating runs (noisy, shared
+machine). `TF_FIXED_DT` runs (`TF_RECORD` state, hashes of every entity's transforms,
+visibility and UI nodes, screenshots) are identical before and after. The particle simulation
+(`update_pfx`, 0.5-0.9 ms) stays on one thread: its effects draw from one random stream in
+order.
 The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
 ~3 triangles that actually touch it), but its leaves and walk order define the query results, so
 they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old
-results bit for bit. Box queries (sphere pushes, box sweeps, wall searches) put the leaves they
+results bit for bit. Box queries (sphere pushes, box sweeps) put the leaves they
 find back into the old walk's order; rays up to 400 units find every leaf they reach and replay
 the old nearest-first walk, with its shrinking limit, over the ones with hits (ties included);
 longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the
@@ -1335,6 +1368,11 @@ statistics of every render pass. Bevy averages a pass name over the cameras that
 `TF_GPU_TIMES` also logs a `gpu:` line every two seconds with each pass's GPU time per frame
 summed over the cameras, split into the cameras' runs (largest first; the sky, world and
 viewmodel cameras each run their own opaque pass and tonemapping), and the frame's total.
+
+`TF_FIXED_DT=60` (testing) advances the game by exactly 1/60 s per frame and runs the `--script` and
+`--shots` clock on frame counts, so a scripted run plays out the same, frame by frame, whatever the
+frame rate: the `TF_RECORD` logs and screenshots of two runs match exactly, which is how changes to
+the per-frame systems are checked for unchanged behaviour.
 
 ### Campaign maps
 

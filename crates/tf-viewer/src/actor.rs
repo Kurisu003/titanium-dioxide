@@ -1046,6 +1046,8 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, 
     let dt = time.delta_secs();
     cache.frame += 1;
     let frame = cache.frame;
+    // Actors whose pose inputs changed: evaluated below.
+    let mut changed = Vec::new();
     for (e, mut actor) in &mut actors {
         if actor.clips.is_empty() {
             continue;
@@ -1062,21 +1064,45 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, 
         // sends them through transform propagation and the skinning upload again).
         let key = actor.pose_key();
         let entry = cache.poses.entry(e).or_insert_with(|| (Vec::new(), Pose::new(), 0));
-        if entry.0 != key {
-            entry.1 = actor.evaluate();
-            entry.0 = key;
-        }
         entry.2 = frame;
-        for (&j, &(p, q)) in actor.joints.iter().zip(&entry.1) {
-            if let Ok(mut tf) = transforms.get_mut(j) {
-                if bits3(tf.translation) != bits3(p) || bits4(tf.rotation) != bits4(q) {
-                    tf.translation = p;
-                    tf.rotation = q;
-                }
+        if entry.0 != key {
+            entry.0 = key;
+            changed.push(e);
+            continue;
+        }
+        write_pose(&actor.joints, &entry.1, &mut transforms);
+    }
+    // The new poses, each from its own actor alone, on every core. (Every actor has joints of
+    // its own, so writing them after the cached ones gives the same transforms.)
+    let refs: Vec<&Actor> = changed.iter().filter_map(|&e| actors.get(e).ok().map(|(_, a)| a)).collect();
+    let poses: Vec<Pose> = if refs.len() > 1 {
+        bevy::tasks::ComputeTaskPool::get().scope(|s| {
+            for a in &refs {
+                s.spawn(async move { a.evaluate() });
             }
+        })
+    } else {
+        refs.iter().map(|a| a.evaluate()).collect()
+    };
+    for ((e, a), pose) in changed.iter().zip(&refs).zip(poses) {
+        write_pose(&a.joints, &pose, &mut transforms);
+        if let Some(entry) = cache.poses.get_mut(e) {
+            entry.1 = pose;
         }
     }
     cache.poses.retain(|_, v| v.2 == frame);
+}
+
+/// Put a pose on an actor's joints, writing only the bones that moved.
+fn write_pose(joints: &[Entity], pose: &Pose, transforms: &mut Query<&mut Transform>) {
+    for (&j, &(p, q)) in joints.iter().zip(pose) {
+        if let Ok(mut tf) = transforms.get_mut(j) {
+            if bits3(tf.translation) != bits3(p) || bits4(tf.rotation) != bits4(q) {
+                tf.translation = p;
+                tf.rotation = q;
+            }
+        }
+    }
 }
 
 fn bits3(v: Vec3) -> [u32; 3] {
