@@ -71,6 +71,11 @@ impl LoadedAt {
     }
 }
 
+/// The frame before `loading`: the map's world is built (`setup_world`).
+pub fn loading_world(s: Res<LoadState>) -> bool {
+    matches!(*s, LoadState::Waiting(n) if n >= 6)
+}
+
 pub fn loading(s: Res<LoadState>) -> bool {
     *s == LoadState::Load
 }

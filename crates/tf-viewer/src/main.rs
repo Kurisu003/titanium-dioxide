@@ -336,6 +336,7 @@ fn main() {
         .init_resource::<hud::HudHidden>()
         .add_systems(Startup, (time_scale, weapons::setup_fx, ui::load_ui_assets, ui::spawn_loading_screen).chain())
         .add_systems(First, script_time_scale)
+        .add_systems(Update, setup_world.run_if(ui::loading_world).before(ui::loading_tick))
         .add_systems(Update, (setup, hud::spawn_hud, pilotability::spawn_pilot_slots, pilotability::setup_pilot_kit, pilotbody::spawn_pilot_body, rodeo::spawn_battery_hud, fparms::spawn_arms).chain().run_if(ui::loading).before(ui::loading_tick))
         // While warming up too: the reflection cubemap it copies changes the viewmodels' pipelines.
         .add_systems(Update, vmcam::follow_camera.run_if(ui::world_ready.and(not(ui::loaded))))
@@ -604,15 +605,38 @@ impl Phases {
     }
 }
 
+/// What the first load frame (`setup_world`) hands to the second (`setup`).
+struct WorldStage {
+    t: std::time::Instant,
+    ph: Phases,
+    gd: GameData,
+    cache: convert::Cache,
+    /// The collision hierarchy, building on its own thread.
+    collision: std::thread::JoinHandle<(CollisionWorld, std::time::Duration)>,
+    sweep: Option<CollisionWorld>,
+    kits: Vec<targets::EnemyKit>,
+    bt_vitals: vitals::Vitals,
+    params: tf_sim::titan::TitanParams,
+    sounds: std::thread::JoinHandle<audio::Sfx>,
+    root: Entity,
+    camera: Entity,
+    spawn: (Vec3, f32, Vec<Vec3>),
+}
+
+#[derive(Resource)]
+struct PendingWorld(Option<Box<WorldStage>>);
+
+/// The first load frame: game data, the map's world, props, sky and probes, and the cameras.
+/// Loading takes two frames so the render world uploads the map's meshes and textures and
+/// compiles their pipelines while the second frame (`setup`) builds the collision hierarchy,
+/// the actors and the nav grids: in one frame, all of that waited until loading was done.
 #[allow(clippy::too_many_arguments)]
-fn setup(
+fn setup_world(
     mut commands: Commands,
     args: Res<Args>,
-    mut input: ResMut<PlayerInput>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut blends: ResMut<Assets<convert::BlendMaterial>>,
     (mut batch_materials, mut buffers): (ResMut<Assets<propbatch::PropBatchMaterial>>, ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>),
 ) {
@@ -739,6 +763,87 @@ fn setup(
         Err(e) => log::error!("map {}: {e:#}", args.map),
     }
     ph.mark("probes, reflections, particle light");
+    // The collision hierarchy builds on its own thread from here, through the end of this
+    // frame, into the next.
+    let collision = std::thread::spawn(move || {
+        let tb = std::time::Instant::now();
+        collision.finish();
+        let took = tb.elapsed();
+        (collision, took)
+    });
+    let (bt_pos, bt_yaw, placements) = match titan_spawn(&gd, &args.map) {
+        Some((p, y)) => (p, y, Vec::new()),
+        None => campaign_arena(&gd, &args.map).unwrap_or((Vec3::ZERO, 0.0, Vec::new())),
+    };
+    // The cameras and the sun exist from this frame on, so the render world prepares the map
+    // for them while the next frame runs. `setup` moves the camera to its final place (BT's
+    // spawn on the ground).
+    let camera = commands.spawn((
+        Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection { fov: 60f32.to_radians(), ..default() }),
+        camera_start(&args, bt_pos, bt_yaw.to_radians()),
+        FreeCamera { walk_speed: 8.0, run_speed: 40.0, ..default() },
+        MainCamera,
+        bevy::camera::Exposure { ev100: env::EV100 },
+        // The sky camera (sky.rs) clears and draws the skybox first.
+        // The viewmodel camera, drawing last into the same textures, copies the frame to the
+        // window (sky.rs).
+        Camera { clear_color: ClearColorConfig::None, output_mode: bevy::camera::CameraOutputMode::Skip, ..default() },
+        // Contact shading (SSAO needs MSAA off; SMAA smooths edges instead).
+        Msaa::Off,
+        bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
+        bevy::anti_alias::smaa::Smaa::default(),
+        bevy::post_process::bloom::Bloom { intensity: 0.05, ..bevy::post_process::bloom::Bloom::NATURAL },
+    )).id();
+    if let Some(fog) = map_env.distance_fog() {
+        commands.entity(camera).insert(fog);
+    }
+    // The sun also lights the first-person models (their own camera and layer, vmcam.rs).
+    commands.spawn((map_env.sun(), bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER])));
+    vmcam::spawn_camera(&mut commands);
+    ph.mark("cameras");
+    commands.insert_resource(PendingWorld(Some(Box::new(WorldStage {
+        t,
+        ph,
+        gd,
+        cache,
+        collision,
+        sweep,
+        kits,
+        bt_vitals,
+        params,
+        sounds,
+        root,
+        camera,
+        spawn: (bt_pos, bt_yaw, placements),
+    }))));
+}
+
+/// Where the world camera starts: the free camera start if one was asked for, else behind
+/// and above BT.
+fn camera_start(args: &Args, bt_pos: Vec3, yaw: f32) -> Transform {
+    let fwd = Quat::from_rotation_z(yaw) * Vec3::X;
+    let cam = args.cam.unwrap_or(bt_pos + fwd * 650.0 + Vec3::new(0.0, 0.0, 220.0));
+    let look = args.look.unwrap_or(bt_pos + Vec3::new(0.0, 0.0, 170.0));
+    Transform::from_translation(to_bevy(cam)).looking_at(to_bevy(look), Vec3::Y)
+}
+
+/// The second load frame: the collision hierarchy, BT, the viewmodels, nav grids, enemies.
+#[allow(clippy::too_many_arguments)]
+fn setup(
+    mut commands: Commands,
+    args: Res<Args>,
+    mut input: ResMut<PlayerInput>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
+    mut pending: ResMut<PendingWorld>,
+) {
+    let Some(stage) = pending.0.take() else { return };
+    commands.remove_resource::<PendingWorld>();
+    let WorldStage { t, mut ph, gd, mut cache, collision, sweep, kits, bt_vitals, params, sounds, root, camera, spawn } = *stage;
+    ph.mark("between the load frames");
     // The actors' templates (models, clips, meshes, textures) build on every core while the
     // collision hierarchy does; spawning them below only adds their assets.
     let bt_spec = ActorSpec {
@@ -792,11 +897,11 @@ fn setup(
         specs.push(ActorSpec { path: &kit.model, sequences: seqs, grids, body: &[] });
         specs.push(ActorSpec { path: &kit.weapon.playermodel, sequences: &[], grids: &[], body: &[] });
     }
-    let tb = std::time::Instant::now();
-    std::thread::scope(|scope| {
+    let collision = std::thread::scope(|scope| {
         scope.spawn(|| actor::prefetch_actors(&gd, &cache, &specs));
-        collision.finish();
-        log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), tb.elapsed());
+        let (collision, took) = collision.join().expect("collision builder panicked");
+        log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), took);
+        collision
     });
     // TF_COLLISION_DUMP=<file>: save the movement collision for offline tests (tf-sim's
     // `pilotscan` example).
@@ -810,10 +915,7 @@ fn setup(
     }
 
     ph.mark("collision BVH");
-    let (mut bt_pos, bt_yaw, placements) = match titan_spawn(&gd, &args.map) {
-        Some((p, y)) => (p, y, Vec::new()),
-        None => campaign_arena(&gd, &args.map).unwrap_or((Vec3::ZERO, 0.0, Vec::new())),
-    };
+    let (mut bt_pos, bt_yaw, placements) = spawn;
     // Stand on the ground under the spawn (campaign placements can float a little).
     if let Some(h) = collision.raycast(tf_sim::glam::Vec3::new(bt_pos.x, bt_pos.y, bt_pos.z + 100.0), -tf_sim::glam::Vec3::Z, 3000.0) {
         bt_pos.z = h.point.z;
@@ -1055,35 +1157,11 @@ fn setup(
     commands.insert_resource(targets::EnemyKits(kits));
 
     // Camera: the player controller places it unless a free camera start was requested.
-    let fwd = Quat::from_rotation_z(yaw) * Vec3::X;
-    let cam = args.cam.unwrap_or(bt_pos + fwd * 650.0 + Vec3::new(0.0, 0.0, 220.0));
-    let look = args.look.unwrap_or(bt_pos + Vec3::new(0.0, 0.0, 170.0));
-    if args.cam.is_some() {
+    if let Some(cam) = args.cam {
+        let look = args.look.unwrap_or(bt_pos + Vec3::new(0.0, 0.0, 170.0));
         commands.insert_resource(player::FreeCamStart(to_bevy(cam), to_bevy(look)));
     }
-    let camera = commands.spawn((
-        Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection { fov: 60f32.to_radians(), ..default() }),
-        Transform::from_translation(to_bevy(cam)).looking_at(to_bevy(look), Vec3::Y),
-        FreeCamera { walk_speed: 8.0, run_speed: 40.0, ..default() },
-        MainCamera,
-        bevy::camera::Exposure { ev100: env::EV100 },
-        // The sky camera (sky.rs) clears and draws the skybox first.
-        // The viewmodel camera, drawing last into the same textures, copies the frame to the
-        // window (sky.rs).
-        Camera { clear_color: ClearColorConfig::None, output_mode: bevy::camera::CameraOutputMode::Skip, ..default() },
-        // Contact shading (SSAO needs MSAA off; SMAA smooths edges instead).
-        Msaa::Off,
-        bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
-        bevy::anti_alias::smaa::Smaa::default(),
-        bevy::post_process::bloom::Bloom { intensity: 0.05, ..bevy::post_process::bloom::Bloom::NATURAL },
-    )).id();
-    if let Some(fog) = map_env.distance_fog() {
-        commands.entity(camera).insert(fog);
-    }
-    // The sun also lights the first-person models (their own camera and layer, vmcam.rs).
-    commands.spawn((map_env.sun(), bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER])));
-    vmcam::spawn_camera(&mut commands);
+    commands.entity(camera).insert(camera_start(&args, bt_pos, yaw));
     ph.mark("rest");
     match sounds.join() {
         Ok(sfx) => commands.insert_resource(sfx),
