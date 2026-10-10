@@ -1,10 +1,15 @@
-//! Engine-independent simulation: collision and Titan movement.
+//! Engine-independent simulation: collision, and Pilot and Titan movement.
 
 pub mod collision;
 pub mod pilot;
 pub mod titan;
 
 pub use glam;
+
+/// Source's SimpleSpline, 3t^2 - 2t^3: eases 0..1 in and out (the crouch view, mantles).
+pub(crate) fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
 
 #[cfg(test)]
 mod tests {
