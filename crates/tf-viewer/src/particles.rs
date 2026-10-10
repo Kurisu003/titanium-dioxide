@@ -11,7 +11,6 @@ use crate::player::MainCamera;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use tf_assets::vtf::{self, Sequence};
@@ -215,7 +214,8 @@ struct Layer {
     tex: Tex,
     additive: bool,
     sheet: Vec<Sequence>,
-    mesh: Handle<Mesh>,
+    buf: crate::spritebuf::SpriteBuf,
+    material: Handle<crate::spritebuf::SpriteMaterial>,
     entity: Entity,
 }
 
@@ -274,7 +274,8 @@ pub fn load_particles(
     existing: Option<Res<Particles>>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::spritebuf::SpriteMaterial>>,
+    (device, mut buckets): (Res<bevy::render::renderer::RenderDevice>, ResMut<crate::spritebuf::SpriteMeshes>),
 ) {
     let (Some(gd), None) = (gd, existing) else { return };
     let t = std::time::Instant::now();
@@ -311,34 +312,28 @@ pub fn load_particles(
             RenderAssetUsages::RENDER_WORLD,
         );
         img.sampler = bevy::image::ImageSampler::linear();
-        let material = materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(images.add(img)),
-            unlit: true,
-            alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend },
-            cull_mode: None,
-            double_sided: true,
-            fog_enabled: !additive,
-            ..default()
+        // Made in Update: the mesh this replaced reached the render world this frame.
+        let buf = crate::spritebuf::SpriteBuf::new(&device, true);
+        let material = materials.add(crate::spritebuf::SpriteMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                base_color_texture: Some(images.add(img)),
+                unlit: true,
+                alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend },
+                cull_mode: None,
+                double_sided: true,
+                fog_enabled: !additive,
+                ..default()
+            },
+            extension: crate::spritebuf::SpritePull { verts: buf.buffer.clone() },
         });
-        let mesh = meshes.add(empty_mesh());
         let entity = commands
-            .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
+            .spawn((Mesh3d(buckets.first(&mut meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
             .id();
-        layers.push(Layer { tex, additive, sheet: v.sheet, mesh, entity });
+        layers.push(Layer { tex, additive, sheet: v.sheet, buf, material, entity });
     }
     log::info!("particles: {} textures in {:?}", layers.len(), t.elapsed());
     commands.insert_resource(Particles { layers, live: Vec::with_capacity(1024), rng: 0x9A27_1C1E });
-}
-
-fn empty_mesh() -> Mesh {
-    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
-    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; 3]);
-    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; 3]);
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32; 4]; 3]);
-    m.insert_indices(Indices::U32(vec![0, 1, 2]));
-    m
 }
 
 /// The hand-built look of an effect (used when the game's particle system can't be played).
@@ -556,6 +551,13 @@ pub fn update_particles(
     mut meshes: ResMut<Assets<Mesh>>,
     mut vis: Query<&mut Visibility>,
     mut pfx: Option<ResMut<crate::pfx::Pfx>>,
+    mut gpu: (
+        Res<bevy::render::renderer::RenderDevice>,
+        ResMut<crate::spritebuf::SpriteMeshes>,
+        ResMut<crate::spritebuf::SpriteUploads>,
+        ResMut<Assets<crate::spritebuf::SpriteMaterial>>,
+        MessageWriter<AssetEvent<crate::spritebuf::SpriteMaterial>>,
+    ),
 ) {
     let Some(mut p) = particles else {
         for (e, _) in &requests {
@@ -617,7 +619,17 @@ pub fn update_particles(
         }
     }
 
-    let Ok(cam) = camera.single() else { return };
+    let Ok(cam) = camera.single() else {
+        // No layer was written (their buffers still take what the meshes would have).
+        let (device, buckets, uploads, mats, events) = &mut gpu;
+        let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut meshes, commands: &mut commands };
+        for layer in &mut p.layers {
+            if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
+                crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| &mut m.extension.verts);
+            }
+        }
+        return;
+    };
     let eye = cam.translation();
     // TF_FX_TEST: cycle the big effects 25 m in front of the camera every 3 s (for checking them).
     if std::env::var_os("TF_FX_TEST").is_some() {
@@ -636,8 +648,11 @@ pub fn update_particles(
         }
     }
     let (right, up) = (cam.right().as_vec3(), cam.up().as_vec3());
+    let normal = (-cam.forward().as_vec3()).to_array();
+    let (device, buckets, uploads, mats, events) = &mut gpu;
+    let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut meshes, commands: &mut commands };
     let p = &mut *p;
-    for layer in &p.layers {
+    for layer in &mut p.layers {
         let mut list: Vec<&Particle> = p.live.iter().filter(|q| q.tex == layer.tex && q.age >= 0.0).collect();
         if let Ok(mut v) = vis.get_mut(layer.entity) {
             let want = if list.is_empty() { Visibility::Hidden } else { Visibility::Visible };
@@ -646,16 +661,17 @@ pub fn update_particles(
             }
         }
         if list.is_empty() {
+            // The mesh was left alone.
+            if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
+                crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| &mut m.extension.verts);
+            }
             continue;
         }
         if !layer.additive {
             list.sort_by(|a, b| b.pos.distance_squared(eye).total_cmp(&a.pos.distance_squared(eye)));
         }
-        let n = list.len();
-        let mut pos = Vec::with_capacity(n * 4);
-        let mut uv = Vec::with_capacity(n * 4);
-        let mut col = Vec::with_capacity(n * 4);
-        let mut idx = Vec::with_capacity(n * 6);
+        let mut v = crate::spritebuf::SpriteBuf::begin(list.len());
+        let mut quads = 0;
         for q in list {
             let t = (q.age / q.life.max(1e-4)).clamp(0.0, 1.0);
             let size = q.size.0 + (q.size.1 - q.size.0) * t;
@@ -672,8 +688,8 @@ pub fn update_particles(
                 None => [0.0, 0.0, 1.0, 1.0],
             };
             let c = [q.color.x, q.color.y, q.color.z, a];
-            let base = pos.len() as u32;
-            if q.len.0 > 0.0 || q.stretch > 0.0 {
+            let uv = [[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]];
+            let corners = if q.len.0 > 0.0 || q.stretch > 0.0 {
                 let axis = q.axis;
                 let mut len = q.len.0 + (q.len.1 - q.len.0) * t + q.vel.length() * q.stretch;
                 if q.from_origin {
@@ -684,39 +700,21 @@ pub fn update_particles(
                 let c = axis.cross(to_eye);
                 let side = if c.length() > 0.05 { c.normalize() } else { right } * size;
                 let tail = q.pos - axis * len;
-                for v in [q.pos - side, q.pos + side, tail + side, tail - side] {
-                    pos.push(v.to_array());
-                }
-                uv.extend([[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]]);
+                [q.pos - side, q.pos + side, tail + side, tail - side]
             } else {
                 let (s, co) = q.rot.sin_cos();
                 let r = (right * co + up * s) * size;
                 let u = (up * co - right * s) * size;
-                for v in [q.pos - r + u, q.pos + r + u, q.pos + r - u, q.pos - r - u] {
-                    pos.push(v.to_array());
-                }
-                uv.extend([[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]]);
+                [q.pos - r + u, q.pos + r + u, q.pos + r - u, q.pos - r - u]
+            };
+            for k in 0..4 {
+                crate::spritebuf::SpriteBuf::push(&mut v, corners[k].to_array(), normal, uv[k], c);
             }
-            col.extend([c; 4]);
-            idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            quads += 1;
         }
-        if idx.is_empty() {
-            // Left alone once empty: `get_mut` marks the asset modified (a re-upload) every time
-            // (an empty mesh is empty_mesh's single triangle; live ones are whole quads).
-            if meshes.get(&layer.mesh).is_some_and(|m| m.count_vertices() != 3) {
-                if let Some(mesh) = meshes.get_mut(&layer.mesh) {
-                    *mesh = empty_mesh();
-                }
-            }
-            continue;
+        if let Some(grown) = layer.buf.frame(quads, v, layer.entity, &mut ctx) {
+            crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| &mut m.extension.verts);
         }
-        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
-        let normals = vec![(-cam.forward().as_vec3()).to_array(); pos.len()];
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
-        mesh.insert_indices(Indices::U32(idx));
     }
 }
 

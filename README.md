@@ -138,7 +138,7 @@ The game's own particle systems play (`pfx.rs`; `tf_assets::pcf` parses the 396 
 files, Valve DMX binary 5, into 10 437 system definitions): emitters, initializers, operators,
 forces, constraints and renderers are compiled from each system's operator list with Source's
 defaults, children start with their delays, and every live particle of a material goes into one
-camera-facing mesh per frame. Generic effects map to the game's systems and impact tables
+camera-facing quad list per frame. Generic effects map to the game's systems and impact tables
 (`scripts/impacts/<table>.txt`: `wpn_muzzleflash_xo`, `P_wpn_tracer`, `titan_bullet`,
 `exp_rocket_shoulder`, `xo_exp_death`, `titan_landing`, ...). Hits play each weapon's own
 `impact_effect_table` for what the round struck (`Effect::Hit`): metal_titan (`E`) on a Titan,
@@ -274,7 +274,7 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
   `$texColorFromAlpha`, for example `flash_cloud_fire` for muzzle flashes and `fire_ramp` for
   fireballs).
 - Additive or blended, per the material.
-- All live particles of a texture share one camera-facing mesh rebuilt each frame (one draw
+- All live particles of a texture share one camera-facing quad list rebuilt each frame (one draw
   call per texture, capped at 6000 particles).
 - Energy weapons (Splitter Rifle, Plasma Railgun) get the blue ramps. Thermite and 40mm shells
   leave smoke trails and explode.
@@ -1363,6 +1363,28 @@ machine). `TF_FIXED_DT` runs (`TF_RECORD` state, hashes of every entity's transf
 visibility and UI nodes, screenshots) are identical before and after. The particle simulation
 (`update_pfx`, 0.5-0.9 ms) stays on one thread: its effects draw from one random stream in
 order.
+
+Particle sprites don't change a mesh asset every frame. Each sprite layer (a material's quads,
+`pfx.rs` and the hand-built `particles.rs`) owns a storage buffer in its material, written in
+place from the render world, and draws one of a few constant meshes of 2^k quads; `pull.wgsl`
+is Bevy's mesh vertex shader reading each vertex from the buffer (`spritebuf.rs`). Any modified
+mesh used to send every mesh entity of every material type through a respecialisation check
+and the mesh allocator every frame. The buffers get their contents on the same frames the
+meshes reached the render world (asset events run before the particle systems in PostUpdate,
+so a mesh written in frame N was uploaded in frame N+1). Particle model instances are written
+in place instead of re-inserted through commands every frame. Vanguard scene on Angel City
+(`TF_FIXED_DT=60`, uncapped, profile build, last 1800 frames, two alternating runs):
+`allocate_and_free_meshes` 0.63 -> 0.003 ms, `mark_3d_meshes_as_changed_if_their_assets_changed`
+0.21 -> 0.004 ms, `check_entities_needing_specialization` over all materials 2.9 -> 2.0 ms of
+CPU, render schedule 15.2-15.6 -> 14.6-15.0 ms, frame 16.6-17.3 -> 16.0-16.4 ms. Particle
+screenshots aren't exactly repeatable even before this: sprite layers are all at the same sort
+distance, so their order comes from the visible-entity list, which `check_visibility` fills from
+several threads, and the particle systems race Bevy's asset-event and visibility-propagation
+systems. With those pinned (particle systems after `AssetEventSystems` and visibility
+propagation, ties ordered by layer creation; test builds only), 60 of 65 shots of five scenes
+(Vortex, smoke, explosions, muzzle flashes, dash dust, sparks, Pilot fire, the eject and BT's
+self-destruct) match one of two runs before exactly and the other five differ in one pixel.
+
 The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
 ~3 triangles that actually touch it), but its leaves and walk order define the query results, so
 they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old

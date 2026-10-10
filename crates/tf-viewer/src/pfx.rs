@@ -42,9 +42,9 @@ use crate::player::{to_bevy, MainCamera, UNIT};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
-use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
+use bevy::render::renderer::RenderDevice;
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use tf_assets::pcf::{Op, SystemDef};
@@ -64,12 +64,16 @@ const BLEND_GAIN: f32 = 1.0;
 const ADD_GAIN: f32 = 2.0;
 /// Sprite material extension: Source's spritecard `$depthblend`/`$depthblendscale` (soft
 /// particles against the depth prepass) and `$ignorez` (no depth test). See soft.wgsl.
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(SoftKey)]
 pub struct SoftParticle {
     /// x: depth blend distance in metres (0 = off).
     #[uniform(100)]
     pub params: Vec4,
+    /// The layer's vertices (spritebuf.rs).
+    #[storage(103, read_only, buffer)]
+    #[reflect(ignore, default = "crate::spritebuf::no_buffer")]
+    pub verts: bevy::render::render_resource::Buffer,
     pub ignorez: bool,
 }
 
@@ -85,6 +89,9 @@ impl From<&SoftParticle> for SoftKey {
 }
 
 impl bevy::pbr::MaterialExtension for SoftParticle {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        "embedded://tf_viewer/pull.wgsl".into()
+    }
     fn fragment_shader() -> bevy::shader::ShaderRef {
         "embedded://tf_viewer/soft.wgsl".into()
     }
@@ -110,7 +117,7 @@ pub type SoftMaterial = bevy::pbr::ExtendedMaterial<StandardMaterial, SoftPartic
 /// transmission texture (a copy of the main pass taken before the transmissive phase, which
 /// the base material's `specular_transmission > 0` puts these sprites in) and offsets the
 /// lookup by the normal map. See refract.wgsl.
-#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone)]
 #[bind_group_data(SoftKey)]
 pub struct RefractParticle {
     /// x: `$refractamount`, y: `$bluramount` (pixels), z: 1 with `$vertexcolormodulate`.
@@ -120,6 +127,10 @@ pub struct RefractParticle {
     #[texture(101)]
     #[sampler(102)]
     pub normal: Option<Handle<Image>>,
+    /// The layer's vertices (spritebuf.rs).
+    #[storage(103, read_only, buffer)]
+    #[reflect(ignore, default = "crate::spritebuf::no_buffer")]
+    pub verts: bevy::render::render_resource::Buffer,
     pub ignorez: bool,
 }
 
@@ -130,6 +141,9 @@ impl From<&RefractParticle> for SoftKey {
 }
 
 impl bevy::pbr::MaterialExtension for RefractParticle {
+    fn vertex_shader() -> bevy::shader::ShaderRef {
+        "embedded://tf_viewer/pull.wgsl".into()
+    }
     fn fragment_shader() -> bevy::shader::ShaderRef {
         "embedded://tf_viewer/refract.wgsl".into()
     }
@@ -1682,8 +1696,24 @@ struct Layer {
     gain: f32,
     orient: i32,
     sheet: Vec<Sequence>,
-    mesh: Handle<Mesh>,
+    buf: crate::spritebuf::SpriteBuf,
+    mat: LayerMat,
     entity: Entity,
+}
+
+/// A layer's material (its vertex buffer is replaced when it grows).
+enum LayerMat {
+    Soft(Handle<SoftMaterial>),
+    Refract(Handle<RefractMaterial>),
+}
+
+impl LayerMat {
+    fn swap(&self, soft: &mut Assets<SoftMaterial>, refract: &mut Assets<RefractMaterial>, soft_events: &mut MessageWriter<AssetEvent<SoftMaterial>>, refract_events: &mut MessageWriter<AssetEvent<RefractMaterial>>, grown: bevy::render::render_resource::Buffer) {
+        match self {
+            LayerMat::Soft(h) => crate::spritebuf::swap_buffer(soft, soft_events, h, grown, |m| &mut m.extension.verts),
+            LayerMat::Refract(h) => crate::spritebuf::swap_buffer(refract, refract_events, h, grown, |m| &mut m.extension.verts),
+        }
+    }
 }
 
 /// Parse a VMT's `$key value` pairs (lowercased keys) and its shader name.
@@ -3069,6 +3099,7 @@ fn layer_for(
     meshes: &mut Assets<Mesh>,
     mats: &mut Assets<SoftMaterial>,
     refract_mats: &mut Assets<RefractMaterial>,
+    sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes),
 ) -> Option<usize> {
     let key = material.replace('\\', "/").to_ascii_lowercase();
     let layer_key = if overlay { format!("{key}#overlay") } else { key.clone() };
@@ -3088,7 +3119,7 @@ fn layer_for(
             if overlay {
                 return None;
             }
-            return Some(refract_layer(&key, v, &kv, commands, images, meshes, refract_mats));
+            return Some(refract_layer(&key, v, &kv, commands, images, meshes, refract_mats, sprites));
         }
         let additive = flag("$additive") || flag("$addself");
         let overbright = kv.get("$overbrightfactor").and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0).max(0.1);
@@ -3106,6 +3137,7 @@ fn layer_for(
         let depth_scale = std::env::var("TF_DEPTHBLEND_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         let depth_blend = if flag("$depthblend") && std::env::var_os("TF_NO_DEPTHBLEND").is_none() { kv.get("$depthblendscale").and_then(|s| s.parse::<f32>().ok()).unwrap_or(DEPTH_BLEND_DEFAULT) * UNIT * depth_scale } else { 0.0 };
         let ignorez = flag("$ignorez");
+        let buf = crate::spritebuf::SpriteBuf::new(sprites.0, false);
         let material = mats.add(SoftMaterial {
             base: StandardMaterial {
                 base_color: Color::WHITE,
@@ -3117,11 +3149,10 @@ fn layer_for(
                 fog_enabled: !additive,
                 ..default()
             },
-            extension: SoftParticle { params: Vec4::new(depth_blend, 0.0, 0.0, 0.0), ignorez },
+            extension: SoftParticle { params: Vec4::new(depth_blend, 0.0, 0.0, 0.0), verts: buf.buffer.clone(), ignorez },
         });
-        let mesh = meshes.add(empty_mesh());
         let entity = commands
-            .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
+            .spawn((Mesh3d(sprites.1.first(meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
             .id();
         if overlay {
             commands.entity(entity).insert(bevy::camera::visibility::RenderLayers::layer(crate::vmcam::VM_LAYER));
@@ -3131,7 +3162,7 @@ fn layer_for(
         // square root (15 -> 3.9) and the camera's bloom carries the rest. An approximation of
         // the game's HDR pipeline, not its numbers.
         let gain = if additive { ADD_GAIN } else { BLEND_GAIN } * overbright.sqrt();
-        Some(Layer { key: key.clone(), additive, gain, orient, sheet: v.sheet, mesh, entity })
+        Some(Layer { key: key.clone(), additive, gain, orient, sheet: v.sheet, buf, mat: LayerMat::Soft(material), entity })
     })();
     let idx = result.map(|l| {
         pfx.layers.push(l);
@@ -3145,7 +3176,7 @@ fn layer_for(
 }
 
 /// A refracting material's layer: its sprites take the transmissive phase (refract.wgsl).
-fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<RefractMaterial>) -> Layer {
+fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<RefractMaterial>, sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes)) -> Layer {
     let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
     let num = |k: &str| kv.get(k).and_then(|s| s.trim().parse::<f32>().ok());
     let mut img = Image::new(
@@ -3158,6 +3189,7 @@ fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, comma
     img.sampler = bevy::image::ImageSampler::linear();
     // TF_REFRACT_SCALE=k multiplies every material's amount (for checking it).
     let scale = std::env::var("TF_REFRACT_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+    let buf = crate::spritebuf::SpriteBuf::new(sprites.0, false);
     let material = mats.add(RefractMaterial {
         base: StandardMaterial {
             // Only to put the sprites in the transmissive phase (it is what makes Bevy copy the
@@ -3173,22 +3205,12 @@ fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, comma
         extension: RefractParticle {
             params: Vec4::new(num("$refractamount").unwrap_or(0.0) * scale, num("$bluramount").unwrap_or(0.0), if flag("$vertexcolormodulate") { 1.0 } else { 0.0 }, 0.0),
             normal: Some(images.add(img)),
+            verts: buf.buffer.clone(),
             ignorez: flag("$ignorez"),
         },
     });
-    let mesh = meshes.add(empty_mesh());
-    let entity = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver)).id();
-    Layer { key: key.to_string(), additive: false, gain: 1.0, orient: num("$orientation").map_or(0, |o| o as i32), sheet: v.sheet, mesh, entity }
-}
-
-fn empty_mesh() -> Mesh {
-    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
-    m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
-    m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; 3]);
-    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; 3]);
-    m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32; 4]; 3]);
-    m.insert_indices(Indices::U32(vec![0, 1, 2]));
-    m
+    let entity = commands.spawn((Mesh3d(sprites.1.first(meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver)).id();
+    Layer { key: key.to_string(), additive: false, gain: 1.0, orient: num("$orientation").map_or(0, |o| o as i32), sheet: v.sheet, buf, mat: LayerMat::Refract(material), entity }
 }
 
 #[derive(Default)]
@@ -3196,7 +3218,6 @@ struct Batch {
     pos: Vec<[f32; 3]>,
     uv: Vec<[f32; 2]>,
     col: Vec<[f32; 4]>,
-    idx: Vec<u32>,
     /// (depth, first vertex) of each quad, for back-to-front sorting.
     quads: Vec<(f32, u32)>,
 }
@@ -3259,6 +3280,14 @@ pub fn update_pfx(
     mut lights: Query<(&mut PointLight, &mut Transform)>,
     old: Option<ResMut<crate::particles::Particles>>,
     lenses: Query<(&Projection, Has<crate::vmcam::ViewmodelCamera>), Or<(With<MainCamera>, With<crate::vmcam::ViewmodelCamera>)>>,
+    mut gpu: (
+        Res<RenderDevice>,
+        ResMut<crate::spritebuf::SpriteMeshes>,
+        ResMut<crate::spritebuf::SpriteUploads>,
+        Query<&mut Transform, (With<FxModelInstance>, Without<PointLight>)>,
+        MessageWriter<AssetEvent<SoftMaterial>>,
+        MessageWriter<AssetEvent<RefractMaterial>>,
+    ),
 ) {
     // Set Control Point To Player: Source's C_OP_SetControlPointToPlayer uses the view origin
     // (the camera), so screen-space systems such as the FX_victim glows sit at the eye.
@@ -3440,7 +3469,7 @@ pub fn update_pfx(
         }
     }
     for (fi, ni, m, overlay) in needed {
-        let l = layer_for(&mut pfx, &m, overlay, &gd, &mut commands, images, meshes, mats, &mut assets.5);
+        let l = layer_for(&mut pfx, &m, overlay, &gd, &mut commands, images, meshes, mats, &mut assets.5, (&gpu.0, &mut gpu.1));
         pfx.effects[fi].nodes[ni].layer = l.or(Some(usize::MAX));
     }
     if loads > 0 {
@@ -3588,6 +3617,7 @@ pub fn update_pfx(
     // root in game units.
     {
         let (mut cache, root, _) = model_res;
+        let model_tfs = &mut gpu.3;
         let Pfx { effects, model_cache, .. } = &mut *pfx;
         let eye_game = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
         for fx in effects.iter_mut() {
@@ -3653,7 +3683,14 @@ pub fn update_pfx(
                         // them until they are clear of it, or the first frames fill the view.
                         let at_eye = fx.vm && p.pos.distance(eye_game) < FP_MODEL_CLEARANCE;
                         if at_eye || p.alpha <= 0.01 || p.radius <= 0.0 || std::env::var_os("TF_NO_FX_MODELS").is_some() {
-                            commands.entity(e).insert(Visibility::Hidden);
+                            match vis.get_mut(e) {
+                                Ok(mut v) => {
+                                    v.set_if_neq(Visibility::Hidden);
+                                }
+                                Err(_) => {
+                                    commands.entity(e).insert(Visibility::Hidden);
+                                }
+                            }
                             continue;
                         }
                         // Source's AngleMatrix order: yaw about Z, pitch about Y, roll about X.
@@ -3673,7 +3710,18 @@ pub fn update_pfx(
                             log::trace!("model instance {} age {:.1} at {:?} radius {} alpha {} cp0 {:?} fwd {:?} camera {:?} dist {:.0} model -x/+z goes to {:?} / {:?}", n.sys.material, fx.age, p.pos, p.radius, p.alpha, cp.pos, cp.fwd, cam_game, p.pos.distance(cam_game), rot * Vec3::NEG_X, rot * Vec3::Z);
                         }
                         let k = std::env::var("TF_FX_MODEL_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
-                        commands.entity(e).insert((Transform { translation: p.pos, rotation: rot, scale: Vec3::splat(p.radius * k) }, Visibility::Visible));
+                        let tf = Transform { translation: p.pos, rotation: rot, scale: Vec3::splat(p.radius * k) };
+                        // Written in place (re-inserting them every frame marked every live
+                        // instance changed); instances spawned this frame aren't there yet.
+                        match (model_tfs.get_mut(e), vis.get_mut(e)) {
+                            (Ok(mut t), Ok(mut v)) => {
+                                t.set_if_neq(tf);
+                                v.set_if_neq(Visibility::Visible);
+                            }
+                            _ => {
+                                commands.entity(e).insert((tf, Visibility::Visible));
+                            }
+                        }
                         // The model instance's colour and alpha (CBufModelInstance row 6, which
                         // the game's uber shader multiplies its albedo, emissive and alpha by)
                         // are the particle's: a shield's health colour reaches its dome this way.
@@ -3719,7 +3767,17 @@ pub fn update_pfx(
     pfx.total = pfx.effects.iter().flat_map(|f| f.nodes.iter()).map(|n| n.particles.len()).sum();
 
     // Draw.
-    let Ok(cam) = camera.single() else { return };
+    let Ok(cam) = camera.single() else {
+        // No layer was written (their buffers still take what the meshes would have).
+        let (device, buckets, uploads, _, soft_events, refract_events) = &mut gpu;
+        let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut assets.0, commands: &mut commands };
+        for layer in &mut pfx.layers {
+            if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
+                layer.mat.swap(&mut assets.2, &mut assets.5, soft_events, refract_events, grown);
+            }
+        }
+        return;
+    };
     let eye = to_game(cam.translation());
     let (right, up, fwd) = (dir_to_game(cam.right().as_vec3()), dir_to_game(cam.up().as_vec3()), dir_to_game(cam.forward().as_vec3()));
     let mut batches: Vec<Batch> = (0..pfx.layers.len()).map(|_| Batch::default()).collect();
@@ -3874,38 +3932,31 @@ pub fn update_pfx(
             }
         }
     }
+    let (device, buckets, uploads, _, soft_events, refract_events) = &mut gpu;
+    let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes, commands: &mut commands };
+    let normal = (-cam.forward().as_vec3()).to_array();
+    let Pfx { layers, .. } = &mut *pfx;
     for (li, mut b) in batches.into_iter().enumerate() {
-        let layer = &pfx.layers[li];
+        let layer = &mut layers[li];
         if let Ok(mut v) = vis.get_mut(layer.entity) {
             let want = if b.quads.is_empty() { Visibility::Hidden } else { Visibility::Visible };
             if *v != want {
                 *v = want;
             }
         }
-        if b.quads.is_empty() {
-            // Only touch a mesh that isn't empty yet: `get_mut` alone marks the asset modified,
-            // which re-uploads it (and re-checks every entity using it) the next frame.
-            if meshes.get(&layer.mesh).is_some_and(|m| m.count_vertices() != 3) {
-                if let Some(mesh) = meshes.get_mut(&layer.mesh) {
-                    *mesh = empty_mesh();
-                }
-            }
-            continue;
-        }
-        let Some(mesh) = meshes.get_mut(&layer.mesh) else { continue };
         if !layer.additive {
             b.quads.sort_by(|a, c| c.0.total_cmp(&a.0));
         }
+        // The quads in draw order (what the index list gave the mesh).
+        let mut v = crate::spritebuf::SpriteBuf::begin(b.quads.len());
         for &(_, base) in &b.quads {
-            b.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            for i in base as usize..base as usize + 4 {
+                crate::spritebuf::SpriteBuf::push(&mut v, to_bevy(Vec3::from(b.pos[i])).to_array(), normal, b.uv[i], b.col[i]);
+            }
         }
-        let pos: Vec<[f32; 3]> = b.pos.iter().map(|p| to_bevy(Vec3::from(*p)).to_array()).collect();
-        let normals = vec![(-cam.forward().as_vec3()).to_array(); pos.len()];
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, b.uv);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, b.col);
-        mesh.insert_indices(Indices::U32(b.idx));
+        if let Some(grown) = layer.buf.frame(b.quads.len(), v, layer.entity, &mut ctx) {
+            layer.mat.swap(mats, &mut assets.5, soft_events, refract_events, grown);
+        }
     }
     // Lights: the strongest few light-source particles.
     light_cands.sort_by(|a, b| b.0.total_cmp(&a.0));
