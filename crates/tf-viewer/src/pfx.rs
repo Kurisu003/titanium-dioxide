@@ -3284,6 +3284,7 @@ pub fn update_pfx(
         Res<RenderDevice>,
         ResMut<crate::spritebuf::SpriteMeshes>,
         ResMut<crate::spritebuf::SpriteUploads>,
+        Query<&mut Transform, (With<FxModelInstance>, Without<PointLight>)>,
         MessageWriter<AssetEvent<SoftMaterial>>,
         MessageWriter<AssetEvent<RefractMaterial>>,
     ),
@@ -3616,6 +3617,7 @@ pub fn update_pfx(
     // root in game units.
     {
         let (mut cache, root, _) = model_res;
+        let model_tfs = &mut gpu.3;
         let Pfx { effects, model_cache, .. } = &mut *pfx;
         let eye_game = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
         for fx in effects.iter_mut() {
@@ -3681,7 +3683,14 @@ pub fn update_pfx(
                         // them until they are clear of it, or the first frames fill the view.
                         let at_eye = fx.vm && p.pos.distance(eye_game) < FP_MODEL_CLEARANCE;
                         if at_eye || p.alpha <= 0.01 || p.radius <= 0.0 || std::env::var_os("TF_NO_FX_MODELS").is_some() {
-                            commands.entity(e).insert(Visibility::Hidden);
+                            match vis.get_mut(e) {
+                                Ok(mut v) => {
+                                    v.set_if_neq(Visibility::Hidden);
+                                }
+                                Err(_) => {
+                                    commands.entity(e).insert(Visibility::Hidden);
+                                }
+                            }
                             continue;
                         }
                         // Source's AngleMatrix order: yaw about Z, pitch about Y, roll about X.
@@ -3701,7 +3710,18 @@ pub fn update_pfx(
                             log::trace!("model instance {} age {:.1} at {:?} radius {} alpha {} cp0 {:?} fwd {:?} camera {:?} dist {:.0} model -x/+z goes to {:?} / {:?}", n.sys.material, fx.age, p.pos, p.radius, p.alpha, cp.pos, cp.fwd, cam_game, p.pos.distance(cam_game), rot * Vec3::NEG_X, rot * Vec3::Z);
                         }
                         let k = std::env::var("TF_FX_MODEL_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
-                        commands.entity(e).insert((Transform { translation: p.pos, rotation: rot, scale: Vec3::splat(p.radius * k) }, Visibility::Visible));
+                        let tf = Transform { translation: p.pos, rotation: rot, scale: Vec3::splat(p.radius * k) };
+                        // Written in place (re-inserting them every frame marked every live
+                        // instance changed); instances spawned this frame aren't there yet.
+                        match (model_tfs.get_mut(e), vis.get_mut(e)) {
+                            (Ok(mut t), Ok(mut v)) => {
+                                t.set_if_neq(tf);
+                                v.set_if_neq(Visibility::Visible);
+                            }
+                            _ => {
+                                commands.entity(e).insert((tf, Visibility::Visible));
+                            }
+                        }
                         // The model instance's colour and alpha (CBufModelInstance row 6, which
                         // the game's uber shader multiplies its albedo, emissive and alpha by)
                         // are the particle's: a shield's health colour reaches its dome this way.
@@ -3749,7 +3769,7 @@ pub fn update_pfx(
     // Draw.
     let Ok(cam) = camera.single() else {
         // No layer was written (their buffers still take what the meshes would have).
-        let (device, buckets, uploads, soft_events, refract_events) = &mut gpu;
+        let (device, buckets, uploads, _, soft_events, refract_events) = &mut gpu;
         let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut assets.0, commands: &mut commands };
         for layer in &mut pfx.layers {
             if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
@@ -3912,7 +3932,7 @@ pub fn update_pfx(
             }
         }
     }
-    let (device, buckets, uploads, soft_events, refract_events) = &mut gpu;
+    let (device, buckets, uploads, _, soft_events, refract_events) = &mut gpu;
     let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes, commands: &mut commands };
     let normal = (-cam.forward().as_vec3()).to_array();
     let Pfx { layers, .. } = &mut *pfx;
