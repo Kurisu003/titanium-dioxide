@@ -375,7 +375,15 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     StayOnGround (0x180207860) then keeps the Pilot on stairs and slopes going down (up to 18).
     In the air, hitting a ledge also tries StepMove, so a jump that rises past a lip lands on
     it. So anything up to 18 units is run over at full speed, and taller ledges stop you at the
-    face. Automantle on the ground needs jump held (0x180209ed0 checks `IN_JUMP` there and for
+    face. Wall-running is the same move with the wall as the floor: the Pilot's up vector
+    (player+0x2494, which StepMove and HandleBlocked measure "up" and "walkable" from; the
+    wall-run turns it to the wall's normal, 0x1802068c0, and IsWallRunning 0x1802c9350 is just
+    up.z < 1) is the wall's normal, so StepMove lifts the hull 18 out from the wall, moves and
+    drops it back. Trims, window frames, pillars and clip boxes up to 18 out from the wall are
+    run past at full speed (on Angel City a 1.4-unit player clip box stopped runs dead), deeper
+    ones stop the run. While wall-running StayOnGround doesn't move the Pilot (0x1802078b5).
+    `tf-sim/tests/wallrun_ledges.rs` checks trims 2-24 out, flutes, a pillar, window frames and
+    a cornice; `pilotscan <dump> rec <TF_RECORD log> t0 t1` re-runs part of a play session. Automantle on the ground needs jump held (0x180209ed0 checks `IN_JUMP` there and for
     0.25 s after leaving the ground); before this, running into any knee-high ledge started a
     1 s climb. Not modelled or guessed: the slow-fall case's flag (0x2b7c) is ignored, the
     `boostEnabled` air step-up doubling (boost Pilot classes only) is left out, the step's
@@ -447,8 +455,13 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     then keeps `slidevelocitydecay` 0.7 of itself per second. The slide ends below
     `slideStopSpeed` 125, or when crouch is let go at or below `slideMaxStopSpeed` 350. A jump
     out of a slide is `slideJumpHeight` 50 high and keeps the slide's speed; the long jump
-    raises a speed within 85% of `slideMaxJumpSpeed` 350 to 350, and jumping during the
-    crouch-down (the first 0.2 s) takes the boost back. Sliding up a step costs
+    raises a speed within 85% of `slideMaxJumpSpeed` 350 to 350, and jumping before the Pilot
+    is fully ducked (within 0.4 s of the slide's start) takes the boost back (jump handler
+    0x180200655: `m_duckState` not 2). The duck carries on in the air, so crouch held through a
+    jump lands fully ducked: landing into a slide adds the boost (SetGroundEntity 0x1801fa1c6)
+    and hopping straight out keeps it. Every slide start restarts the cooldown, boosted or not
+    (0x18020b213), so a slide-hop chain gets one boost and then carries it, losing only the
+    slide friction of each landing's ground ticks; `tests/slide_hop.rs` prints the speeds. Sliding up a step costs
     `slide_step_velocity_reduction` 10 per unit of step height (telling a step from a ramp by a
     flat top is ours). The view goes down into a crouch over 0.4 s (0.2 s when the crouch
     starts a slide) and back up over 0.2 s, eased with Duck's smoothstep. Slides tilt the view
@@ -464,9 +477,9 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     (`sound_slide_prefix` "pilotslide" by surface), the hull staying standing until the crouch
     finishes, and the slide effects table.
   - Jumps: a jump within `skip_time` 0.1 s of landing is a "skip": `skip_jump_height_fraction`
-    0.75 of the height, keeping the landing speed less `skip_speed_reduce` 12, which doesn't cut
-    below `skip_speed_retain` 450 (restoring the landing speed through those ground ticks is our
-    reading). `jump_graceperiod` 0.2 s after walking off a ledge still gives a normal jump. A
+    0.75 of the height, keeping its speed less `skip_speed_reduce` 12, which doesn't cut below
+    `skip_speed_retain` 450 (client.dll 0x1802009b6 takes the speed at the jump: friction since
+    landing stays lost). `jump_graceperiod` 0.2 s after walking off a ledge still gives a normal jump. A
     double jump while already rising fast still adds `superjump_min_height_fraction` 0.25 of its
     height. Not modelled: `jump_keyboardgrace*` (redirecting a jump with keys just after it).
   - Wall-running is ground movement on the wall's plane, as the keys' text describes:
@@ -1219,6 +1232,15 @@ collision triangles (`TF_COLLISION_DUMP`), the BVH, the nav grids and the spawn 
 the same on every run (they used to follow a HashMap's per-run order). `RUST_LOG=info` logs
 each phase of `setup` as `load phase: <what> <time>`.
 
+Loading takes two frames: `setup_world` builds the game data, world, props, sky and probes and
+spawns the cameras and the sun, and `setup` builds the rest (collision hierarchy, BT, viewmodels,
+nav grids, enemies) in the next frame, while the render world uploads the map's meshes and
+textures (371 MB and 2.2 GB on Angel City) and compiles its shaders. In one frame all of that
+waited until the end; Angel City goes from about 9.2-10.5 s to 8.7-10 s from launch to playable
+(shared machine, noisy), and the warm-up below from 56-82 frames to 34-40. What is left there is
+mostly Bevy composing the ~26 PBR shader variants one at a time (~40 ms each, behind its shader
+cache's lock) after the uploads.
+
 The loading screen then stays up while the world warms up behind it (`ui::loading_tick`): every
 first-person model is shown (they skip frustum culling, so they count from wherever they sit),
 the viewmodel camera already has the reflection cubemap, and the screen waits until no render
@@ -1294,6 +1316,25 @@ high made a new buffer (and a 5 ms rebuild, ~15 times a minute on foot); they no
 again (rebuilds on the Angel City run: 146 -> 8).
 Cockpit 64-81 -> 72-93 fps, on foot 56-67 -> 53-80. `TF_NO_BIND_CACHE=1` turns it off.
 
+Bevy draws each shadow cascade in one batch set per material (200-540 per cascade on Angel
+City), but an opaque material's shadow pipeline has no fragment shader and never reads the
+material. `shadowbatch.rs` queues those meshes in one set per pipeline instead (60-150 sets
+remain per cascade, mostly alpha-tested materials, which keep theirs): about 2.3-3.6 -> 0.9-1.4 ms
+of CPU per cascade. The depth written is the same (screenshots with time frozen, flipping between
+the two every 4 s, match bit for bit). `TF_SHADOW_BY_MATERIAL=1` turns it off.
+
+The render thread walks the render graph one node at a time, and with wgpu 27 a pass's commands
+are only validated and encoded when its command encoder is finished. Bevy's opaque, prepass,
+shadow and bloom passes are encoded on worker threads, but its transparent pass went into the
+graph's own encoder, so every sorted translucent draw was encoded serially. `transparentpass.rs`
+puts it in a worker task like the others (same commands, submitted in the same order): the graph
+walk went from about 4.0 to 3.1 ms. `TF_SERIAL_TRANSPARENT=1` keeps Bevy's node.
+
+The guns' ammo counters (`ruiscreen.rs`) render through small UI cameras into textures. Those
+cameras now render only for 30 frames after a counter's text changes (and until it is laid
+out); the texture keeps the last picture. Drawing the same digits every frame cost the render
+thread about 1 ms (two cameras' graph, UI preparation and command buffers).
+
 The viewmodel camera keeps only the sun's first shadow cascade (0.1-10 m): Bevy builds all four
 for every camera the light reaches, but first-person models are within a few metres of the eye
 and never sample the others, so three shadow passes of the whole map per frame were wasted.
@@ -1325,7 +1366,7 @@ order.
 The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
 ~3 triangles that actually touch it), but its leaves and walk order define the query results, so
 they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old
-results bit for bit. Box queries (sphere pushes, box sweeps, wall searches) put the leaves they
+results bit for bit. Box queries (sphere pushes, box sweeps) put the leaves they
 find back into the old walk's order; rays up to 400 units find every leaf they reach and replay
 the old nearest-first walk, with its shrinking limit, over the ones with hits (ties included);
 longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the

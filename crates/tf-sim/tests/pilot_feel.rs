@@ -197,3 +197,55 @@ fn keyboard_grace_after_jump() {
     let angle = (-s.vel.y).atan2(s.vel.x).to_degrees();
     assert!(angle < 15.0, "falling without a jump: heading {angle}");
 }
+
+/// Jumping keeps the horizontal speed, strafe keys held or not: the ground jump only sets the
+/// vertical speed (jump handler 0x180200cf9) and the keyboard grace (0x1801f1d62) turns the
+/// velocity toward the held keys at the same speed. (A takeoff touching a wall loses the part
+/// of the velocity into the wall to the collision, which is what a recording that seemed to
+/// show a strafe-jump speed loss had: the Pilot was against a wall both times.)
+#[test]
+fn strafe_jump_keeps_speed() {
+    let (p, w) = (PilotParams::default(), floor());
+    for side in [1.0, -1.0] {
+        let mut s = PilotState::new(Vec3::ZERO, 0.0);
+        settle(&mut s, &p, &w);
+        let i = PilotInput { right: side, ..sprint() };
+        for _ in 0..240 {
+            step(&mut s, &sprint(), &p, &w, DT);
+        }
+        step(&mut s, &PilotInput { jump: true, ..i }, &p, &w, DT);
+        let mut min_speed = s.horizontal_speed();
+        for _ in 0..60 {
+            step(&mut s, &i, &p, &w, DT);
+            min_speed = min_speed.min(s.horizontal_speed());
+        }
+        println!("sprint, then jump holding forward + side {side}: min speed over 0.5 s {min_speed:.1}");
+        assert!(min_speed > p.sprint_speed - 1.0, "strafe jump {side}: {min_speed}");
+    }
+}
+
+/// Landing faster than the sprint speed: Friction (0x1801f8090) keeps the sprint speed along
+/// the input and brakes the rest at the stance deceleration from the first ground tick. Above
+/// the stance speed GetDeceleration (0x1801fcf10) would use sprintDeceleration, else
+/// sprintAcceleration, but pilot_base.set / pilot_mp.set set neither (-1), so it is still
+/// 0.6 x acceleration 2500 = 1500 u/s^2. There is no landing grace: the only no-deceleration
+/// window (player+0x2450) follows velocity impulses (impulse_low_decel_duration_scalar,
+/// 0x1802cc410). Only a jump on the landing tick skips the friction.
+#[test]
+fn landing_over_sprint_speed() {
+    let (p, w) = (PilotParams::default(), floor());
+    let mut s = PilotState::new(Vec3::new(0.0, 0.0, 20.0), 0.0);
+    s.mode = PilotMove::Air;
+    s.vel = Vec3::new(395.0, 0.0, -100.0);
+    while !s.on_ground() {
+        step(&mut s, &sprint(), &p, &w, DT);
+    }
+    let landed = s.horizontal_speed();
+    let mut t = 0.0;
+    while s.horizontal_speed() > p.sprint_speed + 0.5 {
+        step(&mut s, &sprint(), &p, &w, DT);
+        t += DT;
+    }
+    println!("landing at {landed:.1} standing: sprint speed again after {t:.3} s");
+    assert!((t - (landed - p.sprint_speed) / p.ground_decel).abs() < 2.0 * DT, "{t}");
+}

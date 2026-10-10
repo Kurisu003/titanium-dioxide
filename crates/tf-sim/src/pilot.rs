@@ -1,9 +1,11 @@
-//! Pilot movement: walk, sprint, crouch, slide, jump, double jump, wall-running and the grapple.
+//! Pilot movement: walk, sprint, crouch, slide, jump, double jump, mantle, wall-running and
+//! wall hang, ziplines and the grapple.
 //! Values from `scripts/players/mp/pilot_mp.set` (the base of every multiplayer Pilot class);
 //! fields it leaves out use the engine's player-settings defaults from client.dll (acceleration
 //! 2500, deceleration -1, airSpeed 60, airAcceleration 500) and its convars.
 
 use crate::collision::{CollisionWorld, Trace, CLIP_PILOT, DIST_EPSILON};
+use crate::smoothstep;
 use glam::{Vec2, Vec3};
 
 #[derive(Debug, Clone)]
@@ -267,21 +269,31 @@ impl Zipline {
         (self.b - self.a) - Vec3::Z * 4.0 * self.sag * (1.0 - 2.0 * t)
     }
     pub fn length(&self) -> f32 {
-        (0..16).map(|i| (self.point((i + 1) as f32 / 16.0) - self.point(i as f32 / 16.0)).length()).sum()
+        let mut prev = self.point(0.0);
+        (1..=16)
+            .map(|i| {
+                let p = self.point(i as f32 / 16.0);
+                let d = (p - prev).length();
+                prev = p;
+                d
+            })
+            .sum()
     }
     /// The closest point's parameter and distance.
     pub fn closest(&self, p: Vec3) -> (f32, f32) {
         const N: usize = 48;
         let mut best = (0.0, f32::MAX);
+        let mut p0 = self.point(0.0);
         for i in 0..N {
             let (t0, t1) = (i as f32 / N as f32, (i + 1) as f32 / N as f32);
-            let (p0, p1) = (self.point(t0), self.point(t1));
+            let p1 = self.point(t1);
             let d = p1 - p0;
             let k = ((p - p0).dot(d) / d.length_squared().max(1e-6)).clamp(0.0, 1.0);
             let dist = (p0 + d * k - p).length();
             if dist < best.1 {
                 best = (t0 + (t1 - t0) * k, dist);
             }
+            p0 = p1;
         }
         best
     }
@@ -571,9 +583,8 @@ pub struct PilotState {
     push_away: f32,
     /// Seconds of jump_graceperiod left after walking off a ledge.
     jump_grace: f32,
-    /// Seconds since the last landing, and the horizontal speed then (for skips).
+    /// Seconds since the last landing (for skips).
     since_land: f32,
-    land_speed: f32,
     /// Seconds since the last jump (ground, double or wall jump): the keyboard grace.
     since_jump: f32,
     pub jumps: u32,
@@ -601,6 +612,11 @@ pub struct PilotState {
     /// `duck_frac`), and how long the current crouch takes.
     pub duck: f32,
     duck_time: f32,
+    /// The engine's duck state, which (unlike the view and hull here) carries on in the air:
+    /// seconds crouch has been held, and how long it takes to be fully ducked (Duck
+    /// 0x1801f5500: m_flDucktime 400 ms, 200 ms when the crouch started a slide).
+    duck_held: f32,
+    duck_held_time: f32,
     /// Downward speed of the latest landing (taken by the camera/sound code).
     pub landed: Option<f32>,
     /// The zipline being ridden, and seconds until another can be used.
@@ -636,7 +652,6 @@ impl PilotState {
             push_away: 0.0,
             jump_grace: 0.0,
             since_land: 99.0,
-            land_speed: 0.0,
             since_jump: 99.0,
             jumps: 0,
             grapple: None,
@@ -652,6 +667,8 @@ impl PilotState {
             slide_long_jump: false,
             duck: 0.0,
             duck_time: 0.4,
+            duck_held: 0.0,
+            duck_held_time: 0.4,
             landed: None,
             zipline: None,
             zip_cooldown: 0.0,
@@ -717,14 +734,17 @@ impl PilotState {
         if self.zipline.is_some() || self.zip_cooldown > 0.0 || matches!(self.mode, PilotMove::Mantle { .. }) {
             return false;
         }
+        // On the ground only the use key grabs.
+        if !use_pressed && self.on_ground() {
+            return false;
+        }
         let eye = self.eye(p);
         let top = self.pos + Vec3::Z * p.height;
-        let airborne = !self.on_ground();
         let mut best: Option<(Zipline, f32, f32)> = None;
         for line in lines {
             let (t, d) = if use_pressed { line.closest(eye) } else { line.closest(top) };
             let reach = if use_pressed { z.use_range } else { z.grab_radius };
-            if (use_pressed || airborne) && d <= reach && best.is_none_or(|b| d < b.2) {
+            if d <= reach && best.is_none_or(|b| d < b.2) {
                 best = Some((*line, t, d));
             }
         }
@@ -762,8 +782,7 @@ impl PilotState {
     }
     /// The view's crouch fraction: Duck's smoothstep (client.dll 0x1801f8020).
     pub fn duck_frac(&self) -> f32 {
-        let k = self.duck.clamp(0.0, 1.0);
-        k * k * (3.0 - 2.0 * k)
+        smoothstep(self.duck.clamp(0.0, 1.0))
     }
     /// The eye: the stand and crouch view heights blended by the crouch fraction.
     pub fn eye_offset(&self, p: &PilotParams) -> f32 {
@@ -800,10 +819,14 @@ fn wall_probe(world: &CollisionWorld, p: &PilotParams, origin: Vec3, n: Vec3) ->
     let side = Vec3::new(-n.y, n.x, 0.0) * p.radius * 0.9;
     let up = Vec3::Z * p.radius * 0.9;
     let reach = p.radius * 1.2929 + p.wallrun.allowed_wall_dist;
+    // One search of the trees for the nine rays (their boxes are padded by a unit or so).
+    let corner = side.abs() + up.abs() + Vec3::splat(4.0);
+    let (a, b) = (origin, origin - n * reach);
+    let region = world.region_moving(a.min(b) - corner, a.max(b) + corner, CLIP_PILOT);
     let mut best: Option<(f32, Vec3)> = None;
     for i in -1..=1 {
         for j in -1..=1 {
-            if let Some(h) = world.raycast_moving(origin + side * i as f32 + up * j as f32, -n, reach, CLIP_PILOT) {
+            if let Some(h) = region.raycast(origin + side * i as f32 + up * j as f32, -n, reach) {
                 if best.is_none_or(|b| h.t - p.radius < b.0) {
                     best = Some((h.t - p.radius, h.normal));
                 }
@@ -813,33 +836,40 @@ fn wall_probe(world: &CollisionWorld, p: &PilotParams, origin: Vec3, n: Vec3) ->
     best
 }
 
+/// What CanWallrun says.
+enum CanWallrun {
+    No,
+    /// Not yet: the probes didn't find the wall close enough (retry).
+    NotYet,
+    Yes,
+}
+
 /// client.dll CanWallrun (0x180202090) for an airborne Pilot whose move hit a surface with
-/// normal `n` while moving along `dir`: 0 no, 1 not yet (the probes didn't find the wall close
-/// enough: retry), 2 yes. No speed, input or view requirement.
-fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, n: Vec3, dir: Vec3) -> u8 {
+/// normal `n` while moving along `dir`. No speed, input or view requirement.
+fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, n: Vec3, dir: Vec3) -> CanWallrun {
     let w = &p.wallrun;
     // Not within the lockout after leaving the ground without a jump.
     if s.since_ground < w.ground_lockout {
-        return 0;
+        return CanWallrun::No;
     }
     // Walls and overhangs, not floors.
     if n.z > 0.7 || n.z < -0.35 {
-        return 0;
+        return CanWallrun::No;
     }
     // (Crouching only blocks a Pilot who can't stand up; airborne Pilots aren't crouched here.)
     let flat = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
     // The wall last left: only below where that run started.
     if s.last_wall.is_some_and(|last| flat.dot(last) > w.same_wall_dot) && (!w.same_wall_allowed || s.pos.z >= s.wallrun_start.z + w.same_wall_height) {
-        return 0;
+        return CanWallrun::No;
     }
     // Moving into the wall (wallrun_minAngle_air).
     if Vec3::new(dir.x, dir.y, 0.0).normalize_or_zero().dot(n) >= -(w.min_angle_air * 0.5).to_radians().cos() {
-        return 0;
+        return CanWallrun::No;
     }
     // The wall must be there at the knees and at the middle of the hull.
     let near = |h: f32| wall_probe(world, p, s.pos + Vec3::Z * h, n).is_some_and(|(d, _)| d <= w.allowed_wall_dist);
     if !near(16.0) || !near(p.height * 0.5 + p.radius) {
-        return 1;
+        return CanWallrun::NotYet;
     }
     // Pushing and looking squarely into a wall whose top is below the head is a mantle
     // (0x180201e50): the head-height probe must find the wall too.
@@ -848,9 +878,9 @@ fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &
     let into = -hv(flat);
     let mantle = wish.length_squared() > 1e-6 && wish.normalize().dot(into) >= w.mantle_push_angle.to_radians().cos() && fwd.dot(into) >= w.mantle_view_angle.to_radians().cos();
     if mantle && !near(p.height - p.radius) {
-        return 1;
+        return CanWallrun::NotYet;
     }
-    2
+    CanWallrun::Yes
 }
 
 /// TryStartWallrun (client.dll 0x18020b390): start a wall-run on the wall with normal `n` if
@@ -860,7 +890,7 @@ fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &
 fn try_start_wallrun(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, n: Vec3, dir: Vec3) {
     s.wallrun_retry = None;
     match can_wallrun(s, p, world, input, n, dir) {
-        2 => {
+        CanWallrun::Yes => {
             let w = &p.wallrun;
             let flat = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
             if s.last_wall.is_some_and(|last| flat.dot(last) > w.same_wall_dot) {
@@ -877,8 +907,8 @@ fn try_start_wallrun(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld
             s.push_away = 0.0;
             s.wallrun_start = s.pos;
         }
-        1 => s.wallrun_retry = Some((p.wallrun.retry_interval, s.pos, n)),
-        _ => {}
+        CanWallrun::NotYet => s.wallrun_retry = Some((p.wallrun.retry_interval, s.pos, n)),
+        CanWallrun::No => {}
     }
 }
 
@@ -891,14 +921,20 @@ fn fall_off_wall(s: &mut PilotState, p: &PilotParams, normal: Vec3) {
     s.wallrun_no_boost = true;
 }
 
-/// Jumping off a wall: remembered for the same-wall rule; no lockout, the next run is boosted.
-fn jump_off_wall(s: &mut PilotState, normal: Vec3) {
+/// A jump off the ground or a wall (not the double jump): no wall-run lockout, the next run is
+/// boosted, and the keyboard grace starts.
+fn took_off(s: &mut PilotState) {
     s.mode = PilotMove::Air;
-    s.last_wall = Some(normal);
     s.since_ground = 99.0;
     s.since_jump = 0.0;
     s.wallrun_no_boost = false;
     s.jumps += 1;
+}
+
+/// Jumping off a wall: remembered for the same-wall rule.
+fn jump_off_wall(s: &mut PilotState, normal: Vec3) {
+    took_off(s);
+    s.last_wall = Some(normal);
 }
 
 /// The double jump (client.dll jump handler 0x180200200, superjump branch). Vertical: rising
@@ -955,10 +991,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     s.pitch = input.pitch;
     let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
     let right = Vec2::new(s.yaw.sin(), -s.yaw.cos());
-    let mut wish = fwd * input.forward + right * input.right;
-    if wish.length() > 1.0 {
-        wish = wish.normalize();
-    }
+    let wish = wish_of(s.yaw, input);
     let jump_v = |h: f32| (2.0 * p.jump_gravity * h).sqrt();
     s.zip_cooldown = (s.zip_cooldown - dt).max(0.0);
     s.jump_grace = (s.jump_grace - dt).max(0.0);
@@ -979,6 +1012,14 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     } else {
         s.duck = (s.duck - dt / 0.2).max(0.0);
     }
+    if !input.crouch {
+        s.duck_held = 0.0;
+    } else {
+        if s.duck_held == 0.0 {
+            s.duck_held_time = 0.4;
+        }
+        s.duck_held += dt;
+    }
     // Off the ground the sprint view eases out; a sprinting jump lands into the fast start.
     if !s.on_ground() {
         s.sprint_fast |= s.sprinting;
@@ -997,8 +1038,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             r.t = (r.t + r.dir * r.speed * dt / len).clamp(0.0, 1.0);
             r.mount += dt;
             let hang = r.line.point(r.t) - Vec3::Z * (p.height + z.hang);
-            let k = (r.mount / z.mount_time.max(1e-3)).min(1.0);
-            let k = k * k * (3.0 - 2.0 * k);
+            let k = smoothstep((r.mount / z.mount_time.max(1e-3)).min(1.0));
             s.pos = r.from.lerp(hang, k);
             s.vel = r.line.tangent(r.t).normalize_or_zero() * r.dir * r.speed;
             s.mode = PilotMove::Air;
@@ -1046,6 +1086,9 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 }
                 s.mode = PilotMove::Slide;
                 s.since_slide = 0.0;
+                if s.duck_held <= dt {
+                    s.duck_held_time = 0.2;
+                }
             }
             let sliding = s.mode == PilotMove::Slide;
             // Standing up ends a slide only at or below slideMaxStopSpeed; it always ends under
@@ -1127,12 +1170,14 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             if input.jump {
                 // A jump out of a slide is slideJumpHeight high and keeps the slide's speed
                 // (jump handler 0x180200609). Once per boosted slide it is a long jump: jumping
-                // before the crouch has finished (within 0.4 s) first takes the slide boost back,
-                // and a speed between 85% and 100% of slideMaxJumpSpeed is raised to it.
+                // before the Pilot is fully ducked (m_duckState 2) within 0.4 s of the slide's
+                // start first takes the slide boost back, and a speed between 85% and 100% of
+                // slideMaxJumpSpeed is raised to it. Crouch held through the air keeps the
+                // Pilot ducked, so landing into a boosted slide and hopping at once keeps it.
                 let mut sp = h.length();
                 if sliding && std::mem::take(&mut s.slide_long_jump) && sp > 0.0 {
                     let before = sp;
-                    if s.duck < 1.0 && s.since_slide < 0.4 {
+                    if s.duck_held < s.duck_held_time && s.since_slide < 0.4 {
                         sp = (sp - s.slide_boost_given).max(0.0);
                     }
                     let max = p.slide_max_jump_speed;
@@ -1140,13 +1185,13 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                         sp = max;
                     }
                 }
-                // A skip (jumping within skip_time of landing) is lower and keeps the landing
-                // speed less skip_speed_reduce, not cutting below skip_speed_retain.
+                // A skip (jumping within skip_time of landing) is lower and keeps its speed less
+                // skip_speed_reduce, not cutting below skip_speed_retain (0x1802009b6: the
+                // speed it has then, not the landing speed).
                 let skip = s.since_land <= p.skip_time;
                 let height = if sliding { p.slide_jump_height } else { p.jump_height };
                 s.vel.z = jump_v(height * if skip { p.skip_jump_frac } else { 1.0 });
                 if skip {
-                    sp = sp.max(s.land_speed);
                     if sp > p.skip_speed_retain {
                         sp = (sp - p.skip_speed_reduce).max(p.skip_speed_retain);
                     }
@@ -1154,12 +1199,8 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 let d = h.normalize_or_zero();
                 s.vel.x = d.x * sp;
                 s.vel.y = d.y * sp;
-                s.mode = PilotMove::Air;
                 s.crouched = false;
-                s.since_ground = 99.0;
-                s.since_jump = 0.0;
-                s.wallrun_no_boost = false;
-                s.jumps += 1;
+                took_off(s);
             }
         }
         PilotMove::Air => {
@@ -1179,10 +1220,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 // Just walked off a ledge: still a normal jump (jump_graceperiod).
                 s.jump_grace = 0.0;
                 s.vel.z = jump_v(p.jump_height);
-                s.since_ground = 99.0;
-                s.since_jump = 0.0;
-                s.wallrun_no_boost = false;
-                s.jumps += 1;
+                took_off(s);
             } else if input.jump && s.double_jump_available {
                 superjump(s, wish, p);
             }
@@ -1193,8 +1231,8 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             // Up first, then over the edge.
             let up = (k / 0.6).min(1.0);
             let over = ((k - 0.4) / 0.6).clamp(0.0, 1.0);
-            let ease = |x: f32| x * x * (3.0 - 2.0 * x);
-            s.pos = Vec3::new(from.x + (to.x - from.x) * ease(over), from.y + (to.y - from.y) * ease(over), from.z + (to.z - from.z) * ease(up));
+            let (over, up) = (smoothstep(over), smoothstep(up));
+            s.pos = Vec3::new(from.x + (to.x - from.x) * over, from.y + (to.y - from.y) * over, from.z + (to.z - from.z) * up);
             s.vel = Vec3::ZERO;
             if k >= 1.0 {
                 s.mode = PilotMove::Ground;
@@ -1314,17 +1352,22 @@ const NON_JUMP_VELOCITY: f32 = 140.0;
 
 /// The Pilot's collision hull: an axis-aligned box, pilot_base.set's stand hull_min/hull_max
 /// "-16 -16 0" / "16 16 72" (crouch "16 16 47"), traced against the world and the player clips
-/// as the engine's player movement does (client.dll 0x1801fbdc0).
+/// as the engine's player movement does (client.dll 0x1801fbdc0). It carries the settings the
+/// moves read (step height, stepTestDist) and the Pilot's up direction (player+0x2494): +Z,
+/// or the wall's normal while wall-running, the wall then being the floor that StepMove and
+/// the blocked-move handling measure from (IsWallRunning, 0x1802c9350, is just up.z < 1).
 struct Hull<'a> {
     world: &'a CollisionWorld,
+    p: &'a PilotParams,
     mins: Vec3,
     maxs: Vec3,
+    up: Vec3,
 }
 
 impl<'a> Hull<'a> {
-    fn new(world: &'a CollisionWorld, p: &PilotParams, crouched: bool) -> Self {
+    fn new(world: &'a CollisionWorld, p: &'a PilotParams, crouched: bool) -> Self {
         let h = if crouched { p.crouch_height } else { p.height };
-        Self { world, mins: Vec3::new(-p.radius, -p.radius, 0.0), maxs: Vec3::new(p.radius, p.radius, h) }
+        Self { world, p, mins: Vec3::new(-p.radius, -p.radius, 0.0), maxs: Vec3::new(p.radius, p.radius, h), up: Vec3::Z }
     }
     fn trace(&self, a: Vec3, b: Vec3) -> Trace {
         self.world.trace_box(a, b, self.mins, self.maxs, CLIP_PILOT)
@@ -1349,6 +1392,19 @@ impl<'a> Hull<'a> {
     }
 }
 
+/// The last steep plane (a wall, |normal.z| up to `WALKABLE_Z`) a move's traces ran into: what
+/// a wall-run touches.
+#[derive(Default)]
+struct Touched(Option<Vec3>);
+
+impl Touched {
+    fn push(&mut self, n: Vec3) {
+        if n.z.abs() <= WALKABLE_Z {
+            self.0 = Some(n);
+        }
+    }
+}
+
 /// TryPlayerMove (client.dll 0x1801fa310): move along `vel` for `time`, sliding along what is
 /// hit. Up to 8 traces. Each blocking plane takes the velocity's part into it away (from the
 /// velocity at the last plane reset) and adds 1/128 unit/s of push-out; a second plane makes it
@@ -1357,8 +1413,8 @@ impl<'a> Hull<'a> {
 /// velocity. Each new destination is first kept out of the planes already hit (to 0.001 in
 /// front of them), and the planes are forgotten once the hull has moved more than a unit since
 /// they were last reset. `first` is a trace already made from `pos` for the first try. The
-/// normals hit go to `hits`.
-fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Option<Trace>, hits: &mut Vec<Vec3>) {
+/// planes hit go to `hits`.
+fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Option<Trace>, hits: &mut Touched) {
     let primal = *vel;
     let mut orig = *vel;
     let mut planes = [Vec3::ZERO; 2];
@@ -1446,56 +1502,64 @@ fn try_player_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: O
 /// (TryPlayerMove, with the blocked trace `first`) and lifted by the step height (+
 /// DIST_EPSILON) and dropped back down by the height lifted plus the step height. The lifted
 /// one is kept when it got further across the ground (more than 1/0.999 of the plain move's
-/// distance) and came down on a floor. Coming down on something steep is still a step when
-/// stepTestDist further along there is floor (steep bits shorter than that, like a bevelled
-/// curb, are ignored), or when that spot is not much higher than where the plain move ended
-/// (at most about 45 degrees up from it, 0.49 = sin^2), with the first landing no more than
-/// twice as high (at least a tenth of the step) as that spot. Returns the height stepped up.
-fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Trace, hits: &mut Vec<Vec3>) -> f32 {
+/// distance) and came down on a floor. "Up", "height" and "floor" are along the hull's up
+/// direction (the pointer StepMove takes, player+0x2494: on a wall-run the wall's normal, so a
+/// wall-run steps out over trims and frames on the wall as a walk steps up a curb). Coming
+/// down on something steep is still a step when stepTestDist further along there is floor
+/// (steep bits shorter than that, like a bevelled curb, are ignored), or when that spot is not
+/// much higher than where the plain move ended (at most about 45 degrees up from it, 0.49 =
+/// sin^2), with the first landing no more than twice as high (at least a tenth of the step)
+/// as that spot. Returns the height stepped up.
+fn step_move(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, first: Trace, hits: &mut Touched) -> f32 {
+    let p = h.p;
     if *vel == Vec3::ZERO {
         return 0.0;
     }
-    let (start, v0) = (*pos, *vel);
-    let planar = |a: Vec3, b: Vec3| (a - b).truncate().length_squared();
+    let (start, v0, upv) = (*pos, *vel, h.up);
+    let planar = |a: Vec3, b: Vec3| {
+        let d = a - b;
+        (d - upv * d.dot(upv)).length_squared()
+    };
     try_player_move(h, pos, vel, time, Some(first), hits);
     let down = *pos;
     let lift = p.step_height + DIST_EPSILON;
-    let tr = h.trace(start, start + Vec3::Z * lift);
+    let tr = h.trace(start, start + upv * lift);
     let (top, lifted) = if tr.start_solid { (start, 0.0) } else { (tr.end, tr.fraction * lift) };
     let (mut up, mut up_vel) = (top, v0);
-    try_player_move(h, &mut up, &mut up_vel, time, None, &mut Vec::new());
+    try_player_move(h, &mut up, &mut up_vel, time, None, &mut Touched::default());
     if planar(down, start) >= planar(up, start) * 0.999 {
         return 0.0;
     }
     let drop = lifted + p.step_height + DIST_EPSILON;
-    let tr = h.trace(up, up - Vec3::Z * drop);
+    let tr = h.trace(up, up - upv * drop);
     let land = if tr.start_solid { up } else { tr.end };
-    if tr.normal.z < WALKABLE_Z {
+    if tr.normal.dot(upv) < WALKABLE_Z {
         let gap = planar(land, down);
         if gap <= 0.0 {
             return 0.0;
         }
         let (spot, nz, tested) = if gap < p.step_test_dist * p.step_test_dist {
-            let (mut q, mut qv) = (top, Vec3::new(v0.x, v0.y, v0.z.max(0.0)));
-            try_player_move(h, &mut q, &mut qv, p.step_test_dist / v0.length(), None, &mut Vec::new());
-            let t2 = h.trace(q, q - Vec3::Z * drop);
-            (t2.end, t2.normal.z, true)
+            let (mut q, mut qv) = (top, v0 - upv * v0.dot(upv).min(0.0));
+            try_player_move(h, &mut q, &mut qv, p.step_test_dist / v0.length(), None, &mut Touched::default());
+            let t2 = h.trace(q, q - upv * drop);
+            (t2.end, t2.normal.dot(upv), true)
         } else {
-            (land, tr.normal.z, false)
+            (land, tr.normal.dot(upv), false)
         };
         let mut ok = tested && nz >= WALKABLE_Z;
         if !ok && nz > 0.0 {
             let d = spot - down;
-            let flat = d.truncate().length_squared();
-            ok = d.z <= 0.0 || flat / (flat + d.z * d.z) > 0.49;
+            let dz = d.dot(upv);
+            let flat = planar(spot, down);
+            ok = dz <= 0.0 || flat / (flat + dz * dz) > 0.49;
         }
-        if !ok || (land.z - start.z).abs() > (2.0 * (spot.z - start.z).abs()).max(0.1 * p.step_height) {
+        if !ok || (land - start).dot(upv).abs() > (2.0 * (spot - start).dot(upv).abs()).max(0.1 * p.step_height) {
             return 0.0;
         }
     }
     *pos = land;
     *vel = up_vel;
-    land.z - start.z
+    (land - start).dot(upv)
 }
 
 /// What a move does when its trace `tr` hits something (client.dll 0x1802055b0). A floor
@@ -1503,7 +1567,7 @@ fn step_move(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f3
 /// speed along the slope; in the air keeping the horizontal velocity (the speed at most).
 /// Anything else, or a second hit, goes to StepMove, which also climbs in the air. Returns
 /// whether the turned move got through, and the height stepped up.
-fn handle_blocked(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, time: f32, tr: Trace, on_ground: bool, hits: &mut Vec<Vec3>) -> (bool, f32) {
+fn handle_blocked(h: &Hull, pos: &mut Vec3, vel: &mut Vec3, time: f32, tr: Trace, on_ground: bool, hits: &mut Touched) -> (bool, f32) {
     let n = tr.normal;
     if n.z > WALKABLE_Z && !tr.start_solid {
         let left = (1.0 - tr.fraction) * time;
@@ -1519,16 +1583,16 @@ fn handle_blocked(h: &Hull, p: &PilotParams, pos: &mut Vec3, vel: &mut Vec3, tim
         }
         // The rest from the original position, the first try being the turned move.
         let t = Trace { fraction: tr.fraction + (1.0 - tr.fraction) * t2.fraction, ..t2 };
-        return (false, step_move(h, p, pos, vel, time, t, hits));
+        return (false, step_move(h, pos, vel, time, t, hits));
     }
-    (false, step_move(h, p, pos, vel, time, tr, hits))
+    (false, step_move(h, pos, vel, time, tr, hits))
 }
 
 /// StayOnGround (client.dll 0x180207860 / 0x1801faed0): down onto a floor within the step
 /// height (from 1 unit up when the hull starts stuck), so walking down steps and slopes keeps
 /// the Pilot on them.
-fn stay_on_ground(h: &Hull, p: &PilotParams, pos: &mut Vec3) {
-    let end = *pos - Vec3::Z * p.step_height;
+fn stay_on_ground(h: &Hull, pos: &mut Vec3) {
+    let end = *pos - Vec3::Z * h.p.step_height;
     let mut tr = h.trace(*pos, end);
     if tr.start_solid {
         tr = h.trace(*pos + Vec3::Z, end);
@@ -1542,13 +1606,13 @@ fn stay_on_ground(h: &Hull, p: &PilotParams, pos: &mut Vec3) {
 }
 
 /// One tick of movement with collision: client.dll's ground move (0x18020cc30) or AirMove
-/// (0x1801f1bd0), then CategorizePosition (0x1801f3160). Returns the fastest speed lost into a
-/// wall (0 if none).
+/// (0x1801f1bd0), then CategorizePosition (0x1801f3160). Returns the speed the move had into
+/// the wall that blocked it (along the wall's flattened normal; 0 if none).
 fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput, dt: f32) -> f32 {
     let h = Hull::new(world, p, s.crouched);
     h.unstick(&mut s.pos);
     let vel_before = s.vel;
-    let mut hits = Vec::new();
+    let mut hits = Touched::default();
     // The surface the hull ran into (blocked, not stepped over), for the wall-run start.
     let mut wall: Option<Vec3> = None;
     let on_ground_before = s.on_ground();
@@ -1567,7 +1631,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
         if !tr.hit() {
             s.pos = dest;
         } else {
-            let (done, rise) = handle_blocked(&h, p, &mut s.pos, &mut s.vel, dt, tr, true, &mut hits);
+            let (done, rise) = handle_blocked(&h, &mut s.pos, &mut s.vel, dt, tr, true, &mut hits);
             if !done {
                 wall = Some(tr.normal);
             }
@@ -1583,7 +1647,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
                 }
             }
         }
-        stay_on_ground(&h, p, &mut s.pos);
+        stay_on_ground(&h, &mut s.pos);
         // On the ground the velocity stays along it (the dispatcher, 0x1801f9693).
         s.vel.z = 0.0;
     } else {
@@ -1591,8 +1655,15 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
         let tr = h.trace(s.pos, dest);
         if !tr.hit() {
             s.pos = dest;
-        } else if matches!(s.mode, PilotMove::WallRun { .. }) {
-            try_player_move(&h, &mut s.pos, &mut s.vel, dt, Some(tr), &mut hits);
+        } else if let PilotMove::WallRun { normal, .. } = s.mode {
+            // On a wall-run the wall is the ground (the dispatcher, 0x1801f9621, runs the
+            // surface move 0x18020cc30 with the Pilot's up vector turned to the wall's normal),
+            // so what blocks the run goes through StepMove measured from the wall: trims,
+            // frames and pillars up to the step height out from it are stepped over. The plain
+            // move inside StepMove is the slide along the wall as before; the stepped one is
+            // only taken when it gets further along the wall.
+            let hw = Hull { up: normal.normalize_or(Vec3::Z), ..Hull::new(world, p, s.crouched) };
+            step_move(&hw, &mut s.pos, &mut s.vel, dt, tr, &mut hits);
         } else {
             // Falling slowly (under 300 u/s across) into something steep, a while after leaving
             // the ground: just slide along it, without climbing, unless there is floor within
@@ -1611,7 +1682,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
             if slow_fall {
                 try_player_move(&h, &mut s.pos, &mut s.vel, dt, Some(tr), &mut hits);
                 wall = Some(n);
-            } else if !handle_blocked(&h, p, &mut s.pos, &mut s.vel, dt, tr, false, &mut hits).0 {
+            } else if !handle_blocked(&h, &mut s.pos, &mut s.vel, dt, tr, false, &mut hits).0 {
                 wall = Some(n);
             }
         }
@@ -1633,7 +1704,6 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
             s.landed = Some(-s.vel.z);
             s.mode = PilotMove::Ground;
             s.since_land = 0.0;
-            s.land_speed = s.horizontal_speed();
             s.wallrun_no_boost = true;
             s.vel.z = 0.0;
         }
@@ -1660,7 +1730,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
     } else if let PilotMove::WallRun { normal, time } = s.mode {
         // A running wall is followed by the knee-height probe (wallrun_allowed_wall_dist from
         // the hull's face, 0x18020e9e0); losing it drops the Pilot off.
-        let touched = hits.iter().rev().find(|n| n.z.abs() <= WALKABLE_Z).map(|n| Vec3::new(n.x, n.y, 0.0).normalize_or_zero());
+        let touched = hits.0.map(|n| Vec3::new(n.x, n.y, 0.0).normalize_or_zero());
         let sensed = wall_probe(world, p, s.pos + Vec3::Z * 16.0, normal)
             .filter(|(d, n)| *d <= p.wallrun.allowed_wall_dist && n.z.abs() <= 0.7)
             .map(|(_, n)| Vec3::new(n.x, n.y, 0.0).normalize_or_zero())

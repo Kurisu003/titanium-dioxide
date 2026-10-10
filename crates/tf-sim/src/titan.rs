@@ -1,7 +1,8 @@
-//! Titan movement: walk, sprint, dash and gravity against a [`CollisionWorld`].
+//! Titan movement: walk, sprint, crouch, dash, hover and gravity against a [`CollisionWorld`].
 //! Units are the game's (inches, seconds); Z is up; yaw 0 faces +X.
 
 use crate::collision::{CollisionWorld, CLIP_TITAN};
+use crate::smoothstep;
 use glam::{Vec2, Vec3};
 
 /// Tuning, normally filled from `titan_*.set` player settings.
@@ -162,8 +163,7 @@ impl TitanState {
     /// The eye: the stand view height, eased toward the crouch one by `duck` (Source's
     /// SimpleSpline, 3t^2 - 2t^3).
     pub fn eye(&self, p: &TitanParams) -> Vec3 {
-        let d = self.duck.clamp(0.0, 1.0);
-        let d = d * d * (3.0 - 2.0 * d);
+        let d = smoothstep(self.duck.clamp(0.0, 1.0));
         self.pos + Vec3::Z * (p.eye_height + (p.crouch_eye_height - p.eye_height) * d)
     }
 
@@ -253,8 +253,9 @@ fn approach(cur: Vec2, target: Vec2, rate: f32) -> Vec2 {
 }
 
 /// Seconds the eye takes to move down into the crouch view height and back up. The settings
-/// have no key for it; these are Source's gamemovement constants (TIME_TO_DUCK_MSECS 400,
-/// TIME_TO_UNDUCK_MSECS 200), a guess for Respawn's engine.
+/// have no key for it: the engine's Duck (client.dll 0x1801f5500) times the view with
+/// m_flDucktime, 400 ms down and 200 ms up (Source's TIME_TO_DUCK_MSECS / TIME_TO_UNDUCK_MSECS),
+/// as the Pilot's crouch does (`pilot::step`).
 pub const DUCK_TIME: f32 = 0.4;
 pub const UNDUCK_TIME: f32 = 0.2;
 
@@ -406,6 +407,10 @@ pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &Col
     }
 }
 
+/// How far (game units) the body spheres can be pushed within one move and still use the move's
+/// `Region` (beyond, a sphere searches the trees itself, with the same result).
+const BODY_MARGIN: f32 = 16.0;
+
 fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta: Vec3) {
     let was_on_ground = s.on_ground;
     s.pos += delta;
@@ -414,9 +419,12 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
     let r = p.radius;
     let lo = p.step_height + r;
     let hi = (s.height(p) - r).max(lo);
+    // Titan clips (the map's TOOLSCLIP_TITAN and player clip brushes) hold BT in too. One
+    // search of the trees serves the three spheres, with room for their pushes.
+    let m = r + BODY_MARGIN;
+    let body = world.region_moving(s.pos + Vec3::new(-m, -m, lo - m), s.pos + Vec3::new(m, m, hi + m), CLIP_TITAN);
     for z in [lo, (lo + hi) * 0.5, hi] {
-        // Titan clips (the map's TOOLSCLIP_TITAN and player clip brushes) hold BT in too.
-        let (push, normals) = world.push_sphere_moving(s.pos + Vec3::Z * z, r, 0.7, CLIP_TITAN);
+        let (push, normals) = body.push_sphere(s.pos + Vec3::Z * z, r, 0.7);
         if push != Vec3::ZERO {
             let mut push = push;
             // Hitting a ceiling while rising stops the climb; otherwise push sideways only.
@@ -438,9 +446,12 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
     let reach_down = if was_on_ground { p.step_height } else { 1.0 };
     let mut ground: Option<f32> = None;
     let probe = r * 0.6;
+    // One search of the trees for the five rays (their boxes are padded by a unit or so).
+    let m = probe + 4.0;
+    let feet = world.region_moving(s.pos + Vec3::new(-m, -m, -reach_down - 4.0), s.pos + Vec3::new(m, m, p.step_height + 4.0), CLIP_TITAN);
     for off in [Vec3::ZERO, Vec3::X * probe, -Vec3::X * probe, Vec3::Y * probe, -Vec3::Y * probe] {
         let origin = s.pos + off + Vec3::Z * p.step_height;
-        if let Some(hit) = world.raycast_moving(origin, -Vec3::Z, p.step_height + reach_down, CLIP_TITAN) {
+        if let Some(hit) = feet.raycast(origin, -Vec3::Z, p.step_height + reach_down) {
             if hit.normal.z > 0.7 {
                 ground = Some(ground.map_or(hit.point.z, |g: f32| g.max(hit.point.z)));
             }
