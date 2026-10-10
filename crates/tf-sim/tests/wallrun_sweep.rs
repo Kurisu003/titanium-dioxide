@@ -84,7 +84,9 @@ fn run(w: &CollisionWorld, c: Case) -> Outcome {
         if matches!(s.mode, PilotMove::WallRun { .. }) {
             return Outcome::Ran;
         }
-        if was_air && s.mode == PilotMove::Air && s.pos.x + p.radius >= WALL_X - 0.5 {
+        // In contact: the move's push-out leaves the hull 1/128 unit off the wall (a jump that
+        // lands right at the wall's foot can pass within half a unit without touching it).
+        if was_air && s.mode == PilotMove::Air && s.pos.x + p.radius >= WALL_X - 0.1 {
             touched = true;
         }
         if s.on_ground() {
@@ -184,7 +186,9 @@ fn short_walls() {
         let s = 6000.0;
         quad(&mut w, Vec3::new(-s, -s, 0.0), Vec3::new(s, -s, 0.0), Vec3::new(s, s, 0.0), Vec3::new(-s, s, 0.0));
         quad(&mut w, Vec3::new(WALL_X, -s, 0.0), Vec3::new(WALL_X, -s, h), Vec3::new(WALL_X, s, h), Vec3::new(WALL_X, s, 0.0));
-        let mut st = PilotState::new(Vec3::new(WALL_X - p.radius - 0.5, 0.0, 10.0), std::f32::consts::FRAC_PI_2);
+        // Falling from 6 units up: the mid probe's cube (52 +- 14.4 above the feet) reaches
+        // below 45 at once.
+        let mut st = PilotState::new(Vec3::new(WALL_X - p.radius - 0.5, 0.0, 6.0), std::f32::consts::FRAC_PI_2);
         st.vel = Vec3::new(60.0, 300.0, 0.0);
         let mut ran = false;
         for _ in 0..30 {

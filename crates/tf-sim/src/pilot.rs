@@ -617,6 +617,11 @@ pub struct PilotState {
     /// 0x1801f5500: m_flDucktime 400 ms, 200 ms when the crouch started a slide).
     duck_held: f32,
     duck_held_time: f32,
+    /// Seconds left of the unduck after crouch was let go (m_duckState 3): no jumping.
+    unduck: f32,
+    /// Last tick's movement key directions (forward/back, right/left as -1, 0, 1): key presses
+    /// for the keyboard grace.
+    prev_keys: (i8, i8),
     /// Downward speed of the latest landing (taken by the camera/sound code).
     pub landed: Option<f32>,
     /// The zipline being ridden, and seconds until another can be used.
@@ -669,6 +674,8 @@ impl PilotState {
             duck_time: 0.4,
             duck_held: 0.0,
             duck_held_time: 0.4,
+            unduck: 0.0,
+            prev_keys: (0, 0),
             landed: None,
             zipline: None,
             zip_cooldown: 0.0,
@@ -856,7 +863,11 @@ fn can_wallrun(s: &PilotState, p: &PilotParams, world: &CollisionWorld, input: &
     if n.z > 0.7 || n.z < -0.35 {
         return CanWallrun::No;
     }
-    // (Crouching only blocks a Pilot who can't stand up; airborne Pilots aren't crouched here.)
+    // Crouching only blocks a Pilot who can't stand up; ducked in the air with crouch held the
+    // run would end at once (crouch drops off a wall), so it doesn't start.
+    if s.crouched && (input.crouch || !Hull::new(world, p, false).fits(s.pos - Vec3::Z * air_duck_shift(p))) {
+        return CanWallrun::No;
+    }
     let flat = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
     // The wall last left: only below where that run started.
     if s.last_wall.is_some_and(|last| flat.dot(last) > w.same_wall_dot) && (!w.same_wall_allowed || s.pos.z >= s.wallrun_start.z + w.same_wall_height) {
@@ -891,6 +902,7 @@ fn try_start_wallrun(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld
     s.wallrun_retry = None;
     match can_wallrun(s, p, world, input, n, dir) {
         CanWallrun::Yes => {
+            stand_in_air(s, p, world);
             let w = &p.wallrun;
             let flat = Vec3::new(n.x, n.y, 0.0).normalize_or_zero();
             if s.last_wall.is_some_and(|last| flat.dot(last) > w.same_wall_dot) {
@@ -965,11 +977,16 @@ fn superjump(s: &mut PilotState, wish: Vec2, p: &PilotParams) {
 }
 
 /// AirMove's keyboard grace (client.dll 0x1801f1d62): within jump_keyboardgraceperiodmax of
-/// the last jump, the movement keys (the buttons, not their analog amount) turn the horizontal
-/// velocity toward their direction, keeping its speed: by jump_keyboardgrace_strength up to
-/// jump_keyboardgraceperiodmin, fading to nothing at the max, and changing the velocity by at
-/// most jump_keyboardgrace_max x the standing sprint speed per tick. The game takes the keys
-/// along the view's forward and right; flattening them here ignores the view's pitch.
+/// the last jump, on a tick where a movement key goes down (the move data's pressed buttons,
+/// 0x618 = IN_FORWARD|IN_BACK|IN_MOVELEFT|IN_MOVERIGHT), the held movement keys (the buttons,
+/// not their analog amount) turn the horizontal velocity toward their direction, keeping its
+/// speed: by jump_keyboardgrace_strength up to jump_keyboardgraceperiodmin, fading to nothing
+/// at the max, and changing the velocity by at most jump_keyboardgrace_max x the standing
+/// sprint speed. It happens once per key press: in the real game's capture, back pressed 0.2 s
+/// into a 260 u/s jump takes 182 off the speed on that tick only, then air acceleration slows
+/// the rest (the speed passes through zero 0.15 s later), instead of turning the jump around.
+/// The game takes the keys along the view's forward and right; flattening them here ignores
+/// the view's pitch.
 fn keyboard_grace(h: Vec2, fwd: Vec2, right: Vec2, input: &PilotInput, since_jump: f32, p: &PilotParams) -> Vec2 {
     let key = |x: f32| if x > 0.01 { 1.0 } else if x < -0.01 { -1.0 } else { 0.0 };
     let keys = fwd * key(input.forward) + right * key(input.right);
@@ -984,6 +1001,113 @@ fn keyboard_grace(h: Vec2, fwd: Vec2, right: Vec2, input: &PilotInput, since_jum
     let target = if dir.length() > 1e-4 { dir.normalize() * speed } else { dir };
     let delta = (target - h).clamp_length_max(p.sprint_speed * p.keyboard_grace_cap);
     h + delta
+}
+
+/// A movement key's direction from its input (-1, 0, 1).
+fn key_sign(x: f32) -> i8 {
+    if x > 0.01 {
+        1
+    } else if x < -0.01 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// StartSlide (client.dll 0x18020af70), run when crouch goes down on the ground (Duck,
+/// 0x1801f571a) or on landing while ducking or ducked (SetGroundEntity 0x1801fa1c6, m_duckState
+/// 1 or 2): the horizontal speed must be at least slideRequiredStartSpeed and the movement
+/// input within slide_max_angle_dot of the view's forward (no input, a strafe or backpedal is
+/// just a crouch). After slide_boost_cooldown since the last slide it adds slideSpeedBoost,
+/// not past slideSpeedBoostCap, and allows one slide long jump.
+fn start_slide(s: &mut PilotState, p: &PilotParams, wish: Vec2, fwd: Vec2, dt: f32) {
+    let speed = s.horizontal_speed();
+    if speed < p.slide_min_speed || wish.dot(fwd) < p.slide_max_angle_dot {
+        return;
+    }
+    if s.since_slide > p.slide_boost_cooldown {
+        let boosted = (speed + p.slide_boost).min(p.slide_boost_cap);
+        s.slide_boost_given = (boosted - speed).max(0.0);
+        if boosted > speed {
+            let v = hv(s.vel) * (boosted / speed);
+            s.vel.x = v.x;
+            s.vel.y = v.y;
+        }
+        s.slide_long_jump = true;
+    }
+    s.mode = PilotMove::Slide;
+    s.since_slide = 0.0;
+    if s.duck_held <= dt {
+        s.duck_held_time = 0.2;
+    }
+}
+
+/// Respawn's AirAccelerate (client.dll 0x1801f19a0) on the full velocity: Source air
+/// acceleration toward the input up to `air_speed`; already faster along it, the velocity turns
+/// toward the input at player_extraairaccelleration (2 u/s^2), the result capped at the larger
+/// of the old speed and the wish speed. The cap is on the 3D speed, so while rising or falling
+/// that little push trades vertical speed for horizontal (the capture's jumps gain 0.5-1 u/s
+/// across while holding forward, 1.5 u/s^2 at 173 across and 290 up).
+fn air_accelerate(v: Vec3, wish: Vec2, air_speed: f32, accel: f32, dt: f32) -> Vec3 {
+    let dir = wish.normalize_or_zero().extend(0.0);
+    let wish_speed = wish.length().min(1.0) * air_speed;
+    let add = wish_speed - v.dot(dir);
+    if add > 0.0 {
+        v + dir * (accel * dt).min(add)
+    } else {
+        let max_sq = v.length_squared().max(wish_speed * wish_speed);
+        let n = v + dir * dt * 2.0;
+        if n.length_squared() > max_sq { n * (max_sq / n.length_squared()).sqrt() } else { n }
+    }
+}
+
+/// AirMove's steering: air acceleration, then the keyboard grace on a key press just after a
+/// jump.
+#[allow(clippy::too_many_arguments)]
+fn air_control(s: &mut PilotState, wish: Vec2, fwd: Vec2, right: Vec2, input: &PilotInput, key_pressed: bool, p: &PilotParams, dt: f32) {
+    s.vel = air_accelerate(s.vel, wish, p.air_speed, p.air_accel, dt);
+    if key_pressed && s.since_jump < p.keyboard_grace.1 {
+        let h = keyboard_grace(hv(s.vel), fwd, right, input, s.since_jump, p);
+        s.vel.x = h.x;
+        s.vel.y = h.y;
+    }
+}
+
+/// Half the difference between the standing and crouched hull heights: ducking in the air
+/// lifts the feet this much and standing up lowers them, keeping the hull's middle in place
+/// (FinishDuck 0x1801f7290 / FinishUnDuck 0x1801f75e0, x 0.5 at 0x1808a2f88).
+fn air_duck_shift(p: &PilotParams) -> f32 {
+    (p.height - p.crouch_height) * 0.5
+}
+
+/// Stand up in the air (the hull's middle kept) if the standing hull fits there.
+fn stand_in_air(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld) -> bool {
+    if !s.crouched {
+        return true;
+    }
+    let at = s.pos - Vec3::Z * air_duck_shift(p);
+    if Hull::new(world, p, false).fits(at) {
+        s.pos = at;
+        s.crouched = false;
+        true
+    } else {
+        false
+    }
+}
+
+/// Ducking in the air: once crouch has been held for the duck time (Duck's timer, 0.4 s) the
+/// hull turns crouched with the feet lifted (the capture's crouched slide-hop jump rises 12.5
+/// units at that moment and lands later); letting go stands back up when the unduck ends, if
+/// there is room.
+fn air_duck(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input: &PilotInput) {
+    if input.crouch {
+        if !s.crouched && s.duck_held >= s.duck_held_time {
+            s.pos.z += air_duck_shift(p);
+            s.crouched = true;
+        }
+    } else if s.unduck <= 0.0 {
+        stand_in_air(s, p, world);
+    }
 }
 
 pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &CollisionWorld, dt: f32) {
@@ -1002,9 +1126,15 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     if let Some(r) = &mut s.wallrun_retry {
         r.0 -= dt;
     }
+    // Movement keys pressed this tick (the move data's pressed buttons, which the keyboard grace
+    // reads: AirMove 0x1801f1d62 tests IN_FORWARD|IN_BACK|IN_MOVELEFT|IN_MOVERIGHT there).
+    let keys = (key_sign(input.forward), key_sign(input.right));
+    let key_pressed = (keys.0 != 0 && keys.0 != s.prev_keys.0) || (keys.1 != 0 && keys.1 != s.prev_keys.1);
+    s.prev_keys = keys;
     // The view goes into a crouch over 0.4 s (0.2 s when the crouch starts a slide) and back
-    // up over 0.2 s (client.dll Duck, 0x1801f5500: m_flDucktime 400 / 200 ms).
-    if s.crouched {
+    // up over 0.2 s (client.dll Duck, 0x1801f5500: m_flDucktime 400 / 200 ms); in the air it
+    // starts going down while crouch is held.
+    if s.crouched || (input.crouch && s.mode == PilotMove::Air) {
         if s.duck <= 0.0 {
             s.duck_time = if s.mode == PilotMove::Slide { 0.2 } else { 0.4 };
         }
@@ -1012,13 +1142,23 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     } else {
         s.duck = (s.duck - dt / 0.2).max(0.0);
     }
+    // Letting go of crouch starts the unduck (Duck 0x1801f5847 / 0x1801f5867, m_duckState 3):
+    // 200 ms from fully ducked, or 200 ms times the part of the duck done. Until it finishes
+    // the Pilot can't jump unless sliding (jump handler 0x1802003f4); the capture of the real
+    // game shows a jump pressed together with letting go of crouch out of a slide is lost.
+    s.unduck = (s.unduck - dt).max(0.0);
+    let released = !input.crouch && s.duck_held > 0.0;
     if !input.crouch {
+        if released {
+            s.unduck = 0.2 * (s.duck_held / s.duck_held_time).min(1.0);
+        }
         s.duck_held = 0.0;
     } else {
         if s.duck_held == 0.0 {
             s.duck_held_time = 0.4;
         }
         s.duck_held += dt;
+        s.unduck = 0.0;
     }
     // Off the ground the sprint view eases out; a sprinting jump lands into the fast start.
     if !s.on_ground() {
@@ -1059,6 +1199,8 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
         return;
     }
 
+    // Whether this tick's move is airborne and owes the second half of its gravity.
+    let mut half_gravity = false;
     match s.mode {
         PilotMove::Ground | PilotMove::Slide => {
             s.double_jump_available = true;
@@ -1066,29 +1208,11 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             s.since_ground = 0.0;
             s.jump_grace = 0.0;
             let speed = s.horizontal_speed();
-            // StartSlide (client.dll 0x18020af70) runs when crouch goes down on the ground (Duck,
-            // 0x1801f571a) or on landing already crouched (0x1801fa1c6): the horizontal speed
-            // must be at least slideRequiredStartSpeed and the movement input within
-            // slide_max_angle_dot of the view's forward (no input, a strafe or backpedal is
-            // just a crouch). After slide_boost_cooldown since the last slide it adds
-            // slideSpeedBoost, not past slideSpeedBoostCap, and allows one slide long jump.
+            // StartSlide runs when crouch goes down on the ground (Duck, 0x1801f571a); landing
+            // while ducking starts one too (`move_once`).
             let crouch_pressed = input.crouch && !s.crouched;
-            if s.mode == PilotMove::Ground && crouch_pressed && speed >= p.slide_min_speed && wish.dot(fwd) >= p.slide_max_angle_dot {
-                if s.since_slide > p.slide_boost_cooldown {
-                    let boosted = (speed + p.slide_boost).min(p.slide_boost_cap);
-                    s.slide_boost_given = (boosted - speed).max(0.0);
-                    if boosted > speed {
-                        let v = hv(s.vel) * (boosted / speed);
-                        s.vel.x = v.x;
-                        s.vel.y = v.y;
-                    }
-                    s.slide_long_jump = true;
-                }
-                s.mode = PilotMove::Slide;
-                s.since_slide = 0.0;
-                if s.duck_held <= dt {
-                    s.duck_held_time = 0.2;
-                }
+            if s.mode == PilotMove::Ground && crouch_pressed {
+                start_slide(s, p, wish, fwd, dt);
             }
             let sliding = s.mode == PilotMove::Slide;
             // Standing up ends a slide only at or below slideMaxStopSpeed; it always ends under
@@ -1096,10 +1220,17 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             let want_stop = !input.crouch;
             if sliding && (speed < p.slide_stop_speed || (want_stop && speed <= p.slide_max_stop_speed)) {
                 s.mode = PilotMove::Ground;
+                // Crouch let go earlier, above slideMaxStopSpeed: the unduck starts now.
+                if want_stop && !released {
+                    s.unduck = 0.2;
+                }
             }
             // Standing up needs room for the standing hull (under something low the Pilot stays
             // crouched).
             s.crouched = input.crouch || s.mode == PilotMove::Slide || (s.crouched && !Hull::new(world, p, false).fits(s.pos));
+            // No jump while unducking (m_duckState 3) unless sliding (0x1802003f4); a Pilot who
+            // can't stand up stays ducked and can.
+            let jump = input.jump && (s.unduck <= 0.0 || s.mode == PilotMove::Slide || s.crouched);
             s.sprinting = input.sprint && input.forward > 0.5 && !s.crouched;
             if s.sprinting {
                 s.sprint_wait += dt;
@@ -1117,7 +1248,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 s.sprint_frac = (s.sprint_frac - dt / p.sprint_end.max(1e-3)).max(0.0);
             }
             let mut h = hv(s.vel);
-            if input.jump {
+            if jump {
                 // Jumping skips this tick's friction (Source's CheckJumpButton runs first), so
                 // jumping on the tick you land keeps your speed: bunny hops and slide hops.
             } else if s.mode == PilotMove::Slide {
@@ -1167,7 +1298,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             }
             s.vel.x = h.x;
             s.vel.y = h.y;
-            if input.jump {
+            if jump {
                 // A jump out of a slide is slideJumpHeight high and keeps the slide's speed
                 // (jump handler 0x180200609). Once per boosted slide it is a long jump: jumping
                 // before the Pilot is fully ducked (m_duckState 2) within 0.4 s of the slide's
@@ -1190,7 +1321,13 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 // speed it has then, not the landing speed).
                 let skip = s.since_land <= p.skip_time;
                 let height = if sliding { p.slide_jump_height } else { p.jump_height };
-                s.vel.z = jump_v(height * if skip { p.skip_jump_frac } else { 1.0 });
+                // The jump speed is added to the vertical speed (0x180200da4), which already
+                // lost StartGravity's half tick of gravity, and the jump finishes that gravity at
+                // once: the move runs at the jump speed less a tick of gravity, and after the
+                // move's own FinishGravity the tick ends 1.5 ticks of gravity under it (the real
+                // game logs 293.7 for a 300 u/s jump at 141 fps).
+                s.vel.z = jump_v(height * if skip { p.skip_jump_frac } else { 1.0 }) - p.gravity * dt;
+                half_gravity = true;
                 if skip {
                     if sp > p.skip_speed_retain {
                         sp = (sp - p.skip_speed_reduce).max(p.skip_speed_retain);
@@ -1199,31 +1336,30 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 let d = h.normalize_or_zero();
                 s.vel.x = d.x * sp;
                 s.vel.y = d.y * sp;
-                s.crouched = false;
+                // Ducked (crouch held) the Pilot leaves the ground ducked.
+                s.crouched &= input.crouch;
                 took_off(s);
+                // The jump tick then runs AirMove, not WalkMove.
+                air_control(s, wish, fwd, right, input, key_pressed, p, dt);
             }
         }
         PilotMove::Air => {
-            s.crouched = false;
-            // AirAccelerate (client.dll 0x1801f19a0): Source air acceleration, only the speed
-            // along the wish direction is capped (at airSpeed), so momentum carries and strafing
-            // curves the path.
-            let mut h = crate::titan::air_move(hv(s.vel), wish, p.air_speed, p.air_accel, dt);
-            // Keyboard grace (AirMove 0x1801f1d62): just after a jump the keys turn the velocity.
-            if s.since_jump < p.keyboard_grace.1 {
-                h = keyboard_grace(h, fwd, right, input, s.since_jump, p);
-            }
-            s.vel.x = h.x;
-            s.vel.y = h.y;
-            s.vel.z -= p.gravity * dt;
+            // StartGravity: half a tick of gravity before the move and half after it
+            // (FinishGravity, below), so the move runs at the mid-tick vertical speed.
+            s.vel.z -= 0.5 * p.gravity * dt;
+            half_gravity = true;
+            air_duck(s, p, world, input);
+            // The jump comes before AirMove (CheckJumpButton) and finishes its gravity at once.
             if input.jump && s.jump_grace > 0.0 {
                 // Just walked off a ledge: still a normal jump (jump_graceperiod).
                 s.jump_grace = 0.0;
-                s.vel.z = jump_v(p.jump_height);
+                s.vel.z = jump_v(p.jump_height) - 0.5 * p.gravity * dt;
                 took_off(s);
             } else if input.jump && s.double_jump_available {
                 superjump(s, wish, p);
+                s.vel.z -= 0.5 * p.gravity * dt;
             }
+            air_control(s, wish, fwd, right, input, key_pressed, p, dt);
         }
         PilotMove::Mantle { from, to, time } => {
             let t = time + dt;
@@ -1341,6 +1477,10 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
         }
     }
     move_once(s, p, world, input, dt);
+    // FinishGravity, unless the move landed (or caught a wall).
+    if half_gravity && s.mode == PilotMove::Air {
+        s.vel.z -= 0.5 * p.gravity * dt;
+    }
 }
 
 /// A surface is a floor when its normal's up component is at least this (client.dll
@@ -1706,6 +1846,12 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
             s.since_land = 0.0;
             s.wallrun_no_boost = true;
             s.vel.z = 0.0;
+            // Landing while ducking or ducked (crouch held) starts a slide on this tick
+            // (SetGroundEntity 0x1801fa1c6): the capture's crouched landing at 260 is at 400
+            // on the landing frame itself.
+            if s.duck_held > 0.0 && matches!(s.mode, PilotMove::Ground) && input.crouch {
+                start_slide(s, p, wish_of(s.yaw, input), Vec2::new(s.yaw.cos(), s.yaw.sin()), dt);
+            }
         }
     } else if on_ground_before {
         // Walked off a ledge: jump_graceperiod to still jump.
@@ -1968,7 +2114,9 @@ fn grapple_step(s: &mut PilotState, input: &PilotInput, wish: Vec2, p: &PilotPar
         superjump(s, Vec2::ZERO, p);
     }
     s.mode = PilotMove::Air;
-    s.crouched = false;
+    if !stand_in_air(s, p, world) {
+        s.crouched = false;
+    }
 
     let still = PilotInput { forward: 0.0, ..*input };
     let impact = move_once(s, p, world, &still, dt);
