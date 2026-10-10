@@ -1344,7 +1344,7 @@ order.
 The collision BVH's median splits overlap a lot (a Titan's sphere push walked ~184 nodes to find
 ~3 triangles that actually touch it), but its leaves and walk order define the query results, so
 they stay: queries walk a binned-SAH tree built over those leaves instead and keep the old
-results bit for bit. Box queries (sphere pushes, box sweeps, wall searches) put the leaves they
+results bit for bit. Box queries (sphere pushes, box sweeps) put the leaves they
 find back into the old walk's order; rays up to 400 units find every leaf they reach and replay
 the old nearest-first walk, with its shrinking limit, over the ones with hits (ties included);
 longer rays, and level rays exactly at a leaf's top height (where glam's NaN handling makes the
