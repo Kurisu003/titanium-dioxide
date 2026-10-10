@@ -523,8 +523,9 @@ mod tests {
             assert!((s.eye(&p).z - p.crouch_eye_height).abs() < 0.01, "{}", s.eye(&p).z);
         }
 
-        /// A jump within skip_time of landing is a skip: 75% of the height, landing speed kept
-        /// (less skip_speed_reduce above skip_speed_retain).
+        /// A jump within skip_time of landing is a skip: 75% of the height, the speed it has
+        /// then kept (less skip_speed_reduce above skip_speed_retain; client.dll 0x1802009b6
+        /// takes the current speed, so the ground ticks' friction since landing stays lost).
         #[test]
         fn skip_jump() {
             let w = arena();
@@ -538,8 +539,10 @@ mod tests {
             for _ in 0..6 {
                 step(&mut s, &PilotInput::default(), &p, &w, 1.0 / 120.0);
             }
+            let before = s.horizontal_speed();
+            assert!(before < 600.0 - 60.0 && before > p.skip_speed_retain, "friction since landing: {before}");
             step(&mut s, &PilotInput { jump: true, ..Default::default() }, &p, &w, 1.0 / 120.0);
-            assert!((s.horizontal_speed() - (600.0 - p.skip_speed_reduce)).abs() < 2.0, "skip speed {}", s.horizontal_speed());
+            assert!((s.horizontal_speed() - (before - p.skip_speed_reduce)).abs() < 0.5, "skip speed {}", s.horizontal_speed());
             let top = run(&mut s, PilotInput::default(), &w, 0.6);
             assert!((top - p.jump_height * p.skip_jump_frac * p.jump_gravity / p.gravity).abs() < 3.0, "skip apex {top}");
             // Below skip_speed_retain nothing is lost; a later jump is a full one.

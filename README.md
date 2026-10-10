@@ -455,8 +455,13 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     then keeps `slidevelocitydecay` 0.7 of itself per second. The slide ends below
     `slideStopSpeed` 125, or when crouch is let go at or below `slideMaxStopSpeed` 350. A jump
     out of a slide is `slideJumpHeight` 50 high and keeps the slide's speed; the long jump
-    raises a speed within 85% of `slideMaxJumpSpeed` 350 to 350, and jumping during the
-    crouch-down (the first 0.2 s) takes the boost back. Sliding up a step costs
+    raises a speed within 85% of `slideMaxJumpSpeed` 350 to 350, and jumping before the Pilot
+    is fully ducked (within 0.4 s of the slide's start) takes the boost back (jump handler
+    0x180200655: `m_duckState` not 2). The duck carries on in the air, so crouch held through a
+    jump lands fully ducked: landing into a slide adds the boost (SetGroundEntity 0x1801fa1c6)
+    and hopping straight out keeps it. Every slide start restarts the cooldown, boosted or not
+    (0x18020b213), so a slide-hop chain gets one boost and then carries it, losing only the
+    slide friction of each landing's ground ticks; `tests/slide_hop.rs` prints the speeds. Sliding up a step costs
     `slide_step_velocity_reduction` 10 per unit of step height (telling a step from a ramp by a
     flat top is ours). The view goes down into a crouch over 0.4 s (0.2 s when the crouch
     starts a slide) and back up over 0.2 s, eased with Duck's smoothstep. Slides tilt the view
@@ -472,9 +477,9 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
     (`sound_slide_prefix` "pilotslide" by surface), the hull staying standing until the crouch
     finishes, and the slide effects table.
   - Jumps: a jump within `skip_time` 0.1 s of landing is a "skip": `skip_jump_height_fraction`
-    0.75 of the height, keeping the landing speed less `skip_speed_reduce` 12, which doesn't cut
-    below `skip_speed_retain` 450 (restoring the landing speed through those ground ticks is our
-    reading). `jump_graceperiod` 0.2 s after walking off a ledge still gives a normal jump. A
+    0.75 of the height, keeping its speed less `skip_speed_reduce` 12, which doesn't cut below
+    `skip_speed_retain` 450 (client.dll 0x1802009b6 takes the speed at the jump: friction since
+    landing stays lost). `jump_graceperiod` 0.2 s after walking off a ledge still gives a normal jump. A
     double jump while already rising fast still adds `superjump_min_height_fraction` 0.25 of its
     height. Not modelled: `jump_keyboardgrace*` (redirecting a jump with keys just after it).
   - Wall-running is ground movement on the wall's plane, as the keys' text describes:

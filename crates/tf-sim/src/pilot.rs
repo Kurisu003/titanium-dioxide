@@ -583,9 +583,8 @@ pub struct PilotState {
     push_away: f32,
     /// Seconds of jump_graceperiod left after walking off a ledge.
     jump_grace: f32,
-    /// Seconds since the last landing, and the horizontal speed then (for skips).
+    /// Seconds since the last landing (for skips).
     since_land: f32,
-    land_speed: f32,
     /// Seconds since the last jump (ground, double or wall jump): the keyboard grace.
     since_jump: f32,
     pub jumps: u32,
@@ -613,6 +612,11 @@ pub struct PilotState {
     /// `duck_frac`), and how long the current crouch takes.
     pub duck: f32,
     duck_time: f32,
+    /// The engine's duck state, which (unlike the view and hull here) carries on in the air:
+    /// seconds crouch has been held, and how long it takes to be fully ducked (Duck
+    /// 0x1801f5500: m_flDucktime 400 ms, 200 ms when the crouch started a slide).
+    duck_held: f32,
+    duck_held_time: f32,
     /// Downward speed of the latest landing (taken by the camera/sound code).
     pub landed: Option<f32>,
     /// The zipline being ridden, and seconds until another can be used.
@@ -648,7 +652,6 @@ impl PilotState {
             push_away: 0.0,
             jump_grace: 0.0,
             since_land: 99.0,
-            land_speed: 0.0,
             since_jump: 99.0,
             jumps: 0,
             grapple: None,
@@ -664,6 +667,8 @@ impl PilotState {
             slide_long_jump: false,
             duck: 0.0,
             duck_time: 0.4,
+            duck_held: 0.0,
+            duck_held_time: 0.4,
             landed: None,
             zipline: None,
             zip_cooldown: 0.0,
@@ -1007,6 +1012,14 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     } else {
         s.duck = (s.duck - dt / 0.2).max(0.0);
     }
+    if !input.crouch {
+        s.duck_held = 0.0;
+    } else {
+        if s.duck_held == 0.0 {
+            s.duck_held_time = 0.4;
+        }
+        s.duck_held += dt;
+    }
     // Off the ground the sprint view eases out; a sprinting jump lands into the fast start.
     if !s.on_ground() {
         s.sprint_fast |= s.sprinting;
@@ -1073,6 +1086,9 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 }
                 s.mode = PilotMove::Slide;
                 s.since_slide = 0.0;
+                if s.duck_held <= dt {
+                    s.duck_held_time = 0.2;
+                }
             }
             let sliding = s.mode == PilotMove::Slide;
             // Standing up ends a slide only at or below slideMaxStopSpeed; it always ends under
@@ -1154,12 +1170,14 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             if input.jump {
                 // A jump out of a slide is slideJumpHeight high and keeps the slide's speed
                 // (jump handler 0x180200609). Once per boosted slide it is a long jump: jumping
-                // before the crouch has finished (within 0.4 s) first takes the slide boost back,
-                // and a speed between 85% and 100% of slideMaxJumpSpeed is raised to it.
+                // before the Pilot is fully ducked (m_duckState 2) within 0.4 s of the slide's
+                // start first takes the slide boost back, and a speed between 85% and 100% of
+                // slideMaxJumpSpeed is raised to it. Crouch held through the air keeps the
+                // Pilot ducked, so landing into a boosted slide and hopping at once keeps it.
                 let mut sp = h.length();
                 if sliding && std::mem::take(&mut s.slide_long_jump) && sp > 0.0 {
                     let before = sp;
-                    if s.duck < 1.0 && s.since_slide < 0.4 {
+                    if s.duck_held < s.duck_held_time && s.since_slide < 0.4 {
                         sp = (sp - s.slide_boost_given).max(0.0);
                     }
                     let max = p.slide_max_jump_speed;
@@ -1167,13 +1185,13 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                         sp = max;
                     }
                 }
-                // A skip (jumping within skip_time of landing) is lower and keeps the landing
-                // speed less skip_speed_reduce, not cutting below skip_speed_retain.
+                // A skip (jumping within skip_time of landing) is lower and keeps its speed less
+                // skip_speed_reduce, not cutting below skip_speed_retain (0x1802009b6: the
+                // speed it has then, not the landing speed).
                 let skip = s.since_land <= p.skip_time;
                 let height = if sliding { p.slide_jump_height } else { p.jump_height };
                 s.vel.z = jump_v(height * if skip { p.skip_jump_frac } else { 1.0 });
                 if skip {
-                    sp = sp.max(s.land_speed);
                     if sp > p.skip_speed_retain {
                         sp = (sp - p.skip_speed_reduce).max(p.skip_speed_retain);
                     }
@@ -1686,7 +1704,6 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
             s.landed = Some(-s.vel.z);
             s.mode = PilotMove::Ground;
             s.since_land = 0.0;
-            s.land_speed = s.horizontal_speed();
             s.wallrun_no_boost = true;
             s.vel.z = 0.0;
         }
