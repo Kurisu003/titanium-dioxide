@@ -949,6 +949,38 @@ fn jump_off_wall(s: &mut PilotState, normal: Vec3) {
     s.last_wall = Some(normal);
 }
 
+/// The wall-run jump's velocity (client.dll 0x180201170), from the horizontal velocity `h` and
+/// vertical speed `vz` the Pilot has on the wall. `add` is the input direction times
+/// wallrunJumpInputDirSpeed; while sprinting, an input shorter than 1 is filled up with the view
+/// direction first (the sprint flag 0x2588). The push-off is wallrunJumpOutwardSpeed, cut by up
+/// to 80% when the Pilot both looks and pushes into the wall (the two negative dot products with
+/// the normal, 0x1802011f0), and it is the normal component of the whole `add`: `add` is raised
+/// along the normal until it has that much, not given it on top. The horizontal velocity is kept
+/// and `add` is added to it. Vertically, wallrunJumpUpSpeed is the target: a Pilot rising slower
+/// gets `min(vz + 1.5 * up, up)` (falling fast off the wall weakens the jump), one rising faster
+/// keeps its speed (0x180201350).
+fn wall_jump_velocity(h: Vec2, vz: f32, normal: Vec3, wish: Vec2, fwd: Vec2, pitch: f32, sprinting: bool, p: &PilotParams) -> Vec3 {
+    let mut dir = wish;
+    if sprinting && dir.length() < 1.0 {
+        dir += fwd * (1.0 - dir.length());
+    }
+    let dir = Vec3::new(dir.x, dir.y, 0.0);
+    let mut add = dir * p.wallrun_jump_input;
+    // The view direction's dot with the wall normal (the normal is horizontal, so only the pitch's
+    // cosine matters), clamped to "into the wall".
+    let look_in = (hv(normal).dot(fwd) * pitch.cos()).min(0.0);
+    let push_in = normal.dot(dir).min(0.0);
+    let outward = p.wallrun_jump_out * (1.0 - 0.8 * look_in * push_in);
+    let along = normal.dot(add);
+    if along < outward {
+        add += normal * (outward - along);
+    }
+    let up = p.wallrun_jump_up;
+    let vz = vz + add.z;
+    let vz = if vz < up { (vz + 1.5 * up).min(up) } else { vz };
+    Vec3::new(h.x + add.x, h.y + add.y, vz)
+}
+
 /// The double jump (client.dll jump handler 0x180200200, superjump branch). Vertical: rising
 /// slower than a jump of superjump_min_height_fraction of superjumpMaxHeight would still add,
 /// the vertical speed is replaced by a full superjump (sqrt(2 * sv_gravity * height)); rising
@@ -1385,8 +1417,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             s.since_ground = 0.0;
             s.vel = Vec3::ZERO;
             if input.jump {
-                let v = normal * p.wallrun_jump_out + Vec3::new(wish.x, wish.y, 0.0) * p.wallrun_jump_input;
-                s.vel = Vec3::new(v.x, v.y, p.wallrun_jump_up);
+                s.vel = wall_jump_velocity(Vec2::ZERO, 0.0, normal, wish, fwd, s.pitch, s.sprinting, p);
                 jump_off_wall(s, normal);
             } else if !input.ads || input.crouch || t >= p.wallrun_hang_time {
                 fall_off_wall(s, p, normal);
@@ -1452,8 +1483,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
                 return;
             }
             if wall_jump {
-                let v = normal * p.wallrun_jump_out + Vec3::new(wish.x, wish.y, 0.0) * p.wallrun_jump_input;
-                s.vel = Vec3::new(h.x + v.x, h.y + v.y, p.wallrun_jump_up);
+                s.vel = wall_jump_velocity(h, vz, normal, wish, fwd, s.pitch, s.sprinting, p);
                 jump_off_wall(s, normal);
             } else if t >= p.wallrun_time || input.crouch || s.push_away >= w.push_away_time {
                 fall_off_wall(s, p, normal);
