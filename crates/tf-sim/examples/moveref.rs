@@ -43,7 +43,16 @@ fn main() {
     let w = CollisionWorld::load(std::path::Path::new(&a[1])).expect("collision dump");
     w.finish();
     if a[2] == "prog" {
-        let fps: f32 = a.get(5).map(|s| s.parse().expect("fps")).unwrap_or(143.0);
+        // `fps` may also be a file with one frame time (seconds) per line: the real capture's
+        // client frames, replayed one for one (the last one repeats when they run out).
+        let (fps, dts): (f32, Option<Vec<f32>>) = match a.get(5) {
+            Some(x) if std::path::Path::new(x).is_file() => {
+                let v: Vec<f32> = std::fs::read_to_string(x).expect("dt file").lines().filter_map(|l| l.trim().parse().ok()).collect();
+                (v.len() as f32 / v.iter().sum::<f32>(), Some(v))
+            }
+            Some(x) => (x.parse().expect("fps"), None),
+            None => (143.0, None),
+        };
         let lat: usize = a.get(6).map(|s| s.parse().expect("latency")).unwrap_or(1);
         let only: Option<Vec<&str>> = a.get(7).map(|s| s.split(',').collect());
         let text = std::fs::read_to_string(&a[3]).expect("programs file");
@@ -53,7 +62,12 @@ fn main() {
             if c.len() < 4 || only.as_ref().is_some_and(|o| !o.contains(&c[0])) {
                 continue;
             }
-            let out = run_program(&w, c[1], c[3], fps, lat);
+            let dts = dts.as_ref().and_then(|_| {
+                // per-program frame times: <dtfile dir>/<name>.dts if present, else the shared list
+                let per = std::path::Path::new(&a[5]).with_file_name(format!("{}.dts", c[0]));
+                std::fs::read_to_string(per).ok().map(|t| t.lines().filter_map(|l| l.trim().parse().ok()).collect::<Vec<f32>>())
+            }).or_else(|| dts.clone());
+            let out = run_program(&w, c[1], c[3], fps, lat, dts.as_deref());
             std::fs::write(std::path::Path::new(&a[4]).join(format!("{}.sim.tsv", c[0])), out).expect("write");
         }
         return;
@@ -163,7 +177,7 @@ enum Wait {
 
 /// One capture-2 program from `spot` ("x y z yawdeg"), as cl_td_moveref.gnut runs it: each
 /// frame the Pilot steps, the frame is logged, then the program advances on that state.
-fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize) -> String {
+fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize, dts: Option<&[f32]>) -> String {
     let sp: Vec<f32> = spot.split_whitespace().map(|x| x.parse().expect("spot")).collect();
     let p = PilotParams::default();
     let dt = 1.0 / fps;
@@ -190,6 +204,7 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize)
     loop {
         let mut ev: Vec<String> = Vec::new();
         if frame > 0 {
+            let dt = dts.map(|d| d[(frame - 1).min(d.len() - 1)]).unwrap_or(dt);
             // The commands that reach this frame's user command.
             let mut pressed_speed = false;
             while pending.front().is_some_and(|(f, _)| *f <= frame) {
