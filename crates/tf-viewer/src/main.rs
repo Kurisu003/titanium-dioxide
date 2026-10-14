@@ -279,7 +279,7 @@ fn main() {
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)
         .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin, shadowbatch::ShadowBatchPlugin, transparentpass::ParallelTransparentPlugin))
-        .add_systems(Update, (perf_log, fps_overlay, speed_overlay, weapons::shimmer_shields))
+        .add_systems(Update, (perf_log, fps_overlay, speed_overlay, speed_graph, weapons::shimmer_shields))
         .insert_resource(args)
         .insert_resource(script)
         .insert_resource(mode)
@@ -1313,6 +1313,119 @@ fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots
         _ => "",
     };
     text.0 = format!("{h:.0} u/s   vz {:+.0}   {mode}", s.vel.z);
+}
+
+/// A scrolling graph of the Pilot's horizontal speed over the last `GRAPH_SECONDS`, above the
+/// speed readout (hidden with it by TF_SPEED=0). Coloured by move state: yellow on the ground,
+/// orange sliding, cyan in the air, green on a wall. Reference lines at 260 (sprint), 350 and
+/// 400 u/s; the scale is 0 to `GRAPH_MAX`.
+#[derive(Component)]
+struct SpeedGraph {
+    image: Handle<Image>,
+    /// (speed, colour) per column, oldest first.
+    samples: std::collections::VecDeque<(f32, [u8; 3])>,
+    /// Time since the last column was added.
+    acc: f32,
+}
+
+const GRAPH_W: usize = 300;
+const GRAPH_H: usize = 80;
+const GRAPH_SECONDS: f32 = 10.0;
+const GRAPH_MAX: f32 = 600.0;
+
+fn speed_graph(
+    mut commands: Commands,
+    control: Res<pilotctl::Control>,
+    time: Res<Time>,
+    pilots: Query<&pilotctl::PlayerPilot>,
+    mut images: ResMut<Assets<Image>>,
+    mut graph: Query<(&mut SpeedGraph, &mut Visibility)>,
+) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_none_or(|v| v != "0")) {
+        return;
+    }
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let Ok((mut g, mut vis)) = graph.single_mut() else {
+        let img = Image::new_fill(
+            Extent3d { width: GRAPH_W as u32, height: GRAPH_H as u32, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            &[0, 0, 0, 0],
+            TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
+        );
+        let image = images.add(img);
+        commands.spawn((
+            ImageNode::new(image.clone()),
+            Node { position_type: PositionType::Absolute, left: Val::Px(8.0), bottom: Val::Px(175.0), width: Val::Px(GRAPH_W as f32), height: Val::Px(GRAPH_H as f32), ..default() },
+            GlobalZIndex(200),
+            SpeedGraph { image, samples: std::collections::VecDeque::with_capacity(GRAPH_W + 1), acc: 0.0 },
+        ));
+        return;
+    };
+    let on_foot = *control == pilotctl::Control::Pilot;
+    *vis = if on_foot { Visibility::Visible } else { Visibility::Hidden };
+    let Ok(pilot) = pilots.single() else { return };
+    if !on_foot {
+        g.samples.clear();
+        return;
+    }
+    let s = &pilot.state;
+    let colour = match s.mode {
+        tf_sim::pilot::PilotMove::Slide => [255, 150, 40],
+        tf_sim::pilot::PilotMove::Air => [80, 220, 255],
+        tf_sim::pilot::PilotMove::WallRun { .. } | tf_sim::pilot::PilotMove::WallHang { .. } => [80, 255, 120],
+        _ => [255, 255, 80],
+    };
+    // One column per GRAPH_SECONDS / GRAPH_W of game time; the peak within the slot wins, so
+    // short spikes (a slide boost frame) still show.
+    let speed = s.vel.truncate().length();
+    g.acc += time.delta_secs();
+    let slot = GRAPH_SECONDS / GRAPH_W as f32;
+    if g.acc >= slot || g.samples.is_empty() {
+        g.acc = (g.acc - slot).max(0.0).min(slot);
+        g.samples.push_back((speed, colour));
+        while g.samples.len() > GRAPH_W {
+            g.samples.pop_front();
+        }
+    } else if let Some(last) = g.samples.back_mut() {
+        if speed > last.0 {
+            *last = (speed, colour);
+        }
+    }
+    let Some(img) = images.get_mut(&g.image) else { return };
+    let Some(data) = img.data.as_mut() else { return };
+    let mut put = |x: usize, y: usize, c: [u8; 3], a: u8| {
+        if x < GRAPH_W && y < GRAPH_H {
+            let i = ((GRAPH_H - 1 - y) * GRAPH_W + x) * 4;
+            data[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], a]);
+        }
+    };
+    let row = |v: f32| ((v / GRAPH_MAX).clamp(0.0, 1.0) * (GRAPH_H - 1) as f32).round() as usize;
+    for y in 0..GRAPH_H {
+        for x in 0..GRAPH_W {
+            put(x, y, [0, 0, 0], 110);
+        }
+    }
+    for (v, c) in [(260.0, [255, 255, 80]), (350.0, [80, 220, 255]), (400.0, [255, 150, 40])] {
+        for x in (0..GRAPH_W).step_by(3) {
+            put(x, row(v), c, 90);
+        }
+    }
+    let n = g.samples.len();
+    let x0 = GRAPH_W - n;
+    let mut prev: Option<usize> = None;
+    for (i, &(v, c)) in g.samples.iter().enumerate() {
+        let y = row(v);
+        let (lo, hi) = match prev {
+            Some(p) => (p.min(y), p.max(y)),
+            None => (y, y),
+        };
+        for yy in lo..=hi {
+            put(x0 + i, yy, c, 255);
+        }
+        prev = Some(y);
+    }
 }
 
 /// TF_GPU_TIMES=1 logs the CPU and GPU time of every render pass (Bevy's render diagnostics,
