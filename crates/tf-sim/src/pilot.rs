@@ -1583,6 +1583,10 @@ fn engine_settings(p: &PilotParams) -> engine_move::Settings {
     st.pose_sprint_speed[0] = p.sprint_speed;
     st.pose_speed[1] = p.crouch_speed;
     st.wallrun_ads_type = if p.wallhang_on_ads { 1 } else { 0 };
+    st.sprint_start_delay = p.sprint_start_delay;
+    st.sprint_start_duration = p.sprint_start;
+    st.sprint_start_fast_duration = p.sprint_start_fast;
+    st.sprint_end_duration = p.sprint_end;
     st
 }
 
@@ -1687,25 +1691,9 @@ fn engine_step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &
     if s.on_ground() || !matches!(s.mode, PilotMove::Air) {
         s.since_ground = 0.0;
     }
-    // The sprint view ramp (sprintStartDelay / sprintStartDuration / sprintStartFastDuration /
-    // sprintEndDuration), as the ground branch of `step` runs it.
-    if s.on_ground() {
-        if s.sprinting {
-            s.sprint_wait += dt;
-            let fast = s.sprint_fast;
-            if fast || s.sprint_frac > 0.0 || s.sprint_wait >= p.sprint_start_delay {
-                let dur = if fast { p.sprint_start_fast } else { p.sprint_start };
-                s.sprint_frac = (s.sprint_frac + dt / dur.max(1e-3)).min(1.0);
-            }
-            if s.sprint_frac >= 1.0 {
-                s.sprint_fast = false;
-            }
-        } else {
-            s.sprint_wait = 0.0;
-            s.sprint_fast = false;
-            s.sprint_frac = (s.sprint_frac - dt / p.sprint_end.max(1e-3)).max(0.0);
-        }
-    }
+    // The sprint fraction (view offset, the viewmodel's sprintfrac pose parameter) is the
+    // engine's GetSprintFrac.
+    s.sprint_frac = pm.sprint_frac(&st);
     s.engine = Some(pm);
     s.engine_ran = true;
 

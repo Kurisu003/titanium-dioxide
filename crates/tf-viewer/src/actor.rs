@@ -435,6 +435,10 @@ impl Actor {
     pub fn clip(&self, name: &str) -> Option<usize> {
         self.by_name.get(&name.to_ascii_lowercase()).copied()
     }
+    /// The name a clip index was registered under (logging).
+    pub fn clip_name(&self, clip: usize) -> Option<&str> {
+        self.by_name.iter().find(|(_, &c)| c == clip).map(|(n, _)| n.as_str())
+    }
 
     /// Weighted blend of the base layers followed by the aim layer.
     pub fn evaluate(&self) -> Pose {

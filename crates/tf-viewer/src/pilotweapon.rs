@@ -393,11 +393,14 @@ struct VmLayers {
     /// How much `ads_out_seq` is shown (see `vmmotion::ads_layers`) and last frame's zoom.
     ads_out: f32,
     last_ads: f32,
-    /// The activity modifiers picking each activity's sequence, the ones before the last change
-    /// and seconds since it (the picks cross-fade over the new idle's fade-in time).
+    /// The activity modifiers picking each activity's sequence, seconds since they changed, and
+    /// the earlier picks still fading out with the weight each had when it was replaced
+    /// (Source's sequence transitioner: every change starts a new layer fading in over the new
+    /// idle's fade-in time while all the older ones fade out under it, so a slide jump's
+    /// crouch / ground / air changes within a few frames blend instead of snapping).
     mods: VmMods,
-    prev_mods: VmMods,
     mods_t: f32,
+    mod_fades: [(VmMods, f32); 3],
     /// Seconds since a mantle ended (the gun comes back up with its raise), and whether one
     /// was playing last frame.
     mantle_end_t: f32,
@@ -1454,7 +1457,10 @@ pub fn pilot_viewmodel(
     if on_ground && !vl.was_ground {
         vl.land_t = 0.0;
     }
-    if vl.was_sprint && !sprint {
+    // (Only once the sprint has lowered the gun: GetSprintFrac waits sprintStartDelay, so a
+    // sprint that lasts a few frames, as between landing from a slide hop and the next slide,
+    // neither lowers it nor plays the raise.)
+    if vl.was_sprint && !sprint && lo.sprint_blend > 0.05 {
         vl.sprint_end_t = 0.0;
     }
     vl.mantle_end_t += dt;
@@ -1477,24 +1483,28 @@ pub fn pilot_viewmodel(
     let fade = seqs.fade_in("ACT_VM_IDLE", mods).unwrap_or(0.2).max(0.05);
     vl.mods_t += dt;
     if mods != vl.mods {
+        // The current pick joins the fading layers at the weight it reached; the older ones
+        // keep their share of what is left. At most three linger (the rest are too faint).
         let k = (vl.mods_t / fade).min(1.0);
-        if mods == vl.prev_mods {
-            // Back before the fade finished: carry on from the current mix.
-            vl.prev_mods = vl.mods;
-            vl.mods_t = (1.0 - k) * fade;
-        } else {
-            if k >= 0.5 {
-                vl.prev_mods = vl.mods;
+        let mut old = [(vl.mods, k), (VmMods::default(), 0.0), (VmMods::default(), 0.0)];
+        let mut n = 1;
+        for &(m, w) in &vl.mod_fades {
+            if w * (1.0 - k) > 0.01 && n < 3 {
+                old[n] = (m, w * (1.0 - k));
+                n += 1;
             }
-            vl.mods_t = 0.0;
         }
+        vl.mod_fades = old;
         vl.mods = mods;
+        vl.mods_t = 0.0;
     }
     let mods_k = (vl.mods_t / fade).min(1.0);
-    let (cur_mods, prev_mods) = (vl.mods, vl.prev_mods);
+    let cur_mods = vl.mods;
+    let old_mods: Vec<(VmMods, f32)> = vl.mod_fades.iter().filter(|&&(_, w)| w > 0.0).map(|&(m, w)| (m, w * (1.0 - mods_k))).collect();
     lo.vm_layers = vl;
-    let target = if sprint { 1.0 } else { 0.0 };
-    lo.sprint_blend += (target - lo.sprint_blend) * (1.0 - (-dt * 8.0).exp());
+    // The sprint pose follows the engine's sprint fraction, which the game writes to the
+    // viewmodel's `sprintfrac` pose parameter every frame (0x180149cc0).
+    lo.sprint_blend = s.sprint_frac.clamp(0.0, 1.0);
     let (switching, deploy_t) = (lo.switching, lo.deploy_t);
     let Some(g) = lo.guns.get(active) else { return };
     let Some((anchor, vm)) = g.viewmodel else { return };
@@ -1508,16 +1518,35 @@ pub fn pilot_viewmodel(
     let Ok(mut actor) = actors.get_mut(vm) else { return };
     actor.autoplay = false;
     let clip = |a: &Actor, n: &str| a.clip(n);
-    // An activity's sequence under the current modifiers and, while that fades in, the one the
-    // previous modifiers picked, with their weights; `plain` is the sequence to use when the
-    // model names no activity.
-    let pick = |a: &Actor, act: &str, plain: &str| -> [(Option<usize>, f32); 2] {
+    // An activity's sequence under the current modifiers (slot 0) and, while that fades in,
+    // the ones the earlier modifiers picked, with their weights (layers picking the same clip
+    // merge; the weights sum to 1); `plain` is the sequence to use when the model names no
+    // activity.
+    let pick = |a: &Actor, act: &str, plain: &str| -> [(Option<usize>, f32); 4] {
         let by = |m: VmMods| seqs.pick(act, m).and_then(|l| a.clip(l)).or_else(|| a.clip(plain));
-        let (cur, prev) = (by(cur_mods), by(prev_mods));
-        if cur == prev || prev.is_none() || mods_k >= 1.0 { [(cur, 1.0), (None, 0.0)] } else { [(cur, mods_k), (prev, 1.0 - mods_k)] }
+        let mut out = [(None, 0.0f32); 4];
+        let mut add = |c: Option<usize>, w: f32| {
+            let Some(c) = c else { return };
+            if let Some(slot) = out.iter_mut().find(|s| s.0 == Some(c)) {
+                slot.1 += w;
+            } else if let Some(slot) = out.iter_mut().find(|s| s.0.is_none()) {
+                *slot = (Some(c), w);
+            }
+        };
+        add(by(cur_mods), mods_k.max(1e-3));
+        for &(m, w) in &old_mods {
+            add(by(m), w);
+        }
+        let sum: f32 = out.iter().map(|s| s.1).sum();
+        if sum > 0.0 {
+            for s in &mut out {
+                s.1 /= sum;
+            }
+        }
+        out
     };
-    // Push a picked pair as layers, each at the cycle `cycle` gives for its clip.
-    let push = |a: &Actor, layers: &mut Vec<Layer>, p: [(Option<usize>, f32); 2], cycle: &dyn Fn(&Actor, usize) -> f32, w: f32| {
+    // Push picked layers, each at the cycle `cycle` gives for its clip.
+    let push = |a: &Actor, layers: &mut Vec<Layer>, p: [(Option<usize>, f32); 4], cycle: &dyn Fn(&Actor, usize) -> f32, w: f32| {
         for (c, f) in p {
             if let Some(c) = c.filter(|_| f > 0.0) {
                 layers.push(Layer { clip: c, cycle: cycle(a, c), weight: w * f });
@@ -1528,10 +1557,15 @@ pub fn pilot_viewmodel(
     // Leaving a sprint plays `sprintraise_seq` (ACT_VM_RAISE_FROM_SPRINT) instead of fading.
     let raise_pick = pick(&actor, "ACT_VM_RAISE_FROM_SPRINT", "sprintraise_seq");
     let raise_clip = raise_pick[0].0.filter(|_| !vm_off("raise"));
-    let raising = raise_clip.filter(|&c| !sprint && vl.sprint_end_t < actor.clips[c].duration);
-    if raising.is_some() {
-        lo.sprint_blend = 0.0;
-    }
+    // The raise plays as the engine's sequence transitioner would: fading in over its own
+    // fadeintime from whatever the gun was doing (the hip pose with the sprint fraction still
+    // ramping down), and holding its last frame while the idle fades back in over the idle's.
+    let raise_fade_in = seqs.fade_in("ACT_VM_RAISE_FROM_SPRINT", mods).unwrap_or(0.2).max(0.05);
+    let raising = raise_clip.filter(|&c| !sprint && vl.sprint_end_t < actor.clips[c].duration + fade);
+    let raise_w = raising.map(|c| {
+        let (t, dur) = (vl.sprint_end_t, actor.clips[c].duration);
+        if t < dur { (t / raise_fade_in).min(1.0) } else { 1.0 - ((t - dur) / fade).min(1.0) }
+    });
     let sprint_blend = lo.sprint_blend;
     // `sprintcycle_time` sets the loop's pace (0.55 s against the clips' 0.667 s).
     let dur = if sprint_cycle > 0.0 { sprint_cycle } else { sprint_clip.map(|c| actor.clips[c].duration).unwrap_or(1.0) };
@@ -1555,6 +1589,8 @@ pub fn pilot_viewmodel(
         late.or(base).unwrap_or_else(|| pick(&actor, "ACT_VM_RELOAD", "reload_seq"))
     };
     let mut steady = false;
+    // The share of the steady layers (idle, walk, aim, sprint) while a sprint-raise fades.
+    let mut steady_w = 1.0f32;
     if let Some((_, t)) = switching {
         let k = (t / holster_time).min(0.999);
         push(&actor, &mut layers, pick(&actor, "ACT_VM_HOLSTER", "holster_seq"), &|_, _| k, 1.0);
@@ -1567,11 +1603,11 @@ pub fn pilot_viewmodel(
         if let Some(d) = grid_dur(&actor, "run_layer_reload").filter(|_| !vm_off("walk")) {
             grid_layers.push(GridLayer { grid: "run_layer_reload", x: 0.0, y: 0.0, cycle: (vl.clock / d).fract(), weight: (speed / 173.0).min(1.0) * vl.ground_blend, relative: false });
         }
-    } else if let (Some((crate::pilotability::ThrowPhase::Raise, t)), p @ [(Some(_), _), _]) = (throw.phase, pick(&actor, "ACT_VM_RAISE", "raise_seq")) {
+    } else if let (Some((crate::pilotability::ThrowPhase::Raise, t)), p @ [(Some(_), _), ..]) = (throw.phase, pick(&actor, "ACT_VM_RAISE", "raise_seq")) {
         // Back up after a throw.
         let k = (t / crate::pilotability::THROW_RAISE_SECS).min(0.999);
         push(&actor, &mut layers, p, &|_, _| k, 1.0);
-    } else if let (Some(t), p @ [(Some(_), _), _]) = (melee.t.filter(|&t| t >= crate::executions::MELEE_ANIM_SECS), pick(&actor, "ACT_VM_RAISE_FROM_MELEE", "raise_frommelee_seq")) {
+    } else if let (Some(t), p @ [(Some(_), _), ..]) = (melee.t.filter(|&t| t >= crate::executions::MELEE_ANIM_SECS), pick(&actor, "ACT_VM_RAISE_FROM_MELEE", "raise_frommelee_seq")) {
         // Back up after a melee swing, over melee_raise_recovery_animtime.
         let k = ((t - crate::executions::MELEE_ANIM_SECS) / melee.raise.max(0.05)).min(0.999);
         push(&actor, &mut layers, p, &|_, _| k, 1.0);
@@ -1582,18 +1618,20 @@ pub fn pilot_viewmodel(
         // Back up after a mantle (ACT_VM_RAISE at its own pace).
         let t = vl.mantle_end_t;
         push(&actor, &mut layers, p, &|a, c| once(a, c, t), 1.0);
-    } else if raising.is_some() {
-        let t = vl.sprint_end_t;
-        push(&actor, &mut layers, raise_pick, &|a, c| once(a, c, t), 1.0);
     } else {
-        steady = true;
-        let still = 1.0 - sprint_blend;
+        if let Some(w) = raise_w {
+            let t = vl.sprint_end_t;
+            push(&actor, &mut layers, raise_pick, &|a, c| once(a, c, t), w);
+            steady_w = 1.0 - w;
+        }
+        steady = steady_w > 0.0;
+        let still = (1.0 - sprint_blend) * steady_w;
         // Aiming plays `ads_in_seq` (hip pose to ADS pose) and leaving it `ads_out_seq`, at the
         // zoom fraction, so their own motion paths show (the R-201's gun dips below the hip pose
         // on the way out); a change of direction cross-fades the two.
         // Crouched (and sliding) the crouch pair plays: its hip pose cants the gun to the middle.
         match (pick(&actor, "ACT_VM_ADS_IN", "ads_in_seq"), pick(&actor, "ACT_VM_ADS_OUT", "ads_out_seq")) {
-            (pin @ [(Some(_), _), _], pout) => {
+            (pin @ [(Some(_), _), ..], pout) => {
                 let out = pout[0].0.is_some();
                 let [(cyc_in, w_in), (cyc_out, w_out)] = crate::vmmotion::ads_layers(ads, if out { vl.ads_out } else { 0.0 });
                 push(&actor, &mut layers, pin, &|_, _| cyc_in, (still * w_in).max(1e-3));
@@ -1604,7 +1642,7 @@ pub fn pilot_viewmodel(
             _ => push(&actor, &mut layers, draw, &|_, _| 0.999, still.max(1e-3)),
         }
         if let Some(c) = sprint_clip {
-            layers.push(Layer { clip: c, cycle: lo.vm_cycle, weight: sprint_blend });
+            layers.push(Layer { clip: c, cycle: lo.vm_cycle, weight: sprint_blend * steady_w });
         }
         if let Some(g) = actor.grids.get("attack_seq").filter(|_| !vm_off("fire")) {
             // A new sequence blends in over its fadeintime (Source's sequence transitioner;
@@ -1621,7 +1659,7 @@ pub fn pilot_viewmodel(
         }
     }
     if steady {
-        let still = 1.0 - sprint_blend;
+        let still = (1.0 - sprint_blend) * steady_w;
         // Breathing: `idle_seq_autoplay` (STUDIO_AUTOPLAY) loops in real time, hip or ADS.
         if let Some(d) = grid_dur(&actor, "idle_seq_autoplay").filter(|_| !vm_off("idle")) {
             grid_layers.push(GridLayer { grid: "idle_seq_autoplay", x: ads, y: 0.0, cycle: (vl.clock / d).fract(), weight: still, relative: false });
@@ -1650,6 +1688,13 @@ pub fn pilot_viewmodel(
                 grid_layers.push(GridLayer { grid: name, x: ads, y: 0.0, cycle: t / d, weight: 1.0 - sprint_blend, relative: false });
             }
         }
+    }
+    // TF_VM_LOG=1: every frame's layer weights (the viewmodel jerk shows as weight jumps).
+    if std::env::var_os("TF_VM_LOG").is_some() {
+        let name = |c: usize| actor.clip_name(c).unwrap_or("?");
+        let ls: Vec<String> = layers.iter().map(|l| format!("{}:{:.2}@{:.2}", name(l.clip), l.weight, l.cycle)).collect();
+        let gs: Vec<String> = grid_layers.iter().map(|g| format!("{}:{:.2}", g.grid, g.weight)).collect();
+        log::info!(target: "vm_log", "t {:.3} mods {:?} fade {:.2} | {} | {}", vl.clock, cur_mods, mods_k, ls.join(" "), gs.join(" "));
     }
     actor.grid_layers = grid_layers;
     actor.layers = layers;

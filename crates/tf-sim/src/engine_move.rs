@@ -82,6 +82,13 @@ pub struct Settings {
     pub wallrun_time_limit: f32,        // player+0x2068
     pub wallrun_hang_time_limit: f32,   // player+0x206c
     pub sprint: bool,                   // player+0x2086
+    /// The sprint fraction's timing (settings +0x267c..+0x2688): the delay before the slow
+    /// ramp, its length, the fast ramp's (a sprint resumed soon after one ended) and the ramp
+    /// down.
+    pub sprint_start_delay: f32,
+    pub sprint_start_duration: f32,
+    pub sprint_start_fast_duration: f32,
+    pub sprint_end_duration: f32,
     /// The dodge (the Titan dash; `dodge`, player+0x2085) and its numbers: the per-class block
     /// (`powerRegenRate` player+0x2048, `dodgeDuration` +0x204c, `dodgeSpeed` +0x2050,
     /// `dodgePowerDrain` +0x2054, copied from settings+0x2b80.. by `0x1802c2c20`) and the
@@ -168,6 +175,10 @@ impl Default for Settings {
             wallrun_time_limit: 1.75,
             wallrun_hang_time_limit: 4.0,
             sprint: true,
+            sprint_start_delay: 0.2,
+            sprint_start_duration: 0.8,
+            sprint_start_fast_duration: 0.2,
+            sprint_end_duration: 0.15,
             dodge: false,
             // The class block's dodge numbers have no .set defaults a Pilot reaches: these are
             // titan_buddy.set's, so a Settings with `dodge` on dashes like BT.
@@ -414,7 +425,15 @@ pub struct Pm {
     pub hang_time: f32,          // +0x2500
     pub last_walls: Vec<Vec3>,   // +0x19f0.. (count +0x1a0c): flattened normals of walls jumped off
     pub last_wall_time: f32,     // +0x1a08
-    pub sprinting: bool,         // +0x2434
+    pub sprinting: bool,
+    /// The sprint fraction's bookkeeping (`0x1802cdb90` start / `0x1802cdd10` end): when the
+    /// sprint started (+0x243c) and the fraction then (+0x2440, kept to 1/1023), the same for
+    /// its end (+0x2444 / +0x2448), and when the latch's attempt began (+0x244c).
+    pub sprint_started_time: f32,
+    pub sprint_started_frac: f32,
+    pub sprint_ended_time: f32,
+    pub sprint_ended_frac: f32,
+    pub sticky_sprint_start: f32,         // +0x2434
     pub sprint_window: f32,      // +0x2428
     pub sprint_latch: bool,      // +0x2610
     pub zoom_toggle: bool,       // +0x1699
@@ -498,6 +517,11 @@ impl Pm {
             last_walls: Vec::new(),
             last_wall_time: 0.0,
             sprinting: false,
+            sprint_started_time: -100.0,
+            sprint_started_frac: 0.0,
+            sprint_ended_time: -100.0,
+            sprint_ended_frac: 0.0,
+            sticky_sprint_start: -100.0,
             sprint_window: 0.0,
             sprint_latch: false,
             zoom_toggle: false,
@@ -521,6 +545,22 @@ impl Pm {
         }
     }
 
+    /// GetSprintFrac (`0x1802c1550`), 0..1: sprinting, the lesser of the fast ramp since the
+    /// sprint started (over sprintStartFastDuration) and the slow one from the latch's attempt
+    /// plus sprintStartDelay (over sprintStartDuration), plus the fraction the sprint started
+    /// at; otherwise the fraction the sprint ended at, ramping down over sprintEndDuration. The
+    /// engine feeds it to the view (sprintViewOffset) and the viewmodel's `sprintfrac` pose
+    /// parameter.
+    pub fn sprint_frac(&self, s: &Settings) -> f32 {
+        let ramp = |t: f32, dur: f32| if dur == 0.0 { 1.0 } else { (t / dur).clamp(0.0, 1.0) };
+        if self.sprinting {
+            let fast = ramp(self.now - self.sprint_started_time, s.sprint_start_fast_duration);
+            let slow = ramp(self.now - (s.sprint_start_delay + self.sticky_sprint_start), s.sprint_start_duration);
+            (fast.min(slow.max(0.0)) + self.sprint_started_frac).clamp(0.0, 1.0)
+        } else {
+            (self.sprint_ended_frac - ramp(self.now - self.sprint_ended_time, s.sprint_end_duration)).clamp(0.0, 1.0)
+        }
+    }
     /// IsWallRunning (`0x1802c9350`): the move's up vector is not straight up.
     pub fn is_wallrunning(&self) -> bool {
         self.normal.z < 1.0
@@ -978,12 +1018,25 @@ fn sprint_update(p: &mut Pm, cmd: &Cmd, s: &Settings) {
     if !p.sprint_latch {
         if p.now <= p.sprint_window && can_latch_sprint(p, cmd) {
             p.sprint_latch = true;
+            p.sticky_sprint_start = p.now;
         }
     } else if !can_latch_sprint(p, cmd) {
         p.sprint_latch = false;
         p.sprint_window = 0.0;
     }
     let sprint = (held || p.sprint_latch) && can_sprint(p, cmd, s);
+    if sprint != p.sprinting {
+        // The fraction carries over: a sprint picks up from where the last one's ramp down got
+        // to, and the ramp down starts from where the sprint got to.
+        let frac = (p.sprint_frac(s) * 1023.0 + 0.5).floor() / 1023.0;
+        if sprint {
+            p.sprint_started_frac = frac;
+            p.sprint_started_time = p.now;
+        } else {
+            p.sprint_ended_frac = frac;
+            p.sprint_ended_time = p.now;
+        }
+    }
     p.sprinting = sprint;
 }
 
