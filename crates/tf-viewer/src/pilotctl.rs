@@ -654,7 +654,6 @@ pub fn simulate_pilot(
     titans: Query<&PlayerTitan>,
     status: Res<crate::pilotability::PilotStatus>,
     rodeo: Res<crate::rodeo::Rodeo>,
-    mut shake: ResMut<Shake>,
     loadouts: Query<&crate::pilotweapon::PilotLoadout>,
 ) {
     let Ok(mut pilot) = pilots.single_mut() else { return };
@@ -741,10 +740,9 @@ pub fn simulate_pilot(
             (PilotMove::WallHang { .. }, n) if !matches!(n, PilotMove::WallHang { .. }) => crate::audio::event(&mut commands, "Default.WallCling_Detach"),
             _ => {}
         }
-        // Hard landings (faster than impactSpeed) shake the view.
-        if let Some(v) = pilot.state.take_hard_landing(&params) {
-            shake.0 = shake.0.max(((v - params.impact_speed) / 600.0 + 0.25).min(0.8));
-        }
+        // (Landings kick the view in `pilot_camera`, as client.dll 0x1801f10c0 does; the game
+        // has no camera shake on foot.)
+        let _ = pilot.state.take_hard_landing(&params);
         if std::mem::discriminant(&pilot.state.mode) != std::mem::discriminant(&before) {
             log::info!(
                 "pilot {:?} -> {:?} at {:?} vel {:?}",
@@ -810,6 +808,7 @@ pub fn pilot_camera(
     mut cameras: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
     mut vis: Query<&mut Visibility>,
     punch: Res<crate::weapons::ViewPunch>,
+    springs: Res<crate::vmmotion::WeaponSprings>,
     weapons: Query<&crate::pilotweapon::PilotLoadout>,
     (mut feel, mut vm_eye, world): (Local<CamFeel>, ResMut<VmEye>, Res<Collision>),
 ) {
@@ -855,19 +854,47 @@ pub fn pilot_camera(
             let dt = time.delta_secs().min(0.05);
             let f = &mut *feel;
             let grounded = s.on_ground();
-            // Landing: a dip scaled by impact speed between the falls that viewkickFallDistMin
-            // and viewkickFallDistMax (10..70 units) produce.
-            if grounded && !f.was_grounded {
-                let g = pilot_settings.0.gravity;
-                let (lo, hi) = ((2.0 * g * 10.0f32).sqrt(), (2.0 * g * 70.0f32).sqrt());
-                let k = ((-f.prev_vz - lo) / (hi - lo)).clamp(0.0, 1.0);
-                f.dip_vel -= 60.0 + 260.0 * k;
+            // Landing (client.dll 0x1801f40b0 / 0x1801f10c0): a fall of 80 u/s or more kicks
+            // the view's punch spring (viewPunchSpring punch_pilot: k 65, damping 9) down by
+            // scale x (2 + 0.75 x r) degrees of pitch and scale x r of roll, r uniform in
+            // -0.5..0.5 (the viewpunchLand* random streams); the scale is the impact speed
+            // against the speeds of a viewkickFallDistMin / Max foot fall: under the min
+            // v / vmin, between them 1 .. viewkickFallDistMaxScale, above it the max scale.
+            let v = -f.prev_vz;
+            if grounded && !f.was_grounded && v >= 80.0 {
+                if f.land_seed == 0 {
+                    f.land_seed = 0x9E3779B97F4A7C15;
+                }
+                let p = &pilot_settings.0;
+                let g24 = p.gravity * 2.0 * 12.0;
+                let (vmin, vmax) = ((g24 * p.viewkick_fall_min).sqrt(), (g24 * p.viewkick_fall_max).sqrt());
+                let scale = if v < vmin && vmin > 0.0 {
+                    v / vmin
+                } else if v <= vmax && vmax != vmin {
+                    1.0 + (v - vmin) / (vmax - vmin) * (p.viewkick_fall_max_scale - 1.0)
+                } else {
+                    p.viewkick_fall_max_scale
+                };
+                let mut r = || {
+                    f.land_seed ^= f.land_seed << 13;
+                    f.land_seed ^= f.land_seed >> 7;
+                    f.land_seed ^= f.land_seed << 17;
+                    (f.land_seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5
+                };
+                let kick = Vec3::new(scale * (2.0 + 0.75 * r()), 0.0, scale * r());
+                f.land_vel += kick * 20.0;
+                log::debug!("landing at {v:.0} u/s: view kick scale {scale:.2}, pitch {:.2} roll {:.2} degrees", kick.x, kick.z);
             }
             f.was_grounded = grounded;
             f.prev_vz = s.vel.z;
-            // Spring the dip back.
-            f.dip_vel += (-f.dip * 180.0 - f.dip_vel * 22.0) * dt;
-            f.dip += f.dip_vel * dt;
+            // The punch spring (hip axes of punch_pilot; the ADS ones are the same).
+            let (k, c) = springs.0.get("punch_pilot").map(|(hip, _)| (hip.k, hip.c)).unwrap_or((Vec3::splat(65.0), Vec3::splat(9.0)));
+            let n = ((dt * 500.0).ceil() as usize).clamp(1, 50);
+            let h = dt / n as f32;
+            for _ in 0..n {
+                f.land_vel += (-k * f.land_ang - c * f.land_vel) * h;
+                f.land_ang += f.land_vel * h;
+            }
             // Smooth step-ups/downs on the ground; follow exactly in the air. (The feet are
             // smoothed: the crouch's view height already has the game's own timing.)
             let eye_off = s.eye_offset(&pilot_settings.0);
@@ -949,10 +976,10 @@ pub fn pilot_camera(
             // Looking down slides the view forward (pitchOffsetScale; the sin(pitch) curve is a
             // guess, matching BT's).
             let ahead = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0) * pilot_settings.0.pitch_offset_scale * s.pitch.max(0.0).sin();
-            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z + pilot_settings.0.sprint_view_offset * f.sprint + f.dip) + ahead;
+            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z + pilot_settings.0.sprint_view_offset * f.sprint) + ahead;
             *vm_eye = VmEye { offset: eye - pilot_eye, roll: f.roll };
-            let (py, pp) = (punch.yaw.to_radians(), punch.pitch.to_radians() - f.dip * 0.004);
-            (eye, view_quat(s.yaw + py, s.pitch + pp) * Quat::from_rotation_x(f.roll + punch.roll.to_radians()))
+            let (py, pp) = (punch.yaw.to_radians(), (punch.pitch + f.land_ang.x).to_radians());
+            (eye, view_quat(s.yaw + py, s.pitch + pp) * Quat::from_rotation_x(f.roll + (punch.roll + f.land_ang.z).to_radians()))
         }
         Control::Disembark(t) => {
             // Rise out of the cockpit and over the hatch.
@@ -1021,8 +1048,10 @@ pub struct CamFeel {
     was_grounded: bool,
     prev_vz: f32,
     prev_yaw: f32,
-    dip: f32,
-    dip_vel: f32,
+    /// The landing punch spring (degrees: pitch, yaw, roll) and its random stream.
+    land_ang: Vec3,
+    land_vel: Vec3,
+    land_seed: u64,
     sprint: f32,
     roll: f32,
     wall_roll: f32,

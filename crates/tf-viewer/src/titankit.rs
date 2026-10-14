@@ -52,7 +52,9 @@ pub const SONAR_PULSE_RADIUS: f32 = 1250.0;
 /// mp_titanability_sonar_pulse.txt: projectile_launch_speed 5000, projectile_gravity_scale 3 (of
 /// the 750 u/s² projectile gravity).
 const SONAR_SHOT_SPEED: f32 = 5000.0;
-const SONAR_SHOT_GRAVITY: f32 = 3.0 * DEPLOYABLE_GRAVITY;
+/// FireGenericBoltWithDrop (_weapon_utility.nut) sets the bolt's gravity to 1, over the weapon's
+/// projectile_gravity_scale 3.
+const SONAR_SHOT_GRAVITY: f32 = DEPLOYABLE_GRAVITY;
 const PHASE_DASH_SPEED: f32 = 1000.0;
 const PHASE_DASH_TIME: f32 = 1.0;
 const PHASE_FADE: f32 = 0.5;

@@ -518,6 +518,9 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
         // TF_WALLHANG=1: the MP wall-hang kit (pas_wallhang: wallrunAdsType "wallhang").
         wallhang_on_ads: s.get("global.wallrunadstype").is_some_and(|v| v.eq_ignore_ascii_case("wallhang")) || std::env::var_os("TF_WALLHANG").is_some(),
         impact_speed: s.f32("global.impactspeed", d.impact_speed),
+        viewkick_fall_min: s.f32("global.viewkickfalldistmin", d.viewkick_fall_min),
+        viewkick_fall_max: s.f32("global.viewkickfalldistmax", d.viewkick_fall_max),
+        viewkick_fall_max_scale: s.f32("global.viewkickfalldistmaxscale", d.viewkick_fall_max_scale),
         wallrun_time: s.f32("global.wallrun_timelimit", d.wallrun_time),
         wallrun_max_h: s.f32("global.wallrunmaxspeedhorizontal", d.wallrun_max_h),
         wallrun_max_v: s.f32("global.wallrunmaxspeedvertical", d.wallrun_max_v),

@@ -109,6 +109,12 @@ pub struct PilotParams {
     pub wallhang_on_ads: bool,
     /// impactSpeed: landings faster than this are hard landings (no fall damage in the game).
     pub impact_speed: f32,
+    /// The landing view kick (client.dll 0x1801f10c0): viewkickFallDistMin / Max are fall
+    /// heights in feet (12 units) turned into impact speeds, viewkickFallDistMaxScale the kick's
+    /// scale at the max.
+    pub viewkick_fall_min: f32,
+    pub viewkick_fall_max: f32,
+    pub viewkick_fall_max_scale: f32,
     pub wallrun_jump_out: f32,
     pub wallrun_jump_up: f32,
     pub wallrun_jump_input: f32,
@@ -491,6 +497,9 @@ impl Default for PilotParams {
             wallrun_hang_time: 4.0,   // wallrun_hangTimeLimit (pilot_base.set)
             wallhang_on_ads: false,   // pilot_mp.set wallrunAdsType "ADS"
             impact_speed: 380.0,      // impactSpeed
+            viewkick_fall_min: 10.0,  // viewkickFallDistMin (pilot_mp.set)
+            viewkick_fall_max: 70.0,  // viewkickFallDistMax
+            viewkick_fall_max_scale: 12.0, // viewkickFallDistMaxScale
             wallrun_jump_out: 205.0,
             wallrun_jump_up: 230.0,
             wallrun_jump_input: 80.0,
