@@ -780,9 +780,9 @@ impl BoltShields {
     }
 }
 
-/// Where BT's projectile hits landed this frame (Tone's 40mm builds lock stacks).
+/// The Titans BT's projectiles damaged this frame (Tone's 40mm builds lock stacks on them).
 #[derive(Resource, Default)]
-pub struct TitanBoltHits(pub Vec<Vec3>);
+pub struct TitanBoltHits(pub Vec<Entity>);
 
 /// What the HUD shows for the Q and E slots.
 #[derive(Resource, Default)]
@@ -1411,17 +1411,14 @@ pub fn kit_input(
         st.energy_delay = n.energy_delay;
     }
 
-    // Tone's tracker marks from 40mm hits (Tracker40mm_DamagedTarget -> ApplyTrackerMark).
-    for p in bolt_hits.0.drain(..) {
-        if active.ord != OrdKind::Tracker {
+    // Tone's tracker marks from 40mm damage (Tracker40mm_DamagedTarget -> ApplyTrackerMark: a
+    // damage callback, so a round the Vortex caught or a shield soaked marks nothing). Only
+    // Titans carry marks (the bolt code lists the Titans it damaged).
+    for id in bolt_hits.0.drain(..) {
+        if active.ord != OrdKind::Tracker || !enemies.get(id).is_ok_and(|(_, e)| e.alive()) {
             continue;
         }
-        let near = enemies.iter().filter(|(_, e)| e.alive()).map(|(id, e)| (id, e.infantry, (e.pos + Vec3::Z * e.height * 0.5).distance(p) - e.radius)).min_by(|a, b| a.2.total_cmp(&b.2));
-        log::debug!("tone: 40mm hit at {:.0}, nearest enemy {:?}", p, near.map(|n| n.2));
-        // Only Titans carry tracker marks.
-        if let Some((id, _, _)) = near.filter(|n| n.2 < 120.0 && !n.1) {
-            apply_tracker_mark(&mut commands, &mut st.locks, id);
-        }
+        apply_tracker_mark(&mut commands, &mut st.locks, id);
     }
     for l in &mut st.locks {
         for t in &mut l.1 {

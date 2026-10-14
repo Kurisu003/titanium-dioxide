@@ -1265,6 +1265,10 @@ pub fn update_pilot_bolts(
             enemy_walls.absorbed.push((we, near + (far - near) * f + b.explosion.0));
         }
         let mut hits = Vec::new();
+        // Titans this bolt actually damaged (the game's damage callbacks, Tone's
+        // Tracker40mm_DamagedTarget among them, only run for damage dealt: a Vortex catch,
+        // a Gun Shield soak or a Thermal Shield leave no mark).
+        let mut damaged = Vec::new();
         let mut surface = if wall.is_some() { crate::particles::Surface::Shield } else { crate::particles::Surface::World };
         if let Some((eid, h)) = victim {
             if let Ok((_, mut e)) = enemies.get_mut(eid) {
@@ -1272,7 +1276,11 @@ pub fn update_pilot_bolts(
                 let base = near + (far - near) * f;
                 // Projectiles carry Titan-armour damage; headshots and crits multiply it.
                 let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD { b.headshot } else if !e.infantry && h.crit { b.crit } else { 1.0 };
-                hits.push(e.damage(base * k, b.stops_regen));
+                let hit = e.damage(base * k, b.stops_regen);
+                if hit.dealt > 0.0 && !e.infantry {
+                    damaged.push(eid);
+                }
+                hits.push(hit);
             }
         }
         let (exp, inner, radius) = b.explosion;
@@ -1281,23 +1289,27 @@ pub fn update_pilot_bolts(
             crate::titankit::spawn_meteor_thermite(&mut commands, b.pos - dir * 4.0, b.vel, victim.is_none(), b.pos.x.to_bits() ^ b.pos.y.to_bits().rotate_left(11) ^ b.travelled.to_bits().rotate_left(22));
         }
         if exp > 0.0 && radius > 0.0 {
-            for (_, mut e) in &mut enemies {
+            for (eid, mut e) in &mut enemies {
                 if !e.alive() {
                     continue;
                 }
                 let d = ((e.pos + Vec3::Z * e.height * 0.5) - b.pos).length() - e.radius;
                 if d < radius {
                     let k = 1.0 - ((d - inner) / (radius - inner).max(1.0)).clamp(0.0, 1.0);
-                    hits.push(e.damage(exp * k, b.stops_regen));
+                    let hit = e.damage(exp * k, b.stops_regen);
+                    if hit.dealt > 0.0 && !e.infantry && !damaged.contains(&eid) {
+                        damaged.push(eid);
+                    }
+                    hits.push(hit);
                 }
             }
             audio::cue(&mut commands, Cue::MissileExplode, Some(b.pos));
         }
         if b.from_titan {
-            if victim.is_some() {
-                log::debug!("titan bolt hit at {:.0}", b.pos);
-                titan_hits.0.push(b.pos);
+            if victim.is_some() || !damaged.is_empty() {
+                log::debug!("titan bolt hit at {:.0}, damaged {:?}", b.pos, damaged);
             }
+            titan_hits.0.extend(damaged);
             for mut c in &mut cores {
                 for h in &hits {
                     c.credit_inflicted(*h);
