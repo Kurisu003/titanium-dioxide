@@ -1606,6 +1606,17 @@ fn walk_move(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, dt: f32) 
             let wv = wish.dot(p.vel);
             if wv > 0.0 || (wv < 0.0 && p.forced_slide == 3) {
                 wish -= p.vel * (wv / p.vel.length_squared());
+                // A wish along the velocity leaves a float residue (about 1e-7) that the
+                // normalisation below would blow up into a unit vector, half the time
+                // pointing straight back, and Accelerate would then bite slideAccel x dt
+                // out of the slide. The engine has the same arithmetic and does bite now
+                // and then (its residue depends on its own sin/cos bits; the slide
+                // capture, 310.6 u/s at 0.5 s, sits within a few bites of none), but ours
+                // bit on a fifth of the ticks and slid 5% short, so a residue this small
+                // is taken as the zero it stands for.
+                if wish.length_squared() < 1e-10 {
+                    wish = Vec3::ZERO;
+                }
             }
         }
         let l = wish.length();
