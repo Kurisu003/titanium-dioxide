@@ -1047,14 +1047,16 @@ fn key_sign(x: f32) -> i8 {
 }
 
 /// StartSlide (client.dll 0x18020af70), run when crouch goes down on the ground (Duck,
-/// 0x1801f571a) or on landing while ducking or ducked (SetGroundEntity 0x1801fa1c6, m_duckState
-/// 1 or 2): the horizontal speed must be at least slideRequiredStartSpeed and the movement
-/// input within slide_max_angle_dot of the view's forward (no input, a strafe or backpedal is
-/// just a crouch). After slide_boost_cooldown since the last slide it adds slideSpeedBoost,
-/// not past slideSpeedBoostCap, and allows one slide long jump.
-fn start_slide(s: &mut PilotState, p: &PilotParams, wish: Vec2, fwd: Vec2, dt: f32) {
+/// 0x1801f571a) or on landing while ducking or ducked (OnLand 0x1801fa160, m_duckState 1 or
+/// 2): the horizontal speed must be at least slideRequiredStartSpeed, and `on_ground` the
+/// movement input within slide_max_angle_dot of the view's forward (no input, a strafe or
+/// backpedal is just a crouch). The engine tests the direction only when a ground entity is
+/// set, and OnLand calls StartSlide before it sets one, so a crouched landing slides whatever
+/// is pressed. After slide_boost_cooldown since the last slide it adds slideSpeedBoost, not
+/// past slideSpeedBoostCap, and allows one slide long jump.
+fn start_slide(s: &mut PilotState, p: &PilotParams, wish: Vec2, fwd: Vec2, on_ground: bool, dt: f32) {
     let speed = s.horizontal_speed();
-    if speed < p.slide_min_speed || wish.dot(fwd) < p.slide_max_angle_dot {
+    if speed < p.slide_min_speed || (on_ground && wish.dot(fwd) < p.slide_max_angle_dot) {
         return;
     }
     if s.since_slide > p.slide_boost_cooldown {
@@ -1244,7 +1246,7 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             // while ducking starts one too (`move_once`).
             let crouch_pressed = input.crouch && !s.crouched;
             if s.mode == PilotMove::Ground && crouch_pressed {
-                start_slide(s, p, wish, fwd, dt);
+                start_slide(s, p, wish, fwd, true, dt);
             }
             let sliding = s.mode == PilotMove::Slide;
             // Standing up ends a slide only at or below slideMaxStopSpeed; it always ends under
@@ -1880,7 +1882,7 @@ fn move_once(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input:
             // (SetGroundEntity 0x1801fa1c6): the capture's crouched landing at 260 is at 400
             // on the landing frame itself.
             if s.duck_held > 0.0 && matches!(s.mode, PilotMove::Ground) && input.crouch {
-                start_slide(s, p, wish_of(s.yaw, input), Vec2::new(s.yaw.cos(), s.yaw.sin()), dt);
+                start_slide(s, p, wish_of(s.yaw, input), Vec2::new(s.yaw.cos(), s.yaw.sin()), false, dt);
             }
         }
     } else if on_ground_before {
