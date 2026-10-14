@@ -204,6 +204,33 @@ removed.
 - Wall-running on a surface between -0.35 and 0.7: the stored ground normal is turned toward the
   new one by at most a cvar angle per frame (`0x1802068c0`).
 
+## 10. Sprint (`0x1802c89a0`, 2026-10-14)
+
+The sprint state is `player+0x2434` (GetMaxSpeed `0x1802c6920` picks `sprintspeed` over `speed`
+by it). `+0x1698`/`+0x1699` are the zoom state and zoom toggle, and `+0x2588` is the wall-running
+flag; an earlier note read them as sprint flags.
+
+Every frame, from the button update:
+
+1. A sprint press (`IN_SPEED` = `0x8000`) sets the window `+0x2428 = max(+0x2428, now + 3)`;
+   the key held (not pressed) sets `max(+0x2428, now + 0.1)`.
+2. The latch `+0x2610`: when clear and `now <= +0x2428` and `0x1802caa60` allows it, set (and
+   `+0x244c = now`); when set and `0x1802caa60` forbids it, cleared with `+0x2428 = 0`.
+   `0x1802caa60`: the movement input `(forward, side)` has `|input|^2 >= 0.64` and
+   `forward/|input| >= -0.707` (anything but a backpedal), the weapon does not forbid it
+   (attack or melee held with some weapons), not zooming and no zoom press, and `m_duckState`
+   not 1 or 2 (ducking or ducked clears the latch).
+3. `want = (IN_SPEED held || latch) && CanSprint (0x1802c2570)`; a change calls
+   StartSprint (`0x1802cdb90`) or StopSprint (`0x1802cdd10`). CanSprint: a ground entity or
+   less than 0.25 s since leaving the ground, move type 2, no zoom, the weapon allows it, not on
+   a wall (`+0x249c >= 1`), `|input|^2 >= 0.64` and `forward/|input| >= 0.707` (within 45
+   degrees of forward), `m_duckState` not 1 or 2, status-effect speed scale `<= 0.05`, and the
+   velocity along the view forward `> 0`.
+
+So holding the key sprints again right after every slide, turn or shot; a tapped key lasts
+until the first crouch, aim, shot or non-forward input. The viewer's input latch and the sim's
+`sprinting` follow this since commit `sprint: engine window/latch rules`.
+
 ## 9. Where our sim differs or leaves things out (2026-10-14)
 
 The sim already models the pipeline above (its comments cite the same functions). What it does

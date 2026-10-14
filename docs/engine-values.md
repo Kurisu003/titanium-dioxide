@@ -68,8 +68,9 @@ difference is in how fast our slide drops under 350, not in the duck rule.
 
 The sim does `vel = (h + normal * 205 + wish * 80, 230)`. The game does:
 
-1. `add = wishdir * wallrunJumpInputDirSpeed` (80). When the "fill input" flag (`+0x2588`) is set
-   and `|wishdir| < 1`, the missing part is filled with the view forward vector first.
+1. `add = wishdir * wallrunJumpInputDirSpeed` (80). While wall-running (`+0x2588` is the
+   wall-running flag, not a sprint flag) and `|wishdir| < 1`, the missing part is filled with
+   the view forward vector first, so for a wall-run jump it always is.
 2. `outward = wallrunJumpOutwardSpeed` (205) × `(1 - 0.8 * a * b)` where `a = min(0, normal·view)`
    and `b = min(0, normal·wishdir)`: looking and pushing into the wall reduces the push-off.
 3. If `normal·add < outward`, `add += normal * (outward - normal·add)`, so the push-off is the

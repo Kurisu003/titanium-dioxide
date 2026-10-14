@@ -1265,7 +1265,12 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
             // No jump while unducking (m_duckState 3) unless sliding (0x1802003f4); a Pilot who
             // can't stand up stays ducked and can.
             let jump = input.jump && (s.unduck <= 0.0 || s.mode == PilotMove::Slide || s.crouched);
-            s.sprinting = input.sprint && input.forward > 0.5 && !s.crouched;
+            // CanSprint (client.dll 0x1802c2570): the key or latch (`input.sprint`), a movement
+            // input of at least 0.8 within 45 degrees of forward, not ducking or ducked, and
+            // moving along the view (so the first tick from rest walks). Off the ground it
+            // stops after 0.25 s, which does not matter here.
+            let len = input.forward.hypot(input.right);
+            s.sprinting = input.sprint && len >= 0.8 && input.forward / len >= 0.7071 && !s.crouched && hv(s.vel).dot(fwd) > 0.0;
             if s.sprinting {
                 s.sprint_wait += dt;
                 let fast = s.sprint_fast;

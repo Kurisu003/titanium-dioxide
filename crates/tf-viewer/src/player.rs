@@ -339,7 +339,7 @@ pub fn gather_input(
     menu: Res<crate::ui::Menu>,
     loaded_at: Option<Res<crate::ui::LoadedAt>>,
     scroll: Res<bevy::input::mouse::AccumulatedMouseScroll>,
-    mut latches: Local<(u8, bool)>,
+    mut latches: Local<(u8, bool, f32)>,
     (settings, gamepads, pad_cfg, mut pad, mut assist, cams, control): (
         Res<crate::settings::Settings>,
         Query<&Gamepad>,
@@ -536,18 +536,32 @@ pub fn gather_input(
     let mouse_ok = |c: C| !matches!(bind(c), crate::settings::Bind::Mouse(_)) || grabbed;
     input.fire = mouse_ok(C::Fire) && down(C::Fire);
     input.ads = mouse_ok(C::Ads) && down(C::Ads);
-    // Sprint latches like the game's: a tap starts it and it keeps going while you move
-    // forward, until you stop, aim or fire. Crouching does not end it: StartSlide / EndSlide
-    // (client.dll 0x18020af70 / 0x1801f5a20) leave the sprint flags alone, so a Pilot comes out
-    // of a slide sprinting, and the real game kept 260 u/s after landing with the sprint key let
-    // go in the air (capture 2, strafeturn_fwd_*); the sim itself stops sprinting while crouched.
-    if hit(C::Sprint) || (input.sprint && input.forward > 0.5) {
-        latches.1 = true;
+    // Sprint as the engine's sprint update does it (client.dll 0x1802c89a0): a press opens a
+    // 3 s window and holding the key keeps it open 0.1 s past release; inside the window the
+    // sprint latches as soon as it is allowed (0x1802caa60: a movement input of at least 0.8
+    // not more than 135 degrees from forward, no aim or fire, not ducking or ducked), and the
+    // latch drops, window and all, the moment it is not. So a held key sprints again right
+    // after every slide, turn or shot, while a tapped key is lost at the first crouch. The
+    // Pilot sprints while the key is held or the latch is set; the sim applies the rest of
+    // CanSprint (0x1802c2570).
+    let held = down(C::Sprint);
+    latches.2 = (latches.2 - time.delta_secs()).max(0.0);
+    if hit(C::Sprint) {
+        latches.2 = latches.2.max(3.0);
+    } else if held {
+        latches.2 = latches.2.max(0.1);
     }
-    if input.forward < 0.5 || input.ads || input.fire {
+    let len = input.forward.hypot(input.right);
+    let can_latch = len >= 0.8 && input.forward / len >= -0.7071 && !input.ads && !input.fire && !input.crouch;
+    if !latches.1 {
+        if latches.2 > 0.0 && can_latch {
+            latches.1 = true;
+        }
+    } else if !can_latch {
         latches.1 = false;
+        latches.2 = 0.0;
     }
-    input.sprint = latches.1;
+    input.sprint = held || latches.1;
     if hit(C::Reload) {
         input.reload = true;
         input.pilot_reload = true;
