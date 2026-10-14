@@ -239,11 +239,12 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
             yaw += yawspeed * dt * turn * if keys.speed { 0.67 } else { 1.0 };
             let fwd = keys.forward as i32 as f32 - keys.back as i32 as f32;
             let right = keys.moveright as i32 as f32 - keys.moveleft as i32 as f32;
-            // Sprint latches as in the viewer (and make_replay.py).
+            // Sprint latches as in the viewer (and make_replay.py): a press starts it, letting go
+            // of forward ends it; crouching does not (the sim stops sprinting while crouched).
             if pressed_speed || (keys.speed && fwd > 0.5) {
                 latched = true;
             }
-            if fwd < 0.5 || keys.duck {
+            if fwd < 0.5 {
                 latched = false;
             }
             let input = PilotInput {
