@@ -15,6 +15,16 @@ Names are ours; the binary has none. `mv` is the move data (CMoveData: `+0x18` h
 
 ## 1. PlayerMove (`0x1802041c0`), once per client frame
 
+Before it, CPrediction::SetupMove (`0x1802d8b40`) fills the move data from the usercmd: the
+view angles (`+0xc`), AngleVectors of them into `+0x30` forward / `+0x3c` right / `+0x48` up,
+then the forward and right **flattened to the horizontal plane and normalized** into `+0x54` and
+`+0x60`, and the wish direction `+0x6c = forwardmove x flat forward + sidemove x flat right`
+(`z = 0`), normalized when longer than 1. So the wish never carries the view pitch. WalkMove
+runs its own AngleVectors (with pitch) and projects onto the ground or wall plane, which comes to
+the same thing on the ground; StartSlide's angle test, the keyboard grace and the wall jump's
+"looking into the wall" dot read the flattened copies, while the wall jump's input fill (hang
+only) and WalkMove's backward test read the pitched forward.
+
 1. `settings` and `pose` pointers are refreshed from the `.set` data.
 2. If the player is frozen (`player+0x6c8`) the move inputs are zeroed.
 3. `m_flDucktime` (`+0x188c`, **an integer in milliseconds**) loses `(int)(dt * 1000)` and stops
@@ -207,8 +217,11 @@ removed.
 ## 10. Sprint (`0x1802c89a0`, 2026-10-14)
 
 The sprint state is `player+0x2434` (GetMaxSpeed `0x1802c6920` picks `sprintspeed` over `speed`
-by it). `+0x1698`/`+0x1699` are the zoom state and zoom toggle, and `+0x2588` is the wall-running
-flag; an earlier note read them as sprint flags.
+by it). `+0x1698`/`+0x1699` are the zoom state and zoom toggle, and `+0x2588` is the wall-hang
+flag (set by the wall-run update when the ADS button is held with `wallrunAdsType` 1, cleared
+when the hang ends); an earlier note read them as sprint flags, and a later one read `+0x2588`
+as the wall-running flag. Wall-running itself has no flag: IsWallRunning (`0x1802c9350`) is
+"the move's up vector `+0x2494` is not straight up" (`z < 1`).
 
 Every frame, from the button update:
 
@@ -252,3 +265,53 @@ Everything the sim does model agrees with the code read here: the slide decelera
 when the crouch is let go or the input brakes) and the 0.7 per-second decay, the slide speed
 boost and its cap, the 350 u/s stop and jump rules, the half-tick gravity, the protected-component
 friction and the linear deceleration, the acceleration cap, and the landing slide.
+
+## 11. The port (`crates/tf-sim/src/engine_move.rs`, 2026-10-14)
+
+`engine_move.rs` is a function-by-function port of the walk move (move type 2, world only):
+PlayerMove, FullWalkMove, Duck, the sprint update, CheckJumpButton (ground, double, wall and
+grace jumps, the skip), StartSlide / EndSlide, Friction / Accelerate / AirAccelerate, WalkMove
+(with its wall branch), AirMove (keyboard grace, wall-run retry), CategorizePosition with the
+quarter-hull ground trace, StayOnGround, TryPlayerMove and the step and blocked handlers, and
+the wall-run (CanWallrun's probes, the start, the update with its friction, acceleration,
+gravity ramp, turning and hang, EndWallrun). Every function names the engine address it
+mirrors and the state fields carry the `player+0x....` / `mv+0x..` offsets. Left out: other
+entities, the dodge, the mantle (`0x180208bf0` / `0x180209ed0` / `0x18020bb30`; the old sim's
+mantle runs in its place), ziplines, the grapple, sounds and the eye step smoothing.
+
+Against the 58 capture-2 programs (`~/td-tools/capture2`, `moveref` with `TF_ENGINE_MOVE=1`)
+the port matches the game wherever the old sim did, and is closer on the first-jump peaks
+(49.5 u against the game's 51.0; the old sim gave 47.2). What is left differs by harness
+artifacts shared with the old sim: a 0.6 u ground offset on the slope of the capture spot
+(collision data), a frame of input latency at program start, and the game's logged frame times
+rounding 6.9x ms up to 7 ms (the in-air unduck lands two frames later there).
+
+Things learned while porting that earlier sections or `engine-values.md` had wrong or missing:
+
+- `+0x2588` is the wall-hang flag (see section 10). The wall-run jump's input fill with the
+  view forward (`engine-values.md`) therefore applies only to a jump out of a wall hang.
+- The wish direction is flat (section 1): the port first built it from the pitched forward,
+  which the capture programs (pitch 0) could not show; in the viewer, looking down while
+  falling then cancelled the air acceleration.
+- The keyboard grace (AirMove `0x1801f1d62`): a movement key pressed within
+  `jump_keyboardgraceperiodmax` (0.5 s) of the jump turns the horizontal velocity toward the
+  keys at full `jump_keyboardgrace_strength` (0.7) until `jump_keyboardgraceperiodmin` (0.2 s)
+  after the jump, fading to nothing at the max: `k = clamp((t - max) / (min - max), 0, 1) *
+  strength`. The speed is capped at the standing sprint speed times `jump_keyboardgrace_max`.
+- The player-class block (per-class values the `.set` fills) at `player+0x205c`:
+  `wallrunAccelerateVertical`, `+0x2060 wallrunAccelerateHorizontal`,
+  `+0x2064 wallrunMaxSpeedHorizontal`, `+0x2068 wallrun_timeLimit`, `+0x206c
+  wallrun_hangTimeLimit`, `+0x2070 wallrun enabled`, `+0x2074 wallrunAdsType` (1 wallhang,
+  0 ADS), `+0x2078 superjump enabled`, `+0x2086 sprint enabled`.
+- The stance (pose) block: `pose+0x44 lowSpeed`, `+0x48 acceleration`, `+0x4c deceleration`,
+  `+0x50 lowAcceleration`, `+0x54 sprintAcceleration`, `+0x58 sprintDeceleration`; `speed` and
+  `sprintspeed` sit in the player at `+0x20cc + pose * 8` and `+0x20d0 + pose * 8`.
+- The ConVar globals the decompile reads as `*(float *)(DAT_1811xxxx + 0x58)` (value; `+0x5c`
+  the int) are the ConVar object plus `0x38`; the registration calls
+  (`FUN_1807374a0(&obj, "name", ...)`) give the table `DAT -> name` kept outside the repo in
+  `~/tools/ghidra-proj/out/client_cvar_dat.tsv` (1201 ConVars).
+- `+0x2b90` (the jump-grace reference time `0x1802c5860` reads as `now - +0x2b90`) is written
+  where the ground entity is lost; the port sets it in its SetGroundEntity.
+- `+0x3b7c` (`0x1802c71a0`) is the floor plane of the last ground trace; `+0x2b70` what the
+  last move ran into; `+0x24bc` the no-boost flag for the next wall-run; `+0x1890` the double
+  jumps used, reset on landing (and on a wall-run when `superjump_limitreset_onwallrun`).

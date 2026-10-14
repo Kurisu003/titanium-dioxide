@@ -5,6 +5,7 @@
 //! 2500, deceleration -1, airSpeed 60, airAcceleration 500) and its convars.
 
 use crate::collision::{CollisionWorld, Trace, CLIP_PILOT, DIST_EPSILON};
+use crate::engine_move;
 use crate::smoothstep;
 use glam::{Vec2, Vec3};
 
@@ -633,6 +634,13 @@ pub struct PilotState {
     /// normal, zero if nothing): Friction keeps the velocity along it when the input pushes
     /// into it (`walk_move`).
     block_normal: Vec3,
+    /// The engine port's move state (`engine_move`), used in place of the move code here when
+    /// TF_ENGINE_MOVE=1 (`engine_enabled`), and its game clock.
+    engine: Option<Box<engine_move::Pm>>,
+    engine_time: f32,
+    /// Whether the last step ran the engine port (a mantle, zipline or grapple step in between
+    /// means its ground state is stale).
+    engine_ran: bool,
 }
 
 impl PilotState {
@@ -681,6 +689,9 @@ impl PilotState {
             zip_cooldown: 0.0,
             ground_normal: Vec3::Z,
             block_normal: Vec3::ZERO,
+            engine: None,
+            engine_time: 0.0,
+            engine_ran: false,
         }
     }
     /// The latest landing, if it was a hard one (faster than impactSpeed): its speed.
@@ -1147,6 +1158,9 @@ fn air_duck(s: &mut PilotState, p: &PilotParams, world: &CollisionWorld, input: 
 pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &CollisionWorld, dt: f32) {
     s.yaw = input.yaw;
     s.pitch = input.pitch;
+    // Set again at the end of an engine step: any other way through here (zipline, grapple,
+    // mantle, the old move) leaves the port's ground state stale.
+    let engine_ran = std::mem::replace(&mut s.engine_ran, false);
     let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
     let right = Vec2::new(s.yaw.sin(), -s.yaw.cos());
     let wish = wish_of(s.yaw, input);
@@ -1230,6 +1244,12 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     // 0x1804f43e0, gravity 0x1801fe9e0, steering 0x1801f1bd0).
     update_hook(s, p, world, dt);
     if s.grapple.is_some() && grapple_step(s, input, wish, p, world, dt) {
+        return;
+    }
+
+    // The engine port runs the whole move (everything but the mantle) when asked for.
+    if engine_enabled() && !matches!(s.mode, PilotMove::Mantle { .. }) {
+        engine_step(s, input, p, world, dt, engine_ran);
         return;
     }
 
@@ -1517,6 +1537,154 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     // FinishGravity, unless the move landed (or caught a wall).
     if half_gravity && s.mode == PilotMove::Air {
         s.vel.z -= 0.5 * p.gravity * dt;
+    }
+}
+
+/// TF_ENGINE_MOVE=1 runs the Pilot on the engine port (`engine_move`) instead of the move code
+/// in this file.
+pub fn engine_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TF_ENGINE_MOVE").is_some_and(|v| v == "1"))
+}
+
+/// The engine port's player settings from this file's params: the stim and ADS speed scales
+/// the viewer applies to the params carry over, the rest are the port's pilot_mp.set values.
+fn engine_settings(p: &PilotParams) -> engine_move::Settings {
+    let mut st = engine_move::Settings::default();
+    st.pose_speed[0] = p.walk_speed;
+    st.pose_sprint_speed[0] = p.sprint_speed;
+    st.pose_speed[1] = p.crouch_speed;
+    st.wallrun_ads_type = if p.wallhang_on_ads { 1 } else { 0 };
+    st
+}
+
+/// One step on the engine port: the input becomes a usercmd, the port moves its own player
+/// state (kept in `s.engine`, synced to `s.pos` / `s.vel` either way so the viewer's teleports,
+/// zipline, grapple and mantle still work), and the result is written back into the fields the
+/// viewer reads (mode, crouched, sprinting, jumps, landed, double jump) plus the sprint view
+/// ramp from the ground branch of `step`.
+fn engine_step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &CollisionWorld, dt: f32, engine_ran: bool) {
+    let yaw_deg = s.yaw.to_degrees();
+    let mut pm = s.engine.take().unwrap_or_else(|| Box::new(engine_move::Pm::new(s.pos, yaw_deg)));
+    // Something else moved the Pilot since the port last ran (a teleport, the rodeo placing it
+    // on the Titan): its ground state is as stale as after a step that did not run the port.
+    let moved = (s.pos - pm.origin).length_squared() > 1e-4;
+    pm.origin = s.pos;
+    pm.vel = s.vel;
+    if !engine_ran || moved {
+        // Back from a mantle, zipline, grapple or rodeo (or the first step): nothing under the
+        // feet until the move's CategorizePosition says so.
+        pm.on_ground = false;
+        pm.normal = Vec3::Z;
+        pm.sliding = false;
+        pm.hanging = false;
+        pm.cached = None;
+    }
+    s.engine_time += dt;
+    let st = engine_settings(p);
+    let cv = engine_move::Cvars::default();
+    let mut b = 0u32;
+    if input.forward > 0.0 {
+        b |= engine_move::IN_FORWARD;
+    } else if input.forward < 0.0 {
+        b |= engine_move::IN_BACK;
+    }
+    if input.right > 0.0 {
+        b |= engine_move::IN_MOVERIGHT;
+    } else if input.right < 0.0 {
+        b |= engine_move::IN_MOVELEFT;
+    }
+    if input.sprint {
+        b |= engine_move::IN_SPEED;
+    }
+    if input.crouch {
+        b |= engine_move::IN_DUCK;
+    }
+    if input.jump {
+        b |= engine_move::IN_JUMP;
+    }
+    if input.ads {
+        b |= engine_move::IN_ZOOM;
+    }
+    let cmd = engine_move::Cmd { buttons: b, fmove: input.forward, smove: input.right, yaw: yaw_deg, pitch: s.pitch.to_degrees() };
+    let was_on_ground = pm.on_ground;
+    let was_wall = pm.is_wallrunning();
+    let vz_before = pm.vel.z;
+    let ran_before = engine_ran;
+    engine_move::player_move(&mut pm, &cmd, &st, &cv, world, s.engine_time, dt);
+    if std::env::var_os("TF_ENGINE_DEBUG").is_some() {
+        eprintln!(
+            "eng ran {} moved {} g0 {} t {:.3} b {:#x} f {:.2} s {:.2} yaw {:.1} pitch {:.1} | g {} duck {} dt {} spr {} max {:.1} wish {:.3} {:.3} {:.3} | pos {:.1} {:.1} {:.1} vel {:.1} {:.1} {:.1} n {:.2} {:.2} {:.2}",
+            ran_before as u8, moved as u8, was_on_ground as u8, pm.now, cmd.buttons, cmd.fmove, cmd.smove, cmd.yaw, cmd.pitch, pm.on_ground as u8, pm.duck_state, pm.ducktime, pm.sprinting as u8, pm.maxspeed,
+            pm.wishdir.x, pm.wishdir.y, pm.wishdir.z, pm.origin.x, pm.origin.y, pm.origin.z, pm.vel.x, pm.vel.y, pm.vel.z, pm.normal.x, pm.normal.y, pm.normal.z
+        );
+    }
+
+    s.pos = pm.origin;
+    s.vel = pm.vel;
+    s.crouched = pm.ducked_hull();
+    s.duck = pm.duck_view();
+    s.sprinting = pm.sprinting;
+    s.ground_normal = if pm.on_ground { pm.ground_normal } else { Vec3::Z };
+    s.block_normal = pm.block_normal;
+    s.double_jump_available = (pm.jumps_used as f32) < st.superjump_limit;
+    if pm.jump_time == pm.now {
+        s.jumps += 1;
+        s.since_jump = 0.0;
+        s.since_ground = 99.0;
+    }
+    if !was_on_ground && !was_wall && pm.on_ground {
+        s.landed = Some(-vz_before);
+        s.since_land = 0.0;
+    }
+    s.mode = if pm.hanging {
+        PilotMove::WallHang { normal: pm.normal, time: pm.now - pm.hang_start }
+    } else if pm.is_wallrunning() {
+        PilotMove::WallRun { normal: pm.normal, time: pm.now - pm.wallrun_start_time }
+    } else if pm.on_ground {
+        if pm.sliding { PilotMove::Slide } else { PilotMove::Ground }
+    } else {
+        PilotMove::Air
+    };
+    if s.on_ground() || !matches!(s.mode, PilotMove::Air) {
+        s.since_ground = 0.0;
+    }
+    // The sprint view ramp (sprintStartDelay / sprintStartDuration / sprintStartFastDuration /
+    // sprintEndDuration), as the ground branch of `step` runs it.
+    if s.on_ground() {
+        if s.sprinting {
+            s.sprint_wait += dt;
+            let fast = s.sprint_fast;
+            if fast || s.sprint_frac > 0.0 || s.sprint_wait >= p.sprint_start_delay {
+                let dur = if fast { p.sprint_start_fast } else { p.sprint_start };
+                s.sprint_frac = (s.sprint_frac + dt / dur.max(1e-3)).min(1.0);
+            }
+            if s.sprint_frac >= 1.0 {
+                s.sprint_fast = false;
+            }
+        } else {
+            s.sprint_wait = 0.0;
+            s.sprint_fast = false;
+            s.sprint_frac = (s.sprint_frac - dt / p.sprint_end.max(1e-3)).max(0.0);
+        }
+    }
+    s.engine = Some(pm);
+    s.engine_ran = true;
+
+    // The automantle stays this file's (the engine's is not ported yet): the same trigger as
+    // the old path, after the move.
+    let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
+    let mantle_ok = match s.mode {
+        PilotMove::Ground | PilotMove::Slide => input.jump,
+        PilotMove::Air => input.jump || s.since_ground >= 0.25,
+        _ => true,
+    };
+    if mantle_ok && input.forward > 0.3 && s.vel.z < 250.0 {
+        if let Some(to) = mantle_target(s, p, world, fwd) {
+            s.mode = PilotMove::Mantle { from: s.pos, to, time: 0.0 };
+            s.vel = Vec3::ZERO;
+        }
     }
 }
 
