@@ -60,6 +60,13 @@ const SONAR_RADIUS: f32 = 1250.0;
 const SONAR_DURATION: f32 = 6.0;
 /// DECOY_DURATION (mp_ability_holopilot.nut).
 const DECOY_DURATION: f32 = 10.0;
+/// The decoy's end: server.dll's Decoy_Dissolve (0x1801c4aa0) dissolves the decoy and the gun
+/// models it carries and removes it 3 s later; client.dll's C_EntityDissolve (0x180116b90)
+/// plays the `dissolve` system and "Death.Dissolve" on it. The model's own burn-out (the
+/// dissolve render effect) isn't drawn: it fades out over the second second instead, as
+/// Source's dissolve hides the model between 1.9 and 2 s.
+const DECOY_DISSOLVE_TOTAL: f32 = 3.0;
+const DECOY_DISSOLVE_FADE: (f32, f32) = (1.0, 2.0);
 /// DEPLOYABLE_SHIELD_* (mp_weapon_deployable_cover.nut).
 const SHIELD_DURATION: f32 = 15.0;
 const SHIELD_HEALTH: f32 = 850.0;
@@ -480,6 +487,9 @@ pub struct PilotStatus {
     /// Seconds until the next ordnance charge.
     pub ord_cooldown: f32,
     pub decoy: Option<Decoy>,
+    /// Seconds into the decoy's dissolve (Decoy_Dissolve: the model burns out over
+    /// DECOY_DISSOLVE_MODEL seconds while the `dissolve` system runs, DECOY_DISSOLVE_TOTAL in all).
+    pub decoy_dissolve: Option<f32>,
     /// Pulse Blade: where it landed and how long it keeps revealing.
     pub pulse: Option<(Vec3, f32)>,
     /// Satchels waiting for the detonator.
@@ -1662,20 +1672,55 @@ pub fn update_decoy(
     mut decoys: Query<(&mut Transform, &mut Visibility), With<DecoyActor>>,
     gd: Res<GameData>,
     mut cache: ResMut<Cache>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    // Grouped: the system is at Bevy's parameter limit.
+    assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>),
+    mut dissolve: (Query<&Children>, Query<&MeshMaterial3d<StandardMaterial>>, Local<Vec<(Entity, Handle<StandardMaterial>, Handle<StandardMaterial>)>>),
 ) {
     let Some(kit) = kit else { return };
+    let dt = time.delta_secs().min(0.1);
+    let (mut meshes, mut images, mut materials, mut bindposes) = assets;
+    let (children, mesh_mats, fading) = (&dissolve.0, &dissolve.1, &mut *dissolve.2);
     let Some(mut d) = status.decoy else {
+        // The dissolve: the decoy (and its gun) stay, fading out, while the sparks run.
+        if let (Some(t), Some(anchor)) = (status.decoy_dissolve, kit.decoy) {
+            if fading.is_empty() && t == 0.0 {
+                for e in children.iter_descendants(anchor) {
+                    let Ok(m) = mesh_mats.get(e) else { continue };
+                    let Some(src) = materials.get(&m.0).cloned() else { continue };
+                    let copy = materials.add(StandardMaterial { alpha_mode: AlphaMode::Blend, ..src });
+                    commands.entity(e).insert(MeshMaterial3d(copy.clone()));
+                    fading.push((e, m.0.clone(), copy));
+                }
+            }
+            let t = t + dt;
+            let (a, b) = DECOY_DISSOLVE_FADE;
+            let alpha = (1.0 - (t - a) / (b - a)).clamp(0.0, 1.0);
+            for (_, _, copy) in fading.iter() {
+                if let Some(m) = materials.get_mut(copy) {
+                    m.base_color = m.base_color.with_alpha(alpha);
+                }
+            }
+            if t >= DECOY_DISSOLVE_TOTAL {
+                for (e, orig, _) in fading.drain(..) {
+                    if let Ok(mut c) = commands.get_entity(e) {
+                        c.insert(MeshMaterial3d(orig));
+                    }
+                }
+                if let Ok((_, mut vis)) = decoys.single_mut() {
+                    vis.set_if_neq(Visibility::Hidden);
+                }
+                status.decoy_dissolve = None;
+            } else {
+                status.decoy_dissolve = Some(t);
+                return;
+            }
+        }
         if let Some(e) = rig.gun.take() {
             commands.entity(e).despawn();
         }
         rig.clip = None;
         return;
     };
-    let dt = time.delta_secs().min(0.1);
     // The gun, once, from the weapon in hand.
     if rig.gun.is_none() {
         if let (Some(hand), Some(g)) = (kit.decoy_hand, loadouts.iter().next().and_then(|lo| lo.guns.get(lo.active))) {
@@ -1800,11 +1845,18 @@ pub fn update_decoy(
     }
     if let Ok((mut tf, mut vis)) = decoys.single_mut() {
         *tf = game_tf(d.pos, d.dir.y.atan2(d.dir.x));
-        vis.set_if_neq(if d.time > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
+        vis.set_if_neq(Visibility::Inherited);
     }
     if d.time <= 0.0 {
+        // CleanupExistingDecoy: Decoy_Dissolve, holopilot_end_3P, and the dissolve's own
+        // sparks and sound (C_EntityDissolve) on the decoy, which keeps moving nowhere.
         status.decoy = None;
+        status.decoy_dissolve = Some(0.0);
         crate::audio::event_at(&mut commands, "holopilot_end_3P", d.pos);
+        crate::audio::event_at(&mut commands, "Death.Dissolve", d.pos);
+        if let Some(anchor) = kit.decoy {
+            commands.spawn((Transform::from_translation(Vec3::new(0.0, 0.0, 36.0)), crate::pfx::PfxTrail::oriented("dissolve"), crate::pfx::PfxOneShot(DECOY_DISSOLVE_TOTAL), ChildOf(anchor)));
+        }
     } else {
         status.decoy = Some(d);
     }
