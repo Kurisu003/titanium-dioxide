@@ -324,10 +324,15 @@ pub struct Pm {
     pub smove: f32,     // mv+0x28
     pub yaw: f32,       // mv+0x10 (degrees)
     pub pitch: f32,     // mv+0xc
-    pub fwd: Vec3,      // mv+0x30 (and the copy at +0x54)
-    pub right: Vec3,    // mv+0x3c (+0x60)
+    pub fwd: Vec3,      // mv+0x30 (the view forward, with pitch)
+    pub right: Vec3,    // mv+0x3c
     pub up: Vec3,       // mv+0x48
-    pub wishdir: Vec3,  // mv+0x6c
+    /// The view forward and right flattened to the horizontal plane and normalized
+    /// (mv+0x54 / +0x60, CPrediction::SetupMove `0x1802d8b40`): the wish direction, the slide's
+    /// angle test, the keyboard grace and the wall jump's "looking into the wall" read these.
+    pub fwd_flat: Vec3,
+    pub right_flat: Vec3,
+    pub wishdir: Vec3,  // mv+0x6c: fwd_flat * fmove + right_flat * smove, normalized when over 1
     pub maxspeed: f32,  // mv+0x88
     pub summed_wish: Vec3, // mv+0xb0
     // --- C_Player ---
@@ -405,6 +410,8 @@ impl Pm {
             fwd: Vec3::X,
             right: -Vec3::Y,
             up: Vec3::Z,
+            fwd_flat: Vec3::X,
+            right_flat: -Vec3::Y,
             wishdir: Vec3::ZERO,
             maxspeed: 0.0,
             summed_wish: Vec3::ZERO,
@@ -469,7 +476,8 @@ impl Pm {
     pub fn is_wallrunning(&self) -> bool {
         self.normal.z < 1.0
     }
-    fn ducked_hull(&self) -> bool {
+    /// FL_DUCKING: the hull is the ducked one.
+    pub fn ducked_hull(&self) -> bool {
         self.flags & FL_DUCKING != 0
     }
     /// The current hull (`0x1801f02c0`): mins and maxs by FL_DUCKING.
@@ -601,7 +609,15 @@ pub fn player_move(p: &mut Pm, cmd: &Cmd, s: &Settings, cv: &Cvars, w: &Collisio
     p.fwd = fwd;
     p.right = right;
     p.up = up;
-    p.wishdir = fwd * cmd.fmove + right * cmd.smove;
+    // SetupMove (0x1802d8b40): the wish is in the horizontal plane, from the flattened view
+    // vectors, and never longer than 1.
+    p.fwd_flat = norm(Vec3::new(fwd.x, fwd.y, 0.0));
+    p.right_flat = norm(Vec3::new(right.x, right.y, 0.0));
+    let mut wish = p.fwd_flat * cmd.fmove + p.right_flat * cmd.smove;
+    if wish.length_squared() > 1.0 {
+        wish = norm(wish);
+    }
+    p.wishdir = wish;
     p.summed_wish = Vec3::ZERO;
     p.step_height = s.step_height;
     // 0x180204303: m_flDucktime counts down in whole milliseconds.
@@ -791,6 +807,19 @@ fn duck(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, dt: f32) {
     }
     if !(p.duck_state == 1 || p.duck_state == 2) && was_ducking {
         end_slide(p, cv);
+    }
+}
+
+impl Pm {
+    /// The view's crouch (0 standing, 1 ducked) from the duck state and its ms left: ducking
+    /// counts 400 ms (200 when sliding) down, unducking 200 ms.
+    pub fn duck_view(&self) -> f32 {
+        match self.duck_state {
+            1 => 1.0 - duck_fraction(self.ducktime, self.sliding),
+            2 => 1.0,
+            3 => (self.ducktime as f32 / 200.0).clamp(0.0, 1.0),
+            _ => 0.0,
+        }
     }
 }
 
@@ -1086,7 +1115,7 @@ fn wall_jump(p: &mut Pm, n: Vec3, s: &Settings, cv: &Cvars) {
         }
     }
     let mut add = wd * s.wallrun_jump_input_dir_speed;
-    let a = n.dot(p.fwd).min(0.0);
+    let a = n.dot(p.fwd_flat).min(0.0);
     let b = n.dot(wd).min(0.0);
     let out = (1.0 - a * b * 0.8) * s.wallrun_jump_outward_speed;
     let d = add.dot(n);
@@ -1172,7 +1201,7 @@ fn start_slide(p: &mut Pm, n: Vec3, s: &Settings, cv: &Cvars) {
         if h2 < s.slide_required_start_speed * s.slide_required_start_speed {
             return;
         }
-        if p.on_ground && p.fwd.dot(p.wishdir) < cv.slide_max_angle_dot {
+        if p.on_ground && p.fwd_flat.dot(p.wishdir) < cv.slide_max_angle_dot {
             return;
         }
     }
@@ -1524,7 +1553,7 @@ fn air_move(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, dt: f32) {
         if t < cv.jump_keyboardgraceperiodmax {
             let f = (p.buttons & IN_FORWARD != 0) as i32 as f32 - (p.buttons & IN_BACK != 0) as i32 as f32;
             let sd = (p.buttons & IN_MOVERIGHT != 0) as i32 as f32 - (p.buttons & IN_MOVELEFT != 0) as i32 as f32;
-            let dir = p.fwd * f + p.right * sd;
+            let dir = p.fwd_flat * f + p.right_flat * sd;
             let dl = dir.length().max(NORM_EPS);
             let hs = (p.vel.x * p.vel.x + p.vel.y * p.vel.y).sqrt();
             let hl = hs.max(NORM_EPS);
