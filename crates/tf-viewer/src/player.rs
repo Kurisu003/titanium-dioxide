@@ -295,6 +295,12 @@ pub struct PlayerInput {
     /// The sprint key itself, before the latch (`sprint` is key or latch): for the input
     /// graph and the recording.
     pub sprint_key: bool,
+    /// Toggle crouch (settings): the crouch key is the game's +toggle_duck. `crouch_toggle_key`
+    /// is the key itself, `crouch_toggled` the toggle state (kept across frames; the engine
+    /// port's own state when it runs), and `crouch` mirrors the state.
+    pub crouch_toggle_mode: bool,
+    pub crouch_toggle_key: bool,
+    pub crouch_toggled: bool,
 }
 
 /// Scripted input for automated testing: `start-end:action` entries separated by commas.
@@ -379,6 +385,8 @@ pub fn gather_input(
         input.vortex = false;
         input.utility = false;
         input.crouch = false;
+        input.crouch_toggle_mode = false;
+        input.crouch_toggle_key = false;
         script.aim_dummy = false;
         let mut new_mode = None;
         for (i, (a, b, action)) in script.entries.clone().into_iter().enumerate() {
@@ -410,6 +418,10 @@ pub fn gather_input(
                 "melee" if once => input.melee = true,
                 "jump" if once => input.jump = true,
                 "crouch" if active => input.crouch = true,
+                "duck_toggle" if active => {
+                    input.crouch_toggle_mode = true;
+                    input.crouch_toggle_key = true;
+                }
                 "interact" if once => input.interact = true,
                 "pfxtest" if once => input.pfx_test = true,
                 "tactical" if once => input.tactical = true,
@@ -513,7 +525,23 @@ pub fn gather_input(
         input.dash = true;
         input.jump = true;
     }
-    input.crouch = down(C::Crouch);
+    if settings.toggle_crouch {
+        // The game's +toggle_duck: a tap toggles the crouch and a jump clears it (the engine
+        // port also clears it on a wall run and by the slide rules, and simulate_pilot copies
+        // its state back here).
+        input.crouch_toggle_mode = true;
+        input.crouch_toggle_key = down(C::Crouch);
+        if hit(C::Crouch) {
+            input.crouch_toggled = !input.crouch_toggled;
+        }
+        if hit(C::Jump) {
+            input.crouch_toggled = false;
+        }
+        input.crouch = input.crouch_toggled;
+    } else {
+        input.crouch_toggled = false;
+        input.crouch = down(C::Crouch);
+    }
     if hit(C::Use) {
         input.interact = true;
     }

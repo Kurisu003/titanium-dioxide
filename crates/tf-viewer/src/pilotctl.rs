@@ -687,6 +687,7 @@ pub fn simulate_pilot(
         pitch: input.pitch,
         sprint: input.sprint && !frozen,
         crouch: input.crouch && !frozen,
+        crouch_toggle: input.crouch_toggle_mode.then_some(input.crouch_toggle_key && !frozen),
         jump: false,
         ads: input.pilot_ads && !frozen,
     };
@@ -703,6 +704,10 @@ pub fn simulate_pilot(
         let fall = pilot.state.vel.z;
         let was_crouched = pilot.state.crouched;
         pilot::step(&mut pilot.state, &step_input, &params, &world.0, dt / n as f32);
+        if input.crouch_toggle_mode && pilot::engine_enabled() {
+            // The engine port owns the toggle; the viewer's copy follows it.
+            input.crouch_toggled = pilot.state.crouch_toggled;
+        }
         // Crouching down and standing up on the ground (sound_standToCrouch /
         // sound_crouchToStand, pilot_solo.set; Duck plays them, client.dll 0x1801f56fc /
         // 0x1801f594d). A slide starts with the crouch sound too.

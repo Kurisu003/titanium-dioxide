@@ -518,6 +518,11 @@ pub struct PilotInput {
     pub pitch: f32,
     pub sprint: bool,
     pub crouch: bool,
+    /// Toggle-crouch mode (the game's +toggle_duck bind): Some(key held). The engine port
+    /// then runs the game's own toggle (set by the press, cleared by a jump, a wall run and
+    /// the slide rules) and ignores `crouch`; the old sim still reads `crouch`, which the viewer
+    /// emulates. None is hold-crouch.
+    pub crouch_toggle: Option<bool>,
     /// Jump pressed this tick.
     pub jump: bool,
     /// Aiming down sights (wall hang with the wall-hang kit).
@@ -561,6 +566,8 @@ pub struct PilotState {
     pub pitch: f32,
     pub mode: PilotMove,
     pub crouched: bool,
+    /// The engine port's toggle-crouch state (duck_toggle), for the viewer to mirror.
+    pub crouch_toggled: bool,
     pub sprinting: bool,
     /// How far the view has gone into sprintViewOffset (0..1), and seconds waited for it.
     pub sprint_frac: f32,
@@ -652,6 +659,7 @@ impl PilotState {
             pitch: 0.0,
             mode: PilotMove::Air,
             crouched: false,
+            crouch_toggled: false,
             sprinting: false,
             sprint_frac: 0.0,
             sprint_wait: 0.0,
@@ -1598,8 +1606,17 @@ fn engine_step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &
     if input.sprint {
         b |= engine_move::IN_SPEED;
     }
-    if input.crouch {
-        b |= engine_move::IN_DUCK;
+    match input.crouch_toggle {
+        Some(held) => {
+            if held {
+                b |= engine_move::IN_DUCKTOGGLE;
+            }
+        }
+        None => {
+            if input.crouch {
+                b |= engine_move::IN_DUCK;
+            }
+        }
     }
     if input.jump {
         b |= engine_move::IN_JUMP;
@@ -1626,6 +1643,7 @@ fn engine_step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &
     s.crouched = pm.ducked_hull();
     s.duck = pm.duck_view();
     s.sprinting = pm.sprinting;
+    s.crouch_toggled = pm.duck_toggle;
     s.ground_normal = if pm.on_ground { pm.ground_normal } else { Vec3::Z };
     s.block_normal = pm.block_normal;
     s.double_jump_available = (pm.jumps_used as f32) < st.superjump_limit;

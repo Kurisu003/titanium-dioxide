@@ -534,6 +534,7 @@ fn main() {
                     pitch: num(2),
                     sprint: flags & 1 != 0,
                     crouch: flags & (1 << 11) != 0,
+                    crouch_toggle: None,
                     jump: false,
                     ads: flags & (1 << 20) != 0,
                 };

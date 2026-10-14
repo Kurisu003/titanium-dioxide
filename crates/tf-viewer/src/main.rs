@@ -1352,7 +1352,7 @@ fn graph_keys(i: &player::PlayerInput) -> u16 {
     if i.right > 0.0 { k |= 8 }
     if i.sprint_key { k |= 16 }
     if i.sprint && !i.sprint_key { k |= KEY_LATCH }
-    if i.crouch { k |= 64 }
+    if i.crouch || i.crouch_toggle_key { k |= 64 }
     if i.jump { k |= 128 }
     if i.ads || i.pilot_ads { k |= 256 }
     k

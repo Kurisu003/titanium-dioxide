@@ -239,6 +239,8 @@ pub struct Settings {
     pub mouse_sensitivity_zoomed: f32,
     pub fov_scale: f32,
     pub invert_y: bool,
+    /// Crouch key as the game's +toggle_duck (the controls menu's "Crouch: Toggle").
+    pub toggle_crouch: bool,
     /// Master volume (0-1).
     pub volume: f32,
     pub gamepad_look: usize,
@@ -258,6 +260,7 @@ impl Default for Settings {
             mouse_sensitivity_zoomed: 5.0,
             fov_scale: 1.0,
             invert_y: false,
+            toggle_crouch: false,
             volume: crate::audio::DEFAULT_VOLUME,
             gamepad_look: 2,
             gamepad_look_ads: 2,
@@ -313,6 +316,7 @@ impl Settings {
         s += &format!("mouse_sensitivity_zoomed \"{}\"\n", self.mouse_sensitivity_zoomed);
         s += &format!("cl_fovScale \"{}\"\n", self.fov_scale);
         s += &format!("m_invert_pitch \"{}\"\n", self.invert_y as u8);
+        s += &format!("toggle_duck \"{}\"\n", self.toggle_crouch as u8);
         s += &format!("volume \"{}\"\n", self.volume);
         s += &format!("gamepad_aim_speed \"{}\"\n", self.gamepad_look);
         s += &format!("gamepad_aim_speed_ads \"{}\"\n", self.gamepad_look_ads);
@@ -341,6 +345,7 @@ impl Settings {
                 "mouse_sensitivity_zoomed" => s.mouse_sensitivity_zoomed = f(1).unwrap_or(s.mouse_sensitivity_zoomed).clamp(0.0, 20.0),
                 "cl_fovscale" => s.fov_scale = f(1).unwrap_or(s.fov_scale).clamp(1.0, 1.55),
                 "m_invert_pitch" => s.invert_y = f(1).unwrap_or(0.0) != 0.0,
+                "toggle_duck" => s.toggle_crouch = f(1).unwrap_or(0.0) != 0.0,
                 "volume" => s.volume = f(1).unwrap_or(s.volume).clamp(0.0, 1.0),
                 "gamepad_aim_speed" => s.gamepad_look = (f(1).unwrap_or(2.0) as usize).min(7),
                 "gamepad_aim_speed_ads" => s.gamepad_look_ads = (f(1).unwrap_or(2.0) as usize).min(7),

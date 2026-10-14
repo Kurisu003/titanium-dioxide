@@ -465,6 +465,7 @@ pub enum Action {
     AdsSens,
     Fov,
     InvertY,
+    CrouchMode,
     PadLook,
     PadLookAds,
     PadCurve,
@@ -495,6 +496,7 @@ impl Action {
                 | Action::AdsSens
                 | Action::Fov
                 | Action::InvertY
+                | Action::CrouchMode
                 | Action::PadLook
                 | Action::PadLookAds
                 | Action::PadCurve
@@ -614,7 +616,7 @@ fn actions(page: Page, missions: usize) -> Vec<Action> {
         Page::Pause => vec![Resume, Restart, Loadout, Difficulty, Settings, MainMenu, Quit],
         Page::GameOver => vec![Restart, Loadout, Difficulty, MainMenu, Quit],
         Page::Loadout => vec![Primary, Sidearm, AntiTitan, Tactical, Ordnance, TitanLoadout, Back],
-        Page::Settings => vec![MouseSens, AdsSens, InvertY, Fov, Volume, Graphics, Bindings, PadLook, PadLookAds, PadCurve, PadInvert, AimAssist, PadLayout, Back],
+        Page::Settings => vec![MouseSens, AdsSens, InvertY, CrouchMode, Fov, Volume, Graphics, Bindings, PadLook, PadLookAds, PadCurve, PadInvert, AimAssist, PadLayout, Back],
         Page::Bindings => (0..crate::settings::Command::ALL.len()).map(Bind).chain([ResetBinds, Back]).collect(),
         Page::Missions => (0..missions).map(Mission).chain([Back]).collect(),
         Page::None => vec![],
@@ -1043,6 +1045,7 @@ pub fn menu_input(
             Action::AdsSens => settings.mouse_sensitivity_zoomed = ((settings.mouse_sensitivity_zoomed + 0.2 * change as f32) * 5.0).round().clamp(0.0, 100.0) / 5.0,
             Action::Fov => settings.fov_scale = (1.0 + (((settings.fov_scale - 1.0) / 0.0275).round() + change as f32).clamp(0.0, 20.0) * 0.0275).min(1.55),
             Action::InvertY => settings.invert_y = !settings.invert_y,
+            Action::CrouchMode => settings.toggle_crouch = !settings.toggle_crouch,
             Action::PadLook => settings.gamepad_look = step(settings.gamepad_look, 8),
             Action::PadLookAds => settings.gamepad_look_ads = step(settings.gamepad_look_ads, 8),
             Action::PadCurve => settings.gamepad_curve = step(settings.gamepad_curve, crate::settings::LOOK_CURVES.len()),
@@ -1207,6 +1210,7 @@ pub fn menu_visuals(
                     Action::MouseSens => opt("MOUSE SENSITIVITY", format!("{:.1}", settings.mouse_sensitivity)),
                     Action::AdsSens => opt("ADS MOUSE SENSITIVITY", format!("{:.1}", settings.mouse_sensitivity_zoomed)),
                     Action::InvertY => opt("INVERT MOUSE", on_off(settings.invert_y)),
+                    Action::CrouchMode => opt("CROUCH", if settings.toggle_crouch { "TOGGLE" } else { "HOLD" }),
                     Action::Fov => opt("FIELD OF VIEW", format!("{:.0}", crate::settings::BASE_FOV_DEG * settings.fov_scale)),
                     Action::PadLook => opt("CONTROLLER LOOK SENSITIVITY", settings.gamepad_look + 1),
                     Action::PadLookAds => opt("CONTROLLER ADS SENSITIVITY", settings.gamepad_look_ads + 1),

@@ -88,6 +88,7 @@ fn main() {
                     right: f(3)?,
                     sprint: f(4)? > 0.5,
                     crouch: f(5)? > 0.5,
+                    crouch_toggle: None,
                     jump: f(6)? > 0.5,
                     yaw: f(7)?,
                     pitch: f(8)?,
@@ -226,7 +227,7 @@ impl Mover {
         let right = keys.moveright as i32 as f32 - keys.moveleft as i32 as f32;
         match self {
             Mover::Old(s) => {
-                let input = PilotInput { forward: fwd, right, yaw: yaw.to_radians(), pitch: 0.0, sprint: latched, crouch: keys.duck, jump: jump_press, ads: false };
+                let input = PilotInput { forward: fwd, right, yaw: yaw.to_radians(), pitch: 0.0, sprint: latched, crouch: keys.duck, crouch_toggle: None, jump: jump_press, ads: false };
                 step(s, &input, par, w, dt);
             }
             Mover::Eng(p, st, cv) => {
