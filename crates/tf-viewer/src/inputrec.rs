@@ -37,9 +37,10 @@ const FLAGS: &[(&str, bool)] = &[
     ("pilot_fire", false),
     ("pilot_ads", false),
     ("pilot_reload", true),
+    ("sprint_key", false),
 ];
 
-fn flag_refs(i: &mut PlayerInput) -> [&mut bool; 22] {
+fn flag_refs(i: &mut PlayerInput) -> [&mut bool; 23] {
     [
         &mut i.sprint,
         &mut i.dash,
@@ -63,6 +64,7 @@ fn flag_refs(i: &mut PlayerInput) -> [&mut bool; 22] {
         &mut i.pilot_fire,
         &mut i.pilot_ads,
         &mut i.pilot_reload,
+        &mut i.sprint_key,
     ]
 }
 

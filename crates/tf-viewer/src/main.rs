@@ -1315,28 +1315,54 @@ fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots
     text.0 = format!("{h:.0} u/s   vz {:+.0}   {mode}", s.vel.z);
 }
 
-/// A scrolling graph of the Pilot's horizontal speed over the last `GRAPH_SECONDS`, above the
-/// speed readout (hidden with it by TF_SPEED=0). Coloured by move state: yellow on the ground,
-/// orange sliding, cyan in the air, green on a wall. Reference lines at 260 (sprint), 350 and
-/// 400 u/s; the scale is 0 to `GRAPH_MAX`.
+/// A scrolling graph of the Pilot's horizontal speed over the last `GRAPH_SECONDS`, with the
+/// keys held under it, above the speed readout (hidden with it by TF_SPEED=0). The speed line
+/// is coloured by move state: yellow on the ground, orange sliding, cyan in the air, green on
+/// a wall. Reference lines at 260 (sprint), 350 and 400 u/s; the scale is 0 to `GRAPH_MAX`.
+/// The key lanes (labelled on the left) are W A S D, Shift (bright while the key is down,
+/// dim while the sprint latch holds without it), Ctrl, Space (one-shot presses) and ADS.
 #[derive(Component)]
 struct SpeedGraph {
     image: Handle<Image>,
-    /// (speed, colour) per column, oldest first.
-    samples: std::collections::VecDeque<(f32, [u8; 3])>,
+    /// (speed, colour, keys) per column, oldest first; keys are `KEY_LANES` bits, any frame
+    /// in the column counts.
+    samples: std::collections::VecDeque<(f32, [u8; 3], u16)>,
     /// Time since the last column was added.
     acc: f32,
 }
 
 const GRAPH_W: usize = 300;
+/// Height of the speed plot.
 const GRAPH_H: usize = 80;
 const GRAPH_SECONDS: f32 = 10.0;
 const GRAPH_MAX: f32 = 600.0;
+/// Key lanes under the plot: label and the bit in a sample's keys.
+const KEY_LANES: &[(&str, u16)] = &[("W", 1), ("A", 2), ("S", 4), ("D", 8), ("Shift", 16), ("Ctrl", 64), ("Space", 128), ("ADS", 256)];
+/// The sprint latch without the key: drawn dim in the Shift lane.
+const KEY_LATCH: u16 = 32;
+const LANE_H: usize = 10;
+const LABEL_W: f32 = 44.0;
+const GRAPH_TOTAL_H: usize = GRAPH_H + LANE_H * KEY_LANES.len();
+
+fn graph_keys(i: &player::PlayerInput) -> u16 {
+    let mut k = 0;
+    if i.forward > 0.0 { k |= 1 }
+    if i.right < 0.0 { k |= 2 }
+    if i.forward < 0.0 { k |= 4 }
+    if i.right > 0.0 { k |= 8 }
+    if i.sprint_key { k |= 16 }
+    if i.sprint && !i.sprint_key { k |= KEY_LATCH }
+    if i.crouch { k |= 64 }
+    if i.jump { k |= 128 }
+    if i.ads || i.pilot_ads { k |= 256 }
+    k
+}
 
 fn speed_graph(
     mut commands: Commands,
     control: Res<pilotctl::Control>,
     time: Res<Time>,
+    input: Res<player::PlayerInput>,
     pilots: Query<&pilotctl::PlayerPilot>,
     mut images: ResMut<Assets<Image>>,
     mut graph: Query<(&mut SpeedGraph, &mut Visibility)>,
@@ -1348,19 +1374,32 @@ fn speed_graph(
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
     let Ok((mut g, mut vis)) = graph.single_mut() else {
         let img = Image::new_fill(
-            Extent3d { width: GRAPH_W as u32, height: GRAPH_H as u32, depth_or_array_layers: 1 },
+            Extent3d { width: GRAPH_W as u32, height: GRAPH_TOTAL_H as u32, depth_or_array_layers: 1 },
             TextureDimension::D2,
             &[0, 0, 0, 0],
             TextureFormat::Rgba8UnormSrgb,
             bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
         );
         let image = images.add(img);
-        commands.spawn((
-            ImageNode::new(image.clone()),
-            Node { position_type: PositionType::Absolute, left: Val::Px(8.0), bottom: Val::Px(175.0), width: Val::Px(GRAPH_W as f32), height: Val::Px(GRAPH_H as f32), ..default() },
-            GlobalZIndex(200),
-            SpeedGraph { image, samples: std::collections::VecDeque::with_capacity(GRAPH_W + 1), acc: 0.0 },
-        ));
+        let bottom = 175.0;
+        let labels: Vec<String> = KEY_LANES.iter().map(|(n, _)| n.to_string()).collect();
+        commands
+            .spawn((
+                ImageNode::new(image.clone()),
+                Node { position_type: PositionType::Absolute, left: Val::Px(8.0 + LABEL_W), bottom: Val::Px(bottom), width: Val::Px(GRAPH_W as f32), height: Val::Px(GRAPH_TOTAL_H as f32), ..default() },
+                GlobalZIndex(200),
+                SpeedGraph { image, samples: std::collections::VecDeque::with_capacity(GRAPH_W + 1), acc: 0.0 },
+            ))
+            .with_children(|p| {
+                p.spawn((
+                    Text::new(labels.join("\n")),
+                    TextFont { font_size: 9.0, ..default() },
+                    bevy::text::LineHeight::Px(LANE_H as f32),
+                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    TextLayout::new_with_justify(Justify::Right),
+                    Node { position_type: PositionType::Absolute, right: Val::Px(GRAPH_W as f32 + 4.0), top: Val::Px(GRAPH_H as f32), width: Val::Px(LABEL_W - 4.0), ..default() },
+                ));
+            });
         return;
     };
     let on_foot = *control == pilotctl::Control::Pilot;
@@ -1378,33 +1417,38 @@ fn speed_graph(
         _ => [255, 255, 80],
     };
     // One column per GRAPH_SECONDS / GRAPH_W of game time; the peak within the slot wins, so
-    // short spikes (a slide boost frame) still show.
+    // short spikes (a slide boost frame) still show, and any key down in the slot shows.
     let speed = s.vel.truncate().length();
+    let keys = graph_keys(&input);
     g.acc += time.delta_secs();
     let slot = GRAPH_SECONDS / GRAPH_W as f32;
     if g.acc >= slot || g.samples.is_empty() {
         g.acc = (g.acc - slot).max(0.0).min(slot);
-        g.samples.push_back((speed, colour));
+        g.samples.push_back((speed, colour, keys));
         while g.samples.len() > GRAPH_W {
             g.samples.pop_front();
         }
     } else if let Some(last) = g.samples.back_mut() {
         if speed > last.0 {
-            *last = (speed, colour);
+            last.0 = speed;
+            last.1 = colour;
         }
+        last.2 |= keys;
     }
     let Some(img) = images.get_mut(&g.image) else { return };
     let Some(data) = img.data.as_mut() else { return };
-    let mut put = |x: usize, y: usize, c: [u8; 3], a: u8| {
-        if x < GRAPH_W && y < GRAPH_H {
-            let i = ((GRAPH_H - 1 - y) * GRAPH_W + x) * 4;
+    // y counts up from the bottom of the plot; lanes are below it (negative rows via `lane`).
+    let mut put = |x: usize, row_from_top: usize, c: [u8; 3], a: u8| {
+        if x < GRAPH_W && row_from_top < GRAPH_TOTAL_H {
+            let i = (row_from_top * GRAPH_W + x) * 4;
             data[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], a]);
         }
     };
-    let row = |v: f32| ((v / GRAPH_MAX).clamp(0.0, 1.0) * (GRAPH_H - 1) as f32).round() as usize;
-    for y in 0..GRAPH_H {
+    let row = |v: f32| GRAPH_H - 1 - ((v / GRAPH_MAX).clamp(0.0, 1.0) * (GRAPH_H - 1) as f32).round() as usize;
+    for y in 0..GRAPH_TOTAL_H {
+        let lane = y >= GRAPH_H && (y - GRAPH_H) / LANE_H % 2 == 1;
         for x in 0..GRAPH_W {
-            put(x, y, [0, 0, 0], 110);
+            put(x, y, if lane { [20, 20, 20] } else { [0, 0, 0] }, 110);
         }
     }
     for (v, c) in [(260.0, [255, 255, 80]), (350.0, [80, 220, 255]), (400.0, [255, 150, 40])] {
@@ -1415,7 +1459,7 @@ fn speed_graph(
     let n = g.samples.len();
     let x0 = GRAPH_W - n;
     let mut prev: Option<usize> = None;
-    for (i, &(v, c)) in g.samples.iter().enumerate() {
+    for (i, &(v, c, keys)) in g.samples.iter().enumerate() {
         let y = row(v);
         let (lo, hi) = match prev {
             Some(p) => (p.min(y), p.max(y)),
@@ -1425,6 +1469,19 @@ fn speed_graph(
             put(x0 + i, yy, c, 255);
         }
         prev = Some(y);
+        for (l, &(_, bit)) in KEY_LANES.iter().enumerate() {
+            let top = GRAPH_H + l * LANE_H + 2;
+            let (on, c) = if keys & bit != 0 { (true, [230, 230, 230]) } else if bit == 16 && keys & KEY_LATCH != 0 { (true, [120, 120, 120]) } else { (false, [0, 0, 0]) };
+            if on {
+                // One-shot presses (Space) are a frame long: widen them to three columns.
+                let w = if bit == 128 { 3 } else { 1 };
+                for x in (x0 + i).saturating_sub(w / 2)..=(x0 + i + w / 2) {
+                    for yy in top..top + LANE_H - 4 {
+                        put(x, yy, c, 255);
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -292,6 +292,9 @@ pub struct PlayerInput {
     pub pilot_fire: bool,
     pub pilot_ads: bool,
     pub pilot_reload: bool,
+    /// The sprint key itself, before the latch (`sprint` is key or latch): for the input
+    /// graph and the recording.
+    pub sprint_key: bool,
 }
 
 /// Scripted input for automated testing: `start-end:action` entries separated by commas.
@@ -367,6 +370,7 @@ pub fn gather_input(
         input.forward = 0.0;
         input.right = 0.0;
         input.sprint = false;
+        input.sprint_key = false;
         input.fire = false;
         input.ads = false;
         input.pilot_fire = false;
@@ -458,6 +462,7 @@ pub fn gather_input(
     let bind = |c: C| settings.bind(c);
     let down = |c: C| bind(c).pressed(&keys, &buttons);
     let hit = |c: C| bind(c).just_pressed(&keys, &buttons);
+    input.sprint_key = down(C::Sprint);
     if hit(C::View) && *mode != CameraMode::Free {
         *mode = if *mode == CameraMode::Third { CameraMode::Cockpit } else { CameraMode::Third };
     }
