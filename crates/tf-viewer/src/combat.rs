@@ -5,7 +5,7 @@
 use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
 use crate::targets::Enemy;
 use crate::vitals::{Hit, Vitals};
-use crate::weapons::FxAssets;
+use crate::weapons::{FxAssets, VortexRefire};
 use crate::audio::{self, Cue};
 use bevy::prelude::*;
 use tf_sim::glam::Vec3 as SVec3;
@@ -19,6 +19,11 @@ const VORTEX_HOLD: f32 = 3.0; // charge_time
 const VORTEX_RECOVER: f32 = 3.0; // charge_cooldown_time
 const VORTEX_DELAY: f32 = 1.0; // charge_cooldown_delay
 const VORTEX_RETURN_DAMAGE: f32 = 140.0; // damage_near_value_titanarmor
+const VORTEX_RETURN_PILOT_DAMAGE: f32 = 35.0; // damage_near_value
+/// The returned projectiles' explosion (mp_titanweapon_vortex_shield.txt, SP_BASE).
+const VORTEX_RETURN_EXPLOSION: f32 = 300.0;
+const VORTEX_RETURN_EXPLOSION_INNER: f32 = 25.0;
+const VORTEX_RETURN_EXPLOSION_RADIUS: f32 = 175.0;
 /// CreateVortexSphere( weapon, false, false, sphereRadius = 150, bulletFOV = 120 ): a sphere
 /// around the Titan that catches fire arriving within 60 degrees of where it faces.
 pub const VORTEX_RADIUS: f32 = 150.0;
@@ -139,6 +144,9 @@ pub struct Vortex {
     pub charge: f32,
     pub active: bool,
     pub caught: u32,
+    /// What each caught round was (its refire behaviour and the firing kit, `targets::Bolt::kit`)
+    /// for the release.
+    pub rounds: Vec<(VortexRefire, usize)>,
     /// Rounds swallowed without being returned (absorb-type weapons) this activation.
     pub absorbed: u32,
     delay: f32,
@@ -154,7 +162,7 @@ pub struct Vortex {
 
 impl Default for Vortex {
     fn default() -> Self {
-        Self { charge: VORTEX_HOLD, active: false, caught: 0, absorbed: 0, delay: 0.0, shield: None, shield_fp: false, shield_arm: false, mode: VortexMode::Vortex, burn_timer: 0.0 }
+        Self { charge: VORTEX_HOLD, active: false, caught: 0, rounds: Vec::new(), absorbed: 0, delay: 0.0, shield: None, shield_fp: false, shield_arm: false, mode: VortexMode::Vortex, burn_timer: 0.0 }
     }
 }
 
@@ -241,6 +249,8 @@ pub fn player_combat(
     mut shields: Query<&mut Transform>,
     kit: Option<Res<crate::titankit::ActiveKit>>,
     actors: Query<&crate::actor::Actor>,
+    kits: Res<crate::targets::EnemyKits>,
+    pfx: Option<Res<crate::pfx::Pfx>>,
 ) {
     let dt = time.delta_secs();
     let Ok((mut titan, mut health, mut vortex, mut melee, mut core, kit_state)) = player.single_mut() else { return };
@@ -292,6 +302,7 @@ pub fn player_combat(
     if want && !vortex.active && can_raise {
         vortex.active = true;
         vortex.caught = 0;
+        vortex.rounds.clear();
         vortex.absorbed = 0;
         vortex.burn_timer = HEAT_TICK;
         audio::cue(&mut commands, Cue::VortexStart, None);
@@ -342,38 +353,92 @@ pub fn player_combat(
             if vortex.mode == VortexMode::Heat {
                 vortex.absorbed += vortex.caught;
                 vortex.caught = 0;
+                vortex.rounds.clear();
             }
-            // Release: fling every caught round back along the crosshair.
+            // Release (VortexPrimaryAttack): bullets come back as one hitscan blast along the
+            // crosshair (Vortex_FireBackBullets; the shield's tracer, 35 / 140 each), projectiles
+            // one by one as the shield's own bolts (DoVortexAttackForImpactData): explosive
+            // rounds at 8000 u/s under 0.3 gravity, rockets at 1800, grenades at 1500, each with
+            // the Vortex Shield's damage (35 / 140, explosion 300 in 175) and the original
+            // weapon's look (Vortex_ProjectileCommonSetup).
             vortex.active = false;
             vortex.delay = delay;
             audio::cue(&mut commands, if vortex.caught > 0 { Cue::VortexThrow } else { Cue::VortexEnd }, None);
             vortex.charge = vortex.charge.max(0.0);
+            let game_fx = pfx.as_deref().is_some_and(|p| p.ready()) && std::env::var_os("TF_OLD_FX").is_none();
             let mut rng = (time.elapsed_secs() * 1000.0) as u64 | 1;
-            for _ in 0..vortex.caught {
-                let jitter = Vec3::new(rand(&mut rng) - 0.5, rand(&mut rng) - 0.5, rand(&mut rng) - 0.5) * 0.08;
-                let dir = (view + jitter).normalize();
-                let from = eye + view * VORTEX_DIST;
-                let mut hit_t = world.0.raycast(SVec3::from(from.to_array()), SVec3::from(dir.to_array()), 12000.0).map(|h| h.t).unwrap_or(12000.0);
-                let mut victim = None;
-                for (i, d) in dummies.iter().enumerate() {
-                    if d.alive() {
-                        let c = d.pos + Vec3::Z * d.height * 0.5;
-                        let along = (c - from).dot(dir);
-                        if along > 0.0 && along < hit_t && (from + dir * along).distance(c) < d.radius + 40.0 {
-                            hit_t = along;
-                            victim = Some(i);
+            let rounds = std::mem::take(&mut vortex.rounds);
+            let from = eye + view * VORTEX_DIST;
+            for &(refire, kit) in &rounds {
+                let jitter = |rng: &mut u64, xy: f32, z: f32| Vec3::new((rand(rng) - 0.5) * 2.0 * xy, (rand(rng) - 0.5) * 2.0 * xy, (rand(rng) - 0.5) * 2.0 * z);
+                match refire {
+                    VortexRefire::Bullet => {
+                        let dir = (view + jitter(&mut rng, 0.04, 0.04)).normalize();
+                        let mut hit_t = world.0.raycast(SVec3::from(from.to_array()), SVec3::from(dir.to_array()), 12000.0).map(|h| h.t).unwrap_or(12000.0);
+                        let mut victim = None;
+                        let mut nearest = f32::MAX;
+                        for (i, d) in dummies.iter().enumerate() {
+                            if d.alive() {
+                                let c = d.pos + Vec3::Z * d.height * 0.5;
+                                let along = (c - from).dot(dir);
+                                let miss = (from + dir * along).distance(c);
+                                nearest = nearest.min(miss);
+                                if along > 0.0 && along < hit_t && miss < d.radius + 40.0 {
+                                    hit_t = along;
+                                    victim = Some(i);
+                                }
+                            }
+                        }
+                        if let Some(i) = victim {
+                            if let Some(mut d) = dummies.iter_mut().nth(i) {
+                                let hit = d.damage(VORTEX_RETURN_DAMAGE, false);
+                                if let Some(c) = core.as_mut() {
+                                    c.credit_inflicted(hit);
+                                }
+                                log::debug!("vortex return hit enemy {i} at {hit_t:.0} for {:.0} (health {:.0})", hit.dealt, d.v.health);
+                            }
+                        } else {
+                            log::debug!("vortex return missed: nearest enemy centre {nearest:.0} off the line, world at {hit_t:.0}");
+                        }
+                        let stop = from + dir * hit_t;
+                        if game_fx {
+                            crate::pfx::emit_beam(&mut commands, "weapon_tracers_vortex", to_bevy(from), to_bevy(stop));
+                            crate::particles::emit(&mut commands, crate::particles::Effect::Impact { at: to_bevy(stop), normal: -to_bevy(dir).normalize_or(Vec3::Y), scale: 1.6, energy: victim.is_none() });
+                        } else {
+                            spawn_tracer(&mut commands, &fx, from, stop, false);
                         }
                     }
-                }
-                if let Some(i) = victim {
-                    if let Some(mut d) = dummies.iter_mut().nth(i) {
-                        let hit = d.damage(VORTEX_RETURN_DAMAGE, false);
-                        if let Some(c) = core.as_mut() {
-                            c.credit_inflicted(hit);
-                        }
+                    VortexRefire::ExplosiveRound | VortexRefire::Rocket | VortexRefire::Grenade | VortexRefire::GrenadeLongFuse => {
+                        let k = &kits.0[(kit % crate::targets::ABILITY_BOLT).min(kits.0.len() - 1)];
+                        let w = match (&k.ability, kit >= crate::targets::ABILITY_BOLT) {
+                            (Some(a), true) => &a.weapon,
+                            _ => &k.weapon,
+                        };
+                        let mut def = w.clone();
+                        def.name = "mp_titanweapon_vortex_shield".to_string();
+                        def.damage_near = VORTEX_RETURN_DAMAGE;
+                        def.damage_far = VORTEX_RETURN_DAMAGE;
+                        def.damage_near_pilot = VORTEX_RETURN_PILOT_DAMAGE;
+                        def.damage_far_pilot = VORTEX_RETURN_PILOT_DAMAGE;
+                        def.explosion_damage = VORTEX_RETURN_EXPLOSION;
+                        def.npc_explosion_damage_heavy = VORTEX_RETURN_EXPLOSION;
+                        def.explosion_inner_radius = VORTEX_RETURN_EXPLOSION_INNER;
+                        def.explosion_radius = VORTEX_RETURN_EXPLOSION_RADIUS;
+                        def.crit = false;
+                        def.headshot_scale = 1.0;
+                        def.burn = None;
+                        let (speed, gravity, sxy, sz) = match refire {
+                            VortexRefire::ExplosiveRound => (8000.0, 0.3, 0.15, 0.075),
+                            VortexRefire::Rocket => (1800.0, 0.0, 0.0, 0.0),
+                            _ => (1500.0, 1.0, 0.2, 0.2),
+                        };
+                        let dir = (view + jitter(&mut rng, sxy, sz)).normalize();
+                        let origin = from + jitter(&mut rng, 25.0, 25.0);
+                        crate::pilotweapon::spawn_bolt(&mut commands, &fx, origin, dir * speed, gravity, &def, true);
+                        log::debug!("vortex return {refire:?} from {}", w.name);
                     }
+                    VortexRefire::None | VortexRefire::Absorb => {}
                 }
-                spawn_tracer(&mut commands, &fx, from, from + dir * hit_t, false);
             }
             if vortex.caught > 0 || vortex.absorbed > 0 {
                 log::info!("vortex returned {} rounds, absorbed {}", vortex.caught, vortex.absorbed);

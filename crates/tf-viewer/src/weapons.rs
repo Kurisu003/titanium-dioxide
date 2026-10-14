@@ -23,6 +23,44 @@ pub fn intern(s: &str) -> &'static str {
     t
 }
 
+/// `vortex_refire_behavior`: what a Vortex Shield does with a weapon's caught rounds on release
+/// (_vortex.nut: the VORTEX_REFIRE_* strings). Absorbed rounds (and weapons without a
+/// behaviour) are never thrown back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VortexRefire {
+    #[default]
+    None,
+    Absorb,
+    /// Hitscan, all at once (Vortex_FireBackBullets).
+    Bullet,
+    /// A bolt at 8000 u/s under 0.3 gravity that explodes (Vortex_FireBackExplosiveRound).
+    ExplosiveRound,
+    /// A missile at 1800 u/s (Vortex_FireBackRocket).
+    Rocket,
+    /// A grenade at 1500 u/s with a 1.25 s fuse (Vortex_FireBackGrenade).
+    Grenade,
+    /// The same with a 10 s fuse.
+    GrenadeLongFuse,
+}
+
+impl VortexRefire {
+    pub fn parse(s: Option<&str>) -> Self {
+        match s.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            Some("absorb") => Self::Absorb,
+            Some("bullet") => Self::Bullet,
+            Some("explosive_round") => Self::ExplosiveRound,
+            Some("rocket") => Self::Rocket,
+            Some("grenade") | Some("frag_grenade") => Self::Grenade,
+            Some("grenade_long_fuse") => Self::GrenadeLongFuse,
+            _ => Self::None,
+        }
+    }
+    /// Swallowed by the shield: nothing comes back.
+    pub fn absorbed(self) -> bool {
+        matches!(self, Self::None | Self::Absorb)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WeaponDef {
     pub name: String,
@@ -78,6 +116,7 @@ pub struct WeaponDef {
     /// vortex_refire_behavior: "absorb" rounds are swallowed by a Vortex; the rest (bullet,
     /// rocket, explosive_round...) are thrown back on release.
     pub vortex_absorb: bool,
+    pub vortex_refire: VortexRefire,
     /// vortex_absorb_effect / _third_person: the system a caught round plays in the shield (seen
     /// by the Vortex's owner / by everyone else).
     pub vortex_fx: (String, String),
@@ -360,7 +399,8 @@ impl WeaponDef {
                 // Engine default when the script leaves it out.
                 (f("proficiency_perfect_spreadscale", 1.0), f("proficiency_perfect_bias", 1.0)),
             ],
-            vortex_absorb: s.get(".vortex_refire_behavior").is_some_and(|b| b.eq_ignore_ascii_case("absorb")),
+            vortex_absorb: VortexRefire::parse(s.get(".vortex_refire_behavior")).absorbed(),
+            vortex_refire: VortexRefire::parse(s.get(".vortex_refire_behavior")),
             vortex_fx: (
                 s.get(".vortex_absorb_effect").unwrap_or("wpn_vortex_projectile_rifle_FP").to_string(),
                 s.get(".vortex_absorb_effect_third_person").unwrap_or("wpn_vortex_projectile_rifle").to_string(),

@@ -162,7 +162,7 @@ pub fn enemy_clips(model: &str) -> [&'static str; 4] {
 }
 
 /// Bolts fired by an ability carry their class index plus this.
-const ABILITY_BOLT: usize = 1000;
+pub const ABILITY_BOLT: usize = 1000;
 
 #[derive(Clone)]
 pub struct Ability {
@@ -1420,8 +1420,9 @@ pub fn update_bolts(
             // unless the weapon's rounds are only absorbed.
             if w.vortex_absorb {
                 vortex.absorbed += 1;
-            } else {
-                vortex.caught = (vortex.caught + 1).min(VORTEX_ABSORB_MAX);
+            } else if vortex.caught < VORTEX_ABSORB_MAX {
+                vortex.caught += 1;
+                vortex.rounds.push((w.vortex_refire, b.kit));
             }
             audio::cue(&mut commands, Cue::VortexAbsorb, Some(at));
             // The caught round hangs in the shield until the release (Vortex_SpawnImpactAbsorbFX):
