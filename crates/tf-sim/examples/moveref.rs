@@ -24,6 +24,7 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use tf_sim::collision::CollisionWorld;
 use tf_sim::glam::Vec3;
+use tf_sim::engine_move::{self, Cmd, Pm};
 use tf_sim::pilot::*;
 
 struct Row {
@@ -175,6 +176,75 @@ enum Wait {
     Below(f32, f32),
 }
 
+/// The simulation a program runs through: the old Pilot sim, or the engine port
+/// (`TF_ENGINE_MOVE=1`).
+enum Mover {
+    Old(PilotState),
+    Eng(Pm, engine_move::Settings, engine_move::Cvars),
+}
+
+impl Mover {
+    fn new(pos: Vec3, yaw_deg: f32) -> Self {
+        if std::env::var("TF_ENGINE_MOVE").is_ok_and(|v| v == "1") {
+            let mut pm = Pm::new(pos, yaw_deg);
+            pm.vel = Vec3::ZERO;
+            Mover::Eng(pm, engine_move::Settings::default(), engine_move::Cvars::default())
+        } else {
+            let mut s = PilotState::new(pos, yaw_deg.to_radians());
+            s.mode = PilotMove::Air;
+            Mover::Old(s)
+        }
+    }
+    fn pos(&self) -> Vec3 {
+        match self {
+            Mover::Old(s) => s.pos,
+            Mover::Eng(p, ..) => p.origin,
+        }
+    }
+    fn vel(&self) -> Vec3 {
+        match self {
+            Mover::Old(s) => s.vel,
+            Mover::Eng(p, ..) => p.vel,
+        }
+    }
+    fn on_ground(&self) -> bool {
+        match self {
+            Mover::Old(s) => s.on_ground(),
+            Mover::Eng(p, ..) => p.on_ground,
+        }
+    }
+    fn eye_offset(&self, par: &PilotParams) -> f32 {
+        match self {
+            Mover::Old(s) => s.eye_offset(par),
+            Mover::Eng(p, ..) => if p.flags & 2 != 0 { 32.0 } else { 60.0 },
+        }
+    }
+    /// One frame: `keys` are the held keys, `yaw` degrees, `t` the game time after the frame.
+    #[allow(clippy::too_many_arguments)]
+    fn step(&mut self, w: &CollisionWorld, par: &PilotParams, keys: &Keys, latched: bool, jump_press: bool, yaw: f32, t: f32, dt: f32) {
+        let fwd = keys.forward as i32 as f32 - keys.back as i32 as f32;
+        let right = keys.moveright as i32 as f32 - keys.moveleft as i32 as f32;
+        match self {
+            Mover::Old(s) => {
+                let input = PilotInput { forward: fwd, right, yaw: yaw.to_radians(), pitch: 0.0, sprint: latched, crouch: keys.duck, jump: jump_press, ads: false };
+                step(s, &input, par, w, dt);
+            }
+            Mover::Eng(p, st, cv) => {
+                let mut b = 0u32;
+                if keys.forward { b |= engine_move::IN_FORWARD; }
+                if keys.back { b |= engine_move::IN_BACK; }
+                if keys.moveleft { b |= engine_move::IN_MOVELEFT; }
+                if keys.moveright { b |= engine_move::IN_MOVERIGHT; }
+                if keys.speed { b |= engine_move::IN_SPEED; }
+                if keys.jump { b |= engine_move::IN_JUMP; }
+                if keys.duck { b |= engine_move::IN_DUCK; }
+                let cmd = Cmd { buttons: b, fmove: fwd, smove: right, yaw, pitch: 0.0 };
+                engine_move::player_move(p, &cmd, st, cv, w, t, dt);
+            }
+        }
+    }
+}
+
 /// One capture-2 program from `spot` ("x y z yawdeg"), as cl_td_moveref.gnut runs it: each
 /// frame the Pilot steps, the frame is logged, then the program advances on that state.
 fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize, dts: Option<&[f32]>) -> String {
@@ -182,12 +252,15 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
     let p = PilotParams::default();
     let dt = 1.0 / fps;
     let mut yaw = sp[3];
-    let mut s = PilotState::new(Vec3::new(sp[0], sp[1], sp[2]), yaw.to_radians());
+    let mut s = Mover::new(Vec3::new(sp[0], sp[1], sp[2]), yaw);
     // The server's teleport: dropped at the spot, standing still until settled.
-    let idle = PilotInput { forward: 0.0, right: 0.0, yaw: yaw.to_radians(), pitch: 0.0, sprint: false, crouch: false, jump: false, ads: false };
+    let mut t = -0.5f32;
     for _ in 0..(0.5 * fps) as usize {
-        step(&mut s, &idle, &p, w, dt);
+        t += dt;
+        s.step(w, &p, &Keys::default(), false, false, yaw, t, dt);
     }
+    let settle_end = 0.0f32;
+    let _ = t;
     let steps: Vec<Vec<&str>> = prog.split(';').map(|x| x.split_whitespace().collect()).collect();
     let mut pc = 0;
     let mut wait = Wait::None;
@@ -199,7 +272,7 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
     let mut phase = String::from("start");
     let mut out = String::from("t\tx\ty\tz\tvx\tvy\tvz\tpitch\tyaw\tog\tphase\tframe\tev\teyez\n");
     let mut ended: Option<usize> = None;
-    let mut t = 0.0f32;
+    let mut t = settle_end;
     let mut frame = 0usize;
     loop {
         let mut ev: Vec<String> = Vec::new();
@@ -238,7 +311,6 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
             let turn = keys.left as i32 as f32 - keys.right as i32 as f32;
             yaw += yawspeed * dt * turn * if keys.speed { 0.67 } else { 1.0 };
             let fwd = keys.forward as i32 as f32 - keys.back as i32 as f32;
-            let right = keys.moveright as i32 as f32 - keys.moveleft as i32 as f32;
             // Sprint latches as in the viewer (and make_replay.py): a press starts it, letting go
             // of forward ends it; crouching does not (the sim stops sprinting while crouched).
             if pressed_speed || (keys.speed && fwd > 0.5) {
@@ -247,19 +319,10 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
             if fwd < 0.5 {
                 latched = false;
             }
-            let input = PilotInput {
-                forward: fwd,
-                right,
-                yaw: yaw.to_radians(),
-                pitch: 0.0,
-                sprint: latched,
-                crouch: keys.duck,
-                jump: keys.jump && !jump_prev,
-                ads: false,
-            };
+            let jump_press = keys.jump && !jump_prev;
             jump_prev = keys.jump;
-            step(&mut s, &input, &p, w, dt);
             t += dt;
+            s.step(w, &p, &keys, latched, jump_press, yaw, t, dt);
         }
         // Advance the program on this frame's state.
         if ended.is_none() {
@@ -282,8 +345,8 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
                     Wait::Until(u) => t >= u - 1e-6,
                     Wait::Air(u) => timed_out(u, ev, 3) || !og,
                     Wait::Land(u) => timed_out(u, ev, 4) || og,
-                    Wait::Below(z, u) => timed_out(u, ev, 5) || (!og && s.vel.z < 0.0 && s.pos.z < z),
-                    Wait::Apex(u) => timed_out(u, ev, 6) || (!og && s.vel.z <= 0.0),
+                    Wait::Below(z, u) => timed_out(u, ev, 5) || (!og && s.vel().z < 0.0 && s.pos().z < z),
+                    Wait::Apex(u) => timed_out(u, ev, 6) || (!og && s.vel().z <= 0.0),
                 }
             };
             let mut go = match wait {
@@ -348,13 +411,13 @@ fn run_program(w: &CollisionWorld, spot: &str, prog: &str, fps: f32, lat: usize,
         let _ = writeln!(
             out,
             "{t:.4}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{}\t{phase}\t{frame}\t{}\t{:.3}",
-            s.pos.x,
-            s.pos.y,
-            s.pos.z,
-            s.vel.x,
-            s.vel.y,
-            if s.on_ground() { 0.0 } else { s.vel.z },
-            s.pitch.to_degrees(),
+            s.pos().x,
+            s.pos().y,
+            s.pos().z,
+            s.vel().x,
+            s.vel().y,
+            if s.on_ground() { 0.0 } else { s.vel().z },
+            0.0,
             yaw,
             s.on_ground() as u8,
             if ev.is_empty() { "-".to_string() } else { ev.join("|") },

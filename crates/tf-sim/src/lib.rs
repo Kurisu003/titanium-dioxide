@@ -1,6 +1,7 @@
 //! Engine-independent simulation: collision, and Pilot and Titan movement.
 
 pub mod collision;
+pub mod engine_move;
 pub mod pilot;
 pub mod titan;
 
