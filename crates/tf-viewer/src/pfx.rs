@@ -607,22 +607,11 @@ pub fn emit_named_frame(commands: &mut Commands, name: &str, at: Vec3, rot: Quat
     commands.spawn(PfxRequest { name: name.to_string(), cps: vec![Cp { pos: to_game(at), fwd, left, up }], stop_after: None, vm: false });
 }
 
-/// Play a first-person (`_FP`) system at a viewmodel point.
-pub fn emit_named_vm(commands: &mut Commands, name: &str, at: Vec3, dir: Vec3) {
-    commands.spawn(PfxRequest { name: name.to_string(), cps: vec![Cp::facing(to_game(at), dir_to_game(dir))], stop_after: None, vm: true });
-}
-
 /// Play a beam/tracer system from `from` to `to` (CP0 and CP1, Bevy space).
 pub fn emit_beam(commands: &mut Commands, name: &str, from: Vec3, to: Vec3) {
     let (a, b) = (to_game(from), to_game(to));
     let f = Cp::facing(a, b - a);
     commands.spawn(PfxRequest { name: name.to_string(), cps: vec![f, Cp { pos: b, ..f }], stop_after: None, vm: false });
-}
-
-/// Play an impact effect table's effects for a surface (default concrete) at `at` with the
-/// surface `normal` (Bevy space). Tables are `scripts/impacts/<table>.txt`.
-pub fn emit_impact(commands: &mut Commands, table: &str, at: Vec3, normal: Vec3) {
-    commands.spawn(ImpactRequest { table: table.to_string(), cp: Cp::on_surface(to_game(at), dir_to_game(normal)) });
 }
 
 #[derive(Component)]
@@ -1691,7 +1680,6 @@ fn collect_under(lib: &mut Library, root: usize, delay: f32, depth: u32, parent:
 // Materials
 
 struct Layer {
-    key: String,
     additive: bool,
     gain: f32,
     orient: i32,
@@ -1793,9 +1781,6 @@ pub struct Pfx {
 impl Pfx {
     pub fn ready(&self) -> bool {
         self.lib.as_ref().is_some_and(|l| !l.defs.is_empty())
-    }
-    fn rand(&mut self) -> f32 {
-        rand(&mut self.rng)
     }
     fn spawn(&mut self, name: &str, cps: &[Cp], stop_after: Option<f32>, attached: Option<Entity>) -> Option<u64> {
         let lib = self.lib.as_mut()?;
@@ -3119,7 +3104,7 @@ fn layer_for(
             if overlay {
                 return None;
             }
-            return Some(refract_layer(&key, v, &kv, commands, images, meshes, refract_mats, sprites));
+            return Some(refract_layer(v, &kv, commands, images, meshes, refract_mats, sprites));
         }
         let additive = flag("$additive") || flag("$addself");
         let overbright = kv.get("$overbrightfactor").and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0).max(0.1);
@@ -3162,7 +3147,7 @@ fn layer_for(
         // square root (15 -> 3.9) and the camera's bloom carries the rest. An approximation of
         // the game's HDR pipeline, not its numbers.
         let gain = if additive { ADD_GAIN } else { BLEND_GAIN } * overbright.sqrt();
-        Some(Layer { key: key.clone(), additive, gain, orient, sheet: v.sheet, buf, mat: LayerMat::Soft(material), entity })
+        Some(Layer { additive, gain, orient, sheet: v.sheet, buf, mat: LayerMat::Soft(material), entity })
     })();
     let idx = result.map(|l| {
         pfx.layers.push(l);
@@ -3176,7 +3161,7 @@ fn layer_for(
 }
 
 /// A refracting material's layer: its sprites take the transmissive phase (refract.wgsl).
-fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<RefractMaterial>, sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes)) -> Layer {
+fn refract_layer(mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<RefractMaterial>, sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes)) -> Layer {
     let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
     let num = |k: &str| kv.get(k).and_then(|s| s.trim().parse::<f32>().ok());
     let mut img = Image::new(
@@ -3210,7 +3195,7 @@ fn refract_layer(key: &str, mut v: vtf::Vtf, kv: &HashMap<String, String>, comma
         },
     });
     let entity = commands.spawn((Mesh3d(sprites.1.first(meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver)).id();
-    Layer { key: key.to_string(), additive: false, gain: 1.0, orient: num("$orientation").map_or(0, |o| o as i32), sheet: v.sheet, buf, mat: LayerMat::Refract(material), entity }
+    Layer { additive: false, gain: 1.0, orient: num("$orientation").map_or(0, |o| o as i32), sheet: v.sheet, buf, mat: LayerMat::Refract(material), entity }
 }
 
 #[derive(Default)]

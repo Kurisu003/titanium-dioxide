@@ -929,6 +929,13 @@ pub enum WaveKind {
     Flame,
 }
 
+/// A fresh group id for the player's grouped effects (tripwire pylons, cluster bursts, ...):
+/// a counter rather than the clock, so a scripted run plays the same every time.
+fn next_group() -> u32 {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Group ids for enemy waves (above any player group).
 static ENEMY_WAVE_GROUP: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1 << 30);
 
@@ -1471,7 +1478,7 @@ pub fn kit_input(
             OrdKind::Firewall => {
                 st.ord_cd_max = n.firewall_cd;
                 st.ord_cd = n.firewall_cd;
-                let group = (time.elapsed_secs() * 1000.0) as u32;
+                let group = next_group();
                 commands.spawn(Wave { kind: WaveKind::Firewall, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.firewall_step, left: n.firewall_count, timer: 0.0, radius: n.thermite_radius, titan: 0.0, pilot: 0.0, group, enemy: false, trap: None, row: false });
                 crate::audio::event(&mut commands, "flamewall_flame_start");
                 true
@@ -1493,7 +1500,7 @@ pub fn kit_input(
             OrdKind::ArcWave => {
                 st.ord_cd_max = n.arc_cd;
                 st.ord_cd = n.arc_cd;
-                let group = (time.elapsed_secs() * 1000.0) as u32;
+                let group = next_group();
                 commands.spawn(Wave { kind: WaveKind::Arc, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.arc_step, left: n.arc_count, timer: 0.0, radius: 112.0, titan: n.arc_titan, pilot: n.arc_pilot, group, enemy: false, trap: None, row: false });
                 true
             }
@@ -1868,7 +1875,7 @@ pub fn kit_input(
         st.core_tick = 0.0;
         match core.kind {
             CoreKind::FlameWave => {
-                let group = (time.elapsed_secs() * 1000.0) as u32 ^ 0x5A5A;
+                let group = next_group();
                 let base = Vec3::from(s.pos.to_array()) + fwd * 25.0;
                 for (off, sfx) in [(-1.0, "flamewave_blast_right"), (0.0, "flamewave_blast_middle"), (1.0, "flamewave_blast_left")] {
                     commands.spawn(Wave { kind: WaveKind::Flame, pos: base + right * off * 128.0, head: base + right * off * 128.0, first: true, dir: fwd, step: n.flame_step, left: n.flame_count, timer: 0.0, radius: 180.0, titan: n.flame_titan, pilot: n.flame_pilot, group, enemy: false, trap: None, row: off == 0.0 });
@@ -2273,7 +2280,7 @@ pub fn kit_world(
         }
         crate::audio::event_at(&mut commands, "incendiary_trap_explode", origin);
         crate::audio::event_at(&mut commands, "incendiary_trap_burn", origin);
-        let group = (time.elapsed_secs() * 1000.0) as u32 ^ 0x1F1F;
+        let group = next_group();
         for i in 0..12u32 {
             let yaw = (30.0 * i as f32).to_radians();
             let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);

@@ -366,7 +366,9 @@ pub fn player_combat(
             audio::cue(&mut commands, if vortex.caught > 0 { Cue::VortexThrow } else { Cue::VortexEnd }, None);
             vortex.charge = vortex.charge.max(0.0);
             let game_fx = pfx.as_deref().is_some_and(|p| p.ready()) && std::env::var_os("TF_OLD_FX").is_none();
-            let mut rng = (time.elapsed_secs() * 1000.0) as u64 | 1;
+            // A fresh stream per release, independent of the clock (repeatable runs).
+            static RELEASES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let mut rng = RELEASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_mul(0x9E3779B97F4A7C15) | 1;
             let rounds = std::mem::take(&mut vortex.rounds);
             let from = eye + view * VORTEX_DIST;
             for &(refire, kit) in &rounds {
