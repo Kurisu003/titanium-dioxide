@@ -278,7 +278,7 @@ fn main() {
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(particles::ParticlePlugin)
         .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin, shadowbatch::ShadowBatchPlugin, transparentpass::ParallelTransparentPlugin))
-        .add_systems(Update, (perf_log, fps_overlay, weapons::shimmer_shields))
+        .add_systems(Update, (perf_log, fps_overlay, speed_overlay, weapons::shimmer_shields))
         .insert_resource(args)
         .insert_resource(script)
         .insert_resource(mode)
@@ -1258,6 +1258,46 @@ fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&m
         text.0 = format!("{:.0} fps  {:.1} ms  (slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
         *acc = (0.0, 0, 0.0);
     }
+}
+
+/// A speed readout at the bottom of the screen while on foot (TF_SPEED=0 hides it): the
+/// Pilot's horizontal speed in game units per second, its vertical speed, and the move state.
+#[derive(Component)]
+struct SpeedText;
+
+fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots: Query<&pilotctl::PlayerPilot>, mut text: Query<(&mut Text, &mut Visibility), With<SpeedText>>) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_none_or(|v| v != "0")) {
+        return;
+    }
+    let Ok((mut text, mut vis)) = text.single_mut() else {
+        commands.spawn((
+            Text::new(""),
+            TextFont { font_size: 22.0, ..default() },
+            TextColor(Color::srgb(1.0, 1.0, 0.3)),
+            Node { position_type: PositionType::Absolute, left: Val::Px(8.0), bottom: Val::Px(40.0), ..default() },
+            GlobalZIndex(200),
+            SpeedText,
+        ));
+        return;
+    };
+    let on_foot = *control == pilotctl::Control::Pilot;
+    *vis = if on_foot { Visibility::Visible } else { Visibility::Hidden };
+    if !on_foot {
+        return;
+    }
+    let Ok(pilot) = pilots.single() else { return };
+    let s = &pilot.state;
+    let h = s.vel.truncate().length();
+    let mode = match s.mode {
+        tf_sim::pilot::PilotMove::Ground => if s.sprinting { "sprint" } else if s.crouched { "crouch" } else { "walk" },
+        tf_sim::pilot::PilotMove::Air => "air",
+        tf_sim::pilot::PilotMove::Slide => "slide",
+        tf_sim::pilot::PilotMove::WallRun { .. } => "wallrun",
+        tf_sim::pilot::PilotMove::Mantle { .. } => "mantle",
+        _ => "",
+    };
+    text.0 = format!("{h:.0} u/s   vz {:+.0}   {mode}", s.vel.z);
 }
 
 /// TF_GPU_TIMES=1 logs the CPU and GPU time of every render pass (Bevy's render diagnostics,

@@ -537,11 +537,14 @@ pub fn gather_input(
     input.fire = mouse_ok(C::Fire) && down(C::Fire);
     input.ads = mouse_ok(C::Ads) && down(C::Ads);
     // Sprint latches like the game's: a tap starts it and it keeps going while you move
-    // forward, until you stop, crouch (a slide), aim or fire.
+    // forward, until you stop, aim or fire. Crouching does not end it: StartSlide / EndSlide
+    // (client.dll 0x18020af70 / 0x1801f5a20) leave the sprint flags alone, so a Pilot comes out
+    // of a slide sprinting, and the real game kept 260 u/s after landing with the sprint key let
+    // go in the air (capture 2, strafeturn_fwd_*); the sim itself stops sprinting while crouched.
     if hit(C::Sprint) || (input.sprint && input.forward > 0.5) {
         latches.1 = true;
     }
-    if input.forward < 0.5 || input.crouch || input.ads || input.fire {
+    if input.forward < 0.5 || input.ads || input.fire {
         latches.1 = false;
     }
     input.sprint = latches.1;
