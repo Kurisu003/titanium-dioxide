@@ -274,6 +274,7 @@ pub const MAPS: &[&str] = &[
     // The campaign, in mission order (not The Ark, sp_s2s: its ships are script-moved entities).
     "sp_training", "sp_crashsite", "sp_sewers1", "sp_boomtown_start", "sp_boomtown", "sp_boomtown_end", "sp_hub_timeshift",
     "sp_timeshift_spoke02", "sp_beacon", "sp_beacon_spoke0", "sp_tday", "sp_skyway_v1",
+    crate::flatmap::NAME,
 ];
 
 /// The map picked in the main menu.

@@ -19,6 +19,7 @@ mod convert;
 mod crosshair;
 mod dialogue;
 mod env;
+mod flatmap;
 mod game;
 mod gamedata;
 mod inputrec;
@@ -653,13 +654,22 @@ fn setup_world(
     let mut ph = Phases(t);
     let mut gd = GameData::new(&args.game);
     // frontend holds resource/ files such as the closed captions.
+    // The built-in flat test map has no files of its own.
+    let flat = args.map == flatmap::NAME;
     for v in [args.map.as_str(), "sp_beacon", "mp_common", "frontend"] {
+        if v == flatmap::NAME {
+            continue;
+        }
         if let Err(e) = gd.add_vpk(v) {
             log::warn!("vpk {v}: {e:#}");
         }
     }
     let patch_stems: &[&str] = if std::env::var_os("TF_NO_PATCH_PAKS").is_none() { &["common", "common_mp"] } else { &[] };
-    gd.add_rpaks(&[format!("{}.rpak", args.map), "common.rpak".to_string()], patch_stems);
+    let mut paks = vec!["common.rpak".to_string()];
+    if !flat {
+        paks.insert(0, format!("{}.rpak", args.map));
+    }
+    gd.add_rpaks(&paks, patch_stems);
     ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());
@@ -740,7 +750,12 @@ fn setup_world(
     let mut cache = convert::Cache::default();
     let mut collision = CollisionWorld::default();
     let mut sweep: Option<CollisionWorld> = None;
-    match gd.read_map(&args.map) {
+    match if flat { Err(anyhow::anyhow!("built-in")) } else { gd.read_map(&args.map) } {
+        Err(_) if flat => {
+            flatmap::spawn(&mut commands, static_root, &mut meshes, &mut images, &mut materials, &mut collision);
+            sky::spawn_sky_camera(&mut commands);
+            ph.mark("flat test map");
+        }
         Ok(bsp) => {
             ph.mark("bsp read");
             world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);

@@ -24,18 +24,9 @@ pub struct SkyCamera;
 /// Render layer for skybox geometry.
 pub const SKY_LAYER: usize = 1;
 
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_sky(
-    commands: &mut Commands,
-    root: Entity,
-    gd: &GameData,
-    bsp: &Bsp,
-    env: &MapEnv,
-    cache: &mut Cache,
-    meshes: &mut Assets<Mesh>,
-    images: &mut Assets<Image>,
-    materials: &mut Assets<StandardMaterial>,
-) {
+/// The camera that clears the frame (to `ClearColor`) and draws the skybox, if any, before
+/// the world camera.
+pub fn spawn_sky_camera(commands: &mut Commands) {
     commands.spawn((
         Camera3d::default(),
         // The world and viewmodel cameras draw over this picture in the same textures, and
@@ -50,6 +41,21 @@ pub fn spawn_sky(
         Transform::default(),
         SkyCamera,
     ));
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_sky(
+    commands: &mut Commands,
+    root: Entity,
+    gd: &GameData,
+    bsp: &Bsp,
+    env: &MapEnv,
+    cache: &mut Cache,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    spawn_sky_camera(commands);
     let Some(cam) = env.sky_camera else {
         log::info!("no sky camera; plain sky");
         return;
