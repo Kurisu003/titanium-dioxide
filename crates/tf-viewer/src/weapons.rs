@@ -1037,7 +1037,7 @@ pub fn weapon_fire(
                 audio::event(&mut commands, "weapon_predator_windup_1p");
                 let e = commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if cockpit { "P_predator_barrel_blur_FP" } else { "P_predator_barrel_blur" }))).id();
                 if cockpit {
-                    commands.entity(e).insert(crate::pfx::PfxVmSpace);
+                    commands.entity(e).insert((crate::pfx::PfxVmSpace, crate::pfx::PfxOverlay));
                 }
                 w.spin_fx = Some(e);
             }

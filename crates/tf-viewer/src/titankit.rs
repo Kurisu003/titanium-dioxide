@@ -1569,7 +1569,7 @@ pub fn kit_input(
                 if st.power_fx.is_none() && std::env::var_os("TF_OLD_FX").is_none() {
                     st.power_fx = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if gun_muzzle.cockpit { "P_predator_barrel_blur_glow_FP" } else { "P_predator_barrel_blur_glow" }))).id());
                     if gun_muzzle.cockpit {
-                        commands.entity(st.power_fx.unwrap()).insert(crate::pfx::PfxVmSpace);
+                        commands.entity(st.power_fx.unwrap()).insert((crate::pfx::PfxVmSpace, crate::pfx::PfxOverlay));
                     }
                 }
             }

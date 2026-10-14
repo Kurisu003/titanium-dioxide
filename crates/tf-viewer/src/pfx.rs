@@ -190,6 +190,9 @@ pub enum FxMat {
     /// The game's unlit uber shader (fxuber.rs); each instance gets its own copy, carrying
     /// its particle's colour and alpha.
     Fx(Handle<crate::fxuber::FxUberMaterial>),
+    /// A lit translucent model (Legion's barrel blur sleeve), lit like the gun it wraps; each
+    /// instance gets its own copy, carrying its particle's alpha.
+    Lit(Handle<StandardMaterial>),
 }
 
 /// Effect models (shields, walls) use the game's unlit `Add`/`Trans` shader sets, which the
@@ -210,6 +213,8 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
         if std::env::var_os("TF_OLD_SHIELDS").is_none() {
             if let Some(fm) = crate::fxuber::material(gd, cache, images, &name) {
                 if md.colors.len() == md.positions.len() && !md.colors.is_empty() {
+                    let a = md.colors.iter().map(|c| c[3]);
+                    log::debug!("particle model {path}: vertex alpha {}..{}, mean {:.0}", a.clone().min().unwrap_or(0), a.clone().max().unwrap_or(0), a.map(|x| x as f32).sum::<f32>() / md.colors.len() as f32);
                     if let Some(m) = mesh_assets.get_mut(&mesh) {
                         m.insert_attribute(Mesh::ATTRIBUTE_COLOR, crate::fxuber::vertex_colors(&md.colors));
                     }
@@ -295,6 +300,22 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
                 out.push((mesh, FxMat::Uber(h)));
                 continue;
             }
+        } else if shader.contains("Trans") && !shader.contains("Unlit") && md.colors.len() == md.positions.len() && !md.colors.is_empty() {
+            // A lit translucent model: Legion's barrel blur sleeve (`predator_titan_barrel_blur`,
+            // `uberVcolaoVcolaAoEntcolmdAefTrans...`) samples the gun's own albedo atlas under
+            // the mesh's vertex alpha (0 at the ends, up the middle), lit like the gun, faded
+            // by the particle's alpha (its 1.5 s wind-up). Its alpha edge fade (exponent 6,
+            // 1 to 0: a thin edge-on fringe) is left out.
+            if let Some(m) = mesh_assets.get_mut(&mesh) {
+                m.insert_attribute(Mesh::ATTRIBUTE_COLOR, crate::fxuber::vertex_colors(&md.colors));
+            }
+            m.alpha_mode = AlphaMode::Blend;
+            m.base_color = Color::WHITE;
+            m.double_sided = found.as_ref().is_some_and(|(_, gm)| gm.two_sided());
+            m.cull_mode = if m.double_sided { None } else { Some(bevy::render::render_resource::Face::Back) };
+            log::debug!("particle model {path}: {name} shader {shader} as a lit translucent model");
+            out.push((mesh, FxMat::Lit(mats.add(m))));
+            continue;
         } else if shader.contains("Trans") {
             // The hex shields are refraction materials (a white base, a caustic pattern in
             // slot 4 and a hex normal map): without refraction, the caustic pattern tinted and
@@ -1599,6 +1620,8 @@ struct Node {
     /// Each instance's own copies of its game-shader materials (their instance colour is the
     /// particle's colour and alpha).
     model_mats: Vec<Vec<Handle<crate::fxuber::FxUberMaterial>>>,
+    /// Per model instance, its own copies of the lit translucent materials (FxMat::Lit).
+    model_lit: Vec<Vec<Handle<StandardMaterial>>>,
     /// The node's decal has been laid.
     decal_done: bool,
     /// The parent system's node (for `Position From Parent Particles`).
@@ -1643,7 +1666,7 @@ struct Effect {
 
 fn new_node(sys: Arc<Compiled>, delay: f32) -> Node {
     let n = sys.emit.len();
-    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), model_mats: Vec::new(), decal_done: false, parent: None, op_stopped: false, restart_at: 0.0 }
+    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), model_mats: Vec::new(), model_lit: Vec::new(), decal_done: false, parent: None, op_stopped: false, restart_at: 0.0 }
 }
 
 /// The system tree under `root`, with each child's delay added to its parent's.
@@ -3257,7 +3280,7 @@ pub fn update_pfx(
     world: Option<Res<crate::player::Collision>>,
     requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>, Has<PfxScreen>)>,
     impacts: Query<(Entity, &ImpactRequest)>,
-    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>, Option<&PfxColor>)>,
+    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>, Has<PfxOverlay>, Option<&PfxColor>)>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
     mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>, ResMut<Assets<crate::fxuber::FxUberMaterial>>),
     mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>, Option<Res<ParticleLight>>),
@@ -3353,8 +3376,11 @@ pub fn update_pfx(
     }
     // Trails follow their entities.
     let mut alive_trails = Vec::new();
-    for (ent, gt, mut tr, end, screen, vm_space, color) in &mut trails {
-        let at = match (vm_space, fp_lens) {
+    for (ent, gt, mut tr, end, screen, vm_space, overlay, color) in &mut trails {
+        // A viewmodel-space trail is moved to where the world camera shows that point, unless
+        // it is an overlay: then the viewmodel camera draws it in place, over and behind the
+        // gun as its depth says (Legion's barrel blur sleeve wraps the barrels).
+        let at = match (vm_space && !overlay, fp_lens) {
             (true, Some((cam, w, v))) => to_game(crate::vmcam::fx_to_world(gt.translation(), &cam, w, v)),
             _ => to_game(gt.translation()),
         };
@@ -3382,6 +3408,7 @@ pub fn update_pfx(
             if let (Some(id), true) = (tr.effect, vm_space) {
                 if let Some(fx) = pfx.effects.iter_mut().find(|f| f.id == id) {
                     fx.vm = true;
+                    fx.overlay = overlay;
                 }
             }
         }
@@ -3632,18 +3659,29 @@ pub fn update_pfx(
                         .clone();
                     let e = commands.spawn((Transform::default(), Visibility::Hidden, FxModelInstance)).id();
                     let mut own = Vec::new();
+                    let mut own_lit = Vec::new();
                     if let Some(parts) = parts {
                         for (m, mat) in parts.iter() {
                             if let Some(aabb) = meshes.get(m).and_then(|m| bevy::camera::primitives::MeshAabb::compute_aabb(m)) {
                                 log::debug!("model instance mesh {model}: aabb {:?}..{:?}", aabb.min(), aabb.max());
                             }
                             let c = commands.spawn((Mesh3d(m.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver)).id();
+                            // An overlay effect's models are the viewmodel camera's (render
+                            // layers don't reach children on their own).
+                            if fx.overlay {
+                                commands.entity(c).insert(bevy::camera::visibility::RenderLayers::layer(crate::vmcam::VM_LAYER));
+                            }
                             match mat {
                                 FxMat::Std(h) => commands.entity(c).insert(MeshMaterial3d(h.clone())),
                                 FxMat::Uber(h) => commands.entity(c).insert(MeshMaterial3d(h.clone())),
                                 FxMat::Fx(h) => {
                                     let copy = assets.6.get(h).cloned().map(|m| assets.6.add(m)).unwrap_or_else(|| h.clone());
                                     own.push(copy.clone());
+                                    commands.entity(c).insert(MeshMaterial3d(copy))
+                                }
+                                FxMat::Lit(h) => {
+                                    let copy = assets.3.get(h).cloned().map(|m| assets.3.add(m)).unwrap_or_else(|| h.clone());
+                                    own_lit.push(copy.clone());
                                     commands.entity(c).insert(MeshMaterial3d(copy))
                                 }
                             };
@@ -3655,6 +3693,7 @@ pub fn update_pfx(
                     }
                     n.models.push(e);
                     n.model_mats.push(own);
+                    n.model_lit.push(own_lit);
                 }
                 let cp = cps[0];
                 let basis = Quat::from_mat3(&Mat3::from_cols(cp.fwd, cp.up.cross(cp.fwd), cp.up));
@@ -3717,6 +3756,14 @@ pub fn update_pfx(
                             if assets.6.get(h).is_some_and(|m| (m.params.modulation - modulation).abs().max_element() > 1e-4) {
                                 if let Some(m) = assets.6.get_mut(h) {
                                     m.params.modulation = modulation;
+                                }
+                            }
+                        }
+                        for h in &n.model_lit[used - 1] {
+                            let want = Color::linear_rgba(modulation.x.min(1.0), modulation.y.min(1.0), modulation.z.min(1.0), modulation.w);
+                            if assets.3.get(h).is_some_and(|m| m.base_color.to_linear().to_f32_array().iter().zip(want.to_linear().to_f32_array()).any(|(a, b)| (a - b).abs() > 1e-3)) {
+                                if let Some(m) = assets.3.get_mut(h) {
+                                    m.base_color = want;
                                 }
                             }
                         }

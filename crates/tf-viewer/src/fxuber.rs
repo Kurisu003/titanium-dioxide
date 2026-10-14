@@ -240,7 +240,7 @@ pub fn material(gd: &GameData, cache: &mut crate::convert::Cache, images: &mut A
         tex_uv2: UVec4::new(tex_uv[4], tex_uv[5], tex_uv[6], flags),
         uv_flags: UVec4::from_array(uv_flags),
     };
-    log::debug!("effect model material {name}: {shader} flags {flags:#x} uv {tex_uv:?} uv flags {uv_flags:?}");
+    log::debug!("effect model material {name}: {shader} flags {flags:#x} uv {tex_uv:?} uv flags {uv_flags:?} albedo tint {:?} opacity {} edge fade {:?} distance fade {:?} alpha modulate {:?} two-sided {}", p.albedo_tint, p.opacity, p.edge_fade, p.distance_fade, p.alpha_modulate, m.two_sided());
     let [albedo, emissive, emissive_mul, opacity_mul, detail, distort1, distort2] = textures;
     Some(FxUberMaterial { params, albedo, emissive, emissive_mul, opacity_mul, detail, distort1, distort2, two_sided: m.two_sided(), additive: flags & ADD != 0 })
 }
