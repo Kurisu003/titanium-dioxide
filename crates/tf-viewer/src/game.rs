@@ -61,8 +61,13 @@ pub fn gate_input(game: Res<Game>, mut input: ResMut<PlayerInput>) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// No enemy waves: TF_NO_ENEMIES=1, or the flat test map unless TF_NO_ENEMIES=0 (main.rs).
+#[derive(Resource)]
+pub struct NoEnemies(pub bool);
+
 pub fn director(
     time: Res<Time>,
+    no_enemies: Res<NoEnemies>,
     mut game: ResMut<Game>,
     mut input: ResMut<PlayerInput>,
     mut control: ResMut<Control>,
@@ -133,9 +138,8 @@ pub fn director(
                 }
             } else {
                 game.timer -= dt;
-                // TF_NO_ENEMIES=1: an empty map for testing movement, weapons and animations (0 or unset:
-                // the waves).
-                if std::env::var("TF_NO_ENEMIES").is_ok_and(|v| v != "0") {
+                // An empty map for testing movement, weapons and animations (`NoEnemies`).
+                if no_enemies.0 {
                     game.timer = game.timer.max(1.0);
                 }
                 if game.timer <= 0.0 {

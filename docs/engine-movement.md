@@ -279,7 +279,8 @@ mirrors and the state fields carry the `player+0x....` / `mv+0x..` offsets. Left
 entities, the dodge, the mantle (`0x180208bf0` / `0x180209ed0` / `0x18020bb30`; the old sim's
 mantle runs in its place), ziplines, the grapple, sounds and the eye step smoothing.
 
-Against the 58 capture-2 programs (`~/td-tools/capture2`, `moveref` with `TF_ENGINE_MOVE=1`)
+The port is the Pilot's move code since 2026-10-14 (`TF_ENGINE_MOVE=0` runs the older sim for
+comparisons). Against the 58 capture-2 programs (`~/td-tools/capture2`, `moveref`)
 the port matches the game wherever the old sim did, and is closer on the first-jump peaks
 (49.5 u against the game's 51.0; the old sim gave 47.2). What is left differs by harness
 artifacts shared with the old sim: a 0.6 u ground offset on the slope of the capture spot

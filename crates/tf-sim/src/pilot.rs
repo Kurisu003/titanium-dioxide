@@ -641,8 +641,8 @@ pub struct PilotState {
     /// normal, zero if nothing): Friction keeps the velocity along it when the input pushes
     /// into it (`walk_move`).
     block_normal: Vec3,
-    /// The engine port's move state (`engine_move`), used in place of the move code here when
-    /// TF_ENGINE_MOVE=1 (`engine_enabled`), and its game clock.
+    /// The engine port's move state (`engine_move`), used in place of the move code here
+    /// unless TF_ENGINE_MOVE=0 (`engine_enabled`), and its game clock.
     engine: Option<Box<engine_move::Pm>>,
     engine_time: f32,
     /// Whether the last step ran the engine port (a mantle, zipline or grapple step in between
@@ -1548,12 +1548,12 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     }
 }
 
-/// TF_ENGINE_MOVE=1 runs the Pilot on the engine port (`engine_move`) instead of the move code
-/// in this file.
+/// The Pilot runs on the engine port (`engine_move`), the default since 2026-10-14;
+/// TF_ENGINE_MOVE=0 runs the older move code in this file instead (comparisons).
 pub fn engine_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("TF_ENGINE_MOVE").is_some_and(|v| v == "1"))
+    *ON.get_or_init(|| !std::env::var_os("TF_ENGINE_MOVE").is_some_and(|v| v == "0"))
 }
 
 /// The engine port's player settings from this file's params: the stim and ADS speed scales

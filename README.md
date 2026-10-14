@@ -48,6 +48,15 @@ The game install is found automatically in your Steam libraries. If it isn't, pa
 cargo run --release -p tf-viewer -- [--game /path/to/Titanfall2] [--difficulty easy|normal|hard|master] [--map mp_forwardbase_kodai]
 ```
 
+By default it starts on `flat`, a built-in flat grid for movement testing with no enemy waves, with a
+speed readout and a scrolling speed graph with key lanes at the bottom left (`TF_SPEED=0` hides them).
+Pick one of the game's maps with `--map` or in the MAP row of the title screen (waves come on those;
+`TF_NO_ENEMIES=1` turns them off anywhere, `TF_NO_ENEMIES=0` turns them on on the flat map). The Pilot
+runs on the function-by-function port of the game's movement code (`docs/engine-movement.md`);
+`TF_ENGINE_MOVE=0` runs the older hand-written sim for comparisons. Crouch is on toggle (a tap of
+Ctrl crouches or slides, a jump stands you up, as the game's "Crouch: Toggle" option); SETTINGS >
+CROUCH switches it to hold.
+
 Use `--release`. The world collision BVH (7.5 million triangles) is built in parallel at load, which takes about 1.5 s,
 and combat then runs at roughly 80-95 fps. Debug builds are also optimized and run at about 60-80 fps.
 

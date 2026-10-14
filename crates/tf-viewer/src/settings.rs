@@ -239,7 +239,8 @@ pub struct Settings {
     pub mouse_sensitivity_zoomed: f32,
     pub fov_scale: f32,
     pub invert_y: bool,
-    /// Crouch key as the game's +toggle_duck (the controls menu's "Crouch: Toggle").
+    /// Crouch key as the game's +toggle_duck (the controls menu's "Crouch: Toggle"); on by
+    /// default here (SETTINGS > CROUCH switches to Hold).
     pub toggle_crouch: bool,
     /// Master volume (0-1).
     pub volume: f32,
@@ -260,7 +261,7 @@ impl Default for Settings {
             mouse_sensitivity_zoomed: 5.0,
             fov_scale: 1.0,
             invert_y: false,
-            toggle_crouch: false,
+            toggle_crouch: true,
             volume: crate::audio::DEFAULT_VOLUME,
             gamepad_look: 2,
             gamepad_look_ads: 2,

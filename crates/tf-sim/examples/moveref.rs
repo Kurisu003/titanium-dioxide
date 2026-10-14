@@ -186,7 +186,7 @@ enum Mover {
 
 impl Mover {
     fn new(pos: Vec3, yaw_deg: f32) -> Self {
-        if std::env::var("TF_ENGINE_MOVE").is_ok_and(|v| v == "1") {
+        if tf_sim::pilot::engine_enabled() {
             let mut pm = Pm::new(pos, yaw_deg);
             pm.vel = Vec3::ZERO;
             Mover::Eng(pm, engine_move::Settings::default(), engine_move::Cvars::default())

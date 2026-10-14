@@ -1,6 +1,7 @@
 //! Titanfall-rs: play as BT in a Titanfall 2 map, read straight from the game install.
 //!
-//! Usage: tf-viewer [--game DIR] [--map NAME] [--no-props]
+//! Usage: tf-viewer [--game DIR] [--map NAME] [--no-props]   (the default map is the built-in
+//!                  flat movement-test grid; --map mp_forwardbase_kodai etc. for the game's maps)
 //!                  [--screenshot FILE [--after SECS]] [--shots "T:FILE,T:FILE"]
 //!                  [--cam "x y z" --look "x y z"]   (start in free camera, game units)
 //!                  [--script "0-2:fwd,1-2:sprint,2.5:dash,..."]  (scripted input, for tests)
@@ -162,7 +163,7 @@ fn find_game_dir() -> String {
 fn parse_args() -> Args {
     let mut a = Args {
         game: find_game_dir(),
-        map: "mp_forwardbase_kodai".into(),
+        map: flatmap::NAME.into(),
         props: true,
         shots: Vec::new(),
         cam: None,
@@ -220,6 +221,11 @@ fn main() {
     // First person in the cockpit, as the game always is (C toggles the third-person camera).
     let mode = if args.cam.is_some() { CameraMode::Free } else { CameraMode::Cockpit };
     let map_choice = ui::MapChoice(args.map.clone());
+    // The flat test map is for movement: no enemy waves unless TF_NO_ENEMIES=0 asks for them.
+    let no_enemies = match std::env::var("TF_NO_ENEMIES") {
+        Ok(v) => v != "0",
+        Err(_) => args.map == flatmap::NAME,
+    };
     let user_settings = settings::Settings::load();
     let start_volume = args.volume.unwrap_or(user_settings.volume);
     let start_titan = args.titan;
@@ -330,6 +336,7 @@ fn main() {
         .init_resource::<ui::Quality>()
         .insert_resource(loadout)
         .insert_resource(map_choice)
+        .insert_resource(game::NoEnemies(no_enemies))
         .insert_resource(weapons::TitanKit(start_titan))
         .init_resource::<titankit::ActiveKit>()
         .init_resource::<offhandvm::Offhands>()
