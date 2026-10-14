@@ -1548,12 +1548,31 @@ pub fn step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &Col
     }
 }
 
-/// The Pilot runs on the engine port (`engine_move`), the default since 2026-10-14;
-/// TF_ENGINE_MOVE=0 runs the older move code in this file instead (comparisons).
+/// The Pilot and the Titan run on the engine port (`engine_move`), the default since
+/// 2026-10-14; TF_ENGINE_MOVE=0 runs the older move code in `pilot.rs` / `titan.rs` instead
+/// (comparisons). Unit tests pick per thread with [`engine_for_test`] (the old sim unless set).
 pub fn engine_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !std::env::var_os("TF_ENGINE_MOVE").is_some_and(|v| v == "0"))
+    #[cfg(test)]
+    {
+        ENGINE_FOR_TEST.with(|c| c.get())
+    }
+    #[cfg(not(test))]
+    {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| !std::env::var_os("TF_ENGINE_MOVE").is_some_and(|v| v == "0"))
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static ENGINE_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tests: run this thread's moves on the engine port (true) or the old sims (false).
+#[cfg(test)]
+pub(crate) fn engine_for_test(on: bool) {
+    ENGINE_FOR_TEST.with(|c| c.set(on));
 }
 
 /// The engine port's player settings from this file's params: the stim and ADS speed scales

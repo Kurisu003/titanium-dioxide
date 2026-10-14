@@ -2,6 +2,8 @@
 //! Units are the game's (inches, seconds); Z is up; yaw 0 faces +X.
 
 use crate::collision::{CollisionWorld, CLIP_TITAN};
+use crate::engine_move;
+use crate::pilot::engine_enabled;
 use crate::smoothstep;
 use glam::{Vec2, Vec3};
 
@@ -136,6 +138,11 @@ pub struct TitanState {
     /// What the last move was pushed off (horizontal normal, zero if nothing), for Friction's
     /// wall rule (`walk_move`).
     pub block_normal: Vec3,
+    /// The engine port's player state (`engine_move`), which moves the Titan unless
+    /// TF_ENGINE_MOVE=0 (`engine_enabled`) or it hovers, and its game clock.
+    pub engine: Option<Box<engine_move::Pm>>,
+    pub engine_time: f32,
+    engine_ran: bool,
 }
 
 impl TitanState {
@@ -157,6 +164,9 @@ impl TitanState {
             crouched: false,
             duck: 0.0,
             block_normal: Vec3::ZERO,
+            engine: None,
+            engine_time: 0.0,
+            engine_ran: false,
         }
     }
 
@@ -272,6 +282,13 @@ fn stand_room(s: &TitanState, p: &TitanParams, world: &CollisionWorld) -> bool {
 pub fn step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &CollisionWorld, dt: f32) {
     s.yaw = input.yaw;
     s.pitch = input.pitch;
+    // Set again at the end of an engine step: any other way through here (hover, the old move)
+    // leaves the port's ground state stale.
+    let engine_ran = std::mem::replace(&mut s.engine_ran, false);
+    if engine_enabled() && input.fly.is_none() {
+        engine_step(s, input, p, world, dt, engine_ran);
+        return;
+    }
     // Stance: crouch at once; stand only where the standing hull fits. The eye follows over
     // DUCK_TIME / UNDUCK_TIME.
     if input.crouch && input.fly.is_none() {
@@ -476,4 +493,128 @@ fn move_once(s: &mut TitanState, p: &TitanParams, world: &CollisionWorld, delta:
         }
         _ => s.on_ground = false,
     }
+}
+
+/// The engine port's player settings for a Titan: titan_buddy.set / titan_base.set over the
+/// port's Pilot defaults (`jump 0`, `slide 0`, `doublejump 0`, `dodge 1`, no wall-run, the
+/// 120 x 120 x 235 hull, `stepheight 80`, `steptestdist 35`, gravityscale 1), with the viewer's
+/// speed scale (slows, cores, ADS) on the speeds as the status multiplier of GetMaxSpeed.
+fn engine_settings(p: &TitanParams, scale: f32) -> engine_move::Settings {
+    let mut st = engine_move::Settings::default();
+    st.jump = false;
+    st.slide = false;
+    st.superjump = false;
+    st.wallrun_enabled = false;
+    st.wallstick = false;
+    st.sprint = true;
+    st.crouch = true;
+    st.dodge = true;
+    st.jump_height = 15.0;
+    st.speed_scale_side = p.side_scale;
+    st.speed_scale_back = p.back_scale;
+    st.step_height = p.step_height;
+    st.step_test_dist = 35.0;
+    st.air_speed = p.air_speed * scale;
+    st.air_accel = p.air_accel;
+    st.gravity_scale = p.gravity / 750.0;
+    st.power_regen_rate = p.power_regen;
+    st.dodge_duration = p.dash_duration;
+    st.dodge_speed = p.dash_speed * scale;
+    st.dodge_power_drain = p.dash_drain;
+    st.dodge_interval = p.dash_interval;
+    st.dodge_stop_speed = p.dash_stop_speed;
+    st.dodge_height = p.dash_height;
+    st.dodge_power_delay = p.power_delay;
+    st.dodge_keep_speed_frac = p.dash_keep_frac;
+    st.pose_speed = [p.speed * scale, p.crouch_speed * scale];
+    st.pose_sprint_speed = [p.sprint_speed * scale, p.crouch_speed * scale];
+    st.pose_low_speed = [p.low_speed * scale, -1.0];
+    st.pose_accel = [p.accel, p.crouch_accel];
+    st.pose_decel = [p.decel, p.crouch_decel];
+    st.pose_low_accel = [p.low_accel, -1.0];
+    st.pose_sprint_accel = [p.sprint_accel, -1.0];
+    st.pose_sprint_decel = [p.sprint_decel, -1.0];
+    st.stand_mins = Vec3::new(-p.radius, -p.radius, 0.0);
+    st.stand_maxs = Vec3::new(p.radius, p.radius, p.height);
+    st.duck_mins = st.stand_mins;
+    st.duck_maxs = Vec3::new(p.radius, p.radius, p.crouch_height);
+    st.clip = CLIP_TITAN;
+    st
+}
+
+/// One step on the engine port: the input becomes a usercmd (the dash is the IN_DODGE press,
+/// crouch IN_DUCK), the port moves its own player state (kept in `s.engine`, synced to `s.pos`
+/// / `s.vel` either way so the viewer's teleports and launches still work), and the result is
+/// written back into the fields the viewer reads (ground, sprint, power, dashes, landings,
+/// crouch).
+fn engine_step(s: &mut TitanState, input: &TitanInput, p: &TitanParams, world: &CollisionWorld, dt: f32, engine_ran: bool) {
+    let yaw_deg = s.yaw.to_degrees();
+    let mut pm = s.engine.take().unwrap_or_else(|| Box::new(engine_move::Pm::new(s.pos, yaw_deg)));
+    let moved = (s.pos - pm.origin).length_squared() > 1e-4;
+    pm.origin = s.pos;
+    pm.vel = s.vel;
+    if !engine_ran || moved {
+        pm.on_ground = false;
+        pm.normal = Vec3::Z;
+        pm.sliding = false;
+        pm.hanging = false;
+        pm.cached = None;
+    }
+    s.engine_time += dt;
+    let scale = if input.speed_scale > 0.0 { input.speed_scale } else { 1.0 };
+    let st = engine_settings(p, scale);
+    let cv = engine_move::Cvars::default();
+    let mut b = 0u32;
+    if input.forward > 0.0 {
+        b |= engine_move::IN_FORWARD;
+    } else if input.forward < 0.0 {
+        b |= engine_move::IN_BACK;
+    }
+    if input.right > 0.0 {
+        b |= engine_move::IN_MOVERIGHT;
+    } else if input.right < 0.0 {
+        b |= engine_move::IN_MOVELEFT;
+    }
+    if input.sprint {
+        b |= engine_move::IN_SPEED;
+    }
+    if input.crouch {
+        b |= engine_move::IN_DUCK;
+    }
+    if input.dash {
+        b |= engine_move::IN_DODGE;
+    }
+    let cmd = engine_move::Cmd { buttons: b, fmove: input.forward, smove: input.right, yaw: yaw_deg, pitch: s.pitch.to_degrees() };
+    let was_on_ground = pm.on_ground;
+    let vz_before = pm.vel.z;
+    engine_move::player_move(&mut pm, &cmd, &st, &cv, world, s.engine_time, dt);
+    if std::env::var_os("TF_ENGINE_DEBUG").is_some() {
+        eprintln!(
+            "titan eng t {:.3} b {:#x} f {:.2} s {:.2} | g {} duck {} spr {} max {:.1} dodging {} power {:.1} | pos {:.1} {:.1} {:.1} vel {:.1} {:.1} {:.1}",
+            pm.now, cmd.buttons, cmd.fmove, cmd.smove, pm.on_ground as u8, pm.duck_state, pm.sprinting as u8, pm.maxspeed, pm.dodging as u8, pm.dodge_power,
+            pm.origin.x, pm.origin.y, pm.origin.z, pm.vel.x, pm.vel.y, pm.vel.z
+        );
+    }
+    s.pos = pm.origin;
+    s.vel = pm.vel;
+    s.on_ground = pm.on_ground;
+    s.sprinting = pm.sprinting;
+    s.crouched = pm.ducked_hull();
+    s.duck = pm.duck_view();
+    s.block_normal = pm.block_normal;
+    s.power = pm.dodge_power;
+    s.power_delay = (pm.power_delay_end - pm.now).max(0.0);
+    s.dash_time = if pm.dodging { (pm.dodge_time + st.dodge_duration - pm.now).max(0.0) } else { 0.0 };
+    s.since_dash = (pm.now - pm.dodge_time).max(0.0);
+    if pm.dodge_time == pm.now {
+        s.dashes += 1;
+    }
+    // A landing: the port knew the Titan was airborne (not the first step after a teleport or
+    // the old move, whose ground state it just dropped) and now has ground.
+    if engine_ran && !moved && !was_on_ground && pm.on_ground {
+        s.landings += 1;
+        s.land_speed = -vz_before;
+    }
+    s.engine = Some(pm);
+    s.engine_ran = true;
 }

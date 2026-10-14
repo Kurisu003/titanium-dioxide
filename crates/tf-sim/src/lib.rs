@@ -184,6 +184,60 @@ mod tests {
         assert!(!s.crouched && (s.eye(&p).z - 185.0).abs() < 0.01, "stood up: eye {}", s.eye(&p).z);
     }
 
+    #[test]
+    fn engine_dash_uses_power() {
+        // The same dash on the engine port (CheckJumpButton's dodge branch): dodgeSpeed along
+        // the input, sqrt(2 g dodgeHeight) up, 50 power, airborne for dodgeDuration, the
+        // second one dodgeInterval later, none without power; then the ground brakes it.
+        crate::pilot::engine_for_test(true);
+        let w = world();
+        let p = TitanParams::default();
+        let mut s = TitanState::new(Vec3::new(0.0, -1000.0, 0.0), 0.0);
+        run(&mut s, TitanInput::default(), &w, 0.2);
+        assert!(s.on_ground);
+        step(&mut s, &TitanInput { right: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        assert_eq!(s.dashes, 1);
+        assert!((s.power - 50.0).abs() < 0.5, "power {}", s.power);
+        assert!((s.vel.y + 685.0).abs() < 1.0, "dashing right at dodgeSpeed: {:?}", s.vel);
+        assert!(!s.on_ground && s.dash_time > 0.25, "airborne for the dash: {}", s.dash_time);
+        run(&mut s, TitanInput::default(), &w, 0.25);
+        assert!(!s.on_ground && (s.horizontal_speed() - 685.0).abs() < 2.0, "dash holds: {}", s.horizontal_speed());
+        step(&mut s, &TitanInput { forward: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        assert_eq!(s.dashes, 2);
+        step(&mut s, &TitanInput { forward: 1.0, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        assert_eq!(s.dashes, 2, "out of power");
+        assert!((s.vel.x - 685.0).abs() < 5.0 && s.vel.y.abs() < 5.0, "second dash {:?}", s.vel);
+        // dodgePowerDelay (0.2 s) then powerRegenRate 12/s.
+        run(&mut s, TitanInput::default(), &w, 1.2);
+        assert!((s.power - 12.0).abs() < 1.5, "power regen {}", s.power);
+        run(&mut s, TitanInput::default(), &w, 3.0);
+        assert!(s.on_ground && s.horizontal_speed() < 1.0, "stopped: {:?}", s.vel);
+        assert_eq!(s.landings, 1);
+        // Crouched, no dash.
+        run(&mut s, TitanInput { crouch: true, ..Default::default() }, &w, 0.5);
+        assert!(s.crouched);
+        step(&mut s, &TitanInput { forward: 1.0, crouch: true, dash: true, ..Default::default() }, &p, &w, 1.0 / 60.0);
+        assert_eq!(s.dashes, 2, "no dash while crouched");
+    }
+
+    #[test]
+    fn engine_walks_sprints_and_steps() {
+        crate::pilot::engine_for_test(true);
+        let w = world();
+        let mut s = TitanState::new(Vec3::new(0.0, 0.0, 10.0), 0.0);
+        run(&mut s, TitanInput::default(), &w, 0.5);
+        // (The port's traces stop a trace epsilon short of the floor.)
+        assert!(s.on_ground && s.pos.z.abs() < 0.1, "lands on floor: {:?}", s.pos);
+        run(&mut s, TitanInput { forward: 1.0, ..Default::default() }, &w, 1.0);
+        assert!((s.horizontal_speed() - 280.0).abs() < 1.0, "walk speed {}", s.horizontal_speed());
+        run(&mut s, TitanInput { forward: 1.0, ..Default::default() }, &w, 6.0);
+        assert!(s.pos.x < 1000.0 - 59.0 && s.pos.x > 1000.0 - 62.0, "stopped by wall at {:?}", s.pos);
+        let mut s = TitanState::new(Vec3::new(0.0, 0.0, 0.0), std::f32::consts::FRAC_PI_2);
+        run(&mut s, TitanInput { forward: 1.0, sprint: true, yaw: std::f32::consts::FRAC_PI_2, ..Default::default() }, &w, 3.0);
+        assert!((s.horizontal_speed() - 420.0).abs() < 1.0, "sprint speed {}", s.horizontal_speed());
+        assert!((s.pos.z - 50.0).abs() < 0.1 && s.pos.y > 600.0, "stepped onto ledge: {:?}", s.pos);
+    }
+
     mod pilot_tests {
         use super::quad;
         use crate::collision::CollisionWorld;

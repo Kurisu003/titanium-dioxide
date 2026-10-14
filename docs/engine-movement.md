@@ -276,10 +276,10 @@ quarter-hull ground trace, StayOnGround, TryPlayerMove and the step and blocked 
 the wall-run (CanWallrun's probes, the start, the update with its friction, acceleration,
 gravity ramp, turning and hang, EndWallrun). Every function names the engine address it
 mirrors and the state fields carry the `player+0x....` / `mv+0x..` offsets. Left out: other
-entities, the dodge, the mantle (`0x180208bf0` / `0x180209ed0` / `0x18020bb30`; the old sim's
+entities, the mantle (`0x180208bf0` / `0x180209ed0` / `0x18020bb30`; the old sim's
 mantle runs in its place), ziplines, the grapple, sounds and the eye step smoothing.
 
-The port is the Pilot's move code since 2026-10-14 (`TF_ENGINE_MOVE=0` runs the older sim for
+The port is the Pilot's move code since 2026-10-14 (and the Titan's, section 12) (`TF_ENGINE_MOVE=0` runs the older sim for
 comparisons). Against the 58 capture-2 programs (`~/td-tools/capture2`, `moveref`)
 the port matches the game wherever the old sim did, and is closer on the first-jump peaks
 (49.5 u against the game's 51.0; the old sim gave 47.2). What is left differs by harness
@@ -316,3 +316,52 @@ Things learned while porting that earlier sections or `engine-values.md` had wro
 - `+0x3b7c` (`0x1802c71a0`) is the floor plane of the last ground trace; `+0x2b70` what the
   last move ran into; `+0x24bc` the no-boost flag for the next wall-run; `+0x1890` the double
   jumps used, reset on landing (and on a wall-run when `superjump_limitreset_onwallrun`).
+
+## 12. The Titan: the dodge (`0x180200200`, dodge branch) and its bookkeeping (2026-10-14)
+
+Titans run the same PlayerMove with their own `.set` (`titan_buddy.set` over `titan_base.set`:
+`jump 0`, `doublejump 0`, `slide 0`, `dodge 1`, no wall-run, hull 120 x 120 x 235 / crouch 140,
+`stepheight 80`, `steptestdist 35`, `dodgespeed 685`, `dodgeduration 0.3`, `dodgeinterval 0.2`,
+`dodgestopspeed 350`, `dodgeheight 12`, `dodgeheightmax 25`, `dodgepowerdrain 50`,
+`dodgepowerdelay 0.2`, `powerregenrate 12`; `dodgeAnimDuration` and `dodgeKeepSpeedFrac` stay
+at the engine's 0.5 and 0). The dash is CheckJumpButton's dodge branch; `TF_ENGINE_MOVE=0` runs
+the older `titan.rs` sim instead (hovering always does).
+
+1. **The press**: a dodge is `IN_DODGE` (bit 28) pressed without `IN_JUMP`, or any jump press
+   in the air when the class has no double jump (`+0x2078 == 0`). The duck-toggle check at the
+   top of CheckJumpButton runs first either way.
+2. **The gate**: duck state 0 (no dodge while crouching), `player+0x28f4 & 0x10` clear (a
+   flag the move never sets), `dodge` enabled (`+0x2085`); fail if `now < +0x2b80 (last dodge)
+   + dodgeInterval (settings 0x23c)` or `dodge power (+0x1898) < dodgePowerDrain (class
+   +0x2054)`; with `dodge_no_movement_forward_enable 0` the wish must be nonzero. Then the drain
+   (`0x1802cdfc0`: power -= drain, clamped at 0) and the regen delay (`0x1802cdfa0`:
+   `+0x2424 = max(+0x2424, now + dodgePowerDelay (0x250) x +0x18c8 (1))`).
+3. **OnLand** (`0x1801fa160`) as for every jump, then the slide boost take-back (a Titan never
+   slides).
+4. **The height**: `dodgeHeight` (0x244), or `dodgeVerticalHeight` (0x24c) for a vertical
+   dodge (`dodge_vertical_enable 1` with the wish under `dodge_vertical_threshold` 0.1; off, so
+   never). `dodgeHeightMax` (0x248) is not read by the move code. The jump speed is
+   `sqrt(2 x sv_gravity x height)` x the status jump multiplier (1), 134 u/s for BT, added along
+   the move's up (`+0x2494`) when `dodge_vertical_in_air` (1) or on the ground; `-30 x block
+   normal` when the wish points into it, as for a jump.
+5. **The push**: the direction is the normalized wish, or with no input the eye angles'
+   forward (x, y; `dodge_no_movement_forward_enable 1`); the speed `dodgeSpeed` (class
+   +0x2050, `0x1802c6720`) x (1 - the status effect `0x180328f70`, 0). The old horizontal speed
+   keeps `1 - |push| / |old|` when faster than the push (x `dodge_vertical_horzspeedscale`
+   0.5 when vertical), plus `dodgeKeepSpeedFrac` (0x254) of the rest: `vel.xy = keep x vel.xy +
+   push`. Then `+0x2b80 = now`, `+0x2bad` (dodging) and `+0x2b7c` (the anim flag) set; the
+   jump's `0x18020efe0` is skipped.
+6. **The tail** as for a jump: EndSlide, FinishGravity, CheckVelocity, `+0x2b94 = now`.
+7. **Bookkeeping** (`0x1801f53e0`, first thing in FullWalkMove): `dodging` clears at
+   `+0x2b80 + dodgeDuration` (class +0x204c), earlier when `|vel| < dodgeStopSpeed` (0x240),
+   which clears the anim flag too; the anim flag clears at `+0x2b80 + dodgeAnimDuration`
+   (0x238) or below the stop speed. While `dodging`, CategorizePosition (`0x1801f3160`) keeps
+   the player off the ground; a landing (`0x18020b390`) clears both flags.
+8. **Power regen** (`0x1802ce140`, from the pre-move `0x1802cad80` every frame): with
+   `+0x18b4 == 0`, power under 100 and `+0x2424 <= now`, `power += powerRegenRate (class
+   +0x2048) x (1 - status 0x180328f30) x +0x18c4 (1) x frametime`, capped at 100. The class
+   block copy (`0x1802c2c20`) fills `+0x2048..+0x2054` from settings `+0x2b80..+0x2b8c`
+   (powerRegenRate, dodgeDuration, dodgeSpeed, dodgePowerDrain).
+
+No Titan captures from the real game exist yet (`~/td-tools/capture2` is Pilot-only), so the
+numbers above are from the decompile and the `.set` files alone.

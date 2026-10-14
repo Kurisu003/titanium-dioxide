@@ -1,4 +1,4 @@
-//! Pilot movement as client.dll runs it: a function-by-function port of the engine's player
+//! Pilot and Titan movement as client.dll runs it: a function-by-function port of the engine's player
 //! move code (Titanfall 2 v2.0.11.0, the Ghidra decompile kept outside the repo) for move type 2
 //! (walk) and the world only. Every function here names the engine function it mirrors
 //! (`0x1802041c0` style) and keeps its order of operations; the state fields carry the engine's
@@ -6,11 +6,12 @@
 //! See `docs/engine-movement.md` for the prose version.
 //!
 //! What is left out (no world data for it or not reached by a Pilot on a map alone): other
-//! entities (ground velocity, pushaway, repel, traverse / window hints, grapple), the dodge,
+//! entities (ground velocity, pushaway, repel, traverse / window hints, grapple),
 //! mantling (`0x180208bf0`; the caller may run its own), ziplines, sounds, anim events, view
 //! punch and the step-smoothing eye offset (`player+0x1e10`).
 
 use crate::collision::{CollisionWorld, Trace, CLIP_PILOT};
+
 use glam::Vec3;
 
 // Button bits (mv+0x18 held, +0x1c old, +0x20 pressed this frame).
@@ -81,6 +82,24 @@ pub struct Settings {
     pub wallrun_time_limit: f32,        // player+0x2068
     pub wallrun_hang_time_limit: f32,   // player+0x206c
     pub sprint: bool,                   // player+0x2086
+    /// The dodge (the Titan dash; `dodge`, player+0x2085) and its numbers: the per-class block
+    /// (`powerRegenRate` player+0x2048, `dodgeDuration` +0x204c, `dodgeSpeed` +0x2050,
+    /// `dodgePowerDrain` +0x2054, copied from settings+0x2b80.. by `0x1802c2c20`) and the
+    /// settings struct's own (`dodgeAnimDuration` 0x238 .. `dodgeKeepSpeedFrac` 0x254).
+    pub dodge: bool,
+    pub power_regen_rate: f32,
+    pub dodge_duration: f32,
+    pub dodge_speed: f32,
+    pub dodge_power_drain: f32,
+    pub dodge_anim_duration: f32,   // 0x238
+    pub dodge_interval: f32,        // 0x23c
+    pub dodge_stop_speed: f32,      // 0x240
+    pub dodge_height: f32,          // 0x244
+    pub dodge_vertical_height: f32, // 0x24c
+    pub dodge_power_delay: f32,     // 0x250
+    pub dodge_keep_speed_frac: f32, // 0x254
+    /// Which clip brushes block this player: `CLIP_PILOT` or `CLIP_TITAN`.
+    pub clip: usize,
     pub slide_decel: f32,               // 0x258
     pub slide_want_to_stop_decel: f32,  // 0x25c
     pub slide_velocity_decay: f32,      // 0x260
@@ -149,6 +168,21 @@ impl Default for Settings {
             wallrun_time_limit: 1.75,
             wallrun_hang_time_limit: 4.0,
             sprint: true,
+            dodge: false,
+            // The class block's dodge numbers have no .set defaults a Pilot reaches: these are
+            // titan_buddy.set's, so a Settings with `dodge` on dashes like BT.
+            power_regen_rate: 12.0,
+            dodge_duration: 0.3,
+            dodge_speed: 685.0,
+            dodge_power_drain: 50.0,
+            dodge_anim_duration: 0.5,
+            dodge_interval: 0.6,
+            dodge_stop_speed: 300.0,
+            dodge_height: 25.0,
+            dodge_vertical_height: 200.0,
+            dodge_power_delay: 0.0,
+            dodge_keep_speed_frac: 0.0,
+            clip: CLIP_PILOT,
             slide_decel: 50.0,
             slide_want_to_stop_decel: 400.0,
             slide_velocity_decay: 0.7,
@@ -205,6 +239,10 @@ pub struct Cvars {
     pub superjump_limitreset_onwallrun: bool,
     pub superjump_powerreset_onground: bool,
     pub dodge_vertical_in_air: bool,
+    pub dodge_no_movement_forward_enable: bool,
+    pub dodge_vertical_enable: bool,
+    pub dodge_vertical_threshold: f32,
+    pub dodge_vertical_horzspeedscale: f32,
     pub wallrun_enable: bool,
     pub wallrun_up_wall_boost: f32,
     pub wallrun_gravity_ramp_up_time: f32,
@@ -264,6 +302,10 @@ impl Default for Cvars {
             superjump_limitreset_onwallrun: true,
             superjump_powerreset_onground: true,
             dodge_vertical_in_air: true,
+            dodge_no_movement_forward_enable: true,
+            dodge_vertical_enable: false,
+            dodge_vertical_threshold: 0.1,
+            dodge_vertical_horzspeedscale: 0.5,
             wallrun_enable: true,
             wallrun_up_wall_boost: 250.0,
             wallrun_gravity_ramp_up_time: 1.0,
@@ -383,8 +425,12 @@ pub struct Pm {
     pub jumps_used: i32,         // +0x1890
     pub jump_power: f32,         // +0x189c
     pub dodge_power: f32,        // +0x1898
+    pub power_delay_end: f32,    // +0x2424: no dodge power regen before this time
+    pub dodge_time: f32,         // +0x2b80: when the last dodge started
     pub dodging: bool,           // +0x2bad
     pub dodge_flag: bool,        // +0x2b7c
+    /// The clip set of the frame's traces (from `Settings::clip`).
+    pub clip: usize,
     pub fall_speed: f32,         // +0x18a4
     pub step_height: f32,        // +0x18a8
     pub push_off: Vec3,          // +0x3d44
@@ -462,8 +508,11 @@ impl Pm {
             jumps_used: 0,
             jump_power: 100.0,
             dodge_power: 100.0,
+            power_delay_end: 0.0,
+            dodge_time: -100.0,
             dodging: false,
             dodge_flag: false,
+            clip: CLIP_PILOT,
             fall_speed: 0.0,
             step_height: 18.0,
             push_off: Vec3::ZERO,
@@ -558,7 +607,7 @@ impl Pm {
     /// The engine's hull trace (`0x1801fbdc0`) with the current hull.
     fn trace(&self, w: &CollisionWorld, s: &Settings, start: Vec3, end: Vec3) -> Trace {
         let (mins, maxs) = self.hull(s);
-        w.trace_box(start, end, mins, maxs, CLIP_PILOT)
+        w.trace_box(start, end, mins, maxs, self.clip)
     }
     /// SetGroundEntity (`0x1802abd50`) for the world: the handle and FL_ONGROUND, plus what
     /// the engine records when the ground is lost (`+0x2b90`, `+0x2ba0`: the grace jump).
@@ -620,6 +669,8 @@ pub fn player_move(p: &mut Pm, cmd: &Cmd, s: &Settings, cv: &Cvars, w: &Collisio
     p.wishdir = wish;
     p.summed_wish = Vec3::ZERO;
     p.step_height = s.step_height;
+    p.clip = s.clip;
+    update_power(p, s, dt);
     // 0x180204303: m_flDucktime counts down in whole milliseconds.
     if p.ducktime > 0 {
         p.ducktime -= (dt * 1000.0) as i32;
@@ -650,7 +701,7 @@ pub fn player_move(p: &mut Pm, cmd: &Cmd, s: &Settings, cv: &Cvars, w: &Collisio
 
 /// FullWalkMove (`0x1801f93c0`).
 fn full_walk_move(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, dt: f32) {
-    dodge_update(p);
+    dodge_update(p, s);
     start_gravity(p, s, cv, dt);
     check_velocity(p, cv);
     check_jump_button(p, s, cv, w, dt);
@@ -681,13 +732,31 @@ fn full_walk_move(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, dt: 
     }
 }
 
-/// Dodge bookkeeping (`0x1801f53e0`): the flags only ever clear here for a Pilot.
-fn dodge_update(p: &mut Pm) {
+/// Dodge bookkeeping (`0x1801f53e0`): the dodge ends `dodgeDuration` after it started, the
+/// anim flag `dodgeAnimDuration` after; both end early below `dodgeStopSpeed`.
+fn dodge_update(p: &mut Pm, s: &Settings) {
     if p.dodging {
-        p.dodging = false;
+        if p.now < p.dodge_time + s.dodge_duration {
+            if p.vel.length_squared() < s.dodge_stop_speed * s.dodge_stop_speed {
+                p.dodging = false;
+                p.dodge_flag = false;
+            }
+        } else {
+            p.dodging = false;
+        }
     }
-    if p.dodge_flag {
+    if p.dodge_flag && (p.dodge_time + s.dodge_anim_duration <= p.now || p.vel.length_squared() < s.dodge_stop_speed * s.dodge_stop_speed) {
         p.dodge_flag = false;
+    }
+}
+
+/// The dodge power regen (`0x1802ce140`, run before the move from `0x1802cad80`): once the
+/// delay after a dodge is over, `powerRegenRate` per second (x 1 - the status effect
+/// `0x180328f30`, x player+0x18c4, both 1) up to 100. (player+0x18b4 nonzero drains instead:
+/// nothing here sets it.)
+fn update_power(p: &mut Pm, s: &Settings, dt: f32) {
+    if p.dodge_power < 100.0 && p.power_delay_end <= p.now {
+        p.dodge_power = (p.dodge_power + s.power_regen_rate * dt).min(100.0);
     }
 }
 
@@ -870,7 +939,7 @@ fn can_unduck(p: &mut Pm, s: &Settings, w: &CollisionWorld) -> bool {
         }
         pos += d;
     }
-    let tr = w.trace_box(p.origin, pos, s.stand_mins, s.stand_maxs, CLIP_PILOT);
+    let tr = w.trace_box(p.origin, pos, s.stand_mins, s.stand_maxs, p.clip);
     !tr.start_solid && tr.fraction == 1.0
 }
 
@@ -1013,8 +1082,22 @@ fn check_jump_button(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, d
             return false;
         }
     } else if dodge {
-        // Pilots have no dodge (settings 0x2085).
-        return false;
+        // The dodge gate: standing (duck state 0), `dodge` enabled (player+0x28f4 & 0x10 is a
+        // flag nothing here sets), `dodgeInterval` since the last one, the power for it, and
+        // some input unless dodge_no_movement_forward_enable.
+        if p.duck_state != 0 || !s.dodge {
+            return false;
+        }
+        if p.now < p.dodge_time + s.dodge_interval || p.dodge_power < s.dodge_power_drain {
+            return false;
+        }
+        if !cv.dodge_no_movement_forward_enable && p.wishdir.length_squared() <= 1e-7 {
+            return false;
+        }
+        // 0x1802cdfc0: the drain; 0x1802cdfa0: the regen delay (x player+0x18c8, 1) never
+        // shortens one already pending.
+        p.dodge_power = (p.dodge_power - s.dodge_power_drain).max(0.0);
+        p.power_delay_end = p.power_delay_end.max(p.now + s.dodge_power_delay);
     } else {
         if !s.jump {
             return false;
@@ -1041,6 +1124,7 @@ fn check_jump_button(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, d
     }
     let wall = !(up.z >= 1.0) && !dodge;
     let height;
+    let mut vertical = false;
     if double {
         let f = 0.0; // 0x1802c7720: the double-jump power fraction is 0
         let h = s.superjump_min_height + (s.superjump_max_height - s.superjump_min_height) * f;
@@ -1056,6 +1140,16 @@ fn check_jump_button(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, d
         let use_power = cv.superjump_min_power_use + (cv.superjump_max_power_use - cv.superjump_min_power_use) * f;
         p.jump_power = (p.jump_power - use_power).max(0.0);
         p.jumps_used += 1;
+    } else if dodge {
+        // `dodgeHeight`, or `dodgeVerticalHeight` for a vertical dodge (dodge_vertical_enable
+        // with the stick under dodge_vertical_threshold; off).
+        let th = cv.dodge_vertical_threshold;
+        if !cv.dodge_vertical_enable || th * th <= p.wishdir.length_squared() {
+            height = s.dodge_height;
+        } else {
+            vertical = true;
+            height = s.dodge_vertical_height;
+        }
     } else {
         let mut h = if p.sliding { s.slide_jump_height } else { s.jump_height };
         if p.now - p.land_time < cv.skip_time && !p.is_wallrunning() {
@@ -1084,17 +1178,46 @@ fn check_jump_button(p: &mut Pm, s: &Settings, cv: &Cvars, w: &CollisionWorld, d
         if p.wishdir.dot(p.block_normal) < 0.0 {
             p.vel -= p.block_normal * 30.0;
         }
-        if double {
-            let add = Vec3::new(p.wishdir.x, p.wishdir.y, 0.0) * s.superjump_horz_speed;
+        if double || dodge {
+            // The horizontal push: the double jump's along the wish as it is, the dodge's along
+            // the normalized wish, or the eye's forward (x, y) with no input
+            // (dodge_no_movement_forward_enable); none for a vertical dodge. The old speed
+            // keeps what exceeds the push (x dodge_vertical_horzspeedscale when vertical), plus
+            // `dodgeKeepSpeedFrac` of the rest for a dodge.
+            let mut dir = p.wishdir;
+            if vertical {
+                dir = Vec3::ZERO;
+            } else if dodge {
+                if !cv.dodge_no_movement_forward_enable || 1e-7 < dir.length_squared() {
+                    dir = norm(dir);
+                } else {
+                    dir = p.fwd;
+                }
+            }
+            // 0x1802c6720: dodgeSpeed x (1 - the status effect 0x180328f70, 0).
+            let speed = if double { s.superjump_horz_speed } else { s.dodge_speed };
+            let add = Vec3::new(dir.x, dir.y, 0.0) * speed;
             let cur = (p.vel.x * p.vel.x + p.vel.y * p.vel.y).sqrt();
             let a = (add.x * add.x + add.y * add.y).sqrt();
             let mut keep = 0.0;
             if a < cur {
                 keep = 1.0 - a / cur;
             }
+            if vertical {
+                keep *= cv.dodge_vertical_horzspeedscale;
+            }
+            if dodge {
+                keep += (1.0 - keep) * s.dodge_keep_speed_frac;
+            }
             p.vel.x = keep * p.vel.x + add.x;
             p.vel.y = keep * p.vel.y + add.y;
+            if dodge {
+                p.dodge_time = p.now;
+                p.dodging = true;
+                p.dodge_flag = true;
+            }
         }
+        // (0x18020efe0, the jump's anim / event call, is skipped for a dodge.)
     }
     end_slide(p, cv);
     finish_gravity(p, s, cv, dt);
@@ -1703,7 +1826,7 @@ fn ground_recheck(p: &mut Pm, tr: &mut Trace, tn: &mut f32, got_ground: &mut boo
     if p.on_ground && tr.fraction < 1.0 {
         let end2 = tr.end - p.normal * 2.0;
         let (mins, maxs) = p.hull(s);
-        *tr = ground_trace(w, p.origin, end2, mins, maxs, *tr);
+        *tr = ground_trace(w, p.origin, end2, mins, maxs, *tr, p.clip);
         *tn = tr.normal.dot(p.normal);
     }
     !tr_ent(tr) || (*tn < 0.7 && !p.is_wallrunning())
@@ -1711,7 +1834,7 @@ fn ground_recheck(p: &mut Pm, tr: &mut Trace, tn: &mut f32, got_ground: &mut boo
 
 /// `0x1802081b0`: the trace with the hull's -x-y, +x+y, -x+y and +x-y quarters in turn until
 /// one hits a plane within 0.7 of up; the result keeps the original end point and fraction.
-fn ground_trace(w: &CollisionWorld, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, orig: Trace) -> Trace {
+fn ground_trace(w: &CollisionWorld, start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3, orig: Trace, clip: usize) -> Trace {
     let quarters = [
         (Vec3::new(mins.x, mins.y, mins.z), Vec3::new(maxs.x.min(0.0), maxs.y.min(0.0), maxs.z)),
         (Vec3::new(mins.x.max(0.0), mins.y.max(0.0), mins.z), Vec3::new(maxs.x, maxs.y, maxs.z)),
@@ -1720,7 +1843,7 @@ fn ground_trace(w: &CollisionWorld, start: Vec3, end: Vec3, mins: Vec3, maxs: Ve
     ];
     let mut tr = orig;
     for (qmins, qmaxs) in quarters {
-        tr = w.trace_box(start, end, qmins, qmaxs, CLIP_PILOT);
+        tr = w.trace_box(start, end, qmins, qmaxs, clip);
         if tr_ent(&tr) && !tr.start_solid && tr.normal.z >= 0.7 {
             break;
         }
@@ -2104,10 +2227,9 @@ fn turn_normal(p: &mut Pm, n: Vec3, cv: &Cvars, dt: f32) {
 /// wall (`-n`) by `extra` + the allowed distance + a corner margin. 0: blocked by something
 /// that is not a wall, 1: no wall within `allowed`, 2: the wall is there (its normal in `out`).
 fn wall_probe(p: &Pm, pos: Vec3, extra: f32, n: Vec3, hw: f32, allowed: f32, out: &mut Vec3, w: &CollisionWorld) -> i32 {
-    let _ = p;
     let len = extra + allowed + hw * 0.2929;
     let end = Vec3::new(pos.x - len * n.x, pos.y - len * n.y, pos.z);
-    let tr = w.trace_box(pos, end, Vec3::splat(-hw), Vec3::splat(hw), CLIP_PILOT);
+    let tr = w.trace_box(pos, end, Vec3::splat(-hw), Vec3::splat(hw), p.clip);
     if tr.fraction == 1.0 {
         return 1;
     }
