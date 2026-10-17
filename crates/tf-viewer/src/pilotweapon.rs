@@ -2893,7 +2893,6 @@ pub fn pilot_viewmodel(
     };
     let hp = pivot_of(&actor, &pivots[0]).unwrap_or(offset);
     let zp = pivot_of(&actor, &pivots[1]).unwrap_or(hp);
-    let pivot = hp.lerp(zp, ads);
     let def = motion_def;
     let (cy, sy) = (s.yaw.cos(), s.yaw.sin());
     let vel = Vec3::new(
@@ -2910,15 +2909,13 @@ pub fn pilot_viewmodel(
         ads,
     };
     let off = if vm_off("sway") {
-        crate::vmmotion::VmOffset {
-            rot: Vec3::ZERO,
-            trans: Vec3::ZERO,
-        }
+        crate::vmmotion::VmOffset::default()
     } else {
         lo.vm_motion.step(&def, &inp, dt)
     };
+    let pivot_term = off.pivot_term(hp, zp, offset, ads);
     if std::env::var_os("TF_VM_LOG").is_some() {
-        log::info!(target: "vm_log", "place sprint {sprint_blend:.2} ads {ads:.2} sway trans {:.2?} rot {:.2?} pivot {:.2?} offset {:.2?} shake {:.2?}", off.trans, off.rot, pivot, offset, punch.vm_shake);
+        log::info!(target: "vm_log", "place sprint {sprint_blend:.2} ads {ads:.2} sway trans {:.2?} rot {:.2?} hip {:.2?} zoomed {:.2?} pivot term {:.2?} offset {:.2?} shake {:.2?}", off.trans, off.rot, off.rot_hip, off.rot_zoomed, pivot_term, offset, punch.vm_shake);
     }
     let rs = crate::vmmotion::angles_quat(off.rot);
     let rp = crate::vmmotion::angles_quat(if vm_off("punch") {
@@ -2932,10 +2929,8 @@ pub fn pilot_viewmodel(
     let script_off = Vec3::new(o.y, -o.x, o.z);
     place.0.push((
         anchor,
-        Transform::from_translation(
-            script_off + off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot),
-        )
-        .with_rotation(rp * rs),
+        Transform::from_translation(script_off + off.trans + punch.vm_shake + rp * pivot_term)
+            .with_rotation(rp * rs),
     ));
 }
 

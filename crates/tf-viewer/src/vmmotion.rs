@@ -486,21 +486,40 @@ pub struct MotionInput {
     pub ads: f32,
 }
 
-/// Sway and bob state of one viewmodel.
+/// Sway and bob state of one viewmodel. The hip and zoomed sway springs run side by side
+/// (each toward its own targets, within its own limits) and the result is blended by the zoom
+/// fraction: blending the pivots instead swung the gun by units when aiming in while turning
+/// (a 2.5 degree hip yaw sway about a pivot sliding out to the zoomed one 230 units ahead).
 #[derive(Clone, Default)]
 pub struct VmMotion {
     last: Option<(f32, f32)>,
     t: Vec3,
     r: Vec3,
+    tz: Vec3,
+    rz: Vec3,
     bob_phase: f32,
     bob_amount: f32,
 }
 
-/// The viewmodel offset to apply about its sway pivot: rotation (pitch, yaw, roll degrees)
-/// and translation (view frame).
+/// The viewmodel offset to apply about its sway pivots: rotation (pitch, yaw, roll degrees)
+/// and translation (view frame), blended by the zoom, plus each spring's own rotation for
+/// its pivot.
+#[derive(Clone, Copy, Default, Debug)]
 pub struct VmOffset {
     pub rot: Vec3,
     pub trans: Vec3,
+    pub rot_hip: Vec3,
+    pub rot_zoomed: Vec3,
+}
+
+impl VmOffset {
+    /// The translation that turning the viewmodel (whose camera bone sits at `offset` in model
+    /// space) about the hip pivot `hp` by the hip sway and about the zoomed pivot `zp` by the
+    /// zoomed sway comes to, blended by `ads`.
+    pub fn pivot_term(&self, hp: Vec3, zp: Vec3, offset: Vec3, ads: f32) -> Vec3 {
+        let about = |p: Vec3, r: Vec3| p - offset - angles_quat(r) * p;
+        about(hp, self.rot_hip).lerp(about(zp, self.rot_zoomed), ads)
+    }
 }
 
 /// Turn rate (degrees/s) that counts as a full `sway_turn_*` push. The engine's scale isn't
@@ -523,7 +542,6 @@ impl VmMotion {
             None => (0.0, 0.0),
         };
         self.last = Some((inp.yaw, inp.pitch));
-        let lerp = |a: Vec3, b: Vec3| a.lerp(b, inp.ads);
         let (h, z) = (&def.hip, &def.zoomed);
         // Pushes: positive yaw rate turns left; positive pitch rate looks down.
         let turn = [
@@ -541,22 +559,26 @@ impl VmMotion {
             m.z.clamp(0.0, 1.0),
             (-m.z).clamp(0.0, 1.0),
         ];
-        let mut target_t = Vec3::ZERO;
-        let mut target_r = Vec3::ZERO;
-        for i in 0..6 {
-            target_t += lerp(h.move_t[i], z.move_t[i]) * mv[i];
-            target_r += lerp(h.move_r[i], z.move_r[i]) * mv[i];
-        }
-        for i in 0..4 {
-            target_t += lerp(h.turn_t[i], z.turn_t[i]) * turn[i];
-            target_r += lerp(h.turn_r[i], z.turn_r[i]) * turn[i];
-        }
-        target_t = target_t.clamp(lerp(h.min_t, z.min_t), lerp(h.max_t, z.max_t));
-        target_r = target_r.clamp(lerp(h.min_r, z.min_r), lerp(h.max_r, z.max_r));
-        let tg = h.t_gain + (z.t_gain - h.t_gain) * inp.ads;
-        let rg = h.r_gain + (z.r_gain - h.r_gain) * inp.ads;
-        self.t += (target_t - self.t) * (1.0 - (-tg * dt).exp());
-        self.r += (target_r - self.r) * (1.0 - (-rg * dt).exp());
+        let spring = |set: &SwaySet, t: &mut Vec3, r: &mut Vec3| {
+            let mut target_t = Vec3::ZERO;
+            let mut target_r = Vec3::ZERO;
+            for i in 0..6 {
+                target_t += set.move_t[i] * mv[i];
+                target_r += set.move_r[i] * mv[i];
+            }
+            for i in 0..4 {
+                target_t += set.turn_t[i] * turn[i];
+                target_r += set.turn_r[i] * turn[i];
+            }
+            target_t = target_t.clamp(set.min_t, set.max_t);
+            target_r = target_r.clamp(set.min_r, set.max_r);
+            *t += (target_t - *t) * (1.0 - (-set.t_gain * dt).exp());
+            *r += (target_r - *r) * (1.0 - (-set.r_gain * dt).exp());
+        };
+        spring(h, &mut self.t, &mut self.r);
+        spring(z, &mut self.tz, &mut self.rz);
+        let sway_t = self.t.lerp(self.tz, inp.ads);
+        let sway_r = self.r.lerp(self.rz, inp.ads);
 
         // Bob: one vertical cycle per bob_cycle_time, the sideways sway and the angles at
         // half that rate, scaled by speed up to bob_max_speed.
@@ -575,14 +597,18 @@ impl VmMotion {
             .rem_euclid(std::f32::consts::TAU * 2.0);
         let vert = b.vert + (bz.vert - b.vert) * inp.ads;
         let horz = b.horz + (bz.horz - b.horz) * inp.ads;
-        let ang = b.angles.lerp(bz.angles, inp.ads);
         let (v, s) = (self.bob_phase.sin(), (self.bob_phase * 0.5).sin());
         let a = self.bob_amount;
         let bob_t = Vec3::new(0.0, horz * s, vert * v) * a;
-        let bob_r = Vec3::new(ang.x * v, ang.y * s, ang.z * s) * a;
+        // The bob's angles too are each set's own about its own pivot (the hip bob's 1.7
+        // degree yaw about the zoomed pivot would walk the sight by units mid-zoom).
+        let bob_r = |ang: Vec3| Vec3::new(ang.x * v, ang.y * s, ang.z * s) * a;
+        let (bh, bzr) = (bob_r(b.angles), bob_r(bz.angles));
         VmOffset {
-            rot: self.r + bob_r,
-            trans: self.t + bob_t,
+            rot: sway_r + bh.lerp(bzr, inp.ads),
+            trans: sway_t + bob_t,
+            rot_hip: self.r + bh,
+            rot_zoomed: self.rz + bzr,
         }
     }
 }

@@ -2128,7 +2128,7 @@ pub fn weapon_viewmodel(
             .map(|t| t.transform_point(*off))
     };
     let hp = pivot_of(&pivots[0]).unwrap_or(offset);
-    let pivot = hp.lerp(pivot_of(&pivots[1]).unwrap_or(hp), ads);
+    let zp = pivot_of(&pivots[1]).unwrap_or(hp);
     let (cy, sy) = (s.yaw.cos(), s.yaw.sin());
     let vel = Vec3::new(
         s.vel.x * cy + s.vel.y * sy,
@@ -2167,7 +2167,7 @@ pub fn weapon_viewmodel(
         });
         tf.translation = Vec3::from(s.eye(&settings.0).to_array())
             + view_off
-            + rot * (off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot));
+            + rot * (off.trans + punch.vm_shake + rp * off.pivot_term(hp, zp, offset, ads));
     }
 }
 
