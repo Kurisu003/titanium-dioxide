@@ -465,6 +465,7 @@ fn main() {
     .init_resource::<titankit::KitView>()
     .init_resource::<titankit::TitanMoveMods>()
     .init_resource::<rodeo::Rodeo>()
+    .init_resource::<rodeo::RodeoProps>()
     .init_resource::<autotitan::AutoTitan>()
     .init_resource::<fparms::FpSeq>()
     .init_resource::<hud::HudHidden>()
@@ -568,6 +569,7 @@ fn main() {
                 (
                     pilotctl::simulate_pilot,
                     rodeo::rodeo_update,
+                    rodeo::rodeo_props,
                     fparms::fp_seq_update,
                 )
                     .chain(),

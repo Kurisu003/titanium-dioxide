@@ -35,7 +35,7 @@
 //! 0.75 s after being thrown off (PostRodeoAirControl), friendly NPC Titans to hand a battery
 //! to (none exist here).
 
-use crate::actor::{Actor, Layer};
+use crate::actor::{Actor, ActorSpec, Layer};
 use crate::fparms::{attach_frame, FpArms};
 use crate::particles::{emit, Effect};
 use crate::pilotctl::{Control, PilotSettings, PlayerPilot};
@@ -43,6 +43,7 @@ use crate::player::{to_bevy, CameraMode, PlayerInput};
 use crate::targets::{Enemy, EnemyKits};
 use crate::ui::UiAssets;
 use bevy::prelude::*;
+use std::collections::HashMap;
 use tf_sim::glam::Vec3 as SVec3;
 use tf_sim::pilot::PilotMove;
 
@@ -66,15 +67,27 @@ const JUMP_DEBOUNCE: f32 = 0.6;
 /// How long a rider has been on an NPC Titan's back before it pops its Electric Smoke (the
 /// NPC's anti-rodeo timing is server-side script that isn't shipped; 2 s is an approximation).
 const ANTI_RODEO_SMOKE_DELAY: f32 = 2.0;
-/// Where in the hijack / grenade clips the damage lands (the `rodeo_battery_rip` event sits
-/// at 0.81-0.99 of the pilot's hijack animations; `signal:RodeoPointOfNoReturn` at 0.585).
-const RIP_CYCLE: f32 = 0.85;
-const NO_RETURN_CYCLE: f32 = 0.585;
 /// RodeoDistanceIsTooFar: the rider must be within this of the ride spot.
 const ATTACH_RANGE: f32 = 180.0;
 /// The view blends from where you were onto the entrance clip's camera over this long.
 const VIEW_BLEND: f32 = 0.25;
-const GRENADE_CYCLE: f32 = 0.7;
+/// RODEO_BATTERY_MODEL_FOR_RODEO_ANIMS: the battery shown in the hand during the rip (on the
+/// `R_HAND` attachment: `ja_r_propHand`, identity axes).
+const BATTERY_MODEL: &str = "models/props/titan_battery_static/titan_battery_static.mdl";
+/// GRENADE_MODEL: the frag shown in the hand for the hatch grenade (on `PROPGUN`:
+/// `ja_c_propGun`, which is also the model's root bone).
+const GRENADE_MODEL: &str = "models/weapons/grenades/m20_f_grenade.mdl";
+
+/// Script event cycles of a rodeo clip (they sit on the third-person Pilot clips of
+/// pete_scripted_r1.mdl; the first-person arms clips carry none): the hand prop appears
+/// (`rodeo_battery_show` / `rodeo_battery_grenade_show`), `signal:RodeoPointOfNoReturn`, and
+/// the hit (`rodeo_battery_rip` / `rodeo_battery_grenade_damage`).
+#[derive(Clone, Copy)]
+struct Events {
+    show: f32,
+    no_return: f32,
+    hit: f32,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Chassis {
@@ -130,6 +143,64 @@ impl Chassis {
             Chassis::Stryder => "ptpov_rodeo_light_grenade_1st",
         }
     }
+    /// pt_rodeo_ride_R_hijack_battery (2.667 s). The ogre and stryder Pilot clips aren't
+    /// shipped in the campaign files; they use the same marks.
+    fn rip_events(self) -> Events {
+        Events {
+            show: 0.213,
+            no_return: 0.625,
+            hit: 0.913,
+        }
+    }
+    /// pt_rodeo_<medium|heavy|light>_grenade_1st.
+    fn grenade_events(self) -> Events {
+        match self {
+            Chassis::Atlas => Events {
+                show: 0.15,
+                no_return: 0.5,
+                hit: 0.837,
+            },
+            Chassis::Ogre => Events {
+                show: 0.096,
+                no_return: 0.532,
+                hit: 0.936,
+            },
+            Chassis::Stryder => Events {
+                show: 0.15,
+                no_return: 0.5,
+                hit: 0.999,
+            },
+        }
+    }
+    /// The `hatchmodel` player setting: the battery seated in the Titan's back socket (the
+    /// Titan models have no battery of their own; AddPanelToTitan parents this prop to the
+    /// `RODEO_BATTERY` attachment and plays `hatch_rodeo_up_idle`).
+    fn hatch_model(self) -> &'static str {
+        match self {
+            Chassis::Atlas => "models/titans/medium/titan_medium_rodeo_battery.mdl",
+            Chassis::Ogre => "models/titans/heavy/titan_heavy_rodeo_battery.mdl",
+            Chassis::Stryder => "models/titans/light/titan_light_rodeo_battery.mdl",
+        }
+    }
+    /// The `hatch_rodeo_<state>` alias of the hatch model: `up_idle` (seated), `down_idle`
+    /// (sunk 18 units into the socket, out of sight), `up` (rising back, 0.667 s).
+    fn hatch_clip(self, state: &str) -> String {
+        let t = match self {
+            Chassis::Atlas => "medium",
+            Chassis::Ogre => "heavy",
+            Chassis::Stryder => "light",
+        };
+        format!("hatch_rodeo_{t}_{state}")
+    }
+    /// The `RODEO_BATTERY` attachment: on `def_c_spineC`, identity axes (the Ogre's is also
+    /// tilted 4.6 degrees about X, dropped here).
+    fn socket(self) -> Vec3 {
+        match self {
+            Chassis::Atlas => Vec3::new(0.1, 58.3, -40.3),
+            Chassis::Ogre => Vec3::new(0.0, 74.5, -33.7),
+            Chassis::Stryder => Vec3::new(0.0, 49.2, -15.1),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -146,6 +217,8 @@ pub struct Ride {
     phase: Phase,
     /// Seconds into the phase.
     t: f32,
+    /// Where the phase's clip is (0..1), for the props.
+    cycle: f32,
     /// Seconds since attaching.
     since: f32,
     entrance: String,
@@ -165,6 +238,18 @@ pub struct Rodeo {
     pub battery: bool,
     /// The view while riding (game space: eye, rotation with forward X / up Z).
     pub cam: Option<(Vec3, Quat)>,
+    /// The ridden Titan's hatch battery has sunk out of sight (the show event passed).
+    pub hatch_down: Option<HatchDown>,
+}
+
+/// The hatch battery of the Titan being rodeoed, sunk since the show event
+/// (`hatch_rodeo_down_idle` while the hand holds the battery / grenade over the socket).
+/// When the ride ends it rises again (`hatch_rodeo_up`) if the rip got past the point of no
+/// return or a grenade went in, else it snaps straight back (PlayerRemovesBatteryPack).
+#[derive(Clone, Copy)]
+pub struct HatchDown {
+    pub target: Entity,
+    pub rises: bool,
 }
 
 impl Default for Rodeo {
@@ -174,6 +259,7 @@ impl Default for Rodeo {
             debounce: 0.0,
             battery: std::env::var_os("TF_BATTERY").is_some(),
             cam: None,
+            hatch_down: None,
         }
     }
 }
@@ -350,6 +436,7 @@ pub fn rodeo_update(
             target: id,
             chassis,
             phase: Phase::Entrance,
+            cycle: 0.0,
             t: 0.0,
             since: 0.0,
             entrance,
@@ -411,11 +498,12 @@ pub fn rodeo_update(
     } else {
         (ride.t / len.max(1e-3)).min(0.999)
     };
+    ride.cycle = cycle;
 
     // Jump off (before the point of no return of a hijack).
     let can_jump = ride.since > JUMP_DEBOUNCE
         && matches!(ride.phase, Phase::Entrance | Phase::Idle)
-        || (ride.phase == Phase::Hijack && cycle < NO_RETURN_CYCLE);
+        || (ride.phase == Phase::Hijack && cycle < ride.chassis.rip_events().no_return);
     if input.jump && can_jump && detach.is_none() {
         let yaw = input.yaw;
         let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
@@ -480,12 +568,18 @@ pub fn rodeo_update(
                     }
                 }
             }
-            let hit_at = if ride.phase == Phase::Hijack {
-                RIP_CYCLE
+            let ev = if ride.phase == Phase::Hijack {
+                ride.chassis.rip_events()
             } else {
-                GRENADE_CYCLE
+                ride.chassis.grenade_events()
             };
-            if cycle >= hit_at && !ride.done_hit {
+            if cycle >= ev.show {
+                rodeo.hatch_down = Some(HatchDown {
+                    target: ride.target,
+                    rises: ride.phase == Phase::Grenade || cycle >= ev.no_return,
+                });
+            }
+            if cycle >= ev.hit && !ride.done_hit {
                 ride.done_hit = true;
                 // RodeoBatteryPackRemovalDamage: a segment, half of it from a grenade
                 // (thrown only while carrying a battery); a doomed Titan dies.
@@ -647,6 +741,261 @@ pub fn rodeo_update(
         }
     } else {
         rodeo.ride = Some(ride);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HatchState {
+    Up,
+    Down,
+    Rising,
+}
+
+struct Hatch {
+    actor: Option<Entity>,
+    socket: Entity,
+    chassis: Chassis,
+    state: HatchState,
+    /// Seconds into `hatch_rodeo_up`.
+    t: f32,
+}
+
+/// The rodeo props: every enemy Titan's hatch battery, and the battery / grenade in the hand.
+#[derive(Resource, Default)]
+pub struct RodeoProps {
+    /// By enemy entity.
+    hatches: HashMap<Entity, Hatch>,
+    /// (battery, grenade) actors under the arms' hand bones, once the arms exist.
+    hand: Option<(Option<Entity>, Option<Entity>)>,
+}
+
+/// Spawn and drive the rodeo props (after `rodeo_update`): the hatch battery sits in each
+/// enemy Titan's `RODEO_BATTERY` socket (`hatch_rodeo_up_idle`), sinks at the show event and
+/// rises or snaps back when the ride ends; the hand battery shows from the hijack's show event
+/// and the grenade from the grenade's, both until the rider is thrown off
+/// (ClearRodeoAnimTempProps).
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn rodeo_props(
+    mut commands: Commands,
+    time: Res<Time>,
+    gd: Res<crate::gamedata::GameData>,
+    mut assets: (
+        ResMut<crate::convert::Cache>,
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<Image>>,
+        ResMut<Assets<StandardMaterial>>,
+        ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    ),
+    mut rodeo: ResMut<Rodeo>,
+    mut props: ResMut<RodeoProps>,
+    fp_arms: Option<Res<FpArms>>,
+    kits: Res<EnemyKits>,
+    enemies: Query<(Entity, &Enemy)>,
+    mut actors: Query<&mut Actor>,
+    mut vis: Query<&mut Visibility>,
+    globals: Query<&GlobalTransform>,
+) {
+    let (cache, meshes, images, materials, bindposes) = (
+        &mut *assets.0,
+        &mut *assets.1,
+        &mut *assets.2,
+        &mut *assets.3,
+        &mut *assets.4,
+    );
+    let mut spawn = |commands: &mut Commands, parent: Entity, path: &str, seqs: &[&str]| {
+        let spec = ActorSpec {
+            path,
+            sequences: seqs,
+            grids: &[],
+            body: &[],
+        };
+        match crate::actor::spawn_actor(
+            commands, parent, &gd, &spec, cache, meshes, images, materials, bindposes,
+        ) {
+            Ok(s) => Some(s.entity),
+            Err(e) => {
+                log::warn!("rodeo prop {path}: {e:#}");
+                None
+            }
+        }
+    };
+
+    // A hatch battery for every enemy Titan, at its socket.
+    for (ent, e) in enemies.iter() {
+        if props.hatches.contains_key(&ent) {
+            continue;
+        }
+        let Some(kit) = kits.0.get(e.kit) else {
+            continue;
+        };
+        if kit.infantry {
+            continue;
+        }
+        let Ok(a) = actors.get(e.actor) else { continue };
+        let Some(spine) = a.joint("def_c_spineC") else {
+            continue;
+        };
+        let chassis = Chassis::of_model(&kit.model);
+        // The hatch model's battery hangs down its -Z from the cap at the origin and rides up
+        // and down Z (`up_idle` +1.4, `down_idle` -16.5), so the socket's Z goes up the spine
+        // (the bone's Y): at the show event the hand battery (hanging down the hand's -Y)
+        // then sits exactly where the socket one was.
+        let socket = commands
+            .spawn((
+                Transform::from_translation(chassis.socket())
+                    .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                Visibility::default(),
+            ))
+            .id();
+        commands.entity(spine).add_child(socket);
+        let clips = [
+            chassis.hatch_clip("up_idle"),
+            chassis.hatch_clip("down_idle"),
+            chassis.hatch_clip("up"),
+        ];
+        let refs: Vec<&str> = clips.iter().map(String::as_str).collect();
+        let actor = spawn(&mut commands, socket, chassis.hatch_model(), &refs);
+        props.hatches.insert(
+            ent,
+            Hatch {
+                actor,
+                socket,
+                chassis,
+                state: HatchState::Up,
+                t: 0.0,
+            },
+        );
+    }
+
+    // The battery and the grenade in the arms' hands, hidden until their show events.
+    if props.hand.is_none() {
+        if let Some(arms) = fp_arms.as_deref() {
+            if let Ok(a) = actors.get(arms.actor) {
+                let hand = a.joint("ja_r_propHand");
+                let gun = a.joint("ja_c_propGun");
+                let battery = hand.and_then(|j| spawn(&mut commands, j, BATTERY_MODEL, &[]));
+                let grenade = gun.and_then(|j| spawn(&mut commands, j, GRENADE_MODEL, &[]));
+                for p in [battery, grenade].into_iter().flatten() {
+                    commands.entity(p).insert(Visibility::Hidden);
+                }
+                if hand.is_none() || gun.is_none() {
+                    log::warn!("rodeo props: the arms have no ja_r_propHand / ja_c_propGun");
+                }
+                props.hand = Some((battery, grenade));
+            }
+        }
+    }
+
+    let riding = rodeo.ride.as_ref().map(|r| r.target);
+    let dt = time.delta_secs();
+    for (ent, h) in props.hatches.iter_mut() {
+        let down = rodeo
+            .hatch_down
+            .filter(|d| d.target == *ent && riding == Some(*ent));
+        match (h.state, down) {
+            (HatchState::Down, None) => {
+                let rises = rodeo
+                    .hatch_down
+                    .is_some_and(|d| d.target == *ent && d.rises);
+                h.state = if rises {
+                    HatchState::Rising
+                } else {
+                    HatchState::Up
+                };
+                h.t = 0.0;
+            }
+            (_, Some(_)) => h.state = HatchState::Down,
+            _ => {}
+        }
+        // TF_HATCH_TEST=up|down: hold every hatch in a state (testing).
+        static TEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        match TEST
+            .get_or_init(|| std::env::var("TF_HATCH_TEST").ok())
+            .as_deref()
+        {
+            Some("down") => h.state = HatchState::Down,
+            Some("up") => h.state = HatchState::Up,
+            _ => {}
+        }
+        let Some(actor) = h.actor else { continue };
+        if std::env::var_os("TF_RODEO_TEST").is_some()
+            && riding == Some(*ent)
+            && time.elapsed_secs() % 0.5 < dt
+        {
+            let hand = fp_arms
+                .as_deref()
+                .and_then(|f| actors.get(f.actor).ok())
+                .and_then(|a| a.joint("ja_r_propHand"))
+                .and_then(|j| globals.get(j).ok());
+            let sock = globals.get(h.socket).ok();
+            if let (Some(hand), Some(sock)) = (hand, sock) {
+                // The hand battery hangs down the hand's -Y, the socket one down the socket's
+                // -Z: at the hand-off they should coincide (distance 0, dot 1).
+                log::debug!(
+                    "hatch {:?}: hand-socket {:.1} units, axes dot {:.2}, state {}",
+                    ent,
+                    (hand.translation() - sock.translation()).length() / crate::player::UNIT,
+                    (hand.rotation() * Vec3::NEG_Y).dot(sock.rotation() * Vec3::NEG_Z),
+                    match h.state {
+                        HatchState::Up => "up",
+                        HatchState::Down => "down",
+                        HatchState::Rising => "rising",
+                    }
+                );
+            }
+        }
+        let Ok(mut a) = actors.get_mut(actor) else {
+            continue;
+        };
+        a.autoplay = false;
+        let (name, cycle) = match h.state {
+            HatchState::Up => (h.chassis.hatch_clip("up_idle"), 0.0),
+            HatchState::Down => (h.chassis.hatch_clip("down_idle"), 0.0),
+            HatchState::Rising => {
+                let name = h.chassis.hatch_clip("up");
+                let len = a
+                    .clip(&name)
+                    .map(|c| a.clips[c].duration)
+                    .unwrap_or(0.667)
+                    .max(1e-3);
+                h.t += dt;
+                if h.t >= len {
+                    h.state = HatchState::Up;
+                    (h.chassis.hatch_clip("up_idle"), 0.0)
+                } else {
+                    (name, h.t / len)
+                }
+            }
+        };
+        if let Some(c) = a.clip(&name) {
+            a.layers = vec![Layer {
+                clip: c,
+                cycle,
+                weight: 1.0,
+            }];
+        }
+    }
+    if riding.is_none() {
+        rodeo.hatch_down = None;
+    }
+
+    if let Some((battery, grenade)) = props.hand {
+        let (show_battery, show_grenade) = match rodeo.ride.as_ref() {
+            Some(r) => (
+                r.phase == Phase::Hijack && r.cycle >= r.chassis.rip_events().show,
+                r.phase == Phase::Grenade && r.cycle >= r.chassis.grenade_events().show,
+            ),
+            None => (false, false),
+        };
+        for (p, show) in [(battery, show_battery), (grenade, show_grenade)] {
+            if let Some(mut v) = p.and_then(|p| vis.get_mut(p).ok()) {
+                v.set_if_neq(if show {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                });
+            }
+        }
     }
 }
 
