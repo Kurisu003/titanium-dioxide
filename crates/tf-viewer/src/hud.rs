@@ -162,9 +162,12 @@ pub fn update_damage_arcs(
         img.color = Color::srgba(1.0, 0.22, 0.1, alpha);
     }
 }
-/// Crosshair hit marker corners.
+/// Crosshair hit marker ticks.
 #[derive(Component)]
 pub struct HitMarker;
+/// How long a hit marker stays (the game's hit_indicator runs 1 s with its fade; ours holds
+/// half of this and fades over the rest).
+const HIT_MARKER_TIME: f32 = 0.4;
 /// Charge meter under the crosshair (railgun levels, Charge Rifle wind-up).
 #[derive(Component)]
 pub struct ChargeHud;
@@ -306,10 +309,11 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
 
     // Crosshair: the active weapon's (crosshair.rs).
     crate::crosshair::spawn(&mut commands, root);
-    // Hit marker: four corners around the centre, flipped into place.
+    // Hit marker: the game's hit_indicator tick (29 px at 1080p) four times around the centre,
+    // flipped into an X with a gap at the crosshair.
     for (x, y, fx, fy) in [(-1.0f32, -1.0f32, false, false), (1.0, -1.0, true, false), (-1.0, 1.0, false, true), (1.0, 1.0, true, true)] {
-        let node = Node { position_type: PositionType::Absolute, width: vh(1.3), height: vh(1.3), left: Val::Vh(x * 1.2 - 0.65), top: Val::Vh(y * 1.2 - 0.65), ..default() };
-        let e = image(&mut commands, &ui, "rui/hud/crosshairs/crosshair_corner", node, Color::WHITE);
+        let node = Node { position_type: PositionType::Absolute, width: vh(2.7), height: vh(2.7), left: Val::Vh(x * 1.55 - 1.35), top: Val::Vh(y * 1.55 - 1.35), ..default() };
+        let e = image(&mut commands, &ui, "rui/hit_indicators/hit_indicator_full", node, Color::WHITE);
         commands.entity(e).insert((HitMarker, Visibility::Hidden));
         if let Some(mut c) = commands.get_entity(e).ok() {
             c.entry::<ImageNode>().and_modify(move |mut i| {
@@ -806,7 +810,7 @@ pub fn hit_feedback(
     let hit = enemies.iter().filter(|e| e.active && e.since_hit <= dt * 1.01).count();
     let killed = enemies.iter().any(|e| e.just_died);
     if hit > 0 {
-        *timer = 0.18;
+        *timer = HIT_MARKER_TIME;
         if *beep_cd <= 0.0 {
             crate::audio::cue(&mut commands, crate::audio::Cue::HitBeep, None);
             *beep_cd = 0.07;
@@ -814,7 +818,7 @@ pub fn hit_feedback(
     }
     for (mut v, mut img) in &mut markers {
         v.set_if_neq(if *timer > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
-        img.color = if killed { DOOM } else { Color::WHITE.with_alpha((*timer / 0.18).clamp(0.0, 1.0)) };
+        img.color = if killed { DOOM } else { Color::WHITE.with_alpha((*timer / HIT_MARKER_TIME * 2.0).clamp(0.0, 1.0)) };
     }
 }
 
