@@ -1299,14 +1299,14 @@ fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&m
     }
 }
 
-/// A speed readout at the bottom of the screen while on foot (TF_SPEED=0 hides it): the
+/// A speed readout at the bottom of the screen while on foot (TF_SPEED=1 shows it): the
 /// Pilot's horizontal speed in game units per second, its vertical speed, and the move state.
 #[derive(Component)]
 struct SpeedText;
 
 fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots: Query<&pilotctl::PlayerPilot>, mut text: Query<(&mut Text, &mut Visibility), With<SpeedText>>) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_none_or(|v| v != "0")) {
+    if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_some_and(|v| v != "0")) {
         return;
     }
     let Ok((mut text, mut vis)) = text.single_mut() else {
@@ -1340,7 +1340,7 @@ fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots
 }
 
 /// A scrolling graph of the Pilot's horizontal speed over the last `GRAPH_SECONDS`, with the
-/// keys held under it, above the speed readout (hidden with it by TF_SPEED=0). The speed line
+/// keys held under it, above the speed readout (shown with it by TF_SPEED=1). The speed line
 /// is coloured by move state: yellow on the ground, orange sliding, cyan in the air, green on
 /// a wall. Reference lines at 260 (sprint), 350 and 400 u/s; the scale is 0 to `GRAPH_MAX`.
 /// The key lanes (labelled on the left) are W A S D, Shift (bright while the key is down,
@@ -1392,7 +1392,7 @@ fn speed_graph(
     mut graph: Query<(&mut SpeedGraph, &mut Visibility)>,
 ) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_none_or(|v| v != "0")) {
+    if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_some_and(|v| v != "0")) {
         return;
     }
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};

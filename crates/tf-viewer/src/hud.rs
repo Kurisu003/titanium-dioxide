@@ -89,19 +89,23 @@ const DAMAGE_ARC_RADIUS: f32 = 13.0;
 
 // The bottom-left cockpit cluster, measured off the game's HUD (in vh of a 16:9 frame): the
 // meter's centre and diameters, the ability slots' top-left and size, the ammo bar.
-const METER_X: f32 = 13.9;
-const METER_Y: f32 = 84.0;
-const METER_D: f32 = 11.0;
-const METER_RING: f32 = 0.7;
-const DISC_D: f32 = 8.3;
-pub const SLOTS_X: f32 = 23.0;
-pub const SLOTS_Y: f32 = 83.7;
-pub const SLOT_SIZE: f32 = 3.9;
-pub const SLOT_GAP: f32 = 2.6;
-const AMMO_X: f32 = 36.0;
-const AMMO_W: f32 = 14.0;
-const AMMO_H: f32 = 4.0;
-const METER_BLUE: Color = Color::srgb(0.38, 0.72, 1.0);
+// Measured on 1080p frames of the game (dl/yt2 Kodai frames): ring 204 px across, disc
+// 150 px, centre (215, 920); slots 80x72 px from x 340 with 10 px gaps; gun icon 115x43 px
+// from x 555; ammo digits 38 px.
+const METER_X: f32 = 19.9;
+const METER_Y: f32 = 85.2;
+const METER_D: f32 = 18.9;
+const METER_RING: f32 = 0.75;
+const DISC_D: f32 = 13.9;
+pub const SLOTS_X: f32 = 31.5;
+pub const SLOTS_Y: f32 = 86.1;
+pub const SLOT_SIZE: f32 = 7.4;
+pub const SLOT_H: f32 = 6.7;
+pub const SLOT_GAP: f32 = 0.9;
+const AMMO_X: f32 = 49.0;
+const AMMO_W: f32 = 13.0;
+const AMMO_H: f32 = SLOT_H;
+const METER_BLUE: Color = Color::srgb(0.62, 0.84, 1.0);
 const METER_GREEN: Color = Color::srgb(0.45, 0.85, 0.4);
 /// How long a damage direction stays up.
 const DAMAGE_ARC_TIME: f32 = 1.6;
@@ -241,33 +245,57 @@ pub struct SlotParts {
 /// label is kept for callers that name the ability but isn't shown (the game shows none).
 pub fn slot_column(commands: &mut Commands, ui: &UiAssets, icon: &str, key: &str) -> SlotParts {
     let col = commands.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.5), width: vh(SLOT_SIZE), ..default() }).id();
-    let frame = image(commands, ui, "rui/hud/ability_background_square", Node { width: vh(SLOT_SIZE), height: vh(SLOT_SIZE), overflow: Overflow::clip(), ..default() }, Color::srgba(0.0, 0.0, 0.0, 0.55));
-    let icon_box = commands.spawn(Node { position_type: PositionType::Absolute, left: percent(10), top: percent(10), width: percent(80), height: percent(80), ..default() }).id();
+    let frame = image(commands, ui, "rui/hud/ability_background_square", Node { width: vh(SLOT_SIZE), height: vh(SLOT_H), overflow: Overflow::clip(), ..default() }, Color::srgba(0.0, 0.0, 0.0, 0.5));
+    let icon_box = commands.spawn(Node { position_type: PositionType::Absolute, left: percent(15), top: percent(12), width: percent(70), height: percent(70), ..default() }).id();
     let ic = commands.spawn((Node::default(), ui.image(icon).unwrap_or_default(), FitIcon)).id();
     commands.entity(icon_box).add_child(ic);
     let shade = commands
         .spawn((Node { position_type: PositionType::Absolute, left: px(0), right: px(0), bottom: px(0), height: percent(0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7))))
         .id();
-    let state = text(commands, "", &ui.bold_font, 1.1, AMBER);
-    commands.entity(state).insert((Node { position_type: PositionType::Absolute, bottom: vh(0.15), left: px(0), right: px(0), ..default() }, TextLayout::new_with_justify(Justify::Center)));
+    let state = text(commands, "", &ui.bold_font, 1.5, AMBER);
+    commands.entity(state).insert((Node { position_type: PositionType::Absolute, bottom: vh(0.3), left: px(0), right: px(0), ..default() }, TextLayout::new_with_justify(Justify::Center)));
     commands.entity(frame).add_children(&[icon_box, shade, state]);
-    let key_box = commands.spawn((Node { border: UiRect::all(px(1)), padding: UiRect::axes(vh(0.35), vh(0.02)), ..default() }, BorderColor::all(DIM))).id();
-    let k = text(commands, key, &ui.bold_font, 1.1, WHITE);
+    let key_box = commands
+        .spawn((Node { border: UiRect::all(px(1)), padding: UiRect::axes(vh(0.5), vh(0.05)), ..default() }, BorderColor::all(DIM), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55))))
+        .id();
+    let k = text(commands, key, &ui.bold_font, 1.5, WHITE);
     commands.entity(key_box).add_child(k);
-    let label = text(commands, "", &ui.font, 1.0, DIM);
+    let label = text(commands, "", &ui.font, 1.3, DIM);
     commands.entity(label).insert(Node { display: Display::None, ..default() });
     commands.entity(col).add_children(&[frame, key_box, label]);
     SlotParts { col, icon: ic, shade, state, label }
 }
 
-/// The meter ring's conic gradient: `frac` of the ring in `color`, filled from the top
-/// anticlockwise like the game's earn meter.
+/// Where the meter arc starts (clockwise from the top) and how far it runs: the game's earn
+/// meter fills clockwise from about 8 o'clock to 4 o'clock, leaving the bottom for the caption.
+const METER_START: f32 = 245.0;
+const METER_SPAN: f32 = 230.0;
+
+/// The meter ring's conic gradient: `frac` of the arc in `color`.
 fn meter_gradient(frac: f32, color: Color) -> ConicGradient {
-    let a = (1.0 - frac.clamp(0.0, 1.0)) * std::f32::consts::TAU;
-    ConicGradient::new(
-        UiPosition::CENTER,
-        vec![AngularColorStop::new(Color::NONE, 0.0), AngularColorStop::new(Color::NONE, a), AngularColorStop::new(color, a), AngularColorStop::new(color, std::f32::consts::TAU)],
-    )
+    let d = std::f32::consts::PI / 180.0;
+    let (a0, a1) = (METER_START * d, (METER_START + METER_SPAN * frac.clamp(0.0, 1.0)) * d);
+    let tau = std::f32::consts::TAU;
+    let stops = if a1 <= tau {
+        vec![
+            AngularColorStop::new(Color::NONE, 0.0),
+            AngularColorStop::new(Color::NONE, a0),
+            AngularColorStop::new(color, a0),
+            AngularColorStop::new(color, a1),
+            AngularColorStop::new(Color::NONE, a1),
+            AngularColorStop::new(Color::NONE, tau),
+        ]
+    } else {
+        vec![
+            AngularColorStop::new(color, 0.0),
+            AngularColorStop::new(color, a1 - tau),
+            AngularColorStop::new(Color::NONE, a1 - tau),
+            AngularColorStop::new(Color::NONE, a0),
+            AngularColorStop::new(color, a0),
+            AngularColorStop::new(color, tau),
+        ]
+    };
+    ConicGradient::new(UiPosition::CENTER, stops)
 }
 
 pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
@@ -398,23 +426,45 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         .id();
     commands.entity(root).add_child(meter);
     let ring_node = || Node { position_type: PositionType::Absolute, left: px(0), top: px(0), width: percent(100), height: percent(100), border: UiRect::all(vh(METER_RING)), border_radius: BorderRadius::MAX, ..default() };
-    let track = commands.spawn((ring_node(), BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.4)))).id();
+    let track = commands.spawn((ring_node(), BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.16)))).id();
     let fill = commands.spawn((ring_node(), BorderGradient::from(meter_gradient(0.0, METER_BLUE)), MeterFill)).id();
     let disc = commands
         .spawn((Node { width: vh(DISC_D), height: vh(DISC_D), justify_content: JustifyContent::Center, align_items: AlignItems::Center, border_radius: BorderRadius::MAX, ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55))))
         .id();
-    let icon_box = commands.spawn(Node { width: vh(5.8), height: vh(5.8), ..default() }).id();
+    let icon_box = commands.spawn(Node { width: vh(9.5), height: vh(9.5), ..default() }).id();
     let meter_icon = image(&mut commands, &ui, "rui/hud/earn_meter/titan_follow", Node::default(), WHITE);
     commands.entity(meter_icon).insert((CoreIcon, FitIcon));
     commands.entity(icon_box).add_child(meter_icon);
     commands.entity(disc).add_child(icon_box);
     commands.entity(meter).add_children(&[track, fill, disc]);
-    // Its caption under the disc: the percentage, or what it is ready for, with the key.
+    // The white tick at the arc's end, radial, like the game's.
+    {
+        let end = (METER_START + METER_SPAN).to_radians();
+        let r = METER_D * 0.5;
+        let (w, h) = (0.5, 2.0);
+        let tick = commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: vh(METER_X + r * end.sin() - w * 0.5),
+                    top: vh(METER_Y - r * end.cos() - h * 0.5),
+                    width: vh(w),
+                    height: vh(h),
+                    ..default()
+                },
+                BackgroundColor(WHITE),
+                UiTransform { rotation: Rot2::radians(-end), ..default() },
+            ))
+            .id();
+        commands.entity(root).add_child(tick);
+    }
+    // Its caption under the disc: the percentage, or what it is ready for; the key sits
+    // outside the ring at 5 o'clock.
     let caption = commands
         .spawn(Node {
             position_type: PositionType::Absolute,
             left: vh(METER_X - 9.0),
-            top: vh(METER_Y + 4.3),
+            top: vh(METER_Y + 5.0),
             width: vh(18.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -423,15 +473,29 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         })
         .id();
     commands.entity(root).add_child(caption);
-    let meter_text = text(&mut commands, "", &ui.bold_font, 1.9, WHITE);
+    let meter_text = text(&mut commands, "", &ui.bold_font, 2.6, WHITE);
     commands.entity(meter_text).insert(MeterText);
     let key_box = commands
-        .spawn((Node { display: Display::None, border: UiRect::all(px(1)), padding: UiRect::axes(vh(0.35), vh(0.02)), ..default() }, BorderColor::all(WHITE), MeterKey))
+        .spawn((
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                left: vh(METER_X + 5.5),
+                top: vh(METER_Y + 5.4),
+                border: UiRect::all(px(1)),
+                padding: UiRect::axes(vh(0.5), vh(0.05)),
+                ..default()
+            },
+            BorderColor::all(WHITE),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            MeterKey,
+        ))
         .id();
-    let key_text = text(&mut commands, "", &ui.bold_font, 1.2, WHITE);
+    let key_text = text(&mut commands, "", &ui.bold_font, 1.7, WHITE);
     commands.entity(key_text).insert(MeterKeyText);
     commands.entity(key_box).add_child(key_text);
-    commands.entity(caption).add_children(&[meter_text, key_box]);
+    commands.entity(caption).add_child(meter_text);
+    commands.entity(root).add_child(key_box);
 
     // The Titan's ability slots (the Pilot's are pilotability::spawn_pilot_slots, same place).
     let slots = commands
@@ -458,24 +522,25 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
                 position_type: PositionType::Absolute,
                 left: vh(AMMO_X),
                 top: vh(SLOTS_Y),
-                width: vh(AMMO_W),
                 height: vh(AMMO_H),
                 align_items: AlignItems::Center,
-                justify_content: JustifyContent::SpaceBetween,
-                padding: UiRect::axes(vh(0.7), px(0)),
+                column_gap: vh(1.2),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
             AmmoBar,
         ))
         .id();
     commands.entity(root).add_child(ammo);
-    let wicon_box = commands.spawn(Node { width: vh(7.0), height: vh(3.0), ..default() }).id();
+    let frame = commands
+        .spawn((Node { width: vh(AMMO_W), height: vh(AMMO_H), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5))))
+        .id();
+    let wicon_box = commands.spawn(Node { width: vh(10.6), height: vh(4.2), ..default() }).id();
     let wicon = commands.spawn((Node::default(), ImageNode { color: Color::NONE, ..default() }, WeaponIcon, FitIcon)).id();
     commands.entity(wicon_box).add_child(wicon);
-    let count = text(&mut commands, "", &ui.bold_font, 2.3, WHITE);
+    commands.entity(frame).add_child(wicon_box);
+    let count = text(&mut commands, "", &ui.bold_font, 3.5, WHITE);
     commands.entity(count).insert(AmmoCount);
-    commands.entity(ammo).add_children(&[wicon_box, count]);
+    commands.entity(ammo).add_children(&[frame, count]);
 
     // --- Top centre: wave callout on the hazard strip (where the game's wave callouts sit) ---
     let wave = commands
