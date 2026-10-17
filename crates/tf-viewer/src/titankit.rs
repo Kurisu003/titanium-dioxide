@@ -697,8 +697,9 @@ pub struct KitNumbers {
     pub gun_shield_cd: f32,
     pub gun_shield_hp: f32,
     pub gun_shield_life: f32,
-    // Cores (charge-up, duration)
-    pub core_timing: HashMap<&'static str, (f32, f32)>,
+    // Cores (charge-up, duration, the core's deploy_time when it holsters the primary first:
+    // the gun's holster_time and this come before the charge-up).
+    pub core_timing: HashMap<&'static str, (f32, f32, Option<f32>)>,
     pub flight_rate: f32,
     pub flight_rocket: MissileSpec,
     pub laser_core_tick: f32,
@@ -766,6 +767,8 @@ impl KitNumbers {
                 (
                     num(&s, "charge_time", 1.0).max(0.1),
                     num(&s, "core_duration", 6.0),
+                    (num(&s, "offhand_holster_primary", 0.0) > 0.5)
+                        .then(|| num(&s, "deploy_time", 0.2)),
                 ),
             );
         }
@@ -1850,8 +1853,11 @@ pub fn apply_kit(
             .find(|c| c.1 == spec.core)
             .map(|c| c.0)
             .unwrap_or("mp_titancore_amp_core");
-        let (charge, duration) = n.core_timing.get(id).copied().unwrap_or((1.0, 6.0));
-        core.chargeup = charge;
+        let (charge, duration, holster) =
+            n.core_timing.get(id).copied().unwrap_or((1.0, 6.0, None));
+        // A core that holsters the primary (Salvo, Laser) fires after the gun's holster and its
+        // own draw, then its charge-up.
+        core.chargeup = charge + holster.map_or(0.0, |d| weapon.def.holster_time + d);
         core.duration = duration;
     }
     if *loaded && index == active.index {

@@ -868,6 +868,10 @@ enum VmSeq {
     Sprint,
     /// `sprintraise_seq` (ACT_VM_RAISE_FROM_SPRINT) when a sprint ends.
     SprintRaise,
+    /// `holster_seq` over holster_time: the gun goes away for an offhand that holsters the
+    /// primary (offhand_holster_primary: the Salvo and Laser Cores) and stays away until
+    /// `redeploy`.
+    Holster,
     Melee,
     /// A punch thrown while dashing (`melee_dash_seq`).
     MeleeDash,
@@ -942,6 +946,16 @@ impl Weapon {
     pub fn redeploy(&mut self) {
         self.vm_seq = VmSeq::Draw;
         self.vm_time = 0.0;
+    }
+    /// Put the gun away (holster_seq over holster_time); it comes back with `redeploy`.
+    pub fn holster(&mut self) {
+        if self.vm_seq != VmSeq::Holster {
+            self.vm_seq = VmSeq::Holster;
+            self.vm_time = 0.0;
+        }
+    }
+    pub fn holstered(&self) -> bool {
+        self.vm_seq == VmSeq::Holster
     }
 
     pub fn play_ammo_swap(&mut self) {
@@ -1316,6 +1330,7 @@ pub fn weapon_fire(
         if (input.ads || w.alt_shot || w.forced_ads || (w.def.attack_presses_ads && fire))
             && !s.sprinting
             && !w.reloading()
+            && !w.holstered()
             && !frozen
         {
             1.0
@@ -1385,7 +1400,7 @@ pub fn weapon_fire(
     }
     let want_reload = (input.reload && w.ammo < w.def.clip) || (w.ammo == 0 && fire);
     input.reload = false;
-    if want_reload && !w.reloading() && !frozen {
+    if want_reload && !w.reloading() && !w.holstered() && !frozen {
         let empty = w.ammo == 0;
         // Resume an interrupted reload of the same kind past its milestone with the `_late`
         // sequence and time (when the weapon has one).
@@ -1473,7 +1488,7 @@ pub fn weapon_fire(
             && w.ammo > 0
             && !s.sprinting
             && w.cooldown <= 0.0
-            && w.vm_seq != VmSeq::Draw;
+            && !matches!(w.vm_seq, VmSeq::Draw | VmSeq::Holster);
         let charging = can && if cdef.by_ads { input.ads } else { fire };
         if charging && !w.charge.charging {
             audio::cue_for(
@@ -1508,7 +1523,7 @@ pub fn weapon_fire(
         || (w.reloading() && !burst)
         || (w.ammo == 0 && !burst)
         || s.sprinting
-        || w.vm_seq == VmSeq::Draw
+        || matches!(w.vm_seq, VmSeq::Draw | VmSeq::Holster)
     {
         return;
     }
@@ -1982,7 +1997,11 @@ pub fn weapon_viewmodel(
     let dur = |a: &Actor, c: Option<usize>| c.map(|c| a.clips[c].duration).unwrap_or(0.5);
 
     // One-shot sequences fall back to idle (or sprint) when they finish.
-    let (deploy_time, reload_times) = (w.def.deploy_time, ReloadTimes::of(&w.def));
+    let (deploy_time, holster_time, reload_times) = (
+        w.def.deploy_time,
+        w.def.holster_time,
+        ReloadTimes::of(&w.def),
+    );
     let done = |a: &Actor, seq: VmSeq, t: f32| match seq {
         VmSeq::Draw => t >= deploy_time.max(0.05),
         VmSeq::Fire => t >= dur(a, grid_clip(a, "attack_seq", 0)),
@@ -1998,6 +2017,8 @@ pub fn weapon_viewmodel(
         VmSeq::AmmoSwap => t >= dur(a, clip(a, "ammo_swap_seq")),
         // Held until titankit fires the shot.
         VmSeq::Charge => false,
+        // Away until the offhand that holstered it is done (`redeploy`).
+        VmSeq::Holster => false,
         VmSeq::AltFire => t >= dur(a, clip(a, "power_shot_fire_seq")),
         _ => true,
     };
@@ -2059,6 +2080,7 @@ pub fn weapon_viewmodel(
                 VmSeq::MeleeDash if clip(&actor, "melee_dash_seq").is_some() => "melee_dash_seq",
                 VmSeq::MeleeDash => "melee_seq",
                 VmSeq::SprintRaise => "sprintraise_seq",
+                VmSeq::Holster => "holster_seq",
                 VmSeq::AmmoSwap => "ammo_swap_seq",
                 VmSeq::Charge => "charge_seq",
                 VmSeq::AltFire => "power_shot_fire_seq",
@@ -2068,6 +2090,7 @@ pub fn weapon_viewmodel(
                 // Draw and reload play over the script's deploy/reload time, as the engine scales them.
                 let script_len = match seq {
                     VmSeq::Draw => Some(deploy_time),
+                    VmSeq::Holster => Some(holster_time),
                     VmSeq::Reload
                     | VmSeq::ReloadEmpty
                     | VmSeq::ReloadLate(_)

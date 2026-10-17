@@ -1,10 +1,12 @@
 //! BT's offhand viewmodels: the first-person models the kit's abilities play (the Vortex
 //! blocker's raised left hand, the shoulder rocket pod, Scorch's Firewall slam, the cores'
 //! animations), each with BT's arms bone-merged as on the gun's. What a slot plays comes from
-//! its weapon script: `viewmodel`, `deploy_time`, `holster_time` and
+//! its weapon script: `viewmodel`, `deploy_time`, `holster_time`,
 //! `offhand_keep_primary_in_hand` (when it isn't set, the offhand replaces the gun's viewmodel
 //! while it plays; when it is, the offhand's animations move only the left arm and the gun's
-//! viewmodel keeps the right hand). The `empty_handed` models (Scorch's Firewall and Flame
+//! viewmodel keeps the right hand) and `offhand_holster_primary` (the Salvo and Laser Cores:
+//! the gun first plays its holster_seq over its holster_time, then the offhand draws; the gun
+//! is drawn again when the offhand is done). The `empty_handed` models (Scorch's Firewall and Flame
 //! Core) slam with the right fist, so the gun is put away while they play and drawn again after
 //! (a guess: their scripts keep the primary in hand, but their animation uses the gun hand).
 //!
@@ -30,6 +32,8 @@ struct OffhandDef {
     deploy: f32,
     holster: f32,
     keep_primary: bool,
+    /// `offhand_holster_primary`: the gun holsters before the offhand draws.
+    holster_primary: bool,
     /// An `empty_handed` model: its animation takes the gun hand.
     empty_hand: bool,
 }
@@ -37,6 +41,8 @@ struct OffhandDef {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
     Hidden,
+    /// The gun's holster plays; the offhand waits, hidden.
+    PrimaryHolster,
     Draw,
     Hold,
     Attack,
@@ -106,6 +112,7 @@ fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> 
         deploy: f("deploy_time", 0.2),
         holster: f("holster_time", 0.2),
         keep_primary: f("offhand_keep_primary_in_hand", 0.0) > 0.5,
+        holster_primary: f("offhand_holster_primary", 0.0) > 0.5,
         empty_hand,
     })
 }
@@ -324,17 +331,28 @@ pub fn offhand_viewmodels(
         let dur = |c: Option<usize>| c.map(|c| actor.clips[c].duration).unwrap_or(0.0);
         let delta = |c: Option<usize>| c.is_some_and(|c| actor.clips[c].delta);
         let (deploy, holster_time) = (inst.def.deploy.max(0.05), inst.def.holster.max(0.05));
-        let was_held = inst.phase == Phase::Hold || (inst.phase == Phase::Draw && held);
+        let was_held = inst.phase == Phase::Hold
+            || (matches!(inst.phase, Phase::Draw | Phase::PrimaryHolster) && held);
         if used
             || (held
                 && !was_held
                 && matches!(inst.phase, Phase::Hidden | Phase::Attack | Phase::Holster))
         {
-            inst.phase = Phase::Draw;
+            inst.phase = if inst.def.holster_primary {
+                w.holster();
+                Phase::PrimaryHolster
+            } else {
+                Phase::Draw
+            };
             inst.t = 0.0;
         }
         inst.t += dt;
+        let gun_holster = w.def.holster_time.max(0.05);
         match inst.phase {
+            Phase::PrimaryHolster if inst.t >= gun_holster => {
+                inst.phase = Phase::Draw;
+                inst.t = 0.0;
+            }
             Phase::Draw if inst.t >= deploy => {
                 inst.phase = if held { Phase::Hold } else { Phase::Attack };
                 inst.t = 0.0;
@@ -350,13 +368,14 @@ pub fn offhand_viewmodels(
                     Phase::Holster
                 };
                 inst.t = 0.0;
-                if inst.phase == Phase::Hidden && inst.def.empty_hand {
+                if inst.phase == Phase::Hidden && (inst.def.empty_hand || inst.def.holster_primary)
+                {
                     redeploy = true;
                 }
             }
             Phase::Holster if inst.t >= holster_time => {
                 inst.phase = Phase::Hidden;
-                redeploy |= inst.def.empty_hand;
+                redeploy |= inst.def.empty_hand || inst.def.holster_primary;
             }
             _ => {}
         }
@@ -413,7 +432,7 @@ pub fn offhand_viewmodels(
                 cycle: (t / holster_time).min(0.999),
                 weight: 1.0,
             })),
-            Phase::Hidden => {}
+            Phase::Hidden | Phase::PrimaryHolster => {}
         }
         actor.layers = layers;
         actor.additive = additive;
@@ -421,7 +440,9 @@ pub fn offhand_viewmodels(
             .bone_model_transform("jx_c_camera")
             .map(|t| t.translation)
             .unwrap_or(Vec3::ZERO);
-        let show = inst.phase != Phase::Hidden && cockpit && eye_frame.is_some();
+        let show = !matches!(inst.phase, Phase::Hidden | Phase::PrimaryHolster)
+            && cockpit
+            && eye_frame.is_some();
         if show && (!inst.def.keep_primary || inst.def.empty_hand) {
             hide_gun = true;
         }
