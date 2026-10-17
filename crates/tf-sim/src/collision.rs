@@ -1177,8 +1177,24 @@ impl CollisionWorld {
             w.cells_in(lo, hi, |tri| match sweep_box_tri_in(c0, half, d, tie, tri, lo, hi) {
                 Sweep::Miss => {}
                 Sweep::Inside(mtv) => {
-                    if d.dot(mtv) < 0.0 || d == Vec3::ZERO {
+                    if d == Vec3::ZERO {
+                        // A zero-length probe (unstick, unduck room): overlapping is solid.
                         solid = Some(mtv);
+                    } else {
+                        // A box already straddling a triangle at the start: as with the engine's
+                        // one-sided terrain surfaces (and Source's displacement sweep), the
+                        // triangle doesn't stop the move. A wide hull on uneven ground always
+                        // overlaps the higher triangles under its edges; reporting start-solid
+                        // there froze the Titan on Kodai. Only a move going into the surface is
+                        // held, as a hit at t=0 on the face: the move clips its velocity along
+                        // the face and carries on instead of sinking deeper.
+                        let n = if tri.n.length_squared() > 0.5 { tri.n } else { mtv };
+                        let n = if n.dot(c0 - tri.a) < 0.0 { -n } else { n };
+                        if d.dot(n) < -1e-4 && (0.0 < toi - tie || !face) {
+                            toi = 0.0;
+                            normal = n;
+                            face = true;
+                        }
                     }
                 }
                 Sweep::Hit(t, n, f) => {

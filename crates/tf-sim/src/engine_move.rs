@@ -647,7 +647,15 @@ impl Pm {
     /// The engine's hull trace (`0x1801fbdc0`) with the current hull.
     fn trace(&self, w: &CollisionWorld, s: &Settings, start: Vec3, end: Vec3) -> Trace {
         let (mins, maxs) = self.hull(s);
-        w.trace_box(start, end, mins, maxs, self.clip)
+        let t = w.trace_box(start, end, mins, maxs, self.clip);
+        static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if (t.fraction < 1.0 || t.start_solid) && *DEBUG.get_or_init(|| std::env::var_os("TF_TRACE_DEBUG").is_some()) {
+            eprintln!(
+                "trace clip {} hull {:?}..{:?} {:.2} {:.2} {:.2} -> {:.2} {:.2} {:.2} | frac {:.4} n {:.3} {:.3} {:.3} solid {}",
+                self.clip, mins, maxs, start.x, start.y, start.z, end.x, end.y, end.z, t.fraction, t.normal.x, t.normal.y, t.normal.z, t.start_solid
+            );
+        }
+        t
     }
     /// SetGroundEntity (`0x1802abd50`) for the world: the handle and FL_ONGROUND, plus what
     /// the engine records when the ground is lost (`+0x2b90`, `+0x2ba0`: the grace jump).
