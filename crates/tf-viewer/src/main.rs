@@ -39,6 +39,7 @@ mod autotitan;
 mod bindcache;
 mod cloak;
 mod colorcorr;
+mod minimap;
 mod rodeo;
 mod fparms;
 mod settings;
@@ -283,6 +284,7 @@ fn main() {
         .add_plugins(fxuber::FxUberPlugin)
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
+        .add_plugins(minimap::MinimapPlugin)
         .add_plugins(particles::ParticlePlugin)
         .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin, shadowbatch::ShadowBatchPlugin, transparentpass::ParallelTransparentPlugin))
         .add_systems(Update, (perf_log, fps_overlay, speed_overlay, speed_graph, weapons::shimmer_shields))
@@ -399,7 +401,7 @@ fn main() {
                     weapons::update_fx,
                     targets::update_health_bars,
                     titankit::kit_view,
-                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash, hud::fit_icons),
+                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash, hud::fit_icons, minimap::update_minimap),
                     (hud::update_hud_state, hud::hud_boot, (hud::health_hex, hud::stim_fx), player::cockpit_damage_light).chain(),
                     hud::hit_feedback,
                     hud::update_damage_arcs,
@@ -777,6 +779,9 @@ fn setup_world(
         Ok(bsp) => {
             ph.mark("bsp read");
             world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
+            if let Some(m) = minimap::Minimap::load(&gd, &args.map, &mut cache, &mut images) {
+                commands.insert_resource(m);
+            }
             if std::env::var_os("TF_NO_MAP_COLLISION").is_none() {
                 world::add_game_collision(&bsp, &mut collision);
             }

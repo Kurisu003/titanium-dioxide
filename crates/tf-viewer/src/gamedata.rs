@@ -94,7 +94,9 @@ impl GameData {
                             names.push((ai, Name::Material(normalize_name(&m.name))));
                         }
                     }
-                    b"txtr" if patch.is_some() => {
+                    // Textures by name: the patch paks' (the R-101 SFP's live there) and the
+                    // map's own (its overview for the minimap); guids aren't name hashes.
+                    b"txtr" if patch.is_some() || p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("mp_") || f.to_string_lossy().starts_with("sp_")) => {
                         if let Some(name) = tf_assets::texture::info(&pak, a).ok().and_then(|i| i.name) {
                             names.push((ai, Name::Texture(normalize_name(&name))));
                         }
@@ -112,9 +114,14 @@ impl GameData {
                 (None, Ok((pak, names, took))) => {
                     let mut n = 0;
                     for (ai, name) in names {
-                        if let Name::Material(name) = name {
-                            self.materials.entry(name).or_insert((idx, ai));
-                            n += 1;
+                        match name {
+                            Name::Material(name) => {
+                                self.materials.entry(name).or_insert((idx, ai));
+                                n += 1;
+                            }
+                            Name::Texture(name) => {
+                                self.textures.entry(name).or_insert((idx, ai));
+                            }
                         }
                     }
                     log::info!("opened {} ({} materials) in {:?}", p.display(), n, took);

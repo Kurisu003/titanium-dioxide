@@ -8,7 +8,8 @@ fn main() -> anyhow::Result<()> {
     for asset in pak.assets.iter().filter(|x| x.kind_str() == "txtr") {
         let Ok(t) = texture::load(&pak, asset) else { continue };
         if let Some(f) = a.get(3) {
-            if !t.info.name.as_deref().is_some_and(|n| n.to_ascii_lowercase().contains(&f.to_ascii_lowercase())) {
+            let by_name = t.info.name.as_deref().is_some_and(|n| n.to_ascii_lowercase().contains(&f.to_ascii_lowercase()));
+            if !by_name && !format!("{:016x}", asset.guid).contains(&f.to_ascii_lowercase()) {
                 continue;
             }
         }
