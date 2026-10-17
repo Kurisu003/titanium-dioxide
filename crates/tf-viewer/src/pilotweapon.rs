@@ -150,11 +150,6 @@ pub struct WorldRoot(pub Entity);
 #[derive(Resource, Default)]
 pub struct Strings(pub std::collections::HashMap<String, String>);
 
-impl Strings {
-    pub fn weapon(&self, def: &WeaponDef) -> String {
-        self.0.get(&def.printname).cloned().unwrap_or_else(|| def.name.trim_start_matches("mp_weapon_").to_uppercase())
-    }
-}
 
 /// The activity modifiers the engine sets for the Pilot that viewmodel sequences name (from
 /// client.dll's ACT_MODIFIER list: ads, crouch, ..., onehanded, ..., wallrun, wallhang,

@@ -1352,9 +1352,12 @@ const PULSE_MARKERS: usize = 24;
 
 pub fn spawn_pilot_slots(mut commands: Commands, ui: Res<UiAssets>, status: Res<PilotStatus>, hud: Query<Entity, With<crate::hud::HudRoot>>) {
     let vh = Val::Vh;
-    let dim = Color::srgba(1.0, 1.0, 1.0, 0.55);
     let root = commands
-        .spawn((Node { position_type: PositionType::Absolute, left: vh(4.0), bottom: vh(4.0), column_gap: vh(1.2), ..default() }, Visibility::Hidden, PilotSlots))
+        .spawn((
+            Node { position_type: PositionType::Absolute, left: vh(crate::hud::SLOTS_X), top: vh(crate::hud::SLOTS_Y), column_gap: vh(crate::hud::SLOT_GAP), ..default() },
+            Visibility::Hidden,
+            PilotSlots,
+        ))
         .id();
     // Part of the cockpit HUD: sways and powers on/off with it.
     if let Ok(h) = hud.single() {
@@ -1362,25 +1365,13 @@ pub fn spawn_pilot_slots(mut commands: Commands, ui: Res<UiAssets>, status: Res<
     }
     let tac = TACTICALS[status.tactical];
     let ord = ORDNANCE[status.ordnance];
-    for (i, (icon, key, label)) in [(tac.2, "Q", tac.3), (ord.2, "G", ord.3)].into_iter().enumerate() {
-        let col = commands.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.4), ..default() }).id();
-        let frame = commands
-            .spawn((Node { width: vh(7.0), height: vh(7.0), border: UiRect::all(Val::Px(1.0)), overflow: Overflow::clip(), ..default() }, BorderColor::all(dim), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4))))
-            .id();
-        let ic = commands
-            .spawn((Node::default(), ui.image(icon).unwrap_or_default(), PilotSlotIcon(i), crate::hud::FitIcon))
-            .id();
-        let shade = commands
-            .spawn((Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), bottom: Val::Px(0.0), height: Val::Percent(0.0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)), PilotSlotShade(i)))
-            .id();
-        let state = commands
-            .spawn((Text::new(""), TextFont { font: ui.bold_font.clone(), ..default() }, TextColor(Color::srgb(1.0, 0.75, 0.25)), crate::ui::VhText(1.4), Node { position_type: PositionType::Absolute, bottom: vh(0.3), ..default() }, PilotSlotText(i)))
-            .id();
-        commands.entity(frame).add_children(&[ic, shade, state]);
-        let k = commands.spawn((Text::new(key), TextFont { font: ui.bold_font.clone(), ..default() }, TextColor(Color::WHITE), crate::ui::VhText(1.5))).id();
-        let l = commands.spawn((Text::new(label), TextFont { font: ui.font.clone(), ..default() }, TextColor(dim), crate::ui::VhText(1.0), PilotSlotLabel(i))).id();
-        commands.entity(col).add_children(&[frame, k, l]);
-        commands.entity(root).add_child(col);
+    for (i, (icon, key)) in [(tac.2, "Q"), (ord.2, "G")].into_iter().enumerate() {
+        let p = crate::hud::slot_column(&mut commands, &ui, icon, key);
+        commands.entity(p.icon).insert(PilotSlotIcon(i));
+        commands.entity(p.shade).insert(PilotSlotShade(i));
+        commands.entity(p.state).insert(PilotSlotText(i));
+        commands.entity(p.label).insert(PilotSlotLabel(i));
+        commands.entity(root).add_child(p.col);
     }
     // The old Phase Shift / Cloak screen tints (TF_NO_PHASE_FX / TF_NO_CLOAK_FX).
     commands.spawn((

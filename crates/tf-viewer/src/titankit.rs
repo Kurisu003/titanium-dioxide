@@ -793,6 +793,8 @@ pub struct KitView {
     pub def_text: String,
     pub util_left: f32,
     pub util_text: String,
+    /// The kit's core icon (drawn in the HUD's meter).
+    pub core_icon: String,
 }
 
 /// What the utility slot does to BT's movement this frame (read by player::simulate).
@@ -2677,7 +2679,6 @@ pub fn kit_view(
     mut view: ResMut<KitView>,
     titans: Query<(&KitState, &Ordnance, &Vortex)>,
     mut icons: Query<(&crate::hud::SlotIcon, &mut ImageNode), Without<crate::hud::CoreIcon>>,
-    mut core_icon: Query<&mut ImageNode, (With<crate::hud::CoreIcon>, Without<crate::hud::SlotIcon>)>,
     mut labels: Query<(Option<&crate::hud::SlotLabel>, Option<&crate::hud::CoreLabel>, &mut Text)>,
     mut shown: Local<Option<usize>>,
 ) {
@@ -2740,15 +2741,8 @@ pub fn kit_view(
             None => log::warn!("HUD icon {path} is not in the UI atlas"),
         }
     }
-    if let Ok(mut img) = core_icon.single_mut() {
-        match ui.image(&spec.core_icon) {
-            Some(i) => {
-                let color = img.color;
-                *img = i;
-                img.color = color;
-            }
-            None => log::warn!("HUD icon {} is not in the UI atlas", spec.core_icon),
-        }
+    if view.core_icon != spec.core_icon {
+        view.core_icon = spec.core_icon.clone();
     }
     for (slot, core, mut t) in &mut labels {
         if let Some(slot) = slot {

@@ -112,7 +112,6 @@ pub struct WeaponDef {
     /// by the Vortex's owner / by everyone else).
     pub vortex_fx: (String, String),
     // Pilot weapon handling.
-    pub printname: String,
     pub viewmodel: String,
     /// fire_mode "auto" (hold to fire) vs semi-auto (one shot or burst per pull).
     pub automatic: bool,
@@ -386,7 +385,6 @@ impl WeaponDef {
                 s.get(".vortex_absorb_effect").unwrap_or("wpn_vortex_projectile_rifle_FP").to_string(),
                 s.get(".vortex_absorb_effect_third_person").unwrap_or("wpn_vortex_projectile_rifle").to_string(),
             ),
-            printname: s.get(".printname").unwrap_or_default().trim_start_matches('#').to_string(),
             viewmodel: s.get(".viewmodel").unwrap_or_default().to_string(),
             automatic: s.get("sp_base.fire_mode").or_else(|| s.get(".fire_mode")).is_none_or(|m| m == "auto"),
             burst_count: f("burst_fire_count", 0.0) as u32,

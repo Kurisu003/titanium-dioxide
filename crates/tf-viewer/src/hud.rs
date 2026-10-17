@@ -24,10 +24,21 @@ pub struct HudRoot;
 #[derive(Component)]
 pub struct TitanOnly;
 /// The Pilot's status block (on foot), laid out like BT's.
+/// The bottom-left meter's ring fill (the earn meter on foot, the core meter in the Titan).
 #[derive(Component)]
-pub struct PilotOnly;
+pub struct MeterFill;
+/// The meter's caption ("44%", "TITANFALL") and the key box beside it.
 #[derive(Component)]
-pub struct PilotSeg(usize);
+pub struct MeterText;
+#[derive(Component)]
+pub struct MeterKey;
+#[derive(Component)]
+pub struct MeterKeyText;
+/// The weapon silhouette on the ammo bar.
+#[derive(Component)]
+pub struct WeaponIcon;
+#[derive(Component)]
+pub struct AmmoBar;
 #[derive(Component)]
 pub struct HealthSeg(usize);
 
@@ -60,13 +71,7 @@ pub struct SlotLabel(pub Slot);
 #[derive(Component)]
 pub struct CoreLabel;
 #[derive(Component)]
-pub struct CoreText;
-#[derive(Component)]
-pub struct WeaponName;
-#[derive(Component)]
 pub struct AmmoCount;
-#[derive(Component)]
-pub struct AmmoClip;
 #[derive(Component)]
 pub struct WaveTitle;
 #[derive(Component)]
@@ -79,8 +84,25 @@ pub struct Prompt;
 pub struct HurtOverlay;
 
 const DAMAGE_ARCS: usize = 8;
-/// The Pilot's health bar is split like BT's (20 health a segment).
-const PILOT_SEGMENTS: usize = 5;
+/// The damage arcs' distance from the crosshair (vh).
+const DAMAGE_ARC_RADIUS: f32 = 13.0;
+
+// The bottom-left cockpit cluster, measured off the game's HUD (in vh of a 16:9 frame): the
+// meter's centre and diameters, the ability slots' top-left and size, the ammo bar.
+const METER_X: f32 = 13.9;
+const METER_Y: f32 = 84.0;
+const METER_D: f32 = 11.0;
+const METER_RING: f32 = 0.7;
+const DISC_D: f32 = 8.3;
+pub const SLOTS_X: f32 = 23.0;
+pub const SLOTS_Y: f32 = 83.7;
+pub const SLOT_SIZE: f32 = 3.9;
+pub const SLOT_GAP: f32 = 2.6;
+const AMMO_X: f32 = 36.0;
+const AMMO_W: f32 = 14.0;
+const AMMO_H: f32 = 4.0;
+const METER_BLUE: Color = Color::srgb(0.38, 0.72, 1.0);
+const METER_GREEN: Color = Color::srgb(0.45, 0.85, 0.4);
 /// How long a damage direction stays up.
 const DAMAGE_ARC_TIME: f32 = 1.6;
 
@@ -115,7 +137,7 @@ pub fn update_damage_arcs(
     time: Res<Time>,
     mut from: ResMut<DamageFrom>,
     camera: Query<&GlobalTransform, With<crate::MainCamera>>,
-    mut arcs: Query<(&DamageArc, &mut Node, &mut UiTransform, &mut Visibility, &mut BackgroundGradient)>,
+    mut arcs: Query<(&DamageArc, &mut Node, &mut UiTransform, &mut Visibility, &mut ImageNode)>,
 ) {
     let dt = time.delta_secs();
     from.0.retain_mut(|(_, t)| {
@@ -124,7 +146,7 @@ pub fn update_damage_arcs(
     });
     let Ok(cam) = camera.single() else { return };
     let (eye, fwd, right) = (cam.translation(), cam.forward().as_vec3(), cam.right().as_vec3());
-    for (arc, mut node, mut tf, mut vis, mut grad) in &mut arcs {
+    for (arc, mut node, mut tf, mut vis, mut img) in &mut arcs {
         let Some(&(p, t)) = from.0.get(arc.0) else {
             vis.set_if_neq(Visibility::Hidden);
             continue;
@@ -132,17 +154,12 @@ pub fn update_damage_arcs(
         let to = crate::player::to_bevy(p) - eye;
         let (f, r) = (to.dot(fwd.with_y(0.0).normalize_or_zero()), to.dot(right.with_y(0.0).normalize_or_zero()));
         let a = r.atan2(f);
-        let radius = 15.0;
-        set(&mut node, |n| &mut n.left, vh(a.sin() * radius));
-        set(&mut node, |n| &mut n.top, vh(-a.cos() * radius));
+        set(&mut node, |n| &mut n.left, vh(a.sin() * DAMAGE_ARC_RADIUS));
+        set(&mut node, |n| &mut n.top, vh(-a.cos() * DAMAGE_ARC_RADIUS));
         tf.rotation = Rot2::radians(a);
         vis.set_if_neq(Visibility::Inherited);
         let alpha = (t / DAMAGE_ARC_TIME).min(1.0).powf(0.7);
-        let c = Color::srgba(1.0, 0.22, 0.1, alpha);
-        if let Some(Gradient::Linear(g)) = grad.0.first_mut() {
-            g.stops[1].color = c;
-            g.stops[2].color = c;
-        }
+        img.color = Color::srgba(1.0, 0.22, 0.1, alpha);
     }
 }
 /// Crosshair hit marker corners.
@@ -207,6 +224,49 @@ fn image(commands: &mut Commands, ui: &UiAssets, path: &str, node: Node, color: 
     }
 }
 
+/// The pieces of an ability slot from [`slot_column`], for the caller's marker components.
+pub struct SlotParts {
+    pub col: Entity,
+    pub icon: Entity,
+    pub shade: Entity,
+    pub state: Entity,
+    pub label: Entity,
+}
+
+/// One ability slot of the cockpit cluster (the game's ability_hud): the icon on a dark square,
+/// a cooldown shade rising over it, a state text on it, and the key in a box under it. The
+/// label is kept for callers that name the ability but isn't shown (the game shows none).
+pub fn slot_column(commands: &mut Commands, ui: &UiAssets, icon: &str, key: &str) -> SlotParts {
+    let col = commands.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.5), width: vh(SLOT_SIZE), ..default() }).id();
+    let frame = image(commands, ui, "rui/hud/ability_background_square", Node { width: vh(SLOT_SIZE), height: vh(SLOT_SIZE), overflow: Overflow::clip(), ..default() }, Color::srgba(0.0, 0.0, 0.0, 0.55));
+    let icon_box = commands.spawn(Node { position_type: PositionType::Absolute, left: percent(10), top: percent(10), width: percent(80), height: percent(80), ..default() }).id();
+    let ic = commands.spawn((Node::default(), ui.image(icon).unwrap_or_default(), FitIcon)).id();
+    commands.entity(icon_box).add_child(ic);
+    let shade = commands
+        .spawn((Node { position_type: PositionType::Absolute, left: px(0), right: px(0), bottom: px(0), height: percent(0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7))))
+        .id();
+    let state = text(commands, "", &ui.bold_font, 1.1, AMBER);
+    commands.entity(state).insert((Node { position_type: PositionType::Absolute, bottom: vh(0.15), left: px(0), right: px(0), ..default() }, TextLayout::new_with_justify(Justify::Center)));
+    commands.entity(frame).add_children(&[icon_box, shade, state]);
+    let key_box = commands.spawn((Node { border: UiRect::all(px(1)), padding: UiRect::axes(vh(0.35), vh(0.02)), ..default() }, BorderColor::all(DIM))).id();
+    let k = text(commands, key, &ui.bold_font, 1.1, WHITE);
+    commands.entity(key_box).add_child(k);
+    let label = text(commands, "", &ui.font, 1.0, DIM);
+    commands.entity(label).insert(Node { display: Display::None, ..default() });
+    commands.entity(col).add_children(&[frame, key_box, label]);
+    SlotParts { col, icon: ic, shade, state, label }
+}
+
+/// The meter ring's conic gradient: `frac` of the ring in `color`, filled from the top
+/// anticlockwise like the game's earn meter.
+fn meter_gradient(frac: f32, color: Color) -> ConicGradient {
+    let a = (1.0 - frac.clamp(0.0, 1.0)) * std::f32::consts::TAU;
+    ConicGradient::new(
+        UiPosition::CENTER,
+        vec![AngularColorStop::new(Color::NONE, 0.0), AngularColorStop::new(Color::NONE, a), AngularColorStop::new(color, a), AngularColorStop::new(color, std::f32::consts::TAU)],
+    )
+}
+
 pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
     let root = commands
         .spawn((Node { width: percent(100), height: percent(100), position_type: PositionType::Absolute, ..default() }, HudRoot))
@@ -227,32 +287,20 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         .id();
     commands.entity(root).add_child(hurt);
 
-    // Damage direction indicators: arcs on a ring around the crosshair, pooled.
+    // Damage direction indicators: the game's arc art on a ring around the crosshair, pooled.
     let ring = commands
         .spawn(Node { position_type: PositionType::Absolute, left: percent(50), top: percent(50), width: px(0), height: px(0), ..default() })
         .id();
     commands.entity(root).add_child(ring);
     for i in 0..DAMAGE_ARCS {
-        let arc = commands
-            .spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: vh(10.0),
-                    height: vh(0.8),
-                    margin: UiRect { left: vh(-5.0), top: vh(-0.4), ..default() },
-                    ..default()
-                },
-                BackgroundGradient::from(LinearGradient::to_right(vec![
-                    ColorStop::new(Color::NONE, percent(0)),
-                    ColorStop::new(Color::srgb(1.0, 0.22, 0.1), percent(30)),
-                    ColorStop::new(Color::srgb(1.0, 0.22, 0.1), percent(70)),
-                    ColorStop::new(Color::NONE, percent(100)),
-                ])),
-                UiTransform::IDENTITY,
-                Visibility::Hidden,
-                DamageArc(i),
-            ))
-            .id();
+        let arc = image(
+            &mut commands,
+            &ui,
+            "rui/hud/damage_indicator_small",
+            Node { position_type: PositionType::Absolute, width: vh(10.0), height: vh(3.6), margin: UiRect { left: vh(-5.0), top: vh(-1.8), ..default() }, ..default() },
+            Color::srgba(1.0, 0.22, 0.1, 0.0),
+        );
+        commands.entity(arc).insert((UiTransform::IDENTITY, Visibility::Hidden, DamageArc(i)));
         commands.entity(ring).add_child(arc);
     }
 
@@ -293,32 +341,19 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
     commands.entity(charge_holder).add_child(charge);
     commands.entity(root).add_child(charge_holder);
 
-    // --- Bottom centre: BT's shield and health segments, dash pips, core meter ---
+    // --- Bottom centre: BT's shield and health segments, dash pips ---
     let bottom = commands
         .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: vh(4.0),
-                left: px(0),
-                right: px(0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::FlexEnd,
-                column_gap: vh(2.0),
-                ..default()
-            },
+            Node { position_type: PositionType::Absolute, bottom: vh(3.0), left: px(0), right: px(0), justify_content: JustifyContent::Center, align_items: AlignItems::FlexEnd, ..default() },
             TitanOnly,
         ))
         .id();
     commands.entity(root).add_child(bottom);
-    let health = commands.spawn(Node { flex_direction: FlexDirection::Column, row_gap: vh(0.5), width: vh(48.0), ..default() }).id();
-    let name_row = commands.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..default() }).id();
-    let name = text(&mut commands, "BT-7274", &ui.bold_font, 1.8, WHITE);
-    let tag = text(&mut commands, "VANGUARD CLASS", &ui.font, 1.4, DIM);
-    commands.entity(name_row).add_children(&[name, tag]);
-    let shield_frame = commands.spawn((Node { height: vh(0.6), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)))).id();
+    let health = commands.spawn(Node { flex_direction: FlexDirection::Column, row_gap: vh(0.45), width: vh(40.0), ..default() }).id();
+    let shield_frame = commands.spawn((Node { height: vh(0.5), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)))).id();
     let shield_fill = commands.spawn((Node { width: percent(100), height: percent(100), ..default() }, BackgroundColor(SHIELD), ShieldFill)).id();
     commands.entity(shield_frame).add_child(shield_fill);
-    let segs = commands.spawn(Node { column_gap: vh(0.45), height: vh(1.5), ..default() }).id();
+    let segs = commands.spawn(Node { column_gap: vh(0.4), height: vh(1.2), ..default() }).id();
     for i in 0..crate::combat::SEGMENTS as usize {
         let frame = commands
             .spawn((Node { flex_grow: 1.0, height: percent(100), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))))
@@ -329,104 +364,118 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         commands.entity(segs).add_child(frame);
     }
     // Doomed: one red bar with the game's doom pattern.
-    let doom = image(&mut commands, &ui, "rui/hud/healthbar_doom_16x160", Node { height: vh(1.5), width: percent(100), ..default() }, DOOM);
+    let doom = image(&mut commands, &ui, "rui/hud/healthbar_doom_16x160", Node { height: vh(1.2), width: percent(100), ..default() }, DOOM);
     commands.entity(doom).insert((DoomFill, Visibility::Hidden));
-    let pips = commands.spawn(Node { column_gap: vh(0.6), height: vh(0.45), margin: UiRect::top(vh(0.3)), ..default() }).id();
+    let pips = commands.spawn(Node { column_gap: vh(0.6), height: vh(0.4), margin: UiRect::top(vh(0.2)), ..default() }).id();
     for i in 0..2 {
-        let frame = commands.spawn((Node { width: vh(6.0), height: percent(100), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)))).id();
+        let frame = commands.spawn((Node { width: vh(5.0), height: percent(100), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)))).id();
         let fill = commands.spawn((Node { width: percent(100), height: percent(100), ..default() }, BackgroundColor(WHITE), DashPip(i))).id();
         commands.entity(frame).add_child(fill);
         commands.entity(pips).add_child(frame);
     }
-    commands.entity(health).add_children(&[name_row, shield_frame, segs, doom, pips]);
-    // Core meter.
-    let core = commands.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.3), ..default() }).id();
-    let core_box = commands.spawn(Node { width: vh(6.5), height: vh(6.5), ..default() }).id();
-    let core_icon = image(&mut commands, &ui, "rui/hud/titan_core", Node::default(), DIM);
-    commands.entity(core_icon).insert((CoreIcon, FitIcon));
-    commands.entity(core_box).add_child(core_icon);
-    let core_text = text(&mut commands, "0%", &ui.bold_font, 1.6, WHITE);
-    commands.entity(core_text).insert(CoreText);
-    let core_label = text(&mut commands, "BURST CORE", &ui.font, 1.2, DIM);
-    commands.entity(core_label).insert(CoreLabel);
-    commands.entity(core).add_children(&[core_box, core_text, core_label]);
-    commands.entity(bottom).add_children(&[health, core]);
+    commands.entity(health).add_children(&[shield_frame, segs, doom, pips]);
+    commands.entity(bottom).add_child(health);
 
-    // --- Bottom centre on foot: the Pilot's health, in the same frame as BT's ---
-    let pilot_bottom = commands
-        .spawn((
-            Node { position_type: PositionType::Absolute, bottom: vh(4.0), left: px(0), right: px(0), justify_content: JustifyContent::Center, align_items: AlignItems::FlexEnd, ..default() },
-            PilotOnly,
-            Visibility::Hidden,
-        ))
+    // --- Bottom left: the cockpit cluster, laid out like the game's ---
+    // The meter: a ring filled anticlockwise from the top around a dark disc with an icon in
+    // it. On foot it is the earn meter (BT's health while he is up, his rebuild while he is
+    // down, TITANFALL when he can drop); in the Titan it is the core meter.
+    let meter = commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            left: vh(METER_X - METER_D * 0.5),
+            top: vh(METER_Y - METER_D * 0.5),
+            width: vh(METER_D),
+            height: vh(METER_D),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        })
         .id();
-    commands.entity(root).add_child(pilot_bottom);
-    // Same width and height as BT's bars (with its core meter beside and the doom bar and
-    // dash pips below), so the two line up.
-    let p_health = commands.spawn(Node { flex_direction: FlexDirection::Column, row_gap: vh(0.5), width: vh(48.0), margin: UiRect { right: vh(8.5), bottom: vh(3.25), ..default() }, ..default() }).id();
-    let p_name_row = commands.spawn(Node { justify_content: JustifyContent::SpaceBetween, ..default() }).id();
-    let p_name = text(&mut commands, "COOPER", &ui.bold_font, 1.8, WHITE);
-    let p_tag = text(&mut commands, "PILOT", &ui.font, 1.4, DIM);
-    commands.entity(p_name_row).add_children(&[p_name, p_tag]);
-    let p_segs = commands.spawn(Node { column_gap: vh(0.45), height: vh(1.5), ..default() }).id();
-    for i in 0..PILOT_SEGMENTS {
-        let frame = commands
-            .spawn((Node { flex_grow: 1.0, height: percent(100), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))))
-            .id();
-        let fill = commands.spawn((Node { width: percent(100), height: percent(100), ..default() }, BackgroundColor(WHITE), PilotSeg(i))).id();
-        commands.entity(frame).add_child(fill);
-        commands.entity(p_segs).add_child(frame);
-    }
-    commands.entity(p_health).add_children(&[p_name_row, p_segs]);
-    commands.entity(pilot_bottom).add_child(p_health);
+    commands.entity(root).add_child(meter);
+    let ring_node = || Node { position_type: PositionType::Absolute, left: px(0), top: px(0), width: percent(100), height: percent(100), border: UiRect::all(vh(METER_RING)), border_radius: BorderRadius::MAX, ..default() };
+    let track = commands.spawn((ring_node(), BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.4)))).id();
+    let fill = commands.spawn((ring_node(), BorderGradient::from(meter_gradient(0.0, METER_BLUE)), MeterFill)).id();
+    let disc = commands
+        .spawn((Node { width: vh(DISC_D), height: vh(DISC_D), justify_content: JustifyContent::Center, align_items: AlignItems::Center, border_radius: BorderRadius::MAX, ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55))))
+        .id();
+    let icon_box = commands.spawn(Node { width: vh(5.8), height: vh(5.8), ..default() }).id();
+    let meter_icon = image(&mut commands, &ui, "rui/hud/earn_meter/titan_follow", Node::default(), WHITE);
+    commands.entity(meter_icon).insert((CoreIcon, FitIcon));
+    commands.entity(icon_box).add_child(meter_icon);
+    commands.entity(disc).add_child(icon_box);
+    commands.entity(meter).add_children(&[track, fill, disc]);
+    // Its caption under the disc: the percentage, or what it is ready for, with the key.
+    let caption = commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            left: vh(METER_X - 9.0),
+            top: vh(METER_Y + 4.3),
+            width: vh(18.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            column_gap: vh(0.5),
+            ..default()
+        })
+        .id();
+    commands.entity(root).add_child(caption);
+    let meter_text = text(&mut commands, "", &ui.bold_font, 1.9, WHITE);
+    commands.entity(meter_text).insert(MeterText);
+    let key_box = commands
+        .spawn((Node { display: Display::None, border: UiRect::all(px(1)), padding: UiRect::axes(vh(0.35), vh(0.02)), ..default() }, BorderColor::all(WHITE), MeterKey))
+        .id();
+    let key_text = text(&mut commands, "", &ui.bold_font, 1.2, WHITE);
+    commands.entity(key_text).insert(MeterKeyText);
+    commands.entity(key_box).add_child(key_text);
+    commands.entity(caption).add_children(&[meter_text, key_box]);
 
-    // --- Bottom left: ability slots (ordnance Q, defensive E) ---
+    // The Titan's ability slots (the Pilot's are pilotability::spawn_pilot_slots, same place).
     let slots = commands
-        .spawn((Node { position_type: PositionType::Absolute, left: vh(4.0), bottom: vh(4.0), column_gap: vh(1.2), ..default() }, TitanOnly))
+        .spawn((Node { position_type: PositionType::Absolute, left: vh(SLOTS_X), top: vh(SLOTS_Y), column_gap: vh(SLOT_GAP), ..default() }, TitanOnly))
         .id();
     commands.entity(root).add_child(slots);
-    for (slot, icon, key, label) in [
-        (Slot::Defensive, "rui/titan_loadout/defensive/titan_defensive_vortex_menu", "Q", "VORTEX SHIELD"),
-        (Slot::Utility, "rui/titan_loadout/tactical/titan_tactical_electric_smoke_menu", "E", "ELECTRIC SMOKE"),
-        (Slot::Ordnance, "rui/titan_loadout/ordnance/multilock_rockets_menu", "G", "MULTI-TARGET MISSILES"),
+    for (slot, icon, key) in [
+        (Slot::Defensive, "rui/titan_loadout/defensive/titan_defensive_vortex_menu", "Q"),
+        (Slot::Utility, "rui/titan_loadout/tactical/titan_tactical_electric_smoke_menu", "E"),
+        (Slot::Ordnance, "rui/titan_loadout/ordnance/multilock_rockets_menu", "G"),
     ] {
-        let col = commands.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.4), ..default() }).id();
-        let frame = commands
-            .spawn((Node { width: vh(7.0), height: vh(7.0), border: UiRect::all(px(1)), overflow: Overflow::clip(), ..default() }, BorderColor::all(DIM), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4))))
-            .id();
-        let ic = image(&mut commands, &ui, icon, Node::default(), WHITE);
-        commands.entity(ic).insert((SlotIcon(slot), FitIcon));
-        let shade = commands
-            .spawn((Node { position_type: PositionType::Absolute, left: px(0), right: px(0), bottom: px(0), height: percent(0), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)), CooldownShade(slot)))
-            .id();
-        let state = text(&mut commands, "", &ui.bold_font, 1.4, AMBER);
-        commands.entity(state).insert((SlotText(slot), Node { position_type: PositionType::Absolute, bottom: vh(0.3), ..default() }));
-        commands.entity(frame).add_children(&[ic, shade, state]);
-        let k = text(&mut commands, key, &ui.bold_font, 1.5, WHITE);
-        let l = text(&mut commands, label, &ui.font, 1.0, DIM);
-        commands.entity(l).insert(SlotLabel(slot));
-        commands.entity(col).add_children(&[frame, k, l]);
-        commands.entity(slots).add_child(col);
+        let p = slot_column(&mut commands, &ui, icon, key);
+        commands.entity(p.icon).insert(SlotIcon(slot));
+        commands.entity(p.shade).insert(CooldownShade(slot));
+        commands.entity(p.state).insert(SlotText(slot));
+        commands.entity(p.label).insert(SlotLabel(slot));
+        commands.entity(slots).add_child(p.col);
     }
 
-    // --- Bottom right: weapon and ammo ---
-    let weapon = commands
-        .spawn(Node { position_type: PositionType::Absolute, right: vh(4.0), bottom: vh(3.4), flex_direction: FlexDirection::Column, align_items: AlignItems::FlexEnd, ..default() })
+    // The ammo bar: the weapon's silhouette and its magazine (the game shows no reserve).
+    let ammo = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: vh(AMMO_X),
+                top: vh(SLOTS_Y),
+                width: vh(AMMO_W),
+                height: vh(AMMO_H),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::axes(vh(0.7), px(0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+            AmmoBar,
+        ))
         .id();
-    commands.entity(root).add_child(weapon);
-    let wname = text(&mut commands, "XO-16", &ui.bold_font, 1.8, DIM);
-    commands.entity(wname).insert(WeaponName);
-    let row = commands.spawn(Node { align_items: AlignItems::FlexEnd, column_gap: vh(0.6), ..default() }).id();
-    let count = text(&mut commands, "30", &ui.bold_font, 6.0, WHITE);
+    commands.entity(root).add_child(ammo);
+    let wicon_box = commands.spawn(Node { width: vh(7.0), height: vh(3.0), ..default() }).id();
+    let wicon = commands.spawn((Node::default(), ImageNode { color: Color::NONE, ..default() }, WeaponIcon, FitIcon)).id();
+    commands.entity(wicon_box).add_child(wicon);
+    let count = text(&mut commands, "", &ui.bold_font, 2.3, WHITE);
     commands.entity(count).insert(AmmoCount);
-    let clip = text(&mut commands, "/ 30", &ui.font, 2.2, DIM);
-    commands.entity(clip).insert((AmmoClip, Node { margin: UiRect::bottom(vh(1.0)), ..default() }));
-    commands.entity(row).add_children(&[count, clip]);
-    commands.entity(weapon).add_children(&[wname, row]);
+    commands.entity(ammo).add_children(&[wicon_box, count]);
 
-    // --- Top right: wave callout on the hazard strip ---
+    // --- Top centre: wave callout on the hazard strip (where the game's wave callouts sit) ---
     let wave = commands
-        .spawn(Node { position_type: PositionType::Absolute, right: vh(4.0), top: vh(4.0), flex_direction: FlexDirection::Column, align_items: AlignItems::FlexEnd, row_gap: vh(0.6), ..default() })
+        .spawn(Node { position_type: PositionType::Absolute, left: px(0), right: px(0), top: vh(3.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.5), ..default() })
         .id();
     commands.entity(root).add_child(wave);
     let strip = image(
@@ -440,7 +489,7 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
     commands.entity(wave_title).insert(WaveTitle);
     commands.entity(strip).add_child(wave_title);
     let wave_sub = text(&mut commands, "", &ui.bold_font, 1.6, WHITE);
-    commands.entity(wave_sub).insert((WaveSub, TextLayout::new_with_justify(Justify::Right)));
+    commands.entity(wave_sub).insert((WaveSub, TextLayout::new_with_justify(Justify::Center)));
     commands.entity(wave).add_children(&[strip, wave_sub]);
 
     // --- Centre: banner and prompts ---
@@ -475,33 +524,94 @@ pub fn update_hud(
     control: Res<Control>,
     titans: Query<(&PlayerTitan, &TitanHealth, &Ordnance, &TitanCore, &Vortex, Option<&crate::weapons::Weapon>, &Titanfall)>,
     pilots: Query<(&PlayerPilot, &crate::pilotctl::PilotHealth, Option<&crate::pilotweapon::PilotLoadout>)>,
-    strings: Res<crate::pilotweapon::Strings>,
     enemies: Query<&Enemy>,
     mut segs: Query<(&HealthSeg, &mut Node, &mut BackgroundColor), (Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>)>,
     mut shield: Query<&mut Node, (With<ShieldFill>, Without<HealthSeg>, Without<DashPip>, Without<CooldownShade>)>,
     mut doom: Query<(&mut Node, &mut Visibility), (With<DoomFill>, Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>, Without<TitanOnly>, Without<HudRoot>)>,
     mut pips: Query<(&DashPip, &mut Node, &mut BackgroundColor), (Without<HealthSeg>, Without<ShieldFill>, Without<CooldownShade>)>,
     mut shades: Query<(&CooldownShade, &mut Node), (Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<DoomFill>)>,
-    mut texts: Query<(&mut Text, &mut TextColor, Option<&SlotText>, Option<&CoreText>, Option<&WeaponName>, Option<&AmmoCount>, Option<&AmmoClip>, Option<&WaveTitle>, Option<&WaveSub>, Option<&Banner>, Option<&Prompt>)>,
-    (kit_view, mut pilot_segs): (
+    mut texts: Query<(&mut Text, &mut TextColor, Option<&SlotText>, Option<&MeterText>, Option<&MeterKeyText>, Option<&AmmoCount>, Option<&WaveTitle>, Option<&WaveSub>, Option<&Banner>, Option<&Prompt>)>,
+    (kit_view, ui, mut wicon, mut ammo_bar, mut meter_fill, mut meter_key, mut meter_icon): (
         Option<Res<crate::titankit::KitView>>,
-        Query<(&PilotSeg, &mut Node, &mut BackgroundColor), (Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>, Without<DoomFill>)>,
+        Res<UiAssets>,
+        Query<&mut ImageNode, (With<WeaponIcon>, Without<CoreIcon>)>,
+        Query<&mut Node, (With<AmmoBar>, Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>, Without<DoomFill>, Without<MeterKey>)>,
+        Query<&mut BorderGradient, With<MeterFill>>,
+        Query<&mut Node, (With<MeterKey>, Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>, Without<DoomFill>)>,
+        Query<&mut ImageNode, (With<CoreIcon>, Without<WeaponIcon>)>,
     ),
 ) {
     let Ok((titan, health, ord, core, vortex, weapon, titanfall)) = titans.single() else { return };
     let pilot = pilots.single().ok();
-    if let Some((_, ph, _)) = pilot {
-        let per = crate::pilotctl::PILOT_HEALTH / PILOT_SEGMENTS as f32;
-        for (seg, mut node, mut bg) in &mut pilot_segs {
-            let fill = ((ph.health - seg.0 as f32 * per) / per).clamp(0.0, 1.0);
-            set(&mut node, |n| &mut n.width, percent(fill * 100.0));
-            bg.0 = if ph.hurt > 0.0 { Color::srgb(1.0, 0.55, 0.45) } else { WHITE };
+    let in_titan = *control == Control::Titan && health.dead_for.is_none();
+    let gun = match (*control, weapon, pilot.and_then(|p| p.2.and_then(|l| l.active()))) {
+        (Control::Pilot, _, Some(w)) => Some((w.ammo, w.reloading(), w.def.name.as_str())),
+        (_, Some(w), _) => Some((w.ammo, w.reloading(), w.def.name.as_str())),
+        _ => None,
+    };
+
+    // The meter: what it fills with, whether it is ready, its icon and caption.
+    let doomed = health.v.doomed.is_some();
+    let (frac, ready, icon, caption, key, color) = if in_titan {
+        let ready = core.state == CoreState::Building && core.meter >= 1.0 || core.active();
+        let caption = match core.state {
+            CoreState::Building if ready => "100%".to_string(),
+            CoreState::Building => format!("{:.0}%", core.meter * 100.0),
+            CoreState::Charging(_) => "CHARGING".to_string(),
+            CoreState::Active(_) => "ACTIVE".to_string(),
+        };
+        let icon = kit_view.as_ref().map(|k| k.core_icon.clone()).unwrap_or_else(|| "rui/hud/titan_core".to_string());
+        (if core.active() { 1.0 } else { core.meter }, ready, icon, caption, "V", if ready { METER_GREEN } else { METER_BLUE })
+    } else if health.dead_for.is_some() || titanfall.rebuilding {
+        let ready = titanfall.cooldown <= 0.0 && !titanfall.busy();
+        let frac = 1.0 - titanfall.cooldown / crate::pilotctl::TITAN_REBUILD_SECS;
+        if ready {
+            (1.0, true, "rui/hud/earn_meter/titan_ready".to_string(), "TITANFALL".to_string(), "T", METER_GREEN)
+        } else {
+            (frac, false, "rui/hud/earn_meter/titan_building".to_string(), format!("{:.0}%", frac * 100.0), "T", METER_BLUE)
+        }
+    } else {
+        let frac = health.v.fraction();
+        (frac, false, "rui/hud/earn_meter/titan_follow".to_string(), format!("{:.0}%", frac * 100.0), "", if doomed { DOOM } else { METER_BLUE })
+    };
+    if let Ok(mut g) = meter_fill.single_mut() {
+        if let Some(Gradient::Conic(c)) = g.0.first_mut() {
+            let want = meter_gradient(frac, color);
+            if c.stops != want.stops {
+                c.stops = want.stops;
+            }
         }
     }
-    let in_titan = *control == Control::Titan && health.dead_for.is_none();
+    if let Ok(mut n) = meter_key.single_mut() {
+        set(&mut n, |n| &mut n.display, if ready && !key.is_empty() { Display::Flex } else { Display::None });
+    }
+    if let Ok(mut img) = meter_icon.single_mut() {
+        if let Some(n) = ui.image(&icon) {
+            if img.image != n.image || img.rect != n.rect {
+                img.image = n.image;
+                img.rect = n.rect;
+            }
+        }
+        let want = if ready { AMBER } else { WHITE };
+        if img.color != want {
+            img.color = want;
+        }
+    }
+    // The ammo bar sits after the slots (the Titan has one more).
+    if let Ok(mut n) = ammo_bar.single_mut() {
+        set(&mut n, |n| &mut n.left, vh(if in_titan { AMMO_X + SLOT_SIZE + SLOT_GAP } else { AMMO_X }));
+    }
+    if let Ok(mut img) = wicon.single_mut() {
+        if let Some(n) = gun.and_then(|g| ui.weapon_icons.get(g.2)).and_then(|p| ui.image(p)) {
+            if img.image != n.image || img.rect != n.rect {
+                img.image = n.image;
+                img.rect = n.rect;
+                img.color = WHITE;
+            }
+        }
+    }
 
     // Health and shield.
-    let doomed = health.v.doomed.is_some();
     for (seg, mut node, mut bg) in &mut segs {
         let fill = if doomed { 0.0 } else { ((health.v.health - seg.0 as f32 * crate::combat::SEGMENT) / crate::combat::SEGMENT).clamp(0.0, 1.0) };
         set(&mut node, |n| &mut n.width, percent(fill * 100.0));
@@ -532,7 +642,7 @@ pub fn update_hud(
         set(&mut node, |n| &mut n.height, percent(left.clamp(0.0, 1.0) * 100.0));
     }
     let alive = enemies.iter().filter(|e| e.alive() && !e.infantry).count();
-    for (mut t, mut col, slot, core_t, wname, count, clip, wave_title, wave_sub, banner, prompt) in &mut texts {
+    for (mut t, mut col, slot, meter_t, meter_k, count, wave_title, wave_sub, banner, prompt) in &mut texts {
         let s: String = if let Some(slot) = slot {
             match slot.0 {
                 Slot::Ordnance if kit_view.is_some() => kit_view.as_ref().unwrap().ord_text.clone(),
@@ -543,29 +653,15 @@ pub fn update_hud(
                 Slot::Defensive if vortex.active => format!("{}", vortex.caught + vortex.absorbed),
                 _ => String::new(),
             }
-        } else if core_t.is_some() {
-            match core.state {
-                CoreState::Building if core.meter >= 1.0 => "READY  [V]".into(),
-                CoreState::Building => format!("{:.0}%", core.meter * 100.0),
-                CoreState::Charging(_) => "CHARGING".into(),
-                CoreState::Active(_) => "ACTIVE".into(),
-            }
-        } else if wname.is_some() {
-            match pilot.and_then(|p| p.2.and_then(|l| l.active())) {
-                Some(w) if *control == Control::Pilot => strings.weapon(&w.def).to_uppercase(),
-                _ => weapon.map(|w| strings.weapon(&w.def).to_uppercase()).unwrap_or_default(),
-            }
+        } else if meter_t.is_some() {
+            caption.clone()
+        } else if meter_k.is_some() {
+            key.to_string()
         } else if count.is_some() {
-            match (*control, weapon, pilot.and_then(|p| p.2.and_then(|l| l.active()))) {
-                (Control::Pilot, _, Some(w)) => if w.reloading() { "--".into() } else { format!("{}", w.ammo) },
-                (_, Some(w), _) => if w.reloading() { "--".into() } else { format!("{}", w.ammo) },
-                _ => String::new(),
-            }
-        } else if clip.is_some() {
-            match (*control, weapon, pilot.and_then(|p| p.2.and_then(|l| l.active()))) {
-                (Control::Pilot, _, Some(w)) => if w.reloading() { "RELOADING".into() } else { format!("/ {}", w.def.clip) },
-                (_, Some(w), _) => if w.reloading() { "RELOADING".into() } else { format!("/ {}", w.def.clip) },
-                _ => String::new(),
+            match gun {
+                Some((_, true, _)) => "--".into(),
+                Some((ammo, false, _)) => format!("{ammo}"),
+                None => String::new(),
             }
         } else if wave_title.is_some() {
             match game.state {
@@ -625,19 +721,17 @@ pub fn update_hud_state(
     menu: Res<crate::ui::Menu>,
     mode: Res<CameraMode>,
     control: Res<Control>,
-    ui: Res<UiAssets>,
-    titans: Query<(&TitanHealth, &TitanCore, Option<&crate::weapons::Weapon>)>,
+    titans: Query<(&TitanHealth, Option<&crate::weapons::Weapon>)>,
     pilots: Query<(&crate::pilotctl::PilotHealth, Option<&crate::pilotweapon::PilotLoadout>)>,
-    mut root: Query<&mut Visibility, (With<HudRoot>, Without<PilotOnly>)>,
-    mut titan_only: Query<&mut Visibility, (With<TitanOnly>, Without<HudRoot>, Without<HurtOverlay>, Without<PilotOnly>)>,
-    mut core_icon: Query<&mut ImageNode, With<CoreIcon>>,
-    mut hurt: Query<(&mut Visibility, &mut BackgroundGradient), (With<HurtOverlay>, Without<HudRoot>, Without<TitanOnly>, Without<PilotOnly>)>,
-    mut charge_hud: Query<&mut Visibility, (With<ChargeHud>, Without<HudRoot>, Without<TitanOnly>, Without<HurtOverlay>, Without<PilotOnly>)>,
+    mut root: Query<&mut Visibility, With<HudRoot>>,
+    mut titan_only: Query<&mut Visibility, (With<TitanOnly>, Without<HudRoot>, Without<HurtOverlay>)>,
+    mut hurt: Query<(&mut Visibility, &mut BackgroundGradient), (With<HurtOverlay>, Without<HudRoot>, Without<TitanOnly>)>,
+    mut charge_hud: Query<&mut Visibility, (With<ChargeHud>, Without<HudRoot>, Without<TitanOnly>, Without<HurtOverlay>)>,
     mut charge_pips: Query<(&ChargePip, &mut Node), Without<ChargePipFill>>,
     mut charge_fills: Query<(&ChargePipFill, &mut Node, &mut BackgroundColor), Without<ChargePip>>,
-    (hidden, mut pilot_only): (Res<HudHidden>, Query<&mut Visibility, (With<PilotOnly>, Without<HudRoot>, Without<TitanOnly>, Without<HurtOverlay>, Without<ChargeHud>)>),
+    hidden: Res<HudHidden>,
 ) {
-    let Ok((health, core, weapon)) = titans.single() else { return };
+    let Ok((health, weapon)) = titans.single() else { return };
     let (pilot, loadout) = pilots.single().map(|(h, l)| (Some(h), l)).unwrap_or((None, None));
     let in_game = game.in_play() && !menu.paused && *mode != CameraMode::Free && !hidden.0;
     if let Ok(mut v) = root.single_mut() {
@@ -646,19 +740,6 @@ pub fn update_hud_state(
     let in_titan = *control == Control::Titan && health.dead_for.is_none();
     for mut v in &mut titan_only {
         v.set_if_neq(if in_titan { Visibility::Inherited } else { Visibility::Hidden });
-    }
-    for mut v in &mut pilot_only {
-        v.set_if_neq(if *control == Control::Pilot && pilot.is_some() { Visibility::Inherited } else { Visibility::Hidden });
-    }
-    if let Ok(mut img) = core_icon.single_mut() {
-        let ready = core.state == CoreState::Building && core.meter >= 1.0 || core.active();
-        let want = if ready { "rui/hud/titan_core_ready" } else { "rui/hud/titan_core" };
-        if let Some(n) = ui.image(want) {
-            if img.rect != n.rect {
-                img.rect = n.rect;
-            }
-        }
-        img.color = if ready { AMBER } else { DIM.mix(&WHITE, core.meter) };
     }
 
     // The Pilot's damage bloom (DamageOverlayUpdate, cl_pilot_health_hud.gnut): with 100 health
