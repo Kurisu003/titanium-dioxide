@@ -14,9 +14,9 @@ use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
 /// The circle's centre and diameter (vh of a 16:9 frame), measured off the game's HUD.
-const CENTRE: (f32, f32) = (15.3, 13.2);
-const DIAMETER: f32 = 21.0;
-const ICON: f32 = 2.4;
+const CENTRE: (f32, f32) = (22.5, 15.0);
+const DIAMETER: f32 = 22.5;
+const ICON: f32 = 2.0;
 const ENEMY_ICONS: usize = 16;
 /// The game shows at least this radius (cl_minimap.gnut: max(threatMaxDist, 1800)).
 const MIN_RADIUS: f32 = 1800.0;
@@ -116,8 +116,8 @@ pub fn update_minimap(
     camera: Query<&GlobalTransform, With<MainCamera>>,
     titans: Query<(&PlayerTitan, &crate::combat::TitanHealth)>,
     enemies: Query<&Enemy>,
-    nodes: Query<&MaterialNode<MinimapMaterial>, With<MinimapNode>>,
-    mut icons: Query<(&Icon, &mut Node, &mut Visibility, &mut UiTransform)>,
+    mut nodes: Query<(&MaterialNode<MinimapMaterial>, &mut Visibility), (With<MinimapNode>, Without<Icon>)>,
+    mut icons: Query<(&Icon, &mut Node, &mut Visibility, &mut UiTransform), Without<MinimapNode>>,
 ) {
     let Some(minimap) = minimap else { return };
     let Ok(hud) = hud.single() else { return };
@@ -162,7 +162,9 @@ pub fn update_minimap(
     let pos = crate::player::from_bevy(cam.translation());
     let fwd = crate::player::from_bevy(cam.forward().as_vec3()).truncate().normalize_or(Vec2::X);
     let right = Vec2::new(fwd.y, -fwd.x);
-    for node in &nodes {
+    // The cockpit has no minimap.
+    for (node, mut vis) in &mut nodes {
+        vis.set_if_neq(if *control == Control::Titan { Visibility::Hidden } else { Visibility::Inherited });
         if let Some(m) = materials.get_mut(&node.0) {
             let uv = Vec2::new((pos.x - minimap.corner.x) / minimap.extent, (minimap.corner.y - pos.y) / minimap.extent);
             let params = Vec4::new(uv.x, uv.y, fwd.x, fwd.y);

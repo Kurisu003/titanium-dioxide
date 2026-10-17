@@ -118,6 +118,39 @@ pub fn world_ready(s: Res<LoadState>) -> bool {
 #[derive(Component)]
 pub struct VhText(pub f32);
 
+/// A UI atlas texture as an image. The atlases are authored premultiplied: their icons' white
+/// lines carry a low alpha over black fills, and the game's RUI blends them additively
+/// (src + dst * (1 - a)), so they read white. Bevy's UI blends straight alpha, so the top
+/// level is decoded and rewritten with alpha' = max(a, max(rgb)) and rgb' = rgb / alpha',
+/// which gives the same result wherever the texel isn't brighter than its alpha, and solid
+/// colour where it is.
+fn atlas_image(pak: &Rpak, guid: u64) -> Option<Image> {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let a = pak.asset(guid)?;
+    let tex = tf_assets::texture::load(pak, a).ok()?;
+    let px = tf_assets::texture::decode_rgba(tex.info.format, &tex.data, tex.width as usize, tex.height as usize)?;
+    let mut data = Vec::with_capacity(px.len() * 4);
+    for p in px {
+        let m = p[0].max(p[1]).max(p[2]).max(p[3]);
+        if m == 0 {
+            data.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            let f = |c: u8| ((c as u32 * 255) / m as u32).min(255) as u8;
+            data.extend_from_slice(&[f(p[0]), f(p[1]), f(p[2]), m]);
+        }
+    }
+    let mut img = Image::default();
+    img.data = Some(data);
+    img.texture_descriptor.size = Extent3d { width: tex.width, height: tex.height, depth_or_array_layers: 1 };
+    img.texture_descriptor.mip_level_count = 1;
+    img.texture_descriptor.format = TextureFormat::Rgba8UnormSrgb;
+    img.texture_descriptor.dimension = TextureDimension::D2;
+    img.sampler = bevy::image::ImageSampler::linear();
+    img.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    Some(img)
+}
+
+/// A pak texture as an image.
 fn upload(images: &mut Assets<Image>, pak: &Rpak, guid: u64) -> Option<Handle<Image>> {
     use bevy::render::render_resource::{Extent3d, TextureDimension};
     let a = pak.asset(guid)?;
@@ -187,10 +220,19 @@ pub fn load_ui_assets(mut commands: Commands, args: Res<crate::Args>, mut images
     let paks = root.join("r2/paks/Win64");
     match Rpak::open(paks.join("ui.rpak")) {
         Ok(pak) => {
-            let mut textures: HashMap<u64, Option<Handle<Image>>> = HashMap::new();
-            for a in pak.assets.iter().filter(|a| a.kind_str() == "uimg") {
-                let Ok(atlas) = tf_assets::uimg::load(&pak, a) else { continue };
-                let tex = textures.entry(atlas.texture).or_insert_with(|| upload(&mut images, &pak, atlas.texture)).clone();
+            let atlases: Vec<_> = pak.assets.iter().filter(|a| a.kind_str() == "uimg").filter_map(|a| tf_assets::uimg::load(&pak, a).ok()).collect();
+            // The atlases are decoded (see `atlas_image`) on all cores: seven 4k textures.
+            let mut guids: Vec<u64> = atlases.iter().map(|a| a.texture).collect();
+            guids.sort_unstable();
+            guids.dedup();
+            let decoded: Vec<(u64, Option<Image>)> = std::thread::scope(|sc| {
+                let pak = &pak;
+                let hs: Vec<_> = guids.iter().map(|&g| sc.spawn(move || (g, atlas_image(pak, g)))).collect();
+                hs.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            let textures: HashMap<u64, Option<Handle<Image>>> = decoded.into_iter().map(|(g, img)| (g, img.map(|i| images.add(i)))).collect();
+            for atlas in atlases {
+                let tex = textures.get(&atlas.texture).cloned().flatten();
                 let Some(tex) = tex else { continue };
                 for i in atlas.images {
                     let r = Rect::new(i.x as f32, i.y as f32, (i.x + i.w) as f32, (i.y + i.h) as f32);

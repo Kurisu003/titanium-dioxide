@@ -28,11 +28,13 @@ pub struct Game {
     pub kills: u32,
     pub timer: f32,
     pub best_wave: u32,
+    /// How many enemies the current wave started with (the wave panel's bar).
+    pub wave_size: u32,
 }
 
 impl Default for Game {
     fn default() -> Self {
-        Self { state: GameState::Title, wave: 0, kills: 0, timer: 0.0, best_wave: 0 }
+        Self { state: GameState::Title, wave: 0, kills: 0, timer: 0.0, best_wave: 0, wave_size: 0 }
     }
 }
 
@@ -173,6 +175,7 @@ fn spawn_wave(
     let static_titan = std::env::var_os("TF_STATIC_TITAN").is_some();
     // One more Titan every other wave: 1, 2, 2, 3, 3, 4...
     let count = if static_titan { 1 } else { (1 + game.wave as usize / 2).clamp(1, MAX_ENEMIES_PER_WAVE) };
+    game.wave_size = count as u32;
     let range = if static_titan { 1200.0 } else { 2400.0 };
     // Prefer spots that can see the player, at a fair distance.
     let sees = |p: &Vec3| {

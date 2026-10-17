@@ -51,6 +51,12 @@ const fn on_ring(path: &'static str, px: (f32, f32), angle: f32, rot: f32) -> Pa
 const fn centred(path: &'static str, px: (f32, f32), offset: (f32, f32)) -> Part {
     Part { path, px, angle: None, rot: 0.0, ring: false, offset }
 }
+/// A piece at a fixed offset (vh) and rotation, drawn at full atlas size (1 px = 1 screen px
+/// at 1080 lines) rather than the half size the other recipes use.
+const fn full(path: &'static str, px: (f32, f32), offset: (f32, f32), rot: f32) -> Part {
+    Part { path, px: (px.0 * FULL, px.1 * FULL), angle: None, rot, ring: false, offset }
+}
+const FULL: f32 = 0.0926 / VH_PER_PX;
 
 const DOT: Part = centred("rui/hud/crosshairs/crosshair_dot", (9.0, 9.0), (0.0, 0.0));
 // Triangles at 70% (they read larger than the game's next to the other parts).
@@ -74,7 +80,18 @@ fn recipe(name: &str) -> Vec<Part> {
         "shotgun" | "mastiff" | "mozambique" | "leadwall" | "circle2" | "circle2_small" => vec![DOT, circle],
         "wingman" | "wingman_n" | "charge_rifle" | "smart_pistol" => vec![DOT, bracket(90.0), bracket(270.0)],
         "alternator" | "smr" | "lstar" => vec![DOT, small(90.0), small(270.0)],
-        "grenade_launcher" | "grenade_launcher2" | "40mm" | "40mm_burst" | "tracker_rockets" => {
+        // The 40mm sight (a 1080p cockpit shot): the two rulers, four arcs 2.3 vh out on the
+        // diagonals and a dash 3 vh above and below.
+        "40mm" | "40mm_burst" | "tracker_rockets" => vec![
+            full("rui/hud/crosshairs/crosshair_cross_sides2", (246.0, 73.0), (0.0, 0.0), 0.0),
+            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (-2.2, 2.3), 0.0),
+            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (-2.2, -2.3), 90.0),
+            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (2.2, -2.3), 180.0),
+            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (2.2, 2.3), 270.0),
+            full("rui/hud/crosshairs/crosshair_dash", (7.0, 23.0), (0.0, -3.0), 0.0),
+            full("rui/hud/crosshairs/crosshair_dash", (7.0, 23.0), (0.0, 3.0), 0.0),
+        ],
+        "grenade_launcher" | "grenade_launcher2" => {
             vec![DOT, centred("rui/hud/crosshairs/crosshair_launcher", (15.0, 67.0), (0.0, 2.2))]
         }
         n if n.starts_with("titan_predator") => vec![centred("rui/hud/crosshairs/crosshair_cross_sides", (159.0, 49.0), (0.0, 0.0)), DOT],
