@@ -579,16 +579,33 @@ pub fn rodeo_update(
                     weight: 1.0,
                 }];
             }
+            // The clip's `jx_c_start` bone is its reference point (the hijack attachment,
+            // useAnimatedRefAttachment): it sits up to 60 units from the clip's root and
+            // walks with the root motion of the entrances. Place the arms so it stays on the
+            // attachment, as fparms.rs does for the mounts: root = attach * s0 * start(t)^-1.
+            let s0 = Quat::from_xyzw(0.5, 0.5, 0.5, 0.5);
+            let (root_pos, root_rot) = match a.bone_model_transform("jx_c_start") {
+                Some(st) => {
+                    let frame =
+                        Transform::from_translation(attach.translation).with_rotation(anchor_rot);
+                    let root = frame.compute_affine()
+                        * Transform::from_rotation(s0).compute_affine()
+                        * st.compute_affine().inverse();
+                    let (_, r, t) = root.to_scale_rotation_translation();
+                    (t, r)
+                }
+                None => (attach.translation, anchor_rot),
+            };
             if let Some(c) = a.bone_model_transform("jx_c_camera") {
-                let rot = anchor_rot * c.rotation * attach_frame();
-                view = (attach.translation + anchor_rot * c.translation, rot);
+                let rot = root_rot * c.rotation * attach_frame();
+                view = (root_pos + root_rot * c.translation, rot);
                 if std::env::var_os("TF_RODEO_TEST").is_some() {
-                    log::debug!("rodeo cam {clip_name} cycle {cycle:.2}: bone {:.1} eye {:.0} fwd {:.2}; titan {:.0} yaw {:.0} attach {:.0}", c.translation, view.0, rot * Vec3::X, e.pos, e.state.yaw.to_degrees(), attach.translation);
+                    log::debug!("rodeo cam {clip_name} cycle {cycle:.2}: bone {:.1} eye {:.0} fwd {:.2}; titan {:.0} yaw {:.0} attach {:.0} root {:.0}", c.translation, view.0, rot * Vec3::X, e.pos, e.state.yaw.to_degrees(), attach.translation, root_pos);
                 }
             }
             if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
-                tf.rotation = anchor_rot;
-                tf.translation = attach.translation;
+                tf.rotation = root_rot;
+                tf.translation = root_pos;
                 vis.set_if_neq(if detach.is_some() {
                     Visibility::Hidden
                 } else {
