@@ -11,12 +11,32 @@ const LUX_PER_UNIT: f32 = 22.0;
 /// Lightmap texels are display-referred (sRGB 8-bit) indirect light; this multiplier brings a
 /// texel of 1.0 to roughly "white" at the camera exposure below.
 pub const LIGHTMAP_EXPOSURE: f32 = 26000.0;
-/// Camera exposure (EV100) used for the whole game.
-pub const EV100: f32 = 13.0;
+/// Camera exposure (EV100) used for the whole game (TF_EV100 overrides it, for calibration).
+/// The game auto-exposes (mat_autoexposure_min/max 0.5..2 around the map's tonemap scale) and
+/// sits a stop or two brighter than EV 13 did: against Forwardbase Kodai gameplay frames the
+/// same view measured 0.6x their brightness at EV 13 (and the ground 0.5x), so EV 12.
+pub fn ev100() -> f32 {
+    static EV: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *EV.get_or_init(|| std::env::var("TF_EV100").ok().and_then(|v| v.parse().ok()).unwrap_or(12.0))
+}
+
+/// The tonemapper (TF_TONEMAP=tony|aces|agx|reinhard|none|sbdt|blender, for calibration).
+pub fn tonemapping() -> bevy::core_pipeline::tonemapping::Tonemapping {
+    use bevy::core_pipeline::tonemapping::Tonemapping as T;
+    match std::env::var("TF_TONEMAP").unwrap_or_default().as_str() {
+        "aces" => T::AcesFitted,
+        "agx" => T::AgX,
+        "reinhard" => T::ReinhardLuminance,
+        "none" => T::None,
+        "sbdt" => T::SomewhatBoringDisplayTransform,
+        "blender" => T::BlenderFilmic,
+        _ => T::TonyMcMapface,
+    }
+}
 
 /// Emissive luminance that shows as white at the camera exposure.
 pub fn nits_for_white() -> f32 {
-    1.2 * 2f32.powf(EV100)
+    1.2 * 2f32.powf(ev100())
 }
 
 #[derive(Clone, Debug)]

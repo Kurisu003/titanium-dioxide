@@ -826,7 +826,8 @@ fn setup_world(
         camera_start(&args, bt_pos, bt_yaw.to_radians()),
         FreeCamera { walk_speed: 8.0, run_speed: 40.0, ..default() },
         MainCamera,
-        bevy::camera::Exposure { ev100: env::EV100 },
+        bevy::camera::Exposure { ev100: env::ev100() },
+        env::tonemapping(),
         // The sky camera (sky.rs) clears and draws the skybox first.
         // The viewmodel camera, drawing last into the same textures, copies the frame to the
         // window (sky.rs).

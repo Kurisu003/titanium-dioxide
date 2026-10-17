@@ -38,7 +38,8 @@ pub fn spawn_camera(commands: &mut Commands) {
         Camera { order: 1, clear_color: ClearColorConfig::None, ..default() },
         bevy::render::view::Hdr,
         Msaa::Off,
-        bevy::camera::Exposure { ev100: crate::env::EV100 },
+        bevy::camera::Exposure { ev100: crate::env::ev100() },
+        crate::env::tonemapping(),
         // Bevy 0.18 also clips at `near_clip_plane`, whose default is the 0.1 near plane.
         Projection::Perspective({
             // TF_VM_NEAR=metres overrides the near plane (testing).
