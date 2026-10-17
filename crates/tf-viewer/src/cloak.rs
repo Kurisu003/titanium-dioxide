@@ -108,6 +108,7 @@ pub fn phase_shift_fx(
     cams: Query<(Entity, Option<&crate::colorcorr::ColorCorrection>), With<crate::vmcam::ViewmodelCamera>>,
     main: Query<&GlobalTransform, With<crate::player::MainCamera>>,
     titan: Query<&crate::titankit::KitState>,
+    map_cc: Res<crate::colorcorr::MapColorCorrection>,
 ) {
     let (lut, was, weight, screen) = &mut *state;
     let lut = lut
@@ -139,14 +140,26 @@ pub fn phase_shift_fx(
     let target = if phased { 1.0 } else { 0.0 };
     let step = time.delta_secs() / 0.15;
     *weight = if *weight < target { (*weight + step).min(target) } else { (*weight - step).max(target) };
-    let Some(lut) = lut else { return };
+    // The viewmodel camera draws last, so its colour correction grades the whole picture:
+    // the map's own table (its color_correction entity) normally, the phase shift's while
+    // phased (the engine blends every active correction by weight; here the phase shift's
+    // takes over, since it drowns the map's anyway).
+    let want = match (&lut, *weight > 0.0) {
+        (Some(l), true) => Some((l.clone(), *weight)),
+        _ => map_cc.0.clone().map(|l| (l, 1.0)),
+    };
     for (e, cc) in &cams {
-        if *weight > 0.0 {
-            if cc.is_none_or(|c| (c.weight - *weight).abs() > 1e-4) {
-                commands.entity(e).insert(crate::colorcorr::ColorCorrection { lut: lut.clone(), weight: *weight });
+        match &want {
+            Some((l, w)) => {
+                if cc.is_none_or(|c| c.lut != *l || (c.weight - w).abs() > 1e-4) {
+                    commands.entity(e).insert(crate::colorcorr::ColorCorrection { lut: l.clone(), weight: *w });
+                }
             }
-        } else if cc.is_some() {
-            commands.entity(e).remove::<crate::colorcorr::ColorCorrection>();
+            None => {
+                if cc.is_some() {
+                    commands.entity(e).remove::<crate::colorcorr::ColorCorrection>();
+                }
+            }
         }
     }
 }

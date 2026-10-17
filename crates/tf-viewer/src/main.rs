@@ -683,6 +683,14 @@ fn setup_world(
     ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());
+    let map_lut = map_env.color_correction.as_deref().and_then(|f| match gd.read_file(f) {
+        Ok(raw) => colorcorr::lut_image(&raw).map(|img| images.add(img)),
+        Err(e) => {
+            log::warn!("map colour correction {f}: {e:#}");
+            None
+        }
+    });
+    commands.insert_resource(colorcorr::MapColorCorrection(map_lut));
     let params = titan_params(&gd, "scripts/players/mp/titan_buddy.set");
     let pilot = pilot_params(&gd);
     log::info!("pilot params: {pilot:?}");

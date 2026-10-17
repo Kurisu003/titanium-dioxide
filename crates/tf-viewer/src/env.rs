@@ -32,6 +32,9 @@ pub struct MapEnv {
     pub sky_camera: Option<Vec3>,
     /// sky_camera "skyscale": how much bigger the skybox scene is than authored.
     pub sky_scale: f32,
+    /// The map's `color_correction` entity's lookup table (`materials/correction/*.raw`),
+    /// applied over the whole picture (every shipped map has one, e.g. Kodai's sp_beacon.raw).
+    pub color_correction: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +59,7 @@ impl Default for MapEnv {
             fog: None,
             sky_camera: None,
             sky_scale: 1000.0,
+            color_correction: None,
         }
     }
 }
@@ -116,6 +120,13 @@ impl MapEnv {
                 });
             }
         }
+        // The colour correction: the first enabled, non-radial one (maxfalloff -1 means
+        // everywhere; the maps checked have exactly one).
+        env.color_correction = ents
+            .iter()
+            .filter(|e| get(e, "classname").as_deref() == Some("color_correction") && get(e, "StartDisabled").as_deref() != Some("1"))
+            .find_map(|e| get(e, "filename"))
+            .filter(|f| !f.is_empty());
         // Maps can have several sky cameras (intro, level); prefer the level's, else the one
         // with fog enabled, else the first.
         let cams: Vec<&Vec<(String, String)>> = ents.iter().filter(|e| get(e, "classname").as_deref() == Some("sky_camera")).collect();

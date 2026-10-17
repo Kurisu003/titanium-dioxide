@@ -20,6 +20,11 @@ use bevy::render::texture::GpuImage;
 use bevy::render::view::{ExtractedView, ViewTarget};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
+/// The map's own colour correction table (its `color_correction` entity), None without one
+/// (the flat map).
+#[derive(Resource, Default)]
+pub struct MapColorCorrection(pub Option<Handle<Image>>);
+
 /// Colour correction on a camera: the lookup table and how much of it applies.
 #[derive(Component, Clone)]
 pub struct ColorCorrection {
@@ -55,6 +60,7 @@ struct ColorCorrectionLabel;
 
 impl Plugin for ColorCorrectionPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<MapColorCorrection>();
         embedded_asset!(app, "colorcorr.wgsl");
         app.add_plugins(ExtractComponentPlugin::<ColorCorrection>::default());
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
