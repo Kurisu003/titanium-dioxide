@@ -84,6 +84,14 @@ impl UiMaterial for MinimapMaterial {
 #[derive(Component)]
 pub struct MinimapNode;
 #[derive(Component)]
+pub struct MinimapRim;
+/// The rim's thickness (vh).
+const RIM: f32 = 0.55;
+/// A compass letter on the rim: its world bearing in radians (0 = +X east).
+#[derive(Component)]
+pub struct Compass(f32, bool);
+
+#[derive(Component)]
 pub enum Icon {
     You,
     Titan,
@@ -116,8 +124,10 @@ pub fn update_minimap(
     camera: Query<&GlobalTransform, With<MainCamera>>,
     titans: Query<(&PlayerTitan, &crate::combat::TitanHealth)>,
     enemies: Query<&Enemy>,
-    mut nodes: Query<(&MaterialNode<MinimapMaterial>, &mut Visibility), (With<MinimapNode>, Without<Icon>)>,
-    mut icons: Query<(&Icon, &mut Node, &mut Visibility, &mut UiTransform), Without<MinimapNode>>,
+    mut nodes: Query<(&MaterialNode<MinimapMaterial>, &mut Visibility), (With<MinimapNode>, Without<Icon>, Without<MinimapRim>)>,
+    mut rims: Query<&mut Visibility, (With<MinimapRim>, Without<MinimapNode>, Without<Icon>)>,
+    mut icons: Query<(&Icon, &mut Node, &mut Visibility, &mut UiTransform), (Without<MinimapNode>, Without<MinimapRim>)>,
+    mut letters: Query<(&Compass, &mut Node), (Without<Icon>, Without<MinimapNode>, Without<MinimapRim>)>,
 ) {
     let Some(minimap) = minimap else { return };
     let Ok(hud) = hud.single() else { return };
@@ -132,11 +142,44 @@ pub fn update_minimap(
                     height: vh(DIAMETER),
                     ..default()
                 },
-                MaterialNode(materials.add(MinimapMaterial { params: Vec4::new(0.5, 0.5, 1.0, 0.0), extent: Vec4::new(minimap.radius / minimap.extent, 0.9, 0.0, 0.0), map: minimap.image.clone() })),
+                MaterialNode(materials.add(MinimapMaterial { params: Vec4::new(0.5, 0.5, 1.0, 0.0), extent: Vec4::new(minimap.radius / minimap.extent, 1.0, 0.0, 0.0), map: minimap.image.clone() })),
                 MinimapNode,
             ))
             .id();
         commands.entity(hud).add_child(circle);
+        // The dark rim and the compass letters on it (the game's minimap_base: N/E/S/W large,
+        // the half-winds small), turning with the heading.
+        let rim = commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: vh(CENTRE.0 - DIAMETER * 0.5 - RIM),
+                    top: vh(CENTRE.1 - DIAMETER * 0.5 - RIM),
+                    width: vh(DIAMETER + RIM * 2.0),
+                    height: vh(DIAMETER + RIM * 2.0),
+                    border: UiRect::all(vh(RIM)),
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                },
+                BorderColor::all(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                MinimapRim,
+            ))
+            .id();
+        commands.entity(hud).add_child(rim);
+        for (i, name) in ["E", "NE", "N", "NW", "W", "SW", "S", "SE"].into_iter().enumerate() {
+            let big = i % 2 == 0;
+            let e = commands
+                .spawn((
+                    Node { position_type: PositionType::Absolute, left: percent(50), top: percent(50), ..default() },
+                    Text::new(name),
+                    TextFont { font: ui.bold_font.clone(), font_size: 16.0, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, if big { 0.9 } else { 0.6 })),
+                    crate::ui::VhText(if big { 1.7 } else { 1.1 }),
+                    Compass(i as f32 * std::f32::consts::FRAC_PI_4, big),
+                ))
+                .id();
+            commands.entity(circle).add_child(e);
+        }
         let mut icon = |kind: Icon, path: &str, color: Color| {
             let mut img = ui.image(path).unwrap_or_default();
             img.color = color;
@@ -163,8 +206,12 @@ pub fn update_minimap(
     let fwd = crate::player::from_bevy(cam.forward().as_vec3()).truncate().normalize_or(Vec2::X);
     let right = Vec2::new(fwd.y, -fwd.x);
     // The cockpit has no minimap.
+    let shown = if *control == Control::Titan { Visibility::Hidden } else { Visibility::Inherited };
+    for mut vis in &mut rims {
+        vis.set_if_neq(shown);
+    }
     for (node, mut vis) in &mut nodes {
-        vis.set_if_neq(if *control == Control::Titan { Visibility::Hidden } else { Visibility::Inherited });
+        vis.set_if_neq(shown);
         if let Some(m) = materials.get_mut(&node.0) {
             let uv = Vec2::new((pos.x - minimap.corner.x) / minimap.extent, (minimap.corner.y - pos.y) / minimap.extent);
             let params = Vec4::new(uv.x, uv.y, fwd.x, fwd.y);
@@ -187,6 +234,18 @@ pub fn update_minimap(
         }
         (sx * DIAMETER * 0.5, -sy * DIAMETER * 0.5, clamped)
     };
+    // Compass letters: a bearing's screen angle is its angle from the heading, clockwise.
+    let heading = fwd.y.atan2(fwd.x);
+    for (c, mut node) in &mut letters {
+        // Yaw grows anticlockwise (east 0, north 90), so a bearing right of the heading has
+        // a smaller angle.
+        let a = heading - c.0;
+        let r = DIAMETER * 0.5 - if c.1 { 1.3 } else { 1.0 };
+        let (x, y) = (a.sin() * r, -a.cos() * r);
+        let half = if c.1 { 0.6 } else { 0.7 };
+        crate::hud::set(&mut node, |n| &mut n.left, vh(DIAMETER * 0.5 + x - half));
+        crate::hud::set(&mut node, |n| &mut n.top, vh(DIAMETER * 0.5 + y - half));
+    }
     let titan = titans.single().ok();
     let enemies: Vec<&Enemy> = enemies.iter().filter(|e| e.alive() && !e.infantry).collect();
     for (icon, mut node, mut vis, mut tf) in &mut icons {

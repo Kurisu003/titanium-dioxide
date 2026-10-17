@@ -272,6 +272,8 @@ pub struct PlayerInput {
     pub interact: bool,
     /// Script `pfxtest`: play TF_PFX_TEST now (pfx::pfx_test).
     pub pfx_test: bool,
+    /// Test scripts: kill the nearest living enemy (`kill`).
+    pub kill_nearest: bool,
     /// Pilot tactical ability (Q on foot) and frag throw (G), one-shot.
     pub tactical: bool,
     pub throw: bool,
@@ -424,6 +426,7 @@ pub fn gather_input(
                 }
                 "interact" if once => input.interact = true,
                 "pfxtest" if once => input.pfx_test = true,
+                "kill" if once => input.kill_nearest = true,
                 "tactical" if once => input.tactical = true,
                 "throw" if once => input.throw = true,
                 "titanfall" if once => input.titanfall = true,

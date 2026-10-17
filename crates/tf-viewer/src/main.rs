@@ -25,6 +25,7 @@ mod game;
 mod gamedata;
 mod inputrec;
 mod hitbox;
+mod feed;
 mod hud;
 mod launcherscreen;
 mod executions;
@@ -285,6 +286,7 @@ fn main() {
         .add_plugins(cloak::CloakPlugin)
         .add_plugins(colorcorr::ColorCorrectionPlugin)
         .add_plugins(minimap::MinimapPlugin)
+        .init_resource::<feed::Feed>()
         .add_plugins(particles::ParticlePlugin)
         .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin, shadowbatch::ShadowBatchPlugin, transparentpass::ParallelTransparentPlugin))
         .add_systems(Update, (perf_log, fps_overlay, speed_overlay, speed_graph, weapons::shimmer_shields))
@@ -401,7 +403,7 @@ fn main() {
                     weapons::update_fx,
                     targets::update_health_bars,
                     titankit::kit_view,
-                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash, hud::fit_icons, minimap::update_minimap),
+                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash, hud::fit_icons, minimap::update_minimap, feed::update),
                     (hud::update_hud_state, hud::hud_boot, (hud::health_hex, hud::stim_fx), player::cockpit_damage_light).chain(),
                     hud::hit_feedback,
                     hud::update_damage_arcs,

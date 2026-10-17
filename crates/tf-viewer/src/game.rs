@@ -30,11 +30,13 @@ pub struct Game {
     pub best_wave: u32,
     /// How many enemies the current wave started with (the wave panel's bar).
     pub wave_size: u32,
+    /// Frontier Defense cash from kills (the counter bottom left).
+    pub cash: u32,
 }
 
 impl Default for Game {
     fn default() -> Self {
-        Self { state: GameState::Title, wave: 0, kills: 0, timer: 0.0, best_wave: 0, wave_size: 0 }
+        Self { state: GameState::Title, wave: 0, kills: 0, timer: 0.0, best_wave: 0, wave_size: 0, cash: 0 }
     }
 }
 
@@ -80,8 +82,15 @@ pub fn director(
     mut pilots: Query<(&PlayerPilot, &mut PilotHealth)>,
     mut enemies: Query<&mut Enemy>,
     (mut pilot_status, ability_defs): (ResMut<crate::pilotability::PilotStatus>, Option<Res<crate::pilotability::PilotAbilityDefs>>),
+    (mut feed, loadouts): (ResMut<crate::feed::Feed>, Query<&crate::pilotweapon::PilotLoadout>),
 ) {
     let dt = time.delta_secs();
+    // The gun in hand, for the kill feed rows.
+    let weapon_name: String = match *control {
+        Control::Pilot => loadouts.single().ok().and_then(|l| l.active()).map(|w| w.def.name.clone()).unwrap_or_default(),
+        _ => titans.iter().next().map(|t| t.3.def.name.clone()).unwrap_or_default(),
+    };
+    let kits = Some(&*kits);
     let start = std::mem::take(&mut input.start);
     match game.state {
         GameState::Title | GameState::GameOver => {
@@ -114,16 +123,40 @@ pub fn director(
                 // TF_WAVE=N starts at wave N (debugging bigger fights).
                 game.wave = std::env::var("TF_WAVE").ok().and_then(|w| w.parse::<u32>().ok()).unwrap_or(1).saturating_sub(1);
                 game.kills = 0;
+                game.cash = 0;
+                feed.kills.clear();
+                feed.popups.clear();
                 game.timer = 2.0;
                 game.state = GameState::Intermission;
                 log::info!("new game");
             }
         }
         GameState::Playing | GameState::Intermission => {
+            if std::mem::take(&mut input.kill_nearest) {
+                let from = titans.iter().next().map(|t| t.0.state.pos).map(|p| Vec3::from(p.to_array())).unwrap_or_default();
+                let mut best: Option<(f32, Mut<Enemy>)> = None;
+                for e in &mut enemies {
+                    if e.alive() {
+                        let d = e.pos.distance(from);
+                        if best.as_ref().is_none_or(|b| d < b.0) {
+                            best = Some((d, e));
+                        }
+                    }
+                }
+                if let Some((_, mut e)) = best {
+                    e.kill();
+                }
+            }
             for mut e in &mut enemies {
                 if e.just_died {
                     e.just_died = false;
                     game.kills += 1;
+                    // The kill feed row and the Frontier Defense cash popup at the kill.
+                    let worth = if e.infantry { 45 } else { 100 };
+                    game.cash += worth;
+                    let victim = kits.and_then(|k| k.0.get(e.kit)).map(|k| titlecase(&k.name)).unwrap_or_else(|| "Titan".into());
+                    feed.kills.push(crate::feed::Kill { victim, weapon: weapon_name.clone(), at: time.elapsed_secs() });
+                    feed.popups.push(crate::feed::Popup { pos: e.pos + Vec3::Z * e.height * 0.6, worth, at: time.elapsed_secs() });
                 }
             }
             if pilots.iter().any(|(_, h)| h.dead()) {
@@ -146,7 +179,7 @@ pub fn director(
                 }
                 if game.timer <= 0.0 {
                     game.wave += 1;
-                    spawn_wave(&mut game, &arena, &kits, &world, &titans, &pilots, *control, &mut enemies);
+                    spawn_wave(&mut game, &arena, kits.unwrap(), &world, &titans, &pilots, *control, &mut enemies);
                     game.state = GameState::Playing;
                 }
             }
@@ -225,4 +258,13 @@ fn spawn_wave(
     }
     names.push(format!("{squad} grunts"));
     log::info!("wave {}: {}", game.wave, names.join(", "));
+}
+
+/// "ION" -> "Ion".
+fn titlecase(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + &c.as_str().to_ascii_lowercase(),
+        None => String::new(),
+    }
 }

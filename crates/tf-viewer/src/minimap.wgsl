@@ -29,8 +29,8 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     // side, as the game's minimap draws it) and dimmed outside it.
     let ang = atan2(d.x, -d.y);
     let cone = 1.0 - smoothstep(0.62, 0.72, abs(ang));
-    let lit = mix(0.4, 1.4, cone);
-    let disc = vec4(0.0, 0.0, 0.0, 0.55);
+    let lit = mix(0.45, 1.6, cone);
+    let disc = vec4(0.0, 0.0, 0.0, 0.7);
     let col = mix(disc.rgb, c.rgb * lit, c.a * extent.y);
     let a = max(disc.a, c.a * extent.y);
     let edge = 1.0 - smoothstep(0.97, 1.0, r);

@@ -69,6 +69,8 @@ pub struct CoreIcon;
 /// The Titan silhouette over the earn meter art, on foot.
 #[derive(Component)]
 pub struct MeterSilhouette;
+#[derive(Component)]
+pub struct MeterPlus;
 /// The ability slot's icon and label (swapped per loadout by titankit).
 #[derive(Component)]
 pub struct SlotIcon(pub Slot);
@@ -424,7 +426,10 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         let frame = commands
             .spawn((Node { flex_grow: 1.0, height: percent(100), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))))
             .id();
-        let fill = commands.spawn((Node { width: percent(100), height: percent(100), ..default() }, BackgroundColor(HEALTH_CYAN), HealthSeg(i))).id();
+        // Each segment has the game's lighter edge along its top and bottom.
+        let fill = commands
+            .spawn((Node { width: percent(100), height: percent(100), border: UiRect::vertical(vh(0.2)), ..default() }, BackgroundColor(HEALTH_CYAN), BorderColor::all(Color::srgba(0.8, 0.95, 1.0, 0.9)), HealthSeg(i)))
+            .id();
         let lost = commands.spawn((Node { position_type: PositionType::Absolute, height: percent(100), width: percent(0), ..default() }, BackgroundColor(Color::NONE), LostSeg(i))).id();
         commands.entity(frame).add_children(&[fill, lost]);
         commands.entity(segs).add_child(frame);
@@ -448,6 +453,7 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         commands.entity(pips).add_child(frame);
     }
     commands.entity(root).add_child(pips);
+    crate::feed::spawn(&mut commands, &ui, root);
 
     // --- Bottom left: the cockpit cluster, laid out like the game's ---
     // The meter: a ring filled anticlockwise from the top around a dark disc with an icon in
@@ -521,6 +527,10 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         })
         .id();
     commands.entity(root).add_child(caption);
+    // On foot the game prefixes the percentage with an orange "+".
+    let plus = text(&mut commands, "+", &ui.bold_font, 2.0, AMBER);
+    commands.entity(plus).insert((MeterPlus, Node { margin: UiRect::right(vh(0.2)), ..default() }));
+    commands.entity(caption).add_child(plus);
     let meter_text = text(&mut commands, "", &ui.bold_font, 2.6, WHITE);
     commands.entity(meter_text).insert(MeterText);
     let key_box = commands
@@ -658,7 +668,7 @@ pub fn update_hud(
     mut pips: Query<(&DashPip, &mut Node, &mut BackgroundColor), (Without<HealthSeg>, Without<ShieldFill>, Without<CooldownShade>)>,
     mut shades: Query<(&CooldownShade, &mut Node), (Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<DoomFill>)>,
     mut texts: Query<(&mut Text, &mut TextColor, Option<&SlotText>, Option<&MeterText>, Option<&MeterKeyText>, Option<&AmmoCount>, Option<&WaveTitle>, Option<&WaveSub>, Option<&Banner>, Option<&Prompt>, Option<&WavePct>)>,
-    (kit_view, ui, mut wicon, mut ammo_bar, mut meter_fill, mut meter_key, mut meter_icon, mut wave_fill, mut silhouette): (
+    (kit_view, ui, mut wicon, mut ammo_bar, mut meter_fill, mut meter_key, mut meter_icon, mut wave_fill, mut silhouette, mut plus): (
         Option<Res<crate::titankit::KitView>>,
         Res<UiAssets>,
         Query<&mut ImageNode, (With<WeaponIcon>, Without<CoreIcon>)>,
@@ -668,6 +678,7 @@ pub fn update_hud(
         Query<&mut ImageNode, (With<CoreIcon>, Without<WeaponIcon>)>,
         Query<&mut Node, (With<WaveFill>, Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>, Without<DoomFill>, Without<MeterKey>, Without<AmmoBar>)>,
         Query<&mut Visibility, (With<MeterSilhouette>, Without<HudRoot>, Without<TitanOnly>, Without<DoomFill>)>,
+        Query<&mut Node, (With<MeterPlus>, Without<HealthSeg>, Without<ShieldFill>, Without<DashPip>, Without<CooldownShade>, Without<DoomFill>, Without<MeterKey>, Without<AmmoBar>, Without<WaveFill>)>,
     ),
 ) {
     let Ok((titan, health, ord, core, vortex, weapon, titanfall)) = titans.single() else { return };
@@ -716,6 +727,9 @@ pub fn update_hud(
     }
     if let Ok(mut v) = silhouette.single_mut() {
         v.set_if_neq(if in_titan { Visibility::Hidden } else { Visibility::Inherited });
+    }
+    for mut n in &mut plus {
+        set(&mut n, |n| &mut n.display, if in_titan { Display::None } else { Display::Flex });
     }
     if let Ok(mut img) = meter_icon.single_mut() {
         if let Some(n) = ui.image(&icon) {
