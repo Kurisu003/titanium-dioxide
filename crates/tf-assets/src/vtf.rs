@@ -82,7 +82,9 @@ pub fn decode(b: &[u8], max_size: u32) -> Result<Vtf> {
     let mips = b[56] as u32;
     let low_format = u32_at(b, 57) as i32;
     let (low_w, low_h) = (b[61] as u32, b[62] as u32);
-    let Some(_) = layout(format) else { bail!("unsupported VTF format {format}") };
+    let Some(_) = layout(format) else {
+        bail!("unsupported VTF format {format}")
+    };
 
     let mut hi = None;
     let mut sheet = Vec::new();
@@ -99,7 +101,14 @@ pub fn decode(b: &[u8], max_size: u32) -> Result<Vtf> {
             }
         }
     }
-    let hi = hi.unwrap_or_else(|| header + if low_format >= 0 && low_w > 0 { mip_bytes(low_format, low_w, low_h) } else { 0 });
+    let hi = hi.unwrap_or_else(|| {
+        header
+            + if low_format >= 0 && low_w > 0 {
+                mip_bytes(low_format, low_w, low_h)
+            } else {
+                0
+            }
+    });
 
     let mut mip = 0;
     while mip + 1 < mips && (w >> mip).max(h >> mip) > max_size {
@@ -109,8 +118,16 @@ pub fn decode(b: &[u8], max_size: u32) -> Result<Vtf> {
     let skip: usize = (mip + 1..mips).map(|m| size(m) * frames).sum();
     let at = hi + skip;
     let (mw, mh) = ((w >> mip).max(1), (h >> mip).max(1));
-    let data = b.get(at..at + size(mip)).ok_or_else(|| anyhow::anyhow!("VTF data out of range"))?;
-    Ok(Vtf { width: mw, height: mh, rgba: to_rgba(format, data, mw, mh), sheet, format })
+    let data = b
+        .get(at..at + size(mip))
+        .ok_or_else(|| anyhow::anyhow!("VTF data out of range"))?;
+    Ok(Vtf {
+        width: mw,
+        height: mh,
+        rgba: to_rgba(format, data, mw, mh),
+        sheet,
+        format,
+    })
 }
 
 fn parse_sheet(b: &[u8], o: usize) -> Vec<Sequence> {
@@ -134,14 +151,23 @@ fn parse_sheet(b: &[u8], o: usize) -> Vec<Sequence> {
                 break;
             }
             let d = f32_at(b, p);
-            let r = [f32_at(b, p + 4), f32_at(b, p + 8), f32_at(b, p + 12), f32_at(b, p + 16)];
+            let r = [
+                f32_at(b, p + 4),
+                f32_at(b, p + 8),
+                f32_at(b, p + 12),
+                f32_at(b, p + 16),
+            ];
             frames.push((d, r));
             p += 4 + 16 * coords;
         }
         if out.len() <= seq {
             out.resize(seq + 1, Sequence::default());
         }
-        out[seq] = Sequence { clamp, total, frames };
+        out[seq] = Sequence {
+            clamp,
+            total,
+            frames,
+        };
     }
     out
 }
@@ -150,7 +176,11 @@ fn rgb565(c: u16) -> [u8; 3] {
     let r = ((c >> 11) & 31) as u32;
     let g = ((c >> 5) & 63) as u32;
     let bl = (c & 31) as u32;
-    [(r * 255 / 31) as u8, (g * 255 / 63) as u8, (bl * 255 / 31) as u8]
+    [
+        (r * 255 / 31) as u8,
+        (g * 255 / 63) as u8,
+        (bl * 255 / 31) as u8,
+    ]
 }
 
 /// BC1 colour block into 16 RGBA pixels. `alpha` = whether the 3-colour mode is transparent.
@@ -158,12 +188,32 @@ fn bc1_block(blk: &[u8], out: &mut [[u8; 4]; 16], alpha: bool) {
     let (c0, c1) = (u16_at(blk, 0), u16_at(blk, 2));
     let (a, b) = (rgb565(c0), rgb565(c1));
     let mix = |x: u8, y: u8, wx: u32, wy: u32| ((x as u32 * wx + y as u32 * wy) / (wx + wy)) as u8;
-    let mut pal = [[a[0], a[1], a[2], 255], [b[0], b[1], b[2], 255], [0; 4], [0; 4]];
+    let mut pal = [
+        [a[0], a[1], a[2], 255],
+        [b[0], b[1], b[2], 255],
+        [0; 4],
+        [0; 4],
+    ];
     if c0 > c1 || !alpha {
-        pal[2] = [mix(a[0], b[0], 2, 1), mix(a[1], b[1], 2, 1), mix(a[2], b[2], 2, 1), 255];
-        pal[3] = [mix(a[0], b[0], 1, 2), mix(a[1], b[1], 1, 2), mix(a[2], b[2], 1, 2), 255];
+        pal[2] = [
+            mix(a[0], b[0], 2, 1),
+            mix(a[1], b[1], 2, 1),
+            mix(a[2], b[2], 2, 1),
+            255,
+        ];
+        pal[3] = [
+            mix(a[0], b[0], 1, 2),
+            mix(a[1], b[1], 1, 2),
+            mix(a[2], b[2], 1, 2),
+            255,
+        ];
     } else {
-        pal[2] = [mix(a[0], b[0], 1, 1), mix(a[1], b[1], 1, 1), mix(a[2], b[2], 1, 1), 255];
+        pal[2] = [
+            mix(a[0], b[0], 1, 1),
+            mix(a[1], b[1], 1, 1),
+            mix(a[2], b[2], 1, 1),
+            255,
+        ];
         pal[3] = [0, 0, 0, 0];
     }
     let bits = u32_at(blk, 4);
@@ -271,7 +321,11 @@ mod tests {
 
     #[test]
     fn sequence_rect_walks_frames() {
-        let s = Sequence { clamp: true, total: 2.0, frames: vec![(1.0, [0.0, 0.0, 0.5, 1.0]), (1.0, [0.5, 0.0, 1.0, 1.0])] };
+        let s = Sequence {
+            clamp: true,
+            total: 2.0,
+            frames: vec![(1.0, [0.0, 0.0, 0.5, 1.0]), (1.0, [0.5, 0.0, 1.0, 1.0])],
+        };
         assert_eq!(s.rect_at(0.2)[0], 0.0);
         assert_eq!(s.rect_at(0.7)[0], 0.5);
     }

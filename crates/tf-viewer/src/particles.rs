@@ -41,20 +41,74 @@ pub enum Tex {
 
 /// (texture, ramp, additive, max mip size)
 const TEXTURES: &[(Tex, &str, Option<&str>, bool, u32)] = &[
-    (Tex::FlashCore, "particle/muzzleflash/flash_core", Some("particle/ramps/flash_cloud_fire"), true, 512),
-    (Tex::FlashCoreBlue, "particle/muzzleflash/flash_core", Some("particle/ramps/flash_cloud_fire_blue"), true, 512),
-    (Tex::FlashCloud, "particle/muzzleflash/flash_cloud", Some("particle/ramps/flash_cloud_fire"), true, 256),
-    (Tex::FlashCloudBlue, "particle/muzzleflash/flash_cloud", Some("particle/ramps/flash_cloud_fire_blue"), true, 256),
+    (
+        Tex::FlashCore,
+        "particle/muzzleflash/flash_core",
+        Some("particle/ramps/flash_cloud_fire"),
+        true,
+        512,
+    ),
+    (
+        Tex::FlashCoreBlue,
+        "particle/muzzleflash/flash_core",
+        Some("particle/ramps/flash_cloud_fire_blue"),
+        true,
+        512,
+    ),
+    (
+        Tex::FlashCloud,
+        "particle/muzzleflash/flash_cloud",
+        Some("particle/ramps/flash_cloud_fire"),
+        true,
+        256,
+    ),
+    (
+        Tex::FlashCloudBlue,
+        "particle/muzzleflash/flash_cloud",
+        Some("particle/ramps/flash_cloud_fire_blue"),
+        true,
+        256,
+    ),
     (Tex::Glow, "particle/glows/glow_pointlight", None, true, 128),
     (Tex::Spark, "particle/sparks/sparks", None, true, 256),
     (Tex::Fleks, "particle/impact/fleks", None, false, 512),
     (Tex::Dirt, "particle/dirt/dirt_burst_full", None, false, 512),
-    (Tex::Smoke, "particle/smoke/smoke_puff_01/smoke_puff_01", Some("particle/ramps/smoke_puff_01_ramp"), false, 512),
-    (Tex::FireBall, "particle/explosions/exp_fire_ball", Some("particle/ramps/fire_ramp"), false, 1024),
-    (Tex::Burst, "particle/explosions/exp_burst", None, true, 1024),
-    (Tex::DarkFire, "particle/explosions/exp_fireball_dark", None, false, 1024),
+    (
+        Tex::Smoke,
+        "particle/smoke/smoke_puff_01/smoke_puff_01",
+        Some("particle/ramps/smoke_puff_01_ramp"),
+        false,
+        512,
+    ),
+    (
+        Tex::FireBall,
+        "particle/explosions/exp_fire_ball",
+        Some("particle/ramps/fire_ramp"),
+        false,
+        1024,
+    ),
+    (
+        Tex::Burst,
+        "particle/explosions/exp_burst",
+        None,
+        true,
+        1024,
+    ),
+    (
+        Tex::DarkFire,
+        "particle/explosions/exp_fireball_dark",
+        None,
+        false,
+        1024,
+    ),
     (Tex::Streak, "particle/glows/glare_spike", None, true, 256),
-    (Tex::Trail, "particle/smoke/rocket_trail_soft_edge", None, false, 256),
+    (
+        Tex::Trail,
+        "particle/smoke/rocket_trail_soft_edge",
+        None,
+        false,
+        256,
+    ),
 ];
 
 /// What a round struck, as the impact tables' surface keys.
@@ -87,15 +141,37 @@ pub enum Effect {
     // Each variant plays the game's own particle systems when they're loaded (pfx.rs maps them
     // to the real system names and impact tables); the hand-built look below is the fallback.
     /// Muzzle flash at `at` pointing along `dir`; `scale` 1 is a pilot gun, ~3 a Titan's.
-    Muzzle { at: Vec3, dir: Vec3, scale: f32, energy: bool },
+    Muzzle {
+        at: Vec3,
+        dir: Vec3,
+        scale: f32,
+        energy: bool,
+    },
     /// A tracer streak flying from `from` to `to`; `width` in metres.
-    Tracer { from: Vec3, to: Vec3, width: f32, color: Vec3 },
+    Tracer {
+        from: Vec3,
+        to: Vec3,
+        width: f32,
+        color: Vec3,
+    },
     /// A round hitting something: sparks, a flash, dust and debris (`energy` = blue, no debris).
-    Impact { at: Vec3, normal: Vec3, scale: f32, energy: bool },
+    Impact {
+        at: Vec3,
+        normal: Vec3,
+        scale: f32,
+        energy: bool,
+    },
     /// A weapon's hit played from its impact table (`scripts/impacts/<table>.txt`) for what it
     /// struck; `victim` is a hit on the player, which plays the table's FX_victim entry (the
     /// game's first-person-safe version) when it has one.
-    Hit { at: Vec3, normal: Vec3, table: &'static str, surface: Surface, victim: bool, scale: f32 },
+    Hit {
+        at: Vec3,
+        normal: Vec3,
+        table: &'static str,
+        surface: Surface,
+        victim: bool,
+        scale: f32,
+    },
     /// Fireball, burst, sparks, debris and lingering smoke; `scale` 1 ≈ a 2 m blast.
     Explosion { at: Vec3, scale: f32 },
     /// A Titan blowing up: a big explosion, secondary blasts and a smoke column.
@@ -127,7 +203,12 @@ pub struct Glow {
 
 impl Glow {
     pub fn new(color: Vec3, size: f32, smoke: bool) -> Self {
-        Self { color, size, smoke, last: None }
+        Self {
+            color,
+            size,
+            smoke,
+            last: None,
+        }
     }
 }
 
@@ -238,7 +319,11 @@ impl Particles {
     }
     fn unit(&mut self) -> Vec3 {
         loop {
-            let v = Vec3::new(self.rand() * 2.0 - 1.0, self.rand() * 2.0 - 1.0, self.rand() * 2.0 - 1.0);
+            let v = Vec3::new(
+                self.rand() * 2.0 - 1.0,
+                self.rand() * 2.0 - 1.0,
+                self.rand() * 2.0 - 1.0,
+            );
             let l = v.length_squared();
             if l > 1e-4 && l <= 1.0 {
                 return v / l.sqrt();
@@ -252,7 +337,11 @@ impl Particles {
         (n * (1.0 - spread) + r * spread).normalize_or(n)
     }
     fn seqs(&self, tex: Tex) -> u16 {
-        self.layers.iter().find(|l| l.tex == tex).map(|l| l.sheet.len().max(1) as u16).unwrap_or(1)
+        self.layers
+            .iter()
+            .find(|l| l.tex == tex)
+            .map(|l| l.sheet.len().max(1) as u16)
+            .unwrap_or(1)
     }
     /// A random single-frame sequence (1..n; sequence 0 is often the whole flipbook).
     fn pick_seq(&mut self, tex: Tex, skip_first: bool) -> u16 {
@@ -275,13 +364,22 @@ pub fn load_particles(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::spritebuf::SpriteMaterial>>,
-    (device, mut buckets): (Res<bevy::render::renderer::RenderDevice>, ResMut<crate::spritebuf::SpriteMeshes>),
+    (device, mut buckets): (
+        Res<bevy::render::renderer::RenderDevice>,
+        ResMut<crate::spritebuf::SpriteMeshes>,
+    ),
 ) {
-    let (Some(gd), None) = (gd, existing) else { return };
+    let (Some(gd), None) = (gd, existing) else {
+        return;
+    };
     let t = std::time::Instant::now();
     let read = |name: &str, max: u32| -> Option<vtf::Vtf> {
         let path = format!("materials/{name}.vtf");
-        match gd.read_file(&path).map_err(anyhow::Error::from).and_then(|b| vtf::decode(&b, max)) {
+        match gd
+            .read_file(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|b| vtf::decode(&b, max))
+        {
             Ok(v) => Some(v),
             Err(e) => {
                 log::warn!("particle texture {path}: {e:#}");
@@ -290,10 +388,14 @@ pub fn load_particles(
         }
     };
     // The textures decode on every core; the assets are made here, in the table's order.
-    let decoded = crate::world::parallel_map(TEXTURES, |&(_, path, ramp, _, max)| read(path, max).map(|v| (v, ramp.and_then(|r| read(r, 256)))));
+    let decoded = crate::world::parallel_map(TEXTURES, |&(_, path, ramp, _, max)| {
+        read(path, max).map(|v| (v, ramp.and_then(|r| read(r, 256))))
+    });
     let mut layers = Vec::new();
     for (&(tex, _, _, additive, _), d) in TEXTURES.iter().zip(decoded) {
-        let Some((mut v, ramp)) = d.flatten() else { continue };
+        let Some((mut v, ramp)) = d.flatten() else {
+            continue;
+        };
         if let Some(r) = ramp {
             // $texColorFromAlpha: the colour comes from the ramp, indexed by the texture's alpha.
             let row = (r.height / 2) as usize * r.width as usize;
@@ -305,7 +407,11 @@ pub fn load_particles(
             }
         }
         let mut img = Image::new(
-            Extent3d { width: v.width, height: v.height, depth_or_array_layers: 1 },
+            Extent3d {
+                width: v.width,
+                height: v.height,
+                depth_or_array_layers: 1,
+            },
             TextureDimension::D2,
             std::mem::take(&mut v.rgba),
             TextureFormat::Rgba8UnormSrgb,
@@ -319,37 +425,74 @@ pub fn load_particles(
                 base_color: Color::WHITE,
                 base_color_texture: Some(images.add(img)),
                 unlit: true,
-                alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend },
+                alpha_mode: if additive {
+                    AlphaMode::Add
+                } else {
+                    AlphaMode::Blend
+                },
                 cull_mode: None,
                 double_sided: true,
                 fog_enabled: !additive,
                 ..default()
             },
-            extension: crate::spritebuf::SpritePull { verts: buf.buffer.clone() },
+            extension: crate::spritebuf::SpritePull {
+                verts: buf.buffer.clone(),
+            },
         });
         let entity = commands
-            .spawn((Mesh3d(buckets.first(&mut meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
+            .spawn((
+                Mesh3d(buckets.first(&mut meshes)),
+                MeshMaterial3d(material.clone()),
+                Transform::default(),
+                Visibility::Hidden,
+                NoFrustumCulling,
+                NotShadowCaster,
+                NotShadowReceiver,
+            ))
             .id();
-        layers.push(Layer { tex, additive, sheet: v.sheet, buf, material, entity });
+        layers.push(Layer {
+            tex,
+            additive,
+            sheet: v.sheet,
+            buf,
+            material,
+            entity,
+        });
     }
     log::info!("particles: {} textures in {:?}", layers.len(), t.elapsed());
-    commands.insert_resource(Particles { layers, live: Vec::with_capacity(1024), rng: 0x9A27_1C1E });
+    commands.insert_resource(Particles {
+        layers,
+        live: Vec::with_capacity(1024),
+        rng: 0x9A27_1C1E,
+    });
 }
 
 /// The hand-built look of an effect (used when the game's particle system can't be played).
 pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
     match e {
-        Effect::Muzzle { at, dir, scale: s, energy } => {
+        Effect::Muzzle {
+            at,
+            dir,
+            scale: s,
+            energy,
+        } => {
             let dir = dir.normalize_or(Vec3::NEG_Z);
-            let (cloud, core) = if energy { (Tex::FlashCloudBlue, Tex::FlashCoreBlue) } else { (Tex::FlashCloud, Tex::FlashCore) };
+            let (cloud, core) = if energy {
+                (Tex::FlashCloudBlue, Tex::FlashCoreBlue)
+            } else {
+                (Tex::FlashCloud, Tex::FlashCore)
+            };
             let rot = p.range(0.0, std::f32::consts::TAU);
-            let mut c = Particle::new(cloud, at + dir * 0.1 * s, 0.06, 0.22 * s, Vec3::splat(3.0)).grow(0.36 * s);
+            let mut c = Particle::new(cloud, at + dir * 0.1 * s, 0.06, 0.22 * s, Vec3::splat(3.0))
+                .grow(0.36 * s);
             c.rot = rot;
             p.push(c);
             for k in 0..2 {
                 let seq = p.pick_seq(core, true);
                 let side = p.unit() * 0.08;
-                let mut f = Particle::new(core, at, 0.05, 0.12 * s, Vec3::splat(4.0)).stretched(-(dir + side), 0.6 * s, 0.9 * s).grow(0.18 * s);
+                let mut f = Particle::new(core, at, 0.05, 0.12 * s, Vec3::splat(4.0))
+                    .stretched(-(dir + side), 0.6 * s, 0.9 * s)
+                    .grow(0.18 * s);
                 f.seq = seq;
                 f.alpha = (1.0, 0.2);
                 if k == 1 {
@@ -358,11 +501,24 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
                 }
                 p.push(f);
             }
-            let glow = if energy { Vec3::new(0.6, 1.2, 3.0) } else { Vec3::new(3.0, 1.6, 0.6) };
+            let glow = if energy {
+                Vec3::new(0.6, 1.2, 3.0)
+            } else {
+                Vec3::new(3.0, 1.6, 0.6)
+            };
             p.push(Particle::new(Tex::Glow, at, 0.05, 0.9 * s, glow).alpha(0.8, 0.0));
             // A thin wisp of gun smoke.
             let up = Vec3::Y * p.range(0.2, 0.5);
-            let mut sm = Particle::new(Tex::Smoke, at + dir * 0.2 * s, p.range(0.5, 0.8), 0.08 * s, Vec3::splat(0.8)).grow(0.5 * s).vel(dir * 0.8 * s + up).alpha(0.12 / s.max(1.0).sqrt(), 0.0);
+            let mut sm = Particle::new(
+                Tex::Smoke,
+                at + dir * 0.2 * s,
+                p.range(0.5, 0.8),
+                0.08 * s,
+                Vec3::splat(0.8),
+            )
+            .grow(0.5 * s)
+            .vel(dir * 0.8 * s + up)
+            .alpha(0.12 / s.max(1.0).sqrt(), 0.0);
             sm.drag = 3.0;
             sm.seq = p.pick_seq(Tex::Smoke, false);
             sm.rot = p.range(0.0, 6.28);
@@ -370,7 +526,12 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
             sm.fade_in = 0.15;
             p.push(sm);
         }
-        Effect::Tracer { from, to, width, color } => {
+        Effect::Tracer {
+            from,
+            to,
+            width,
+            color,
+        } => {
             let d = to - from;
             let dist = d.length();
             if dist < 1.0 {
@@ -378,24 +539,54 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
             }
             let dir = d / dist;
             let speed = 500.0;
-            let mut t = Particle::new(Tex::Streak, from, dist / speed, width, color).vel(dir * speed).stretched(dir, width * 50.0, width * 50.0);
+            let mut t = Particle::new(Tex::Streak, from, dist / speed, width, color)
+                .vel(dir * speed)
+                .stretched(dir, width * 50.0, width * 50.0);
             t.from_origin = true;
             t.alpha = (1.0, 0.8);
             p.push(t);
         }
-        Effect::Hit { at, normal, table, surface, scale, .. } => {
-            let energy = ["accel", "elec", "arc", "plasma", "lstar", "sniper"].iter().any(|k| table.contains(k)) || surface == Surface::Shield;
-            spawn_effect(p, Effect::Impact { at, normal, scale, energy });
+        Effect::Hit {
+            at,
+            normal,
+            table,
+            surface,
+            scale,
+            ..
+        } => {
+            let energy = ["accel", "elec", "arc", "plasma", "lstar", "sniper"]
+                .iter()
+                .any(|k| table.contains(k))
+                || surface == Surface::Shield;
+            spawn_effect(
+                p,
+                Effect::Impact {
+                    at,
+                    normal,
+                    scale,
+                    energy,
+                },
+            );
         }
-        Effect::Impact { at, normal, scale: s, energy } => {
+        Effect::Impact {
+            at,
+            normal,
+            scale: s,
+            energy,
+        } => {
             let n = normal.normalize_or(Vec3::Y);
             let at = at + n * 0.03 * s;
-            let (glow, spark) = if energy { (Vec3::new(0.8, 1.6, 4.0), Vec3::new(1.5, 3.0, 6.0)) } else { (Vec3::new(3.0, 1.8, 0.8), Vec3::new(6.0, 3.2, 1.2)) };
+            let (glow, spark) = if energy {
+                (Vec3::new(0.8, 1.6, 4.0), Vec3::new(1.5, 3.0, 6.0))
+            } else {
+                (Vec3::new(3.0, 1.8, 0.8), Vec3::new(6.0, 3.2, 1.2))
+            };
             p.push(Particle::new(Tex::Glow, at, 0.09, 0.6 * s, glow).grow(0.35 * s));
             let sparks = if energy { 4 } else { 6 };
             for _ in 0..sparks {
                 let v = p.around(n, 0.8) * p.range(3.0, 9.0) * s.sqrt();
-                let mut sp = Particle::new(Tex::Spark, at, p.range(0.15, 0.35), 0.018 * s, spark).vel(v);
+                let mut sp =
+                    Particle::new(Tex::Spark, at, p.range(0.15, 0.35), 0.018 * s, spark).vel(v);
                 sp.len = (0.03 * s, 0.03 * s);
                 sp.stretch = 0.035;
                 sp.from_origin = true;
@@ -405,14 +596,31 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
                 p.push(sp);
             }
             if !energy {
-                let mut dust = Particle::new(Tex::Dirt, at, p.range(0.5, 0.8), 0.25 * s, Vec3::new(0.55, 0.5, 0.45)).grow(0.8 * s).vel(n * 1.2 * s).alpha(0.75, 0.0);
+                let mut dust = Particle::new(
+                    Tex::Dirt,
+                    at,
+                    p.range(0.5, 0.8),
+                    0.25 * s,
+                    Vec3::new(0.55, 0.5, 0.45),
+                )
+                .grow(0.8 * s)
+                .vel(n * 1.2 * s)
+                .alpha(0.75, 0.0);
                 dust.animate = true;
                 dust.drag = 2.5;
                 dust.rot = p.range(-0.5, 0.5);
                 p.push(dust);
                 for _ in 0..3 {
                     let v = p.around(n, 0.7) * p.range(2.0, 5.0) * s.sqrt();
-                    let mut f = Particle::new(Tex::Fleks, at, p.range(0.5, 0.9), 0.025 * s, Vec3::new(0.4, 0.38, 0.36)).vel(v).alpha(1.0, 1.0);
+                    let mut f = Particle::new(
+                        Tex::Fleks,
+                        at,
+                        p.range(0.5, 0.9),
+                        0.025 * s,
+                        Vec3::new(0.4, 0.38, 0.36),
+                    )
+                    .vel(v)
+                    .alpha(1.0, 1.0);
                     f.gravity = GRAVITY;
                     f.seq = p.pick_seq(Tex::Fleks, false);
                     f.rot = p.range(0.0, 6.28);
@@ -420,7 +628,9 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
                     p.push(f);
                 }
             } else {
-                let mut c = Particle::new(Tex::FlashCloudBlue, at, 0.12, 0.3 * s, Vec3::splat(2.0)).grow(0.6 * s).alpha(0.8, 0.0);
+                let mut c = Particle::new(Tex::FlashCloudBlue, at, 0.12, 0.3 * s, Vec3::splat(2.0))
+                    .grow(0.6 * s)
+                    .alpha(0.8, 0.0);
                 c.rot = p.range(0.0, 6.28);
                 p.push(c);
             }
@@ -434,11 +644,21 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
             }
             // A column of black smoke drifting up for several seconds.
             for k in 0..10 {
-                let mut sm = Particle::new(Tex::Smoke, at + Vec3::new(p.range(-1.0, 1.0), 0.0, p.range(-1.0, 1.0)), p.range(5.0, 7.0), 2.0, Vec3::splat(0.12))
-                    .grow(7.0)
-                    .vel(Vec3::new(p.range(-0.4, 0.4), p.range(1.5, 3.0), p.range(-0.4, 0.4)))
-                    .alpha(0.75, 0.0)
-                    .delay(0.3 + k as f32 * 0.35);
+                let mut sm = Particle::new(
+                    Tex::Smoke,
+                    at + Vec3::new(p.range(-1.0, 1.0), 0.0, p.range(-1.0, 1.0)),
+                    p.range(5.0, 7.0),
+                    2.0,
+                    Vec3::splat(0.12),
+                )
+                .grow(7.0)
+                .vel(Vec3::new(
+                    p.range(-0.4, 0.4),
+                    p.range(1.5, 3.0),
+                    p.range(-0.4, 0.4),
+                ))
+                .alpha(0.75, 0.0)
+                .delay(0.3 + k as f32 * 0.35);
                 sm.seq = p.pick_seq(Tex::Smoke, false);
                 sm.rot = p.range(0.0, 6.28);
                 sm.spin = p.range(-0.3, 0.3);
@@ -451,15 +671,30 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
             for i in 0..n {
                 let a = i as f32 / n as f32 * std::f32::consts::TAU + p.range(-0.1, 0.1);
                 let out = Vec3::new(a.cos(), 0.0, a.sin());
-                let mut d = Particle::new(Tex::Dirt, at + out * radius * 0.3 + Vec3::Y * 0.3, p.range(1.2, 1.8), 1.0, Vec3::new(0.58, 0.53, 0.47))
-                    .grow(3.5)
-                    .vel(out * p.range(6.0, 10.0) + Vec3::Y * p.range(0.5, 1.5))
-                    .alpha(0.75, 0.0);
+                let mut d = Particle::new(
+                    Tex::Dirt,
+                    at + out * radius * 0.3 + Vec3::Y * 0.3,
+                    p.range(1.2, 1.8),
+                    1.0,
+                    Vec3::new(0.58, 0.53, 0.47),
+                )
+                .grow(3.5)
+                .vel(out * p.range(6.0, 10.0) + Vec3::Y * p.range(0.5, 1.5))
+                .alpha(0.75, 0.0);
                 d.drag = 1.8;
                 d.animate = true;
                 d.rot = p.range(0.0, 6.28);
                 p.push(d);
-                let mut sm = Particle::new(Tex::Smoke, at + out * radius * 0.5, p.range(2.0, 3.0), 1.2, Vec3::new(0.5, 0.44, 0.36)).grow(4.0).vel(out * p.range(3.0, 5.0) + Vec3::Y * 0.6).alpha(0.45, 0.0);
+                let mut sm = Particle::new(
+                    Tex::Smoke,
+                    at + out * radius * 0.5,
+                    p.range(2.0, 3.0),
+                    1.2,
+                    Vec3::new(0.5, 0.44, 0.36),
+                )
+                .grow(4.0)
+                .vel(out * p.range(3.0, 5.0) + Vec3::Y * 0.6)
+                .alpha(0.45, 0.0);
                 sm.drag = 1.2;
                 sm.seq = p.pick_seq(Tex::Smoke, false);
                 sm.rot = p.range(0.0, 6.28);
@@ -468,7 +703,15 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
             }
             for _ in 0..12 {
                 let v = p.around(Vec3::Y, 0.9) * p.range(5.0, 12.0);
-                let mut f = Particle::new(Tex::Fleks, at + Vec3::Y * 0.3, p.range(0.8, 1.4), 0.12, Vec3::new(0.4, 0.38, 0.35)).vel(v).alpha(1.0, 1.0);
+                let mut f = Particle::new(
+                    Tex::Fleks,
+                    at + Vec3::Y * 0.3,
+                    p.range(0.8, 1.4),
+                    0.12,
+                    Vec3::new(0.4, 0.38, 0.35),
+                )
+                .vel(v)
+                .alpha(1.0, 1.0);
                 f.gravity = GRAVITY;
                 f.seq = p.pick_seq(Tex::Fleks, false);
                 f.spin = p.range(-8.0, 8.0);
@@ -476,7 +719,16 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
             }
         }
         Effect::TrailPuff { at, scale: s } => {
-            let mut sm = Particle::new(Tex::Smoke, at, p.range(0.8, 1.2), 0.15 * s, Vec3::splat(0.75)).grow(0.8 * s).alpha(0.4, 0.0).vel(p.unit() * 0.3);
+            let mut sm = Particle::new(
+                Tex::Smoke,
+                at,
+                p.range(0.8, 1.2),
+                0.15 * s,
+                Vec3::splat(0.75),
+            )
+            .grow(0.8 * s)
+            .alpha(0.4, 0.0)
+            .vel(p.unit() * 0.3);
             sm.seq = p.pick_seq(Tex::Smoke, false);
             sm.rot = p.range(0.0, 6.28);
             sm.spin = p.range(-1.0, 1.0);
@@ -487,26 +739,61 @@ pub(crate) fn spawn_effect(p: &mut Particles, e: Effect) {
 }
 
 fn explosion(p: &mut Particles, at: Vec3, s: f32, delay: f32) {
-    p.push(Particle::new(Tex::Glow, at, 0.18, 2.5 * s, Vec3::new(4.0, 2.4, 1.0)).grow(3.5 * s).delay(delay));
+    p.push(
+        Particle::new(Tex::Glow, at, 0.18, 2.5 * s, Vec3::new(4.0, 2.4, 1.0))
+            .grow(3.5 * s)
+            .delay(delay),
+    );
     for _ in 0..3 {
         let off = p.unit() * 0.4 * s;
-        let mut f = Particle::new(Tex::FireBall, at + off, p.range(0.6, 0.9), 0.9 * s, Vec3::splat(2.2)).grow(2.0 * s).vel(off * 2.0 + Vec3::Y * 0.6 * s).alpha(1.0, 0.0).delay(delay);
+        let mut f = Particle::new(
+            Tex::FireBall,
+            at + off,
+            p.range(0.6, 0.9),
+            0.9 * s,
+            Vec3::splat(2.2),
+        )
+        .grow(2.0 * s)
+        .vel(off * 2.0 + Vec3::Y * 0.6 * s)
+        .alpha(1.0, 0.0)
+        .delay(delay);
         f.animate = true;
         f.rot = p.range(0.0, 6.28);
         f.spin = p.range(-0.6, 0.6);
         p.push(f);
     }
-    let mut b = Particle::new(Tex::Burst, at, 0.45, 1.0 * s, Vec3::splat(2.5)).grow(2.2 * s).alpha(1.0, 0.0).delay(delay);
+    let mut b = Particle::new(Tex::Burst, at, 0.45, 1.0 * s, Vec3::splat(2.5))
+        .grow(2.2 * s)
+        .alpha(1.0, 0.0)
+        .delay(delay);
     b.animate = true;
     b.rot = p.range(0.0, 6.28);
     p.push(b);
-    let mut d = Particle::new(Tex::DarkFire, at + Vec3::Y * 0.3 * s, 1.3, 1.2 * s, Vec3::splat(1.0)).grow(2.6 * s).vel(Vec3::Y * 0.8 * s).alpha(0.9, 0.0).delay(delay + 0.05);
+    let mut d = Particle::new(
+        Tex::DarkFire,
+        at + Vec3::Y * 0.3 * s,
+        1.3,
+        1.2 * s,
+        Vec3::splat(1.0),
+    )
+    .grow(2.6 * s)
+    .vel(Vec3::Y * 0.8 * s)
+    .alpha(0.9, 0.0)
+    .delay(delay + 0.05);
     d.animate = true;
     d.rot = p.range(0.0, 6.28);
     p.push(d);
     for _ in 0..(10.0 * s.sqrt()) as usize {
         let v = p.around(Vec3::Y, 0.95) * p.range(8.0, 20.0) * s.sqrt();
-        let mut sp = Particle::new(Tex::Spark, at, p.range(0.4, 0.9), 0.04 * s.sqrt(), Vec3::new(6.0, 3.0, 1.0)).vel(v).delay(delay);
+        let mut sp = Particle::new(
+            Tex::Spark,
+            at,
+            p.range(0.4, 0.9),
+            0.04 * s.sqrt(),
+            Vec3::new(6.0, 3.0, 1.0),
+        )
+        .vel(v)
+        .delay(delay);
         sp.len = (0.05, 0.05);
         sp.stretch = 0.04;
         sp.from_origin = true;
@@ -517,7 +804,16 @@ fn explosion(p: &mut Particles, at: Vec3, s: f32, delay: f32) {
     }
     for _ in 0..(6.0 * s.sqrt()) as usize {
         let v = p.around(Vec3::Y, 0.9) * p.range(4.0, 10.0) * s.sqrt();
-        let mut f = Particle::new(Tex::Fleks, at, p.range(0.8, 1.4), 0.04 * s, Vec3::new(0.3, 0.28, 0.26)).vel(v).alpha(1.0, 1.0).delay(delay);
+        let mut f = Particle::new(
+            Tex::Fleks,
+            at,
+            p.range(0.8, 1.4),
+            0.04 * s,
+            Vec3::new(0.3, 0.28, 0.26),
+        )
+        .vel(v)
+        .alpha(1.0, 1.0)
+        .delay(delay);
         f.gravity = GRAVITY;
         f.seq = p.pick_seq(Tex::Fleks, false);
         f.spin = p.range(-10.0, 10.0);
@@ -525,11 +821,17 @@ fn explosion(p: &mut Particles, at: Vec3, s: f32, delay: f32) {
     }
     for _ in 0..5 {
         let off = p.unit() * 0.6 * s;
-        let mut sm = Particle::new(Tex::Smoke, at + off, p.range(2.5, 3.5), 0.9 * s, Vec3::splat(0.22))
-            .grow(3.2 * s)
-            .vel(off + Vec3::Y * p.range(0.4, 1.0) * s)
-            .alpha(0.7, 0.0)
-            .delay(delay + 0.1);
+        let mut sm = Particle::new(
+            Tex::Smoke,
+            at + off,
+            p.range(2.5, 3.5),
+            0.9 * s,
+            Vec3::splat(0.22),
+        )
+        .grow(3.2 * s)
+        .vel(off + Vec3::Y * p.range(0.4, 1.0) * s)
+        .alpha(0.7, 0.0)
+        .delay(delay + 0.1);
         sm.drag = 0.8;
         sm.seq = p.pick_seq(Tex::Smoke, false);
         sm.rot = p.range(0.0, 6.28);
@@ -586,7 +888,10 @@ pub fn update_particles(
         commands.entity(e).despawn();
         // The game's systems take over once the library has loaded (pfx::update_pfx plays it,
         // or falls back to the hand-built look).
-        if let Some(x) = pfx.as_mut().filter(|x| x.ready() && std::env::var_os("TF_OLD_FX").is_none()) {
+        if let Some(x) = pfx
+            .as_mut()
+            .filter(|x| x.ready() && std::env::var_os("TF_OLD_FX").is_none())
+        {
             // First-person muzzle flashes (the Pilot's and the cockpit's, scale < 2.5) keep
             // the hand-built look: the game's `_FP` systems are sized for its viewmodel
             // FOV/near plane and fill the screen here.
@@ -606,12 +911,22 @@ pub fn update_particles(
         p.push(head);
         if moved.length() > 0.01 {
             let len = moved.length().min(glow.size * 30.0);
-            let mut s = Particle::new(Tex::Streak, at, 1e-4, glow.size * 0.5, glow.color).stretched(moved, len, len).alpha(1.0, 1.0);
+            let mut s = Particle::new(Tex::Streak, at, 1e-4, glow.size * 0.5, glow.color)
+                .stretched(moved, len, len)
+                .alpha(1.0, 1.0);
             s.from_origin = false;
             p.push(s);
         }
         if glow.smoke && moved.length() > 0.01 {
-            let mut sm = Particle::new(Tex::Smoke, last, p.range(0.6, 1.0), glow.size * 0.6, Vec3::splat(0.7)).grow(glow.size * 3.0).alpha(0.35, 0.0);
+            let mut sm = Particle::new(
+                Tex::Smoke,
+                last,
+                p.range(0.6, 1.0),
+                glow.size * 0.6,
+                Vec3::splat(0.7),
+            )
+            .grow(glow.size * 3.0)
+            .alpha(0.35, 0.0);
             sm.seq = p.pick_seq(Tex::Smoke, false);
             sm.rot = p.range(0.0, 6.28);
             sm.fade_in = 0.1;
@@ -622,10 +937,18 @@ pub fn update_particles(
     let Ok(cam) = camera.single() else {
         // No layer was written (their buffers still take what the meshes would have).
         let (device, buckets, uploads, mats, events) = &mut gpu;
-        let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut meshes, commands: &mut commands };
+        let mut ctx = crate::spritebuf::SpriteCtx {
+            device,
+            uploads,
+            buckets,
+            meshes: &mut meshes,
+            commands: &mut commands,
+        };
         for layer in &mut p.layers {
             if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
-                crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| &mut m.extension.verts);
+                crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| {
+                    &mut m.extension.verts
+                });
             }
         }
         return;
@@ -636,12 +959,21 @@ pub fn update_particles(
         let (t0, t1) = (time.elapsed_secs() - dt, time.elapsed_secs());
         if (t0 / 3.0) as u32 != (t1 / 3.0) as u32 {
             let ahead = cam.forward().as_vec3();
-            let at = eye + Vec3::new(ahead.x, 0.0, ahead.z).normalize_or(Vec3::NEG_Z) * 25.0 - Vec3::Y * 2.0;
+            let at = eye + Vec3::new(ahead.x, 0.0, ahead.z).normalize_or(Vec3::NEG_Z) * 25.0
+                - Vec3::Y * 2.0;
             let e = match (t1 / 3.0) as u32 % 4 {
                 0 => Effect::TitanDeath { at },
                 1 => Effect::Explosion { at, scale: 1.0 },
-                2 => Effect::DustRing { at, radius: 220.0 * crate::player::UNIT },
-                _ => Effect::Impact { at, normal: Vec3::Y, scale: 3.0, energy: false },
+                2 => Effect::DustRing {
+                    at,
+                    radius: 220.0 * crate::player::UNIT,
+                },
+                _ => Effect::Impact {
+                    at,
+                    normal: Vec3::Y,
+                    scale: 3.0,
+                    energy: false,
+                },
             };
             log::info!("fx test {e:?}");
             spawn_effect(&mut p, e);
@@ -650,12 +982,26 @@ pub fn update_particles(
     let (right, up) = (cam.right().as_vec3(), cam.up().as_vec3());
     let normal = (-cam.forward().as_vec3()).to_array();
     let (device, buckets, uploads, mats, events) = &mut gpu;
-    let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut meshes, commands: &mut commands };
+    let mut ctx = crate::spritebuf::SpriteCtx {
+        device,
+        uploads,
+        buckets,
+        meshes: &mut meshes,
+        commands: &mut commands,
+    };
     let p = &mut *p;
     for layer in &mut p.layers {
-        let mut list: Vec<&Particle> = p.live.iter().filter(|q| q.tex == layer.tex && q.age >= 0.0).collect();
+        let mut list: Vec<&Particle> = p
+            .live
+            .iter()
+            .filter(|q| q.tex == layer.tex && q.age >= 0.0)
+            .collect();
         if let Ok(mut v) = vis.get_mut(layer.entity) {
-            let want = if list.is_empty() { Visibility::Hidden } else { Visibility::Visible };
+            let want = if list.is_empty() {
+                Visibility::Hidden
+            } else {
+                Visibility::Visible
+            };
             if *v != want {
                 *v = want;
             }
@@ -663,12 +1009,18 @@ pub fn update_particles(
         if list.is_empty() {
             // The mesh was left alone.
             if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
-                crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| &mut m.extension.verts);
+                crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| {
+                    &mut m.extension.verts
+                });
             }
             continue;
         }
         if !layer.additive {
-            list.sort_by(|a, b| b.pos.distance_squared(eye).total_cmp(&a.pos.distance_squared(eye)));
+            list.sort_by(|a, b| {
+                b.pos
+                    .distance_squared(eye)
+                    .total_cmp(&a.pos.distance_squared(eye))
+            });
         }
         let mut v = crate::spritebuf::SpriteBuf::begin(list.len());
         let mut quads = 0;
@@ -688,7 +1040,12 @@ pub fn update_particles(
                 None => [0.0, 0.0, 1.0, 1.0],
             };
             let c = [q.color.x, q.color.y, q.color.z, a];
-            let uv = [[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]];
+            let uv = [
+                [rect[0], rect[1]],
+                [rect[2], rect[1]],
+                [rect[2], rect[3]],
+                [rect[0], rect[3]],
+            ];
             let corners = if q.len.0 > 0.0 || q.stretch > 0.0 {
                 let axis = q.axis;
                 let mut len = q.len.0 + (q.len.1 - q.len.0) * t + q.vel.length() * q.stretch;
@@ -698,7 +1055,11 @@ pub fn update_particles(
                 let to_eye = (eye - q.pos).normalize_or(Vec3::Y);
                 // Seen end-on the streak shrinks to a point: fall back to a camera-facing side.
                 let c = axis.cross(to_eye);
-                let side = if c.length() > 0.05 { c.normalize() } else { right } * size;
+                let side = if c.length() > 0.05 {
+                    c.normalize()
+                } else {
+                    right
+                } * size;
                 let tail = q.pos - axis * len;
                 [q.pos - side, q.pos + side, tail + side, tail - side]
             } else {
@@ -713,7 +1074,9 @@ pub fn update_particles(
             quads += 1;
         }
         if let Some(grown) = layer.buf.frame(quads, v, layer.entity, &mut ctx) {
-            crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| &mut m.extension.verts);
+            crate::spritebuf::swap_buffer(mats, events, &layer.material, grown, |m| {
+                &mut m.extension.verts
+            });
         }
     }
 }
@@ -722,7 +1085,24 @@ pub struct ParticlePlugin;
 
 impl Plugin for ParticlePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (load_particles, crate::pfx::start_pfx, crate::pfx::tick_pfx_one_shots))
-            .add_systems(PostUpdate, (crate::pfx::pfx_test, update_particles, crate::pfx::update_pfx, crate::pfx::sync_fx_model_globals).chain().after(bevy::transform::TransformSystems::Propagate));
+        app.add_systems(
+            Update,
+            (
+                load_particles,
+                crate::pfx::start_pfx,
+                crate::pfx::tick_pfx_one_shots,
+            ),
+        )
+        .add_systems(
+            PostUpdate,
+            (
+                crate::pfx::pfx_test,
+                update_particles,
+                crate::pfx::update_pfx,
+                crate::pfx::sync_fx_model_globals,
+            )
+                .chain()
+                .after(bevy::transform::TransformSystems::Propagate),
+        );
     }
 }

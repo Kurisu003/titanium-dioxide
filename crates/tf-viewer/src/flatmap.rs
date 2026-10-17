@@ -19,7 +19,14 @@ const TILE: f32 = 512.0;
 const TEX_UNITS: f32 = 256.0;
 
 /// Spawn the plane under `root` (game units) and add its collision.
-pub fn spawn(commands: &mut Commands, root: Entity, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>, collision: &mut CollisionWorld) {
+pub fn spawn(
+    commands: &mut Commands,
+    root: Entity,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+    collision: &mut CollisionWorld,
+) {
     let n = (2.0 * HALF / TILE) as usize;
     let mut pos = Vec::with_capacity((n + 1) * (n + 1));
     let mut nrm = Vec::with_capacity(pos.capacity());
@@ -53,9 +60,16 @@ pub fn spawn(commands: &mut Commands, root: Entity, meshes: &mut Assets<Mesh>, i
         cull_mode: None,
         ..default()
     });
-    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY)).id();
+    let e = commands
+        .spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY))
+        .id();
     commands.entity(root).add_child(e);
-    log::info!("flat test map: {}x{} units, {} tiles", 2.0 * HALF, 2.0 * HALF, n * n);
+    log::info!(
+        "flat test map: {}x{} units, {} tiles",
+        2.0 * HALF,
+        2.0 * HALF,
+        n * n
+    );
 }
 
 /// A light grey texture with dark lines every quarter (64 units) and a darker line on the
@@ -67,11 +81,27 @@ fn grid_image() -> Image {
         for x in 0..N {
             let major = x < 3 || y < 3;
             let minor = x % 64 < 2 || y % 64 < 2;
-            let v: u8 = if major { 0x40 } else if minor { 0x80 } else { 0xb8 };
+            let v: u8 = if major {
+                0x40
+            } else if minor {
+                0x80
+            } else {
+                0xb8
+            };
             data.extend([v, v, v, 255]);
         }
     }
-    let mut img = Image::new(Extent3d { width: N as u32, height: N as u32, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD);
+    let mut img = Image::new(
+        Extent3d {
+            width: N as u32,
+            height: N as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
     img.sampler = bevy::image::ImageSampler::Descriptor(crate::convert::sampler());
     img
 }

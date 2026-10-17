@@ -6,8 +6,17 @@ fn main() -> anyhow::Result<()> {
     for p in &a[3..] {
         let t = tf_assets::vtf::decode(&vpk.read(p)?, 512)?;
         let name = p.rsplit('/').next().unwrap().trim_end_matches(".vtf");
-        std::fs::write(format!("{}/{name}_{}x{}.rgba", a[2], t.width, t.height), &t.rgba)?;
-        println!("{p}: {}x{} fmt {} sheet {} seqs", t.width, t.height, t.format, t.sheet.len());
+        std::fs::write(
+            format!("{}/{name}_{}x{}.rgba", a[2], t.width, t.height),
+            &t.rgba,
+        )?;
+        println!(
+            "{p}: {}x{} fmt {} sheet {} seqs",
+            t.width,
+            t.height,
+            t.format,
+            t.sheet.len()
+        );
     }
     Ok(())
 }

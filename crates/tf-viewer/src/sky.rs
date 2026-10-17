@@ -32,7 +32,11 @@ pub fn spawn_sky_camera(commands: &mut Commands) {
         // The world and viewmodel cameras draw over this picture in the same textures, and
         // the viewmodel camera's output overwrites the whole window, so copying it to the
         // window here (and from the world camera) is a wasted full-screen pass.
-        Camera { order: -1, output_mode: bevy::camera::CameraOutputMode::Skip, ..default() },
+        Camera {
+            order: -1,
+            output_mode: bevy::camera::CameraOutputMode::Skip,
+            ..default()
+        },
         bevy::render::view::Hdr,
         // Explicit so the cockpit boot (pilotctl::cockpit_boot) can dim it with the others.
         bevy::camera::Exposure::default(),
@@ -61,7 +65,9 @@ pub fn spawn_sky(
         return;
     };
     let Ok(sp) = bsp.static_props() else { return };
-    let anchor = commands.spawn((Transform::default(), Visibility::default(), Sky)).id();
+    let anchor = commands
+        .spawn((Transform::default(), Visibility::default(), Sky))
+        .id();
     commands.entity(root).add_child(anchor);
     let mut n = 0;
     for p in &sp.props {
@@ -69,9 +75,14 @@ pub fn spawn_sky(
         if !name.starts_with("models/vistas/") || Vec3::from(p.origin).distance(cam) > SKY_RADIUS {
             continue;
         }
-        let Ok((parts, _)) = crate::world::build_static_model(gd, name, cache, meshes, images, materials) else { continue };
+        let Ok((parts, _)) =
+            crate::world::build_static_model(gd, name, cache, meshes, images, materials)
+        else {
+            continue;
+        };
         let [pitch, yaw, roll] = p.angles.map(f32::to_radians);
-        let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(roll);
+        let rot =
+            Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(roll);
         let tf = Transform {
             translation: (Vec3::from(p.origin) - cam) * env.sky_scale,
             rotation: rot,

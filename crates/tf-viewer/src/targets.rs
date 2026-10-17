@@ -7,12 +7,12 @@
 
 use crate::abilities::TitanCore;
 use crate::actor::{Actor, Aim, Layer};
+use crate::audio::{self, Cue};
 use crate::combat::{TitanHealth, Vortex};
 use crate::pilotctl::{Control, PilotHealth, PlayerPilot};
 use crate::player::{to_bevy, Collision, MainCamera, PlayerTitan, TitanSettings};
 use crate::vitals::{Difficulty, Hit, Vitals};
 use crate::weapons::{Fx, FxAssets, WeaponDef};
-use crate::audio::{self, Cue};
 use bevy::prelude::*;
 use tf_assets::settings::PlayerSettings;
 use tf_sim::glam::Vec3 as SVec3;
@@ -67,12 +67,42 @@ pub struct EnemyKit {
 
 /// The enemy Titan classes: AI settings, model, the primary from the class loadout, name.
 pub const ENEMY_CLASSES: &[(&str, &str, &str, &str)] = &[
-    ("npc_titan_atlas_stickybomb", "models/titans/medium/titan_medium_ajax.mdl", "mp_titanweapon_particle_accelerator", "ION"),
-    ("npc_titan_ogre_meteor", "models/titans/heavy/titan_heavy_ogre.mdl", "mp_titanweapon_meteor", "SCORCH"),
-    ("npc_titan_stryder_sniper", "models/titans/light/titan_light_raptor.mdl", "mp_titanweapon_sniper", "NORTHSTAR"),
-    ("npc_titan_stryder_leadwall", "models/titans/light/titan_light_locust.mdl", "mp_titanweapon_leadwall", "RONIN"),
-    ("npc_titan_atlas_tracker", "models/titans/medium/titan_medium_wraith.mdl", "mp_titanweapon_sticky_40mm", "TONE"),
-    ("npc_titan_ogre_minigun", "models/titans/heavy/titan_heavy_deadbolt.mdl", "mp_titanweapon_predator_cannon", "LEGION"),
+    (
+        "npc_titan_atlas_stickybomb",
+        "models/titans/medium/titan_medium_ajax.mdl",
+        "mp_titanweapon_particle_accelerator",
+        "ION",
+    ),
+    (
+        "npc_titan_ogre_meteor",
+        "models/titans/heavy/titan_heavy_ogre.mdl",
+        "mp_titanweapon_meteor",
+        "SCORCH",
+    ),
+    (
+        "npc_titan_stryder_sniper",
+        "models/titans/light/titan_light_raptor.mdl",
+        "mp_titanweapon_sniper",
+        "NORTHSTAR",
+    ),
+    (
+        "npc_titan_stryder_leadwall",
+        "models/titans/light/titan_light_locust.mdl",
+        "mp_titanweapon_leadwall",
+        "RONIN",
+    ),
+    (
+        "npc_titan_atlas_tracker",
+        "models/titans/medium/titan_medium_wraith.mdl",
+        "mp_titanweapon_sticky_40mm",
+        "TONE",
+    ),
+    (
+        "npc_titan_ogre_minigun",
+        "models/titans/heavy/titan_heavy_deadbolt.mdl",
+        "mp_titanweapon_predator_cannon",
+        "LEGION",
+    ),
 ];
 
 /// Each class's MP ordnance, fired between bursts of the main weapon: (weapon script, bolt
@@ -118,12 +148,32 @@ pub struct Defense {
 /// shipped: here a Titan raises its defensive after DEFENSE_TRIGGER_DAMAGE of recent damage
 /// from a target it sees in front (Scorch also when the target is within his shield's reach).
 const ENEMY_DEFENSES: &[Option<Defense>] = &[
-    Some(Defense { kind: DefenseKind::Vortex, hold: 3.0, cooldown: 4.0 }),
-    Some(Defense { kind: DefenseKind::Heat, hold: 3.0, cooldown: 9.0 }),
+    Some(Defense {
+        kind: DefenseKind::Vortex,
+        hold: 3.0,
+        cooldown: 4.0,
+    }),
+    Some(Defense {
+        kind: DefenseKind::Heat,
+        hold: 3.0,
+        cooldown: 9.0,
+    }),
     None,
-    Some(Defense { kind: DefenseKind::Block, hold: 3.0, cooldown: 2.0 }),
-    Some(Defense { kind: DefenseKind::ParticleWall, hold: 0.0, cooldown: 14.0 }),
-    Some(Defense { kind: DefenseKind::GunShield, hold: 6.0, cooldown: 8.0 }),
+    Some(Defense {
+        kind: DefenseKind::Block,
+        hold: 3.0,
+        cooldown: 2.0,
+    }),
+    Some(Defense {
+        kind: DefenseKind::ParticleWall,
+        hold: 0.0,
+        cooldown: 14.0,
+    }),
+    Some(Defense {
+        kind: DefenseKind::GunShield,
+        hold: 6.0,
+        cooldown: 8.0,
+    }),
 ];
 const DEFENSE_TRIGGER_DAMAGE: f32 = 200.0;
 /// VORTEX_BULLET_ABSORB_COUNT_MAX (_vortex.nut).
@@ -155,9 +205,19 @@ fn enemy_sound_type(name: &str) -> Option<&'static str> {
 /// (idle, move forward, move back, death) sequences of an enemy model.
 pub fn enemy_clips(model: &str) -> [&'static str; 4] {
     if model.contains("/humans/") {
-        ["CQB_Idle_MP", "Run_forward_mp", "Run_Backward_mp", "CQB_DeathMP"]
+        [
+            "CQB_Idle_MP",
+            "Run_forward_mp",
+            "Run_Backward_mp",
+            "CQB_DeathMP",
+        ]
     } else {
-        ["CQB_Idle_MP", "Walk_forward_MP", "Walk_backward_MP", "at_Death"]
+        [
+            "CQB_Idle_MP",
+            "Walk_forward_MP",
+            "Walk_backward_MP",
+            "at_Death",
+        ]
     }
 }
 
@@ -176,7 +236,12 @@ pub struct Ability {
 }
 
 /// Enemy infantry: (ai settings, model, weapon, name).
-pub const INFANTRY: (&str, &str, &str, &str) = ("npc_soldier", "models/humans/grunts/imc_grunt_rifle.mdl", "mp_weapon_rspn101", "GRUNT");
+pub const INFANTRY: (&str, &str, &str, &str) = (
+    "npc_soldier",
+    "models/humans/grunts/imc_grunt_rifle.mdl",
+    "mp_weapon_rspn101",
+    "GRUNT",
+);
 
 /// Every enemy class's kit (index = class).
 #[derive(Resource, Clone)]
@@ -188,7 +253,11 @@ pub fn aim_grids(model: &str) -> [&'static str; 2] {
     if model.contains("/humans/") {
         return ["Aim_static", "Aim_move_MP"];
     }
-    if model.contains("/heavy/") { ["Aim_Stand_MP", "Aim_run_MP"] } else { ["MP_stand_Aim_all", "Aim_combat_walk_MP"] }
+    if model.contains("/heavy/") {
+        ["Aim_Stand_MP", "Aim_run_MP"]
+    } else {
+        ["MP_stand_Aim_all", "Aim_combat_walk_MP"]
+    }
 }
 
 impl EnemyKit {
@@ -198,30 +267,53 @@ impl EnemyKit {
         k.weapon = WeaponDef::load(weapon, read);
         k.model = model.to_string();
         k.name = name.to_string();
-        let arsenal = crate::weapons::TITAN_ARSENAL.iter().position(|g| g.id == weapon).unwrap_or(0);
+        let arsenal = crate::weapons::TITAN_ARSENAL
+            .iter()
+            .position(|g| g.id == weapon)
+            .unwrap_or(0);
         let gun = &crate::weapons::TITAN_ARSENAL[arsenal];
         k.arsenal = arsenal;
         // The Splitter Rifle's NPC bolts are slower than the player's (TPAC_PROJECTILE_SPEED_NPC).
-        k.projectile = if weapon == "mp_titanweapon_particle_accelerator" { BOLT_SPEED_NPC } else { gun.projectile.unwrap_or(30000.0) };
+        k.projectile = if weapon == "mp_titanweapon_particle_accelerator" {
+            BOLT_SPEED_NPC
+        } else {
+            gun.projectile.unwrap_or(30000.0)
+        };
         k.gravity = gun.gravity;
         k.pellets = gun.pellets;
         k.defense = ENEMY_DEFENSES.get(index).copied().flatten();
-        k.ability = ENEMY_ABILITIES.get(index).map(|&(id, speed, count, fan, ground)| {
-            let mut weapon = WeaponDef::load(id, read);
-            // The Firewall does its damage through thermite, not the projectile.
-            if weapon.npc_damage_near <= 0.0 && weapon.npc_explosion_damage_heavy <= 0.0 {
-                weapon.npc_damage_near = 0.0;
-                weapon.npc_damage_far = 0.0;
-                weapon.npc_explosion_damage_heavy = k.weapon.npc_explosion_damage_heavy;
-                weapon.explosion_radius = weapon.explosion_radius.max(k.weapon.explosion_radius);
-                weapon.explosion_inner_radius = k.weapon.explosion_inner_radius;
-            }
-            let sound = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, read)
-                .and_then(|s| s.get(".fire_sound_1_player_3p").map(str::to_string))
-                .unwrap_or_default();
-            Ability { weapon, speed, count, fan, ground, sound }
-        });
-        (k.radius, k.height) = if model.contains("heavy") { (80.0, 250.0) } else if model.contains("light") { (60.0, 225.0) } else { (70.0, 235.0) };
+        k.ability = ENEMY_ABILITIES
+            .get(index)
+            .map(|&(id, speed, count, fan, ground)| {
+                let mut weapon = WeaponDef::load(id, read);
+                // The Firewall does its damage through thermite, not the projectile.
+                if weapon.npc_damage_near <= 0.0 && weapon.npc_explosion_damage_heavy <= 0.0 {
+                    weapon.npc_damage_near = 0.0;
+                    weapon.npc_damage_far = 0.0;
+                    weapon.npc_explosion_damage_heavy = k.weapon.npc_explosion_damage_heavy;
+                    weapon.explosion_radius =
+                        weapon.explosion_radius.max(k.weapon.explosion_radius);
+                    weapon.explosion_inner_radius = k.weapon.explosion_inner_radius;
+                }
+                let sound = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, read)
+                    .and_then(|s| s.get(".fire_sound_1_player_3p").map(str::to_string))
+                    .unwrap_or_default();
+                Ability {
+                    weapon,
+                    speed,
+                    count,
+                    fan,
+                    ground,
+                    sound,
+                }
+            });
+        (k.radius, k.height) = if model.contains("heavy") {
+            (80.0, 250.0)
+        } else if model.contains("light") {
+            (60.0, 225.0)
+        } else {
+            (70.0, 235.0)
+        };
         k
     }
 
@@ -229,10 +321,16 @@ impl EnemyKit {
     pub fn infantry(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
         let (ai, model, weapon, name) = INFANTRY;
         let mut k = Self::load(ai, read);
-        let a = PlayerSettings::load(&format!("scripts/aisettings/{ai}.txt"), true, read).unwrap_or_default();
+        let a = PlayerSettings::load(&format!("scripts/aisettings/{ai}.txt"), true, read)
+            .unwrap_or_default();
         k.weapon = WeaponDef::load(weapon, read);
-        let w = PlayerSettings::load(&format!("scripts/weapons/{weapon}.txt"), true, read).unwrap_or_default();
-        k.fire_sound = w.get(".fire_sound_2_npc").or_else(|| w.get(".fire_sound_1_npc")).unwrap_or_default().to_string();
+        let w = PlayerSettings::load(&format!("scripts/weapons/{weapon}.txt"), true, read)
+            .unwrap_or_default();
+        k.fire_sound = w
+            .get(".fire_sound_2_npc")
+            .or_else(|| w.get(".fire_sound_1_npc"))
+            .unwrap_or_default()
+            .to_string();
         k.model = model.to_string();
         k.name = name.to_string();
         k.infantry = true;
@@ -263,12 +361,19 @@ impl EnemyKit {
     }
 
     pub fn load(ai: &str, read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let a = PlayerSettings::load(&format!("scripts/aisettings/{ai}.txt"), true, read).unwrap_or_default();
+        let a = PlayerSettings::load(&format!("scripts/aisettings/{ai}.txt"), true, read)
+            .unwrap_or_default();
         let f = |k: &str, d: f32| a.f32(&format!(".{k}"), d);
-        let set = a.get(".npc_titan_player_settings").unwrap_or("titan_atlas").to_string();
+        let set = a
+            .get(".npc_titan_player_settings")
+            .unwrap_or("titan_atlas")
+            .to_string();
         let settings_path = format!("scripts/players/mp/{set}.set");
         let ts = PlayerSettings::load(&settings_path, true, read).unwrap_or_default();
-        let weapon_name = a.get(".defaultweapon").unwrap_or("mp_titanweapon_particle_accelerator").to_string();
+        let weapon_name = a
+            .get(".defaultweapon")
+            .unwrap_or("mp_titanweapon_particle_accelerator")
+            .to_string();
         let ai_health = a.get(".health").and_then(|v| v.parse().ok());
         Self {
             name: "ION".into(),
@@ -293,7 +398,10 @@ impl EnemyKit {
             max_dodge_per_period: f("maxdodgeperperiod", 2.0) as u32,
             strafe_dodge_damage: f("strafedodgedamage", 800.0),
             melee_range: f("meleerange", 200.0),
-            melee_damage_heavy: (f("meleedamageminheavyarmor", 500.0), f("meleedamagemaxheavyarmor", 600.0)),
+            melee_damage_heavy: (
+                f("meleedamageminheavyarmor", 500.0),
+                f("meleedamagemaxheavyarmor", 600.0),
+            ),
             melee_damage: (f("meleedamagemin", 150.0), f("meleedamagemax", 300.0)),
             melee_interval: f("meleeinterval", 2.0),
         }
@@ -467,7 +575,11 @@ impl Enemy {
         if let Some(d) = self.defense.filter(|_| self.defense_left > 0.0) {
             let to = (self.threat - self.pos).truncate().normalize_or_zero();
             let facing = Vec2::new(self.state.yaw.cos(), self.state.yaw.sin());
-            let cone = if d.kind == DefenseKind::Block { 75.0f32 } else { 60.0 };
+            let cone = if d.kind == DefenseKind::Block {
+                75.0f32
+            } else {
+                60.0
+            };
             if to.dot(facing) >= cone.to_radians().cos() {
                 self.flash = 0.05;
                 match d.kind {
@@ -497,7 +609,10 @@ impl Enemy {
     /// attacker, reduces it.
     pub fn damage_radius(&mut self, amount: f32, stops_regen: bool) -> Hit {
         let mut amount = amount;
-        if self.defense.is_some_and(|d| self.defense_left > 0.0 && d.kind == DefenseKind::Block) {
+        if self
+            .defense
+            .is_some_and(|d| self.defense_left > 0.0 && d.kind == DefenseKind::Block)
+        {
             let to = (self.threat - self.pos).truncate().normalize_or_zero();
             let facing = Vec2::new(self.state.yaw.cos(), self.state.yaw.sin());
             if to.dot(facing) >= 75.0f32.to_radians().cos() {
@@ -564,7 +679,11 @@ impl Enemy {
         self.recent.clear();
         self.dodges.clear();
         // Titans arrive by Titanfall, a little staggered; grunts are simply there.
-        self.drop = if kit.infantry { None } else { Some(-self.rand() * 1.5) };
+        self.drop = if kit.infantry {
+            None
+        } else {
+            Some(-self.rand() * 1.5)
+        };
         self.stand = None;
         self.landed = false;
         self.held = false;
@@ -605,10 +724,21 @@ pub struct Bolt {
 }
 
 /// The player's current body for targeting: (position, radius, height, is_pilot).
-fn player_target(control: Control, titan: &PlayerTitan, titan_alive: bool, pilot: &PlayerPilot, settings: &TitanSettings) -> Option<(Vec3, f32, f32, bool)> {
+fn player_target(
+    control: Control,
+    titan: &PlayerTitan,
+    titan_alive: bool,
+    pilot: &PlayerPilot,
+    settings: &TitanSettings,
+) -> Option<(Vec3, f32, f32, bool)> {
     match control {
         Control::Pilot => Some((Vec3::from(pilot.state.pos.to_array()), 30.0, 72.0, true)),
-        _ if titan_alive => Some((Vec3::from(titan.state.pos.to_array()), settings.0.radius, settings.0.height, false)),
+        _ if titan_alive => Some((
+            Vec3::from(titan.state.pos.to_array()),
+            settings.0.radius,
+            settings.0.height,
+            false,
+        )),
         _ => None,
     }
 }
@@ -619,10 +749,20 @@ impl Enemy {
     /// skips ahead to the furthest of the next few waypoints in a straight clear line. None
     /// without a mesh or route.
     fn route(&mut self, world: &Collision, goal: Vec3, dt: f32) -> Option<Vec2> {
-        let nav = if self.infantry { world.2.as_ref()? } else { world.1.as_ref()? };
-        let (eye_h, reach) = if self.infantry { (50.0, 60.0) } else { (150.0, 120.0) };
+        let nav = if self.infantry {
+            world.2.as_ref()?
+        } else {
+            world.1.as_ref()?
+        };
+        let (eye_h, reach) = if self.infantry {
+            (50.0, 60.0)
+        } else {
+            (150.0, 120.0)
+        };
         self.path_age += dt;
-        let moved = self.path_goal.is_none_or(|g| g.truncate().distance(goal.truncate()) > 200.0);
+        let moved = self
+            .path_goal
+            .is_none_or(|g| g.truncate().distance(goal.truncate()) > 200.0);
         // A failed search is not retried for a second (it is the expensive case).
         let retry = self.path.is_empty() && (self.path_goal.is_none() || self.path_age > 1.0);
         if retry || moved || self.path_age > 2.0 {
@@ -630,11 +770,23 @@ impl Enemy {
             self.path_goal = Some(goal);
             match nav.path(self.pos, goal) {
                 Some(p) => {
-                    log::debug!("route ({}): {} waypoints from {:.0} to {:.0}: {:?}", if self.infantry { "grunt" } else { "titan" }, p.len(), self.pos, goal, p.iter().take(6).map(|w| w.round()).collect::<Vec<_>>());
+                    log::debug!(
+                        "route ({}): {} waypoints from {:.0} to {:.0}: {:?}",
+                        if self.infantry { "grunt" } else { "titan" },
+                        p.len(),
+                        self.pos,
+                        goal,
+                        p.iter().take(6).map(|w| w.round()).collect::<Vec<_>>()
+                    );
                     self.path = p;
                 }
                 None => {
-                    log::debug!("route ({}): none from {:.0} to {:.0}", if self.infantry { "grunt" } else { "titan" }, self.pos, goal);
+                    log::debug!(
+                        "route ({}): none from {:.0} to {:.0}",
+                        if self.infantry { "grunt" } else { "titan" },
+                        self.pos,
+                        goal
+                    );
                     self.path.clear();
                     return None;
                 }
@@ -651,20 +803,36 @@ impl Enemy {
         // roof the whole route below is visible, and walking at it means walking into the
         // parapet.
         let eye = SVec3::new(self.pos.x, self.pos.y, self.pos.z + eye_h);
-        let knee = SVec3::new(self.pos.x, self.pos.y, self.pos.z + if self.infantry { 30.0 } else { 90.0 });
+        let knee = SVec3::new(
+            self.pos.x,
+            self.pos.y,
+            self.pos.z + if self.infantry { 30.0 } else { 90.0 },
+        );
         let clear = |to: Vec3| {
             let d = SVec3::new(to.x - self.pos.x, to.y - self.pos.y, 0.0);
             let len = d.length();
-            (to.z - self.pos.z).abs() <= reach && (len < 1.0 || (world.0.raycast(eye, d / len, len).is_none() && world.0.raycast(knee, d / len, len).is_none()))
+            (to.z - self.pos.z).abs() <= reach
+                && (len < 1.0
+                    || (world.0.raycast(eye, d / len, len).is_none()
+                        && world.0.raycast(knee, d / len, len).is_none()))
         };
         // After walking into something, follow the waypoints one by one for a while.
         self.no_skip = (self.no_skip - dt).max(0.0);
-        let look = if self.no_skip > 0.0 { 1 } else { self.path.len().min(4) };
+        let look = if self.no_skip > 0.0 {
+            1
+        } else {
+            self.path.len().min(4)
+        };
         if let Some(k) = (1..look).rev().find(|&k| clear(self.path[k])) {
             self.path.drain(..k);
         }
         let next = *self.path.first()?;
-        log::trace!("route: at {:.0} heading for {:.0} ({} left)", self.pos, next, self.path.len());
+        log::trace!(
+            "route: at {:.0} heading for {:.0} ({} left)",
+            self.pos,
+            next,
+            self.path.len()
+        );
         Some((next - self.pos).truncate().normalize_or_zero())
     }
 }
@@ -705,12 +873,33 @@ pub fn update_enemies(
     rodeo: Res<crate::rodeo::Rodeo>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    let Ok((titan, mut bt_health, mut core)) = player.single_mut() else { return };
-    let Ok((pilot, mut pilot_health)) = pilots.single_mut() else { return };
-    let target = player_target(*control, titan, bt_health.dead_for.is_none(), pilot, &settings);
+    let Ok((titan, mut bt_health, mut core)) = player.single_mut() else {
+        return;
+    };
+    let Ok((pilot, mut pilot_health)) = pilots.single_mut() else {
+        return;
+    };
+    let target = player_target(
+        *control,
+        titan,
+        bt_health.dead_for.is_none(),
+        pilot,
+        &settings,
+    );
     // On foot, BT fights too (autotitan.rs): an enemy nearer to him than to you takes him on.
-    let bt_target = (*control == Control::Pilot && bt_health.dead_for.is_none()).then(|| (Vec3::from(titan.state.pos.to_array()), settings.0.radius, settings.0.height, false));
-    let positions: Vec<(Entity, Vec3, bool)> = enemies.iter().filter(|(_, e, _, _)| e.alive()).map(|(id, e, _, _)| (id, e.pos, e.infantry)).collect();
+    let bt_target = (*control == Control::Pilot && bt_health.dead_for.is_none()).then(|| {
+        (
+            Vec3::from(titan.state.pos.to_array()),
+            settings.0.radius,
+            settings.0.height,
+            false,
+        )
+    });
+    let positions: Vec<(Entity, Vec3, bool)> = enemies
+        .iter()
+        .filter(|(_, e, _, _)| e.alive())
+        .map(|(id, e, _, _)| (id, e.pos, e.infantry))
+        .collect();
     // Enemy Titans get worse while the player's Titan is doomed (OnTitanDoomed).
     let mut proficiency = difficulty.titan_proficiency();
     if *control != Control::Pilot && bt_health.v.doomed.is_some() {
@@ -723,11 +912,35 @@ pub fn update_enemies(
     // them, which change BT, the Pilot and the command queue, run one enemy at a time in order.
     // Anything else here that touches what an attack changes waits for the earlier enemies'
     // attacks first (`flush!`), so everything happens as it would one enemy at a time.
-    let cx = MoveCx { dt, kits: &kits, world: &world, status: &status, rodeo: &rodeo, target, bt_target, positions: &positions, difficulty: &difficulty, fx: &fx, pilot, proficiency, cone0, focus_time };
+    let cx = MoveCx {
+        dt,
+        kits: &kits,
+        world: &world,
+        status: &status,
+        rodeo: &rodeo,
+        target,
+        bt_target,
+        positions: &positions,
+        difficulty: &difficulty,
+        fx: &fx,
+        pilot,
+        proficiency,
+        cone0,
+        focus_time,
+    };
     let mut pending = Vec::new();
     macro_rules! flush {
         () => {
-            flush_moves(&mut pending, &cx, &mut commands, &mut actors, &mut damage_from, &mut pilot_health, &mut bt_health, &mut core)
+            flush_moves(
+                &mut pending,
+                &cx,
+                &mut commands,
+                &mut actors,
+                &mut damage_from,
+                &mut pilot_health,
+                &mut bt_health,
+                &mut core,
+            )
         };
     }
     for (id, mut e, mut tf, mut vis) in &mut enemies {
@@ -762,7 +975,10 @@ pub fn update_enemies(
         if e.infantry && e.alive() {
             let tp = Vec3::from(titan.state.pos.to_array());
             let moving = Vec2::new(titan.state.vel.x, titan.state.vel.y).length() > 40.0;
-            if moving && (tp - e.pos).truncate().length() < settings.0.radius + e.radius + 10.0 && (e.pos.z - tp.z).abs() < 100.0 {
+            if moving
+                && (tp - e.pos).truncate().length() < settings.0.radius + e.radius + 10.0
+                && (e.pos.z - tp.z).abs() < 100.0
+            {
                 // Whether BT is still alive depends on the earlier enemies' attacks.
                 flush!();
                 if bt_health.dead_for.is_none() {
@@ -839,7 +1055,22 @@ fn flush_moves(
     if pending.is_empty() {
         return;
     }
-    let MoveCx { dt, kits, world, status, rodeo, target, bt_target, positions, difficulty, fx, pilot, proficiency, cone0, focus_time } = *cx;
+    let MoveCx {
+        dt,
+        kits,
+        world,
+        status,
+        rodeo,
+        target,
+        bt_target,
+        positions,
+        difficulty,
+        fx,
+        pilot,
+        proficiency,
+        cone0,
+        focus_time,
+    } = *cx;
     let decide = |id: Entity, e: &mut Enemy, static_titan: bool| {
         let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
         let params = &kit.params;
@@ -856,12 +1087,17 @@ fn flush_moves(
         }
 
         // --- Decide movement ---
-        let mut input = TitanInput { yaw: e.state.yaw, ..Default::default() };
+        let mut input = TitanInput {
+            yaw: e.state.yaw,
+            ..Default::default()
+        };
         if let Some((tpos, _, _, _)) = target {
             let to = tpos - e.pos;
             let dist = to.truncate().length();
             let want_yaw = to.y.atan2(to.x);
-            let diff = (want_yaw - e.state.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            let diff = (want_yaw - e.state.yaw + std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
             input.yaw = e.state.yaw + diff.clamp(-2.0 * dt, 2.0 * dt);
             input.pitch = -(to.z + 60.0).atan2(dist.max(1.0));
             e.strafe_timer -= dt;
@@ -879,13 +1115,21 @@ fn flush_moves(
                     e.replan = 2.5;
                 }
                 if let Some(g) = e.goal {
-                    want = e.route(&world, g, dt).unwrap_or_else(|| (g - e.pos).truncate().normalize_or_zero());
+                    want = e
+                        .route(&world, g, dt)
+                        .unwrap_or_else(|| (g - e.pos).truncate().normalize_or_zero());
                 }
             } else {
                 e.goal = None;
                 let mut towards = to.truncate().normalize_or_zero();
                 let stop = kit.chase_stop_dist.max(kit.circle_strafe_dist);
-                let radial = if dist > stop * 1.5 { 1.0 } else if dist < w.npc_min_engage_titan.max(kit.melee_range * 2.0) { -1.0 } else { 0.0 };
+                let radial = if dist > stop * 1.5 {
+                    1.0
+                } else if dist < w.npc_min_engage_titan.max(kit.melee_range * 2.0) {
+                    -1.0
+                } else {
+                    0.0
+                };
                 // Closing in follows the navmesh (ledges, buildings); the rest steers directly.
                 if radial > 0.0 {
                     if let Some(d) = e.route(&world, tpos, dt) {
@@ -896,7 +1140,11 @@ fn flush_moves(
                 }
                 let side = Vec2::new(towards.y, -towards.x) * e.strafe;
                 // Titans circle-strafe; grunts hold their spot and shoot (no cover use yet).
-                let circle = if dist < stop * 2.0 && !e.infantry { 0.8 } else { 0.0 };
+                let circle = if dist < stop * 2.0 && !e.infantry {
+                    0.8
+                } else {
+                    0.0
+                };
                 want = towards * radial + side * circle;
             }
             if want != Vec2::ZERO {
@@ -907,31 +1155,95 @@ fn flush_moves(
                 input.right = dir.dot(r);
                 // Walking into something: strafe the other way instead of standing there.
                 let speed = Vec2::new(e.state.vel.x, e.state.vel.y).length();
-                e.stuck = if speed < 40.0 && e.state.on_ground && !e.infantry { e.stuck + dt } else { 0.0 };
+                e.stuck = if speed < 40.0 && e.state.on_ground && !e.infantry {
+                    e.stuck + dt
+                } else {
+                    0.0
+                };
                 if e.stuck > 0.6 {
                     e.stuck = 0.0;
                     e.strafe = -e.strafe;
                     e.strafe_timer = 2.0 + e.rand() * 3.0;
-                    log::debug!("{}: blocked at {:.0} heading {:?}, strafing the other way", kit.name, e.pos, e.path.first().map(|p| p.round()));
+                    log::debug!(
+                        "{}: blocked at {:.0} heading {:?}, strafing the other way",
+                        kit.name,
+                        e.pos,
+                        e.path.first().map(|p| p.round())
+                    );
                     if log::log_enabled!(log::Level::Trace) {
                         // What is in the way: hit distances towards the heading at several heights.
                         let d3 = Vec3::new(dir.x, dir.y, 0.0);
-                        let probes: Vec<(f32, Option<i32>)> = [10.0, 40.0, 70.0, 100.0, 150.0, 200.0]
-                            .iter()
-                            .map(|&h| (h, world.0.raycast(SVec3::from((e.pos + Vec3::Z * h).to_array()), SVec3::from(d3.to_array()), 300.0).map(|hit| hit.t as i32)))
-                            .collect();
-                        let ground = world.0.raycast(SVec3::from((e.pos + d3 * 100.0 + Vec3::Z * 100.0).to_array()), -SVec3::Z, 600.0).map(|h| h.point.z as i32);
+                        let probes: Vec<(f32, Option<i32>)> =
+                            [10.0, 40.0, 70.0, 100.0, 150.0, 200.0]
+                                .iter()
+                                .map(|&h| {
+                                    (
+                                        h,
+                                        world
+                                            .0
+                                            .raycast(
+                                                SVec3::from((e.pos + Vec3::Z * h).to_array()),
+                                                SVec3::from(d3.to_array()),
+                                                300.0,
+                                            )
+                                            .map(|hit| hit.t as i32),
+                                    )
+                                })
+                                .collect();
+                        let ground = world
+                            .0
+                            .raycast(
+                                SVec3::from((e.pos + d3 * 100.0 + Vec3::Z * 100.0).to_array()),
+                                -SVec3::Z,
+                                600.0,
+                            )
+                            .map(|h| h.point.z as i32);
                         let side = Vec3::new(-dir.y, dir.x, 0.0);
                         let sides: Vec<(f32, Option<i32>, Option<i32>)> = [40.0, 100.0, 150.0]
                             .iter()
                             .map(|&h| {
                                 let o = SVec3::from((e.pos + Vec3::Z * h).to_array());
-                                (h, world.0.raycast(o, SVec3::from(side.to_array()), 200.0).map(|hit| hit.t as i32), world.0.raycast(o, SVec3::from((-side).to_array()), 200.0).map(|hit| hit.t as i32))
+                                (
+                                    h,
+                                    world
+                                        .0
+                                        .raycast(o, SVec3::from(side.to_array()), 200.0)
+                                        .map(|hit| hit.t as i32),
+                                    world
+                                        .0
+                                        .raycast(o, SVec3::from((-side).to_array()), 200.0)
+                                        .map(|hit| hit.t as i32),
+                                )
                             })
                             .collect();
-                        let up = world.0.raycast(SVec3::from((e.pos + Vec3::Z * 5.0).to_array()), SVec3::Z, 400.0).map(|hit| hit.t as i32);
-                        let (lo, hi) = (params.step_height + params.radius, (params.height - params.radius).max(params.step_height + params.radius));
-                        let pushes: Vec<(f32, SVec3)> = [lo, (lo + hi) * 0.5, hi].iter().map(|&z| (z, world.0.push_sphere(SVec3::from((e.pos + Vec3::Z * z).to_array()), params.radius, 0.7).0)).collect();
+                        let up = world
+                            .0
+                            .raycast(
+                                SVec3::from((e.pos + Vec3::Z * 5.0).to_array()),
+                                SVec3::Z,
+                                400.0,
+                            )
+                            .map(|hit| hit.t as i32);
+                        let (lo, hi) = (
+                            params.step_height + params.radius,
+                            (params.height - params.radius).max(params.step_height + params.radius),
+                        );
+                        let pushes: Vec<(f32, SVec3)> = [lo, (lo + hi) * 0.5, hi]
+                            .iter()
+                            .map(|&z| {
+                                (
+                                    z,
+                                    world
+                                        .0
+                                        .push_sphere(
+                                            SVec3::from((e.pos + Vec3::Z * z).to_array()),
+                                            params.radius,
+                                            0.7,
+                                        )
+                                        .0,
+                                )
+                            })
+                            .collect();
                         log::trace!("{}: wanted {:?}; hits by height {:?}; ground 100 ahead at z {:?}; left/right hits {:?}; up hit {:?}; body pushes {:?}; vel {:?} on_ground {} input fwd {:.2} right {:.2} yaw {:.2}", kit.name, dir, probes, ground, sides, up, pushes, e.state.vel, e.state.on_ground, input.forward, input.right, input.yaw);
                     }
                     // Replan from here (once; a failed search waits a second) and stop cutting
@@ -947,7 +1259,9 @@ fn flush_moves(
             }
             // Dodge when the recent damage passes StrafeDodgeDamage, within the dodge budget.
             let recent: f32 = e.recent.iter().map(|r| r.1).sum();
-            if recent >= kit.strafe_dodge_damage && (e.dodges.len() as u32) < kit.max_dodge_per_period {
+            if recent >= kit.strafe_dodge_damage
+                && (e.dodges.len() as u32) < kit.max_dodge_per_period
+            {
                 input.dash = true;
                 e.dodges.push(0.0);
                 e.recent.clear();
@@ -992,7 +1306,10 @@ fn flush_moves(
             }
         })
     } else {
-        pending.iter_mut().map(|(id, e, _, static_titan)| decide(*id, &mut **e, *static_titan)).collect()
+        pending
+            .iter_mut()
+            .map(|(id, e, _, static_titan)| decide(*id, &mut **e, *static_titan))
+            .collect()
     };
     for ((_, mut e, mut tf, _), (target, at_decoy)) in pending.drain(..).zip(moves) {
         let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
@@ -1004,12 +1321,23 @@ fn flush_moves(
         animate_enemy(&mut actors, &mut e, dt, target.map(|t| t.0));
 
         // --- Melee (MeleeRange, meleeInterval, MeleeDamage*) ---
-        let Some((tpos, tr, th, is_pilot)) = target else { continue };
+        let Some((tpos, tr, th, is_pilot)) = target else {
+            continue;
+        };
         let reach = (tpos - e.pos).truncate().length() - tr - e.radius;
-        if reach < kit.melee_range && e.melee_cooldown <= 0.0 && (tpos.z - e.pos.z).abs() < e.height && !(is_pilot && status.phased()) && !at_decoy {
+        if reach < kit.melee_range
+            && e.melee_cooldown <= 0.0
+            && (tpos.z - e.pos.z).abs() < e.height
+            && !(is_pilot && status.phased())
+            && !at_decoy
+        {
             e.melee_cooldown = kit.melee_interval;
             damage_from.push(e.pos + Vec3::Z * 150.0);
-            let (lo, hi) = if is_pilot { kit.melee_damage } else { kit.melee_damage_heavy };
+            let (lo, hi) = if is_pilot {
+                kit.melee_damage
+            } else {
+                kit.melee_damage_heavy
+            };
             let dmg = (lo + (hi - lo) * e.rand()) * difficulty.damage_to_player();
             if is_pilot {
                 pilot_health.damage_capped(dmg, difficulty.max_pilot_damage_per_hit());
@@ -1032,13 +1360,21 @@ fn flush_moves(
             e.pos + Vec3::Z * 190.0 + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 110.0
         };
         let dist = (aim_at - muzzle).length();
-        let facing = (aim_at - muzzle).truncate().normalize_or_zero().dot(Vec2::new(yaw.cos(), yaw.sin())) > 0.95;
+        let facing = (aim_at - muzzle)
+            .truncate()
+            .normalize_or_zero()
+            .dot(Vec2::new(yaw.cos(), yaw.sin()))
+            > 0.95;
         // Cloak and Phase Shift hide the Pilot.
         let hidden = is_pilot && !at_decoy && !status.visible_at(dist);
         let los = !hidden
             && world
                 .0
-                .raycast(SVec3::from(muzzle.to_array()), SVec3::from((aim_at - muzzle).normalize().to_array()), dist - tr)
+                .raycast(
+                    SVec3::from(muzzle.to_array()),
+                    SVec3::from((aim_at - muzzle).normalize().to_array()),
+                    dist - tr,
+                )
                 .is_none();
         if los {
             e.blind = 0.0;
@@ -1055,7 +1391,10 @@ fn flush_moves(
                 e.defense_left -= dt;
                 if let Some(fx_e) = e.defense_fx {
                     let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-                    commands.entity(fx_e).insert(Transform::from_translation(to_bevy(defense_fx_spot(d.kind, shield_spot))).looking_to(to_bevy(facing).normalize(), Vec3::Y));
+                    commands.entity(fx_e).insert(
+                        Transform::from_translation(to_bevy(defense_fx_spot(d.kind, shield_spot)))
+                            .looking_to(to_bevy(facing).normalize(), Vec3::Y),
+                    );
                     // The shield colour in control point 1 (fxuber::shield_color): the Vortex's
                     // by how much of its hold is spent, the Gun Shield's by its health.
                     let spent = match d.kind {
@@ -1064,7 +1403,9 @@ fn flush_moves(
                         _ => None,
                     };
                     if let Some(f) = spent {
-                        commands.entity(fx_e).insert(crate::pfx::PfxColor(crate::fxuber::shield_color(f)));
+                        commands
+                            .entity(fx_e)
+                            .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(f)));
                     }
                 }
                 if d.kind == DefenseKind::Heat {
@@ -1073,11 +1414,19 @@ fn flush_moves(
                     if e.burn_timer <= 0.0 {
                         e.burn_timer += 1.0 / HEAT_RATE;
                         let to = aim_at - muzzle;
-                        let close = to.truncate().length() - tr < HEAT_RANGE && to.truncate().normalize_or_zero().dot(Vec2::new(yaw.cos(), yaw.sin())) > 60f32.to_radians().cos();
+                        let close = to.truncate().length() - tr < HEAT_RANGE
+                            && to
+                                .truncate()
+                                .normalize_or_zero()
+                                .dot(Vec2::new(yaw.cos(), yaw.sin()))
+                                > 60f32.to_radians().cos();
                         if close && !(is_pilot && status.phased()) {
                             damage_from.push(e.pos + Vec3::Z * 150.0);
                             if is_pilot {
-                                pilot_health.damage_capped(HEAT_PILOT * scale, difficulty.max_pilot_damage_per_hit());
+                                pilot_health.damage_capped(
+                                    HEAT_PILOT * scale,
+                                    difficulty.max_pilot_damage_per_hit(),
+                                );
                             } else {
                                 let hit = bt_health.damage_from(HEAT_TITAN * scale, true, e.pos);
                                 if let Some(c) = core.as_mut() {
@@ -1088,7 +1437,8 @@ fn flush_moves(
                     }
                 }
                 // Down: after its hold, or a Vortex once nothing has hit it for a second.
-                let drop_vortex = d.kind == DefenseKind::Vortex && e.since_hit > 1.0 && e.caught > 0;
+                let drop_vortex =
+                    d.kind == DefenseKind::Vortex && e.since_hit > 1.0 && e.caught > 0;
                 if e.defense_left <= 0.0 || drop_vortex {
                     e.defense_left = 0.0;
                     e.defense_cd = d.cooldown;
@@ -1099,12 +1449,29 @@ fn flush_moves(
                         // Throw every caught round back along the aim (35 / 140 each).
                         let n = e.caught;
                         e.caught = 0;
-                        crate::audio::event_at(&mut commands, if n > 0 { "vortex_1p_shield_throw" } else { "vortex_3p_shield_end_1" }, muzzle);
+                        crate::audio::event_at(
+                            &mut commands,
+                            if n > 0 {
+                                "vortex_1p_shield_throw"
+                            } else {
+                                "vortex_3p_shield_end_1"
+                            },
+                            muzzle,
+                        );
                         let dir0 = (aim_at - muzzle).normalize_or(Vec3::X);
                         for _ in 0..n {
-                            let jitter = Vec3::new(e.rand() - 0.5, e.rand() - 0.5, e.rand() - 0.5) * 0.08;
+                            let jitter =
+                                Vec3::new(e.rand() - 0.5, e.rand() - 0.5, e.rand() - 0.5) * 0.08;
                             let dir = (dir0 + jitter).normalize();
-                            spawn_bolt_dmg(&mut commands, &fx, muzzle + dir0 * 60.0, dir * BOLT_SPEED_NPC, 0.0, e.kit, Some((VORTEX_RETURN_PILOT, VORTEX_RETURN_TITAN)));
+                            spawn_bolt_dmg(
+                                &mut commands,
+                                &fx,
+                                muzzle + dir0 * 60.0,
+                                dir * BOLT_SPEED_NPC,
+                                0.0,
+                                e.kit,
+                                Some((VORTEX_RETURN_PILOT, VORTEX_RETURN_TITAN)),
+                            );
                         }
                         log::info!("enemy vortex threw back {n} rounds");
                     }
@@ -1129,7 +1496,11 @@ fn flush_moves(
                         // cooldown starts now.
                         let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
                         let wall = crate::titankit::ParticleWall::enemy(e.pos, facing);
-                        commands.spawn((Transform::from_translation(to_bevy(e.pos)), Visibility::default(), wall));
+                        commands.spawn((
+                            Transform::from_translation(to_bevy(e.pos)),
+                            Visibility::default(),
+                            wall,
+                        ));
                         e.defense_left = 0.0;
                         e.defense_cd = d.cooldown;
                     }
@@ -1147,8 +1518,18 @@ fn flush_moves(
                     let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
                     match system {
                         Some(name) if std::env::var_os("TF_OLD_FX").is_none() => {
-                            let tf = Transform::from_translation(to_bevy(defense_fx_spot(d.kind, shield_spot))).looking_to(to_bevy(facing).normalize(), Vec3::Y);
-                            let fx_e = commands.spawn((tf, Visibility::default(), crate::pfx::PfxTrail::oriented(name))).id();
+                            let tf = Transform::from_translation(to_bevy(defense_fx_spot(
+                                d.kind,
+                                shield_spot,
+                            )))
+                            .looking_to(to_bevy(facing).normalize(), Vec3::Y);
+                            let fx_e = commands
+                                .spawn((
+                                    tf,
+                                    Visibility::default(),
+                                    crate::pfx::PfxTrail::oriented(name),
+                                ))
+                                .id();
                             // The dome is the system's own model now (fxuber.rs); TF_OLD_SHIELDS
                             // keeps the translucent disc that stood in for it.
                             let old = std::env::var_os("TF_OLD_SHIELDS").is_some();
@@ -1159,30 +1540,60 @@ fn flush_moves(
                                 _ => None,
                             };
                             if let Some((m, mat)) = disc {
-                                let c = commands.spawn((Mesh3d(m.clone()), MeshMaterial3d(mat.clone()), Transform::IDENTITY, crate::weapons::ShieldShimmer)).id();
+                                let c = commands
+                                    .spawn((
+                                        Mesh3d(m.clone()),
+                                        MeshMaterial3d(mat.clone()),
+                                        Transform::IDENTITY,
+                                        crate::weapons::ShieldShimmer,
+                                    ))
+                                    .id();
                                 commands.entity(fx_e).add_child(c);
                             }
                             e.defense_fx = Some(fx_e);
                         }
                         _ if size > 0.0 => {
-                            e.defense_fx = Some(commands.spawn((Transform::from_translation(to_bevy(shield_spot)), crate::particles::Glow::new(color, size, false))).id());
+                            e.defense_fx = Some(
+                                commands
+                                    .spawn((
+                                        Transform::from_translation(to_bevy(shield_spot)),
+                                        crate::particles::Glow::new(color, size, false),
+                                    ))
+                                    .id(),
+                            );
                         }
                         _ => {}
                     }
                     if d.kind == DefenseKind::Vortex {
-                        crate::audio::event_at(&mut commands, "vortex_3p_shield_start_1_long", muzzle);
+                        crate::audio::event_at(
+                            &mut commands,
+                            "vortex_3p_shield_start_1_long",
+                            muzzle,
+                        );
                     }
                     log::info!("enemy {} raises its {:?}", kit.name, d.kind);
                 }
             }
         }
         // Holding a Vortex or Thermal Shield means not firing; the Gun Shield and Block don't.
-        let holding = e.defense_left > 0.0 && matches!(kit.defense.map(|d| d.kind), Some(DefenseKind::Vortex | DefenseKind::Heat));
+        let holding = e.defense_left > 0.0
+            && matches!(
+                kit.defense.map(|d| d.kind),
+                Some(DefenseKind::Vortex | DefenseKind::Heat)
+            );
         let can_shoot = dist < w.npc_max_range && los && facing && !holding;
         e.ability_cd -= dt;
-        if let Some(ab) = kit.ability.as_ref().filter(|_| e.ability_cd <= 0.0 && e.burst_left == 0 && los && facing && dist < ab_range(kit) && !holding) {
+        if let Some(ab) = kit.ability.as_ref().filter(|_| {
+            e.ability_cd <= 0.0
+                && e.burst_left == 0
+                && los
+                && facing
+                && dist < ab_range(kit)
+                && !holding
+        }) {
             let aw = &ab.weapon;
-            e.ability_cd = aw.npc_rest_min + (aw.npc_rest_max - aw.npc_rest_min).max(0.0) * e.rand();
+            e.ability_cd =
+                aw.npc_rest_min + (aw.npc_rest_max - aw.npc_rest_min).max(0.0) * e.rand();
             if !ab.sound.is_empty() {
                 crate::audio::event_at(&mut commands, &ab.sound, muzzle);
             }
@@ -1203,10 +1614,21 @@ fn flush_moves(
                 continue;
             }
             for i in 0..ab.count {
-                let off = if ab.count > 1 { (i as f32 / (ab.count - 1) as f32 - 0.5) * ab.fan } else { 0.0 };
+                let off = if ab.count > 1 {
+                    (i as f32 / (ab.count - 1) as f32 - 0.5) * ab.fan
+                } else {
+                    0.0
+                };
                 let (s, c) = off.to_radians().sin_cos();
                 let d = Vec3::new(dir.x * c - dir.y * s, dir.x * s + dir.y * c, dir.z);
-                spawn_bolt(&mut commands, &fx, from, d * ab.speed, 0.0, e.kit + ABILITY_BOLT);
+                spawn_bolt(
+                    &mut commands,
+                    &fx,
+                    from,
+                    d * ab.speed,
+                    0.0,
+                    e.kit + ABILITY_BOLT,
+                );
             }
             continue;
         }
@@ -1214,12 +1636,18 @@ fn flush_moves(
             e.rest -= dt;
             if e.rest <= 0.0 && can_shoot {
                 let span = (w.npc_max_burst - w.npc_min_burst + 1) as f32;
-                e.burst_left = w.npc_min_burst + ((e.rand() * span) as u32).min(w.npc_max_burst - w.npc_min_burst);
+                e.burst_left = w.npc_min_burst
+                    + ((e.rand() * span) as u32).min(w.npc_max_burst - w.npc_min_burst);
                 e.shot_timer = 0.0;
                 // burst_or_looping_fire_sound_middle_npc, held for the length of the burst.
                 let length = e.burst_left as f32 / npc_fire_rate(w);
                 if kit.name == "ION" {
-                    commands.spawn(crate::audio::SoundCue { cue: Cue::SplitterBurst, at: Some(muzzle), delay: 0.0, duration: Some(length + 0.15) });
+                    commands.spawn(crate::audio::SoundCue {
+                        cue: Cue::SplitterBurst,
+                        at: Some(muzzle),
+                        delay: 0.0,
+                        duration: Some(length + 0.15),
+                    });
                 }
             }
             continue;
@@ -1249,35 +1677,80 @@ fn flush_moves(
             let up = side.cross(dir);
             // SPMP_Callback_ForceAIMissPlayer: fast Pilots are deliberately missed half the time.
             let miss = is_pilot && fast_pilot(pilot) && e.rand() >= FAST_PILOT_CHANCE_TO_HIT;
-            let extra = if miss { ((tr * 2.5) / dist.max(1.0)).atan() } else { 0.0 };
+            let extra = if miss {
+                ((tr * 2.5) / dist.max(1.0)).atan()
+            } else {
+                0.0
+            };
             dir = (dir + side * (r * a.cos() + extra) + up * r * a.sin()).normalize();
             if kit.infantry {
                 if !kit.fire_sound.is_empty() {
                     audio::event_at(&mut commands, &kit.fire_sound, muzzle);
                 }
             } else if kit.name != "ION" {
-                audio::cue(&mut commands, Cue::EnemyGun(kit.arsenal as u8), Some(muzzle));
+                audio::cue(
+                    &mut commands,
+                    Cue::EnemyGun(kit.arsenal as u8),
+                    Some(muzzle),
+                );
             }
             let energy = matches!(e.kit, 0 | 2);
-            crate::particles::emit(&mut commands, crate::particles::Effect::Muzzle { at: to_bevy(muzzle), dir: to_bevy(dir).normalize_or(Vec3::NEG_Z), scale: 3.0, energy });
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Muzzle {
+                    at: to_bevy(muzzle),
+                    dir: to_bevy(dir).normalize_or(Vec3::NEG_Z),
+                    scale: 3.0,
+                    energy,
+                },
+            );
             match kit.pellets {
                 Some((table, k)) => {
                     for o in table {
                         let d = (dir + up * o[0] * k + side * o[1] * k).normalize();
-                        spawn_bolt(&mut commands, &fx, muzzle, d * kit.projectile, kit.gravity, e.kit);
+                        spawn_bolt(
+                            &mut commands,
+                            &fx,
+                            muzzle,
+                            d * kit.projectile,
+                            kit.gravity,
+                            e.kit,
+                        );
                     }
                 }
-                None => spawn_bolt(&mut commands, &fx, muzzle, dir * kit.projectile, kit.gravity, e.kit),
+                None => spawn_bolt(
+                    &mut commands,
+                    &fx,
+                    muzzle,
+                    dir * kit.projectile,
+                    kit.gravity,
+                    e.kit,
+                ),
             }
         }
     }
 }
 
-fn spawn_bolt(commands: &mut Commands, fx: &FxAssets, pos: Vec3, vel: Vec3, gravity: f32, kit: usize) {
+fn spawn_bolt(
+    commands: &mut Commands,
+    fx: &FxAssets,
+    pos: Vec3,
+    vel: Vec3,
+    gravity: f32,
+    kit: usize,
+) {
     spawn_bolt_dmg(commands, fx, pos, vel, gravity, kit, None);
 }
 
-fn spawn_bolt_dmg(commands: &mut Commands, fx: &FxAssets, pos: Vec3, vel: Vec3, gravity: f32, kit: usize, dmg: Option<(f32, f32)>) {
+fn spawn_bolt_dmg(
+    commands: &mut Commands,
+    fx: &FxAssets,
+    pos: Vec3,
+    vel: Vec3,
+    gravity: f32,
+    kit: usize,
+    dmg: Option<(f32, f32)>,
+) {
     let _ = fx;
     // Per class (ENEMY_CLASSES order): Ion and Northstar fire energy, Scorch and Tone shells.
     let (color, size, smoke) = match kit {
@@ -1289,12 +1762,25 @@ fn spawn_bolt_dmg(commands: &mut Commands, fx: &FxAssets, pos: Vec3, vel: Vec3, 
         // Tracker Rockets, Power Shot.
         k if k == ABILITY_BOLT => (Vec3::new(8.0, 1.2, 0.6), 0.5, false),
         k if k == ABILITY_BOLT + 1 => (Vec3::new(8.0, 3.0, 0.5), 0.9, true),
-        k if k == ABILITY_BOLT + 2 || k == ABILITY_BOLT + 4 => (Vec3::new(6.0, 3.5, 1.5), 0.4, true),
+        k if k == ABILITY_BOLT + 2 || k == ABILITY_BOLT + 4 => {
+            (Vec3::new(6.0, 3.5, 1.5), 0.4, true)
+        }
         k if k == ABILITY_BOLT + 3 => (Vec3::new(2.5, 4.0, 8.0), 1.0, false),
         k if k == ABILITY_BOLT + 5 => (Vec3::new(8.0, 6.0, 3.0), 0.6, false),
         _ => (Vec3::new(5.0, 2.8, 1.0), 0.25, false),
     };
-    commands.spawn((Transform::from_translation(to_bevy(pos)), crate::particles::Glow::new(color, size, smoke), Bolt { pos, vel, travelled: 0.0, gravity, kit, dmg }));
+    commands.spawn((
+        Transform::from_translation(to_bevy(pos)),
+        crate::particles::Glow::new(color, size, smoke),
+        Bolt {
+            pos,
+            vel,
+            travelled: 0.0,
+            gravity,
+            kit,
+            dmg,
+        },
+    ));
 }
 
 /// Move Splitter Rifle bolts; they hit the world, the Vortex Shield (absorbed: the Splitter
@@ -1312,7 +1798,14 @@ pub fn update_bolts(
     settings: Res<TitanSettings>,
     _fx: Res<FxAssets>,
     mut bolts: Query<(Entity, &mut Bolt, &mut Transform)>,
-    mut player: Query<(Entity, &GlobalTransform, &PlayerTitan, &mut TitanHealth, &mut Vortex, Option<&mut TitanCore>)>,
+    mut player: Query<(
+        Entity,
+        &GlobalTransform,
+        &PlayerTitan,
+        &mut TitanHealth,
+        &mut Vortex,
+        Option<&mut TitanCore>,
+    )>,
     mut pilots: Query<(&PlayerPilot, &mut PilotHealth)>,
     mut damage_from: ResMut<crate::hud::DamageFrom>,
     status: Res<crate::pilotability::PilotStatus>,
@@ -1321,11 +1814,26 @@ pub fn update_bolts(
     mut shields: ResMut<crate::pilotability::Shields>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    let Ok((bt_entity, bt_gt, titan, mut bt_health, mut vortex, mut core)) = player.single_mut() else { return };
-    let Ok((pilot, mut pilot_health)) = pilots.single_mut() else { return };
-    let target = player_target(*control, titan, bt_health.dead_for.is_none(), pilot, &settings);
+    let Ok((bt_entity, bt_gt, titan, mut bt_health, mut vortex, mut core)) = player.single_mut()
+    else {
+        return;
+    };
+    let Ok((pilot, mut pilot_health)) = pilots.single_mut() else {
+        return;
+    };
+    let target = player_target(
+        *control,
+        titan,
+        bt_health.dead_for.is_none(),
+        pilot,
+        &settings,
+    );
     let eye = Vec3::from(titan.state.eye(&settings.0).to_array());
-    let view = Vec3::new(titan.state.pitch.cos() * titan.state.yaw.cos(), titan.state.pitch.cos() * titan.state.yaw.sin(), -titan.state.pitch.sin());
+    let view = Vec3::new(
+        titan.state.pitch.cos() * titan.state.yaw.cos(),
+        titan.state.pitch.cos() * titan.state.yaw.sin(),
+        -titan.state.pitch.sin(),
+    );
     for (id, mut b, mut tf) in &mut bolts {
         let k = &kits.0[(b.kit % ABILITY_BOLT).min(kits.0.len() - 1)];
         let w = match (&k.ability, b.kit >= ABILITY_BOLT) {
@@ -1349,13 +1857,18 @@ pub fn update_bolts(
             Shield(usize),
         }
         let mut struck = Struck::Nothing;
-        if let Some(h) = world.0.raycast(SVec3::from(b.pos.to_array()), SVec3::from(dir.to_array()), len) {
+        if let Some(h) = world.0.raycast(
+            SVec3::from(b.pos.to_array()),
+            SVec3::from(dir.to_array()),
+            len,
+        ) {
             t_end = h.t;
             struck = Struck::World;
         }
         if vortex.active && *control != Control::Pilot {
             // Ray against the vortex sphere around BT's eye, from the front cone only.
-            let facing = -dir.dot(view) >= (crate::combat::VORTEX_BULLET_FOV * 0.5).to_radians().cos();
+            let facing =
+                -dir.dot(view) >= (crate::combat::VORTEX_BULLET_FOV * 0.5).to_radians().cos();
             let oc = b.pos - eye;
             let half_b = oc.dot(dir);
             let r = vortex.sphere_radius();
@@ -1380,9 +1893,24 @@ pub fn update_bolts(
         // A-Walls stop enemy rounds and take their damage.
         if let Some((i, t)) = shields.block(b.pos, dir, t_end) {
             let at = b.pos + dir * t;
-            shields.0[i].health -= falloff(b.travelled + t, w.npc_damage_near_pilot, w.npc_damage_far_pilot).max(1.0);
+            shields.0[i].health -= falloff(
+                b.travelled + t,
+                w.npc_damage_near_pilot,
+                w.npc_damage_far_pilot,
+            )
+            .max(1.0);
             commands.entity(id).despawn();
-            crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: to_bevy(at), normal: -to_bevy(dir), table: w.impact_table, surface: crate::particles::Surface::Shield, victim: false, scale: 1.0 });
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Hit {
+                    at: to_bevy(at),
+                    normal: -to_bevy(dir),
+                    table: w.impact_table,
+                    surface: crate::particles::Surface::Shield,
+                    victim: false,
+                    scale: 1.0,
+                },
+            );
             continue;
         }
         // BT's Particle Wall and Gun Shield stop rounds from the front.
@@ -1403,16 +1931,41 @@ pub fn update_bolts(
         commands.entity(id).despawn();
         if let Struck::Shield(i) = struck {
             log::debug!("shield {i} stopped a round at {at:.0}");
-            walls.absorbed.push((i, falloff(b.travelled, w.npc_damage_near, w.npc_damage_far)));
-            crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: to_bevy(at), normal: -to_bevy(dir).normalize_or(Vec3::Y), table: w.impact_table, surface: crate::particles::Surface::Shield, victim: false, scale: 1.0 });
+            walls
+                .absorbed
+                .push((i, falloff(b.travelled, w.npc_damage_near, w.npc_damage_far)));
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Hit {
+                    at: to_bevy(at),
+                    normal: -to_bevy(dir).normalize_or(Vec3::Y),
+                    table: w.impact_table,
+                    surface: crate::particles::Surface::Shield,
+                    victim: false,
+                    scale: 1.0,
+                },
+            );
             continue;
         }
         if matches!(struck, Struck::Vortex) && vortex.mode == crate::combat::VortexMode::Heat {
             // The Thermal Shield destroys rounds instead of holding them
             // (OnWeaponVortexHitBullet/Projectile_titanweapon_heat_shield ->
             // Vortex_SpawnHeatShieldPingFX: P_wpn_HeatShield_impact for 0.25 s and a stop sound).
-            crate::pfx::emit_named_cps(&mut commands, "P_wpn_HeatShield_impact", &[crate::pfx::Cp::facing(at, -dir)], Some(0.25));
-            audio::event_at(&mut commands, if k.projectile >= 30000.0 { "heat_shield_stop_bullet" } else { "heat_shield_stop_projectile" }, at);
+            crate::pfx::emit_named_cps(
+                &mut commands,
+                "P_wpn_HeatShield_impact",
+                &[crate::pfx::Cp::facing(at, -dir)],
+                Some(0.25),
+            );
+            audio::event_at(
+                &mut commands,
+                if k.projectile >= 30000.0 {
+                    "heat_shield_stop_bullet"
+                } else {
+                    "heat_shield_stop_projectile"
+                },
+                at,
+            );
             continue;
         }
         if matches!(struck, Struck::Vortex) {
@@ -1429,12 +1982,20 @@ pub fn update_bolts(
             // played where it hit, parented to BT, with control point 1 at the bullet
             // collection point; the owner sees vortex_absorb_effect, everyone else the third
             // person one.
-            let name = if *mode == crate::player::CameraMode::Cockpit { &w.vortex_fx.0 } else { &w.vortex_fx.1 };
+            let name = if *mode == crate::player::CameraMode::Cockpit {
+                &w.vortex_fx.0
+            } else {
+                &w.vortex_fx.1
+            };
             let local = bt_gt.affine().inverse().transform_point3(to_bevy(at));
             commands.entity(bt_entity).with_child((
                 Transform::from_translation(local),
                 crate::pfx::PfxTrail::new(name),
-                crate::pfx::PfxBeamEnd(to_bevy(crate::combat::vortex_collection_point(eye, titan.state.yaw, titan.state.pitch))),
+                crate::pfx::PfxBeamEnd(to_bevy(crate::combat::vortex_collection_point(
+                    eye,
+                    titan.state.yaw,
+                    titan.state.pitch,
+                ))),
                 crate::combat::VortexCaughtFx,
             ));
             continue;
@@ -1446,13 +2007,23 @@ pub fn update_bolts(
         }
         match target {
             Some((_, _, _, false)) => {
-                let mut dmg = if matches!(struck, Struck::Player) { b.dmg.map_or(falloff(b.travelled, w.npc_damage_near, w.npc_damage_far), |d| d.1) } else { 0.0 };
+                let mut dmg = if matches!(struck, Struck::Player) {
+                    b.dmg.map_or(
+                        falloff(b.travelled, w.npc_damage_near, w.npc_damage_far),
+                        |d| d.1,
+                    )
+                } else {
+                    0.0
+                };
                 // Splash against heavy armour (Scorch's thermite, Tone's grenades).
                 if w.npc_explosion_damage_heavy > 0.0 && w.explosion_radius > 0.0 {
                     let (tpos, _, th, _) = target.unwrap();
                     let d = at.distance(tpos + Vec3::Z * th * 0.5) - 100.0;
                     if d < w.explosion_radius {
-                        let k = 1.0 - ((d - w.explosion_inner_radius) / (w.explosion_radius - w.explosion_inner_radius).max(1.0)).clamp(0.0, 1.0);
+                        let k = 1.0
+                            - ((d - w.explosion_inner_radius)
+                                / (w.explosion_radius - w.explosion_inner_radius).max(1.0))
+                            .clamp(0.0, 1.0);
                         dmg += w.npc_explosion_damage_heavy * k;
                     }
                 }
@@ -1460,8 +2031,15 @@ pub fn update_bolts(
                     continue;
                 }
                 let dmg = dmg * scale;
-                let hit = bt_health.damage_from(dmg, w.stops_regen, at - b.vel.normalize_or_zero() * 3000.0);
-                log::debug!("BT hit by a round for {dmg:.0} at {at:.0} from {:.0}", at - b.vel.normalize_or_zero() * b.travelled);
+                let hit = bt_health.damage_from(
+                    dmg,
+                    w.stops_regen,
+                    at - b.vel.normalize_or_zero() * 3000.0,
+                );
+                log::debug!(
+                    "BT hit by a round for {dmg:.0} at {at:.0} from {:.0}",
+                    at - b.vel.normalize_or_zero() * b.travelled
+                );
                 if bt_health.block < 1.0 && hit.dealt < dmg * 0.99 {
                     log::debug!("sword block: {dmg:.0} -> {:.0}", hit.dealt);
                 }
@@ -1475,12 +2053,18 @@ pub fn update_bolts(
             Some((tpos, _, th, true)) if !status.phased() => {
                 let mut dmg = 0.0;
                 if matches!(struck, Struck::Player) {
-                    dmg += b.dmg.map_or(falloff(b.travelled, w.npc_damage_near_pilot, w.npc_damage_far_pilot), |d| d.0);
+                    dmg += b.dmg.map_or(
+                        falloff(b.travelled, w.npc_damage_near_pilot, w.npc_damage_far_pilot),
+                        |d| d.0,
+                    );
                 }
                 // Explosion splash: full inside the inner radius, linear to the edge.
                 let d = at.distance(tpos + Vec3::Z * th * 0.5);
                 if w.explosion_damage > 0.0 && d < w.explosion_radius {
-                    let k = 1.0 - ((d - w.explosion_inner_radius) / (w.explosion_radius - w.explosion_inner_radius).max(1.0)).clamp(0.0, 1.0);
+                    let k = 1.0
+                        - ((d - w.explosion_inner_radius)
+                            / (w.explosion_radius - w.explosion_inner_radius).max(1.0))
+                        .clamp(0.0, 1.0);
                     dmg += w.explosion_damage * k;
                 }
                 if dmg > 0.0 {
@@ -1492,15 +2076,27 @@ pub fn update_bolts(
         let effect = match b.kit {
             // Scorch's thermite bursts; everything else plays its impact table (Tone's 40mm
             // has its own blast systems there).
-            1 => crate::particles::Effect::Explosion { at: to_bevy(at), scale: 0.8 },
+            1 => crate::particles::Effect::Explosion {
+                at: to_bevy(at),
+                scale: 0.8,
+            },
             _ => {
                 // What it struck: the player's Titan hull, the Pilot, or the level.
                 let (surface, victim) = match (&struck, target) {
-                    (Struck::Player, Some((_, _, _, true))) => (crate::particles::Surface::Flesh, true),
+                    (Struck::Player, Some((_, _, _, true))) => {
+                        (crate::particles::Surface::Flesh, true)
+                    }
                     (Struck::Player, _) => (crate::particles::Surface::Titan, true),
                     _ => (crate::particles::Surface::World, false),
                 };
-                crate::particles::Effect::Hit { at: to_bevy(at), normal: -dir_b(b.vel), table: w.impact_table, surface, victim, scale: 1.6 }
+                crate::particles::Effect::Hit {
+                    at: to_bevy(at),
+                    normal: -dir_b(b.vel),
+                    table: w.impact_table,
+                    surface,
+                    victim,
+                    scale: 1.6,
+                }
             }
         };
         crate::particles::emit(&mut commands, effect);
@@ -1519,14 +2115,28 @@ fn flank_point(world: &Collision, from: Vec3, target: Vec3) -> Option<Vec3> {
         let a = k as f32 / 16.0 * std::f32::consts::TAU;
         for r in [1200.0f32, 1700.0] {
             let p = target + Vec3::new(a.cos(), a.sin(), 0.0) * r;
-            let Some(ground) = world.0.raycast(SVec3::new(p.x, p.y, p.z + 500.0), -SVec3::Z, 1200.0) else { continue };
+            let Some(ground) =
+                world
+                    .0
+                    .raycast(SVec3::new(p.x, p.y, p.z + 500.0), -SVec3::Z, 1200.0)
+            else {
+                continue;
+            };
             let p = Vec3::new(p.x, p.y, ground.point.z);
             if (p.z - target.z).abs() > 400.0 {
                 continue;
             }
             let from_p = p + Vec3::Z * 200.0;
             let d = eye - from_p;
-            if world.0.raycast(SVec3::from(from_p.to_array()), SVec3::from(d.normalize().to_array()), d.length() - 40.0).is_some() {
+            if world
+                .0
+                .raycast(
+                    SVec3::from(from_p.to_array()),
+                    SVec3::from(d.normalize().to_array()),
+                    d.length() - 40.0,
+                )
+                .is_some()
+            {
                 continue;
             }
             let cost = p.distance(from);
@@ -1540,7 +2150,16 @@ fn flank_point(world: &Collision, from: Vec3, target: Vec3) -> Option<Vec3> {
 
 /// How far a class uses its ability: the ability script's npc_max_range when it has one.
 fn ab_range(kit: &EnemyKit) -> f32 {
-    kit.ability.as_ref().map(|a| if a.weapon.npc_max_range > 0.0 { a.weapon.npc_max_range } else { kit.weapon.npc_max_range }).unwrap_or(0.0)
+    kit.ability
+        .as_ref()
+        .map(|a| {
+            if a.weapon.npc_max_range > 0.0 {
+                a.weapon.npc_max_range
+            } else {
+                kit.weapon.npc_max_range
+            }
+        })
+        .unwrap_or(0.0)
 }
 
 /// NPCs fire at most one shot per server frame (10 Hz); the scripts' npc_damage values make up
@@ -1577,7 +2196,9 @@ pub fn steer(world: &Collision, pos: Vec3, want: Vec2) -> Vec2 {
 }
 
 fn animate_enemy(actors: &mut Query<&mut Actor>, e: &mut Enemy, dt: f32, target: Option<Vec3>) {
-    let Ok(mut actor) = actors.get_mut(e.actor) else { return };
+    let Ok(mut actor) = actors.get_mut(e.actor) else {
+        return;
+    };
     actor.autoplay = false;
     // Footsteps and servos from the walk cycle's typed sound events, heard where the Titan is.
     actor.event_sounds = e.sound_type.is_some();
@@ -1592,7 +2213,11 @@ fn animate_enemy(actors: &mut Query<&mut Actor>, e: &mut Enemy, dt: f32, target:
     let idle = actor.clip(e.clips[0]).or_else(|| actor.clip("at_IDLE_2"));
     let walk_f = actor.clip(e.clips[1]);
     let walk_b = actor.clip(e.clips[2]);
-    let walk = if forward_speed < -20.0 { walk_b } else { walk_f };
+    let walk = if forward_speed < -20.0 {
+        walk_b
+    } else {
+        walk_f
+    };
     if let Some(c) = walk {
         let clip = &actor.clips[c];
         let stride = (clip.ground_speed * clip.duration).max(1.0);
@@ -1603,24 +2228,46 @@ fn animate_enemy(actors: &mut Query<&mut Actor>, e: &mut Enemy, dt: f32, target:
     }
     let mut layers = Vec::new();
     if let Some(c) = idle {
-        layers.push(Layer { clip: c, cycle: e.idle_cycle, weight: 1.0 - moving });
+        layers.push(Layer {
+            clip: c,
+            cycle: e.idle_cycle,
+            weight: 1.0 - moving,
+        });
     }
     if let Some(c) = walk {
-        layers.push(Layer { clip: c, cycle: e.move_cycle, weight: moving.max(1e-3) });
+        layers.push(Layer {
+            clip: c,
+            cycle: e.move_cycle,
+            weight: moving.max(1e-3),
+        });
     }
     actor.layers = layers;
     let pitch = target.map(|t| {
         let to = t - e.pos;
-        (to.z + 60.0).atan2(to.truncate().length().max(1.0)).to_degrees()
+        (to.z + 60.0)
+            .atan2(to.truncate().length().max(1.0))
+            .to_degrees()
     });
     let grid = e.aim_grids[(moving > 0.5) as usize];
-    actor.aim = Some(Aim { grid: grid.into(), yaw: 0.0, pitch: pitch.unwrap_or(0.0), weight: 1.0 });
+    actor.aim = Some(Aim {
+        grid: grid.into(),
+        yaw: 0.0,
+        pitch: pitch.unwrap_or(0.0),
+        weight: 1.0,
+    });
 }
 
 const ENEMY_DROP_ANIM: &str = "at_hotdrop_drop_2knee_turbo";
 const ENEMY_STAND_ANIM: &str = "at_hotdrop_quickstand";
 
-fn enemy_titanfall(commands: &mut Commands, actors: &mut Query<&mut Actor>, e: &mut Enemy, tf: &mut Transform, vis: &mut Visibility, dt: f32) {
+fn enemy_titanfall(
+    commands: &mut Commands,
+    actors: &mut Query<&mut Actor>,
+    e: &mut Enemy,
+    tf: &mut Transform,
+    vis: &mut Visibility,
+    dt: f32,
+) {
     let Ok(mut actor) = actors.get_mut(e.actor) else {
         e.drop = None;
         e.stand = None;
@@ -1643,22 +2290,40 @@ fn enemy_titanfall(commands: &mut Commands, actors: &mut Query<&mut Actor>, e: &
         let clip = &actor.clips[c];
         let total = clip.movement.last().copied().unwrap_or_default();
         let n = clip.movement.len().max(2);
-        let hit = clip.movement.iter().position(|m| m[2] <= total[2] + 2.0).unwrap_or(n - 1);
+        let hit = clip
+            .movement
+            .iter()
+            .position(|m| m[2] <= total[2] + 2.0)
+            .unwrap_or(n - 1);
         let impact = hit as f32 / (n - 1) as f32 * clip.duration;
         let duration = clip.duration;
         // Join the drop for its last two seconds before impact (the rest is high in the sky).
         let t = if e.landed { t } else { t.max(impact - 2.0) };
         let now = clip.movement_at(t).unwrap_or(total);
-        tf.translation = e.pos + rot * Vec3::new(now[0] - total[0], now[1] - total[1], now[2] - total[2]);
-        actor.layers = vec![Layer { clip: c, cycle: (t / duration.max(1e-3)).min(0.999), weight: 1.0 }];
+        tf.translation =
+            e.pos + rot * Vec3::new(now[0] - total[0], now[1] - total[1], now[2] - total[2]);
+        actor.layers = vec![Layer {
+            clip: c,
+            cycle: (t / duration.max(1e-3)).min(0.999),
+            weight: 1.0,
+        }];
         actor.aim = None;
         if !e.landed && t >= impact {
             e.landed = true;
             log::debug!("enemy titanfall impact at {:.0?} after {t:.2}s", e.pos);
             audio::cue(commands, Cue::TitanLand, Some(e.pos));
             let b = to_bevy(e.pos);
-            crate::particles::emit(commands, crate::particles::Effect::Explosion { at: b, scale: 0.8 });
-            crate::particles::emit(commands, crate::particles::Effect::DustRing { at: b, radius: 220.0 * crate::player::UNIT });
+            crate::particles::emit(
+                commands,
+                crate::particles::Effect::Explosion { at: b, scale: 0.8 },
+            );
+            crate::particles::emit(
+                commands,
+                crate::particles::Effect::DustRing {
+                    at: b,
+                    radius: 220.0 * crate::player::UNIT,
+                },
+            );
         }
         if t >= duration {
             e.drop = None;
@@ -1673,7 +2338,11 @@ fn enemy_titanfall(commands: &mut Commands, actors: &mut Query<&mut Actor>, e: &
         match actor.clip(ENEMY_STAND_ANIM) {
             Some(c) if t < actor.clips[c].duration => {
                 let d = actor.clips[c].duration;
-                actor.layers = vec![Layer { clip: c, cycle: (t / d).min(0.999), weight: 1.0 }];
+                actor.layers = vec![Layer {
+                    clip: c,
+                    cycle: (t / d).min(0.999),
+                    weight: 1.0,
+                }];
                 e.stand = Some(t);
             }
             _ => e.stand = None,
@@ -1682,12 +2351,18 @@ fn enemy_titanfall(commands: &mut Commands, actors: &mut Query<&mut Actor>, e: &
 }
 
 fn animate_death(actors: &mut Query<&mut Actor>, e: &Enemy) {
-    let Ok(mut actor) = actors.get_mut(e.actor) else { return };
+    let Ok(mut actor) = actors.get_mut(e.actor) else {
+        return;
+    };
     actor.autoplay = false;
     actor.aim = None;
     if let Some(c) = actor.clip(e.clips[3]) {
         let cycle = (e.dead_for / actor.clips[c].duration.max(1e-3)).min(0.999);
-        actor.layers = vec![Layer { clip: c, cycle, weight: 1.0 }];
+        actor.layers = vec![Layer {
+            clip: c,
+            cycle,
+            weight: 1.0,
+        }];
     }
 }
 
@@ -1696,26 +2371,63 @@ fn ensure_health_bar(commands: &mut Commands, ui: &crate::ui::UiAssets, id: Enti
         return;
     }
     let frame = commands
-        .spawn((Node { position_type: PositionType::Absolute, width: Val::Vh(13.0), flex_direction: FlexDirection::Column, row_gap: Val::Vh(0.25), ..default() }, Visibility::Hidden))
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Vh(13.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Vh(0.25),
+                ..default()
+            },
+            Visibility::Hidden,
+        ))
         .id();
     let label = commands
         .spawn((
             Text::new("ION"),
-            TextFont { font: ui.bold_font.clone(), font_size: 14.0, ..default() },
+            TextFont {
+                font: ui.bold_font.clone(),
+                font_size: 14.0,
+                ..default()
+            },
             TextColor(Color::srgb(1.0, 0.36, 0.26)),
             crate::ui::VhText(1.5),
         ))
         .id();
     let bar = |commands: &mut Commands, h: f32, color: Color| {
-        let bg = commands.spawn((Node { height: Val::Vh(h), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)))).id();
-        let fill = commands.spawn((Node { width: percent(100), height: percent(100), ..default() }, BackgroundColor(color))).id();
+        let bg = commands
+            .spawn((
+                Node {
+                    height: Val::Vh(h),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+            ))
+            .id();
+        let fill = commands
+            .spawn((
+                Node {
+                    width: percent(100),
+                    height: percent(100),
+                    ..default()
+                },
+                BackgroundColor(color),
+            ))
+            .id();
         commands.entity(bg).add_child(fill);
         (bg, fill)
     };
     let (shield_bg, shield) = bar(commands, 0.35, Color::srgb(0.38, 0.78, 1.0));
     let (health_bg, health) = bar(commands, 0.8, Color::srgb(1.0, 0.36, 0.26));
-    commands.entity(frame).add_children(&[label, shield_bg, health_bg]);
-    commands.entity(frame).insert(HealthBar { enemy: id, label, shield, health });
+    commands
+        .entity(frame)
+        .add_children(&[label, shield_bg, health_bg]);
+    commands.entity(frame).insert(HealthBar {
+        enemy: id,
+        label,
+        shield,
+        health,
+    });
     e.bar = Some(frame);
 }
 
@@ -1723,13 +2435,30 @@ fn ensure_health_bar(commands: &mut Commands, ui: &crate::ui::UiAssets, id: Enti
 pub fn death_explosions(mut commands: Commands, enemies: Query<&Enemy, Changed<Enemy>>) {
     for e in &enemies {
         if e.just_died && !e.infantry {
-            audio::cue(&mut commands, Cue::TitanDeath, Some(e.pos + Vec3::Z * 150.0));
+            audio::cue(
+                &mut commands,
+                Cue::TitanDeath,
+                Some(e.pos + Vec3::Z * 150.0),
+            );
             let b = to_bevy(e.pos + Vec3::Z * 150.0);
-            crate::particles::emit(&mut commands, crate::particles::Effect::TitanDeath { at: b });
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::TitanDeath { at: b },
+            );
             commands.spawn((
-                PointLight { color: Color::srgb(1.0, 0.55, 0.25), intensity: 400_000.0, range: 40.0, ..default() },
+                PointLight {
+                    color: Color::srgb(1.0, 0.55, 0.25),
+                    intensity: 400_000.0,
+                    range: 40.0,
+                    ..default()
+                },
                 Transform::from_translation(b),
-                Fx { life: 0.6, max: 0.6, base: Vec3::ONE, keep_z: false },
+                Fx {
+                    life: 0.6,
+                    max: 0.6,
+                    base: Vec3::ONE,
+                    keep_z: false,
+                },
             ));
         }
     }
@@ -1746,10 +2475,17 @@ pub fn update_health_bars(
     mut fills: Query<(&mut Node, &mut BackgroundColor), Without<HealthBar>>,
     mut labels: Query<(&mut Text, &mut TextColor)>,
 ) {
-    let Ok((camera, cam_tf)) = cameras.single() else { return };
+    let Ok((camera, cam_tf)) = cameras.single() else {
+        return;
+    };
     for (bar, mut node, mut vis) in &mut bars {
-        let Ok(e) = enemies.get(bar.enemy) else { continue };
-        let locks = ordnance.single().map(|o| o.locks_on(bar.enemy)).unwrap_or(0);
+        let Ok(e) = enemies.get(bar.enemy) else {
+            continue;
+        };
+        let locks = ordnance
+            .single()
+            .map(|o| o.locks_on(bar.enemy))
+            .unwrap_or(0);
         let top = to_bevy(e.pos + Vec3::Z * (e.height + 60.0));
         match camera.world_to_viewport(cam_tf, top) {
             Ok(p) if e.alive() && !hidden.0 => {
@@ -1764,15 +2500,33 @@ pub fn update_health_bars(
             }
         }
         if let Ok((mut t, mut c)) = labels.get_mut(bar.label) {
-            let name = kits.0.get(e.kit).map(|k| k.name.as_str()).unwrap_or("TITAN");
-            let s = if locks > 0 { format!("{name}   LOCK x{locks}") } else if e.doomed() { format!("{name}   DOOMED") } else { name.to_string() };
+            let name = kits
+                .0
+                .get(e.kit)
+                .map(|k| k.name.as_str())
+                .unwrap_or("TITAN");
+            let s = if locks > 0 {
+                format!("{name}   LOCK x{locks}")
+            } else if e.doomed() {
+                format!("{name}   DOOMED")
+            } else {
+                name.to_string()
+            };
             if t.0 != s {
                 t.0 = s;
             }
-            c.0 = if locks > 0 { Color::srgb(1.0, 0.8, 0.25) } else { Color::srgb(1.0, 0.36, 0.26) };
+            c.0 = if locks > 0 {
+                Color::srgb(1.0, 0.8, 0.25)
+            } else {
+                Color::srgb(1.0, 0.36, 0.26)
+            };
         }
         if let Ok((mut n, _)) = fills.get_mut(bar.shield) {
-            crate::hud::set(&mut n, |n| &mut n.width, percent(e.v.shield / e.v.max_shield.max(1.0) * 100.0));
+            crate::hud::set(
+                &mut n,
+                |n| &mut n.width,
+                percent(e.v.shield / e.v.max_shield.max(1.0) * 100.0),
+            );
         }
         if let Ok((mut n, mut bg)) = fills.get_mut(bar.health) {
             crate::hud::set(&mut n, |n| &mut n.width, percent(e.v.fraction() * 100.0));
@@ -1802,17 +2556,28 @@ pub fn script_aim(
     if !script.aim_dummy {
         return;
     }
-    let (Ok(t), Ok(p)) = (titans.single(), pilots.single()) else { return };
+    let (Ok(t), Ok(p)) = (titans.single(), pilots.single()) else {
+        return;
+    };
     let eye = if *control == Control::Pilot {
         Vec3::from(p.state.eye(&pilot_settings.0).to_array())
     } else {
         Vec3::from(t.state.eye(&settings.0).to_array())
     };
-    let any_titan = enemies.iter().any(|d| d.alive() && !d.infantry) && std::env::var_os("TF_AIM_GRUNTS").is_none();
+    let any_titan = enemies.iter().any(|d| d.alive() && !d.infantry)
+        && std::env::var_os("TF_AIM_GRUNTS").is_none();
     let target = enemies
         .iter()
         .filter(|d| d.alive() && (d.infantry != any_titan))
-        .map(|d| d.pos + Vec3::Z * d.height * std::env::var("TF_AIM_Z").ok().and_then(|v| v.parse().ok()).unwrap_or(0.6))
+        .map(|d| {
+            d.pos
+                + Vec3::Z
+                    * d.height
+                    * std::env::var("TF_AIM_Z")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0.6)
+        })
         .min_by(|a, b| a.distance(eye).total_cmp(&b.distance(eye)));
     if let Some(p) = target {
         let d = (p - eye).normalize();

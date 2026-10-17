@@ -46,7 +46,17 @@ pub struct AutoTitan {
 
 impl Default for AutoTitan {
     fn default() -> Self {
-        Self { mode: Mode::Follow, guard: Vec3::ZERO, input: None, fire: false, target: None, burst_left: 0, rest: 1.0, shot_timer: 0.0, rng: 0x7A11_B7_C0DE }
+        Self {
+            mode: Mode::Follow,
+            guard: Vec3::ZERO,
+            input: None,
+            fire: false,
+            target: None,
+            burst_left: 0,
+            rest: 1.0,
+            shot_timer: 0.0,
+            rng: 0x7A11_B7_C0DE,
+        }
     }
 }
 
@@ -89,17 +99,27 @@ pub fn auto_titan_think(
     control: Res<Control>,
     mode: Res<CameraMode>,
     mut auto: ResMut<AutoTitan>,
-    titans: Query<(&PlayerTitan, &crate::weapons::Weapon, &crate::combat::TitanHealth, Option<&Titanfall>)>,
+    titans: Query<(
+        &PlayerTitan,
+        &crate::weapons::Weapon,
+        &crate::combat::TitanHealth,
+        Option<&Titanfall>,
+    )>,
     pilots: Query<&PlayerPilot>,
     enemies: Query<(Entity, &Enemy)>,
     rodeo: Res<crate::rodeo::Rodeo>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    let (Ok((titan, weapon, health, titanfall)), Ok(pilot)) = (titans.single(), pilots.single()) else {
+    let (Ok((titan, weapon, health, titanfall)), Ok(pilot)) = (titans.single(), pilots.single())
+    else {
         auto.clear();
         return;
     };
-    let acting = *control == Control::Pilot && *mode != CameraMode::Free && health.dead_for.is_none() && titan.override_anim.is_none() && !titanfall.is_some_and(|t| t.busy());
+    let acting = *control == Control::Pilot
+        && *mode != CameraMode::Free
+        && health.dead_for.is_none()
+        && titan.override_anim.is_none()
+        && !titanfall.is_some_and(|t| t.busy());
     if !acting {
         auto.clear();
         return;
@@ -112,7 +132,11 @@ pub fn auto_titan_think(
     // --- Target: the nearest live enemy he can see, within the weapon's NPC range ---
     let mut best: Option<(Entity, Vec3, f32, f32)> = None;
     for (id, e) in &enemies {
-        if !e.active || !e.alive() || e.arriving() || rodeo.ride.as_ref().is_some_and(|r| r.target == id) {
+        if !e.active
+            || !e.alive()
+            || e.arriving()
+            || rodeo.ride.as_ref().is_some_and(|r| r.target == id)
+        {
             continue;
         }
         let aim_at = e.pos + Vec3::Z * e.height * 0.6;
@@ -121,7 +145,15 @@ pub fn auto_titan_think(
         if dist > w.npc_max_range || best.is_some_and(|b| b.2 <= dist) {
             continue;
         }
-        if world.0.raycast(SVec3::from(eye.to_array()), SVec3::from((to / dist).to_array()), dist - e.radius).is_some() {
+        if world
+            .0
+            .raycast(
+                SVec3::from(eye.to_array()),
+                SVec3::from((to / dist).to_array()),
+                dist - e.radius,
+            )
+            .is_some()
+        {
             continue;
         }
         best = Some((id, aim_at, dist, e.radius));
@@ -136,8 +168,20 @@ pub fn auto_titan_think(
     };
     let to_goal = (goal - pos).truncate();
     let far = to_goal.length();
-    let moving = if auto.input.as_ref().is_some_and(|i| i.forward != 0.0 || i.right != 0.0) { far > stop } else { far > start };
-    let mut input = TitanInput { yaw: s.yaw, pitch: 0.0, ..Default::default() };
+    let moving = if auto
+        .input
+        .as_ref()
+        .is_some_and(|i| i.forward != 0.0 || i.right != 0.0)
+    {
+        far > stop
+    } else {
+        far > start
+    };
+    let mut input = TitanInput {
+        yaw: s.yaw,
+        pitch: 0.0,
+        ..Default::default()
+    };
     if moving {
         let dir = crate::targets::steer(&world, pos, to_goal.normalize_or_zero());
         let f = Vec2::new(s.yaw.cos(), s.yaw.sin());
@@ -152,7 +196,8 @@ pub fn auto_titan_think(
         None if moving => to_goal.y.atan2(to_goal.x),
         None => s.yaw,
     };
-    let diff = (want_yaw - s.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    let diff = (want_yaw - s.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
     input.yaw = s.yaw + diff.clamp(-TURN_RATE * dt, TURN_RATE * dt);
     if let Some((_, at, dist, _)) = best {
         input.pitch = -(at.z - eye.z).atan2(dist.max(1.0));
@@ -160,7 +205,13 @@ pub fn auto_titan_think(
     auto.input = Some(input);
 
     // --- Fire in NPC bursts once he's facing the target ---
-    let facing = best.is_some_and(|(_, at, _, _)| (at - eye).truncate().normalize_or_zero().dot(Vec2::new(s.yaw.cos(), s.yaw.sin())) > 0.95);
+    let facing = best.is_some_and(|(_, at, _, _)| {
+        (at - eye)
+            .truncate()
+            .normalize_or_zero()
+            .dot(Vec2::new(s.yaw.cos(), s.yaw.sin()))
+            > 0.95
+    });
     let can_shoot = facing && !s.sprinting;
     let fire_rate = w.fire_rate.clamp(0.1, 10.0);
     if auto.burst_left == 0 {

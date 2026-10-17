@@ -14,53 +14,53 @@
 
 mod abilities;
 mod actor;
+mod aimassist;
 mod audio;
+mod autotitan;
+mod bindcache;
+mod cloak;
+mod colorcorr;
 mod combat;
 mod convert;
 mod crosshair;
 mod dialogue;
 mod env;
+mod executions;
+mod feed;
 mod flatmap;
+mod fparms;
+mod fxuber;
 mod game;
 mod gamedata;
-mod inputrec;
+mod gamepad;
 mod hitbox;
-mod feed;
 mod hud;
+mod inputrec;
 mod launcherscreen;
-mod executions;
+mod minimap;
 mod music;
 mod nav;
 mod offhandvm;
-mod aimassist;
-mod gamepad;
-mod pilotability;
-mod pilotbody;
-mod autotitan;
-mod bindcache;
-mod cloak;
-mod colorcorr;
-mod minimap;
-mod rodeo;
-mod fparms;
-mod settings;
-mod pilotctl;
-mod pilotweapon;
 mod particles;
 mod pfx;
-mod propbatch;
+mod pilotability;
+mod pilotbody;
+mod pilotctl;
+mod pilotweapon;
 mod player;
+mod propbatch;
+mod rodeo;
 mod ruiscreen;
+mod settings;
 mod shadowbatch;
 mod sky;
-mod spread;
 mod smartammo;
+mod spread;
 mod spritebuf;
 mod targets;
 mod titankit;
 mod transparentpass;
 mod uber;
-mod fxuber;
 mod ui;
 mod vitals;
 mod vmcam;
@@ -75,7 +75,10 @@ use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use gamedata::GameData;
-use player::{to_bevy, CameraMode, Collision, MainCamera, PlayerInput, PlayerTitan, Script, TitanSettings, UNIT};
+use player::{
+    to_bevy, CameraMode, Collision, MainCamera, PlayerInput, PlayerTitan, Script, TitanSettings,
+    UNIT,
+};
 use std::f32::consts::FRAC_PI_2;
 use tf_assets::settings::PlayerSettings;
 use tf_sim::collision::CollisionWorld;
@@ -101,7 +104,11 @@ struct Args {
 /// TF_TIMESCALE=x runs the game at x times real speed (testing: slow motion for screenshots;
 /// scripts and `--shots` stay on the wall clock).
 fn time_scale(mut time: ResMut<Time<Virtual>>) {
-    if let Some(x) = std::env::var("TF_TIMESCALE").ok().and_then(|v| v.parse::<f32>().ok()).filter(|x| *x > 0.0) {
+    if let Some(x) = std::env::var("TF_TIMESCALE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|x| *x > 0.0)
+    {
         time.set_relative_speed(x);
         log::info!("time scale {x}");
     }
@@ -109,14 +116,22 @@ fn time_scale(mut time: ResMut<Time<Virtual>>) {
 
 /// The `timescale=x` script verb: game time runs at x times real speed while it's active
 /// (slow motion from a chosen moment, so loading and weapon swaps aren't slowed too).
-fn script_time_scale(script: Res<player::Script>, loaded_at: Option<Res<ui::LoadedAt>>, mut time: ResMut<Time<Virtual>>, mut base: Local<Option<f32>>) {
+fn script_time_scale(
+    script: Res<player::Script>,
+    loaded_at: Option<Res<ui::LoadedAt>>,
+    mut time: ResMut<Time<Virtual>>,
+    mut base: Local<Option<f32>>,
+) {
     let base = *base.get_or_insert(time.relative_speed());
     let t = loaded_at.map(|l| l.secs()).unwrap_or(0.0);
     let x = script
         .entries
         .iter()
         .filter(|(a, b, _)| script.enabled && t >= *a && t <= b.max(*a))
-        .find_map(|(_, _, act)| act.strip_prefix("timescale=").and_then(|v| v.parse::<f32>().ok()))
+        .find_map(|(_, _, act)| {
+            act.strip_prefix("timescale=")
+                .and_then(|v| v.parse::<f32>().ok())
+        })
         .filter(|x| *x > 0.0)
         .unwrap_or(base);
     if (time.relative_speed() - x).abs() > 1e-6 {
@@ -125,7 +140,10 @@ fn script_time_scale(script: Res<player::Script>, loaded_at: Option<Res<ui::Load
 }
 
 fn parse_vec(s: &str) -> Option<Vec3> {
-    let v: Vec<f32> = s.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    let v: Vec<f32> = s
+        .split_whitespace()
+        .filter_map(|x| x.parse().ok())
+        .collect();
     (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
 }
 
@@ -189,7 +207,8 @@ fn parse_args() -> Args {
             "--shots" => {
                 for item in it.next().unwrap_or_default().split(',') {
                     if let Some((t, f)) = item.split_once(':') {
-                        a.shots.push((t.trim().parse().unwrap_or(0.0), f.trim().to_string()));
+                        a.shots
+                            .push((t.trim().parse().unwrap_or(0.0), f.trim().to_string()));
                     }
                 }
             }
@@ -199,7 +218,12 @@ fn parse_args() -> Args {
             "--loadout" => a.loadout = it.next(),
             "--titan" => a.titan = it.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             "--volume" => a.volume = it.next().and_then(|v| v.parse().ok()),
-            "--difficulty" => a.difficulty = it.next().and_then(|d| vitals::Difficulty::parse(&d)).expect("--difficulty easy|normal|hard|master"),
+            "--difficulty" => {
+                a.difficulty = it
+                    .next()
+                    .and_then(|d| vitals::Difficulty::parse(&d))
+                    .expect("--difficulty easy|normal|hard|master")
+            }
             other => eprintln!("ignoring unknown argument {other}"),
         }
     }
@@ -219,9 +243,17 @@ fn main() {
         );
         std::process::exit(1);
     }
-    let script = args.script.as_deref().map(Script::parse).unwrap_or_default();
+    let script = args
+        .script
+        .as_deref()
+        .map(Script::parse)
+        .unwrap_or_default();
     // First person in the cockpit, as the game always is (C toggles the third-person camera).
-    let mode = if args.cam.is_some() { CameraMode::Free } else { CameraMode::Cockpit };
+    let mode = if args.cam.is_some() {
+        CameraMode::Free
+    } else {
+        CameraMode::Cockpit
+    };
     let map_choice = ui::MapChoice(args.map.clone());
     // The flat test map is for movement: no enemy waves unless TF_NO_ENEMIES=0 asks for them.
     let no_enemies = match std::env::var("TF_NO_ENEMIES") {
@@ -234,7 +266,14 @@ fn main() {
     let mut loadout = pilotweapon::LoadoutChoice::default();
     if let Some(l) = &args.loadout {
         let ids: Vec<&str> = l.split(',').collect();
-        for (slot, id) in [pilotweapon::Slot::Primary, pilotweapon::Slot::Sidearm, pilotweapon::Slot::AntiTitan].into_iter().zip(ids) {
+        for (slot, id) in [
+            pilotweapon::Slot::Primary,
+            pilotweapon::Slot::Sidearm,
+            pilotweapon::Slot::AntiTitan,
+        ]
+        .into_iter()
+        .zip(ids)
+        {
             if let Some(i) = pilotweapon::arsenal_index(id.trim()) {
                 loadout.set(slot, i);
             }
@@ -242,183 +281,377 @@ fn main() {
     }
     let mut app = App::new();
     if ui::fixed_dt().is_some() {
-        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::ZERO))
-            .add_systems(First, ui::fixed_clock.before(bevy::time::TimeSystems).before(script_time_scale));
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::ZERO,
+        ))
+        .add_systems(
+            First,
+            ui::fixed_clock
+                .before(bevy::time::TimeSystems)
+                .before(script_time_scale),
+        );
     }
-    app
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Titanfall-rs".into(),
-                        resolution: (1600u32, 900u32).into(),
-                        // TF_NO_VSYNC=1 runs uncapped, for frame-rate measurements.
-                        present_mode: if std::env::var_os("TF_NO_VSYNC").is_some() { bevy::window::PresentMode::AutoNoVsync } else { default() },
-                        ..default()
-                    }),
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Titanfall-rs".into(),
+                    resolution: (1600u32, 900u32).into(),
+                    // TF_NO_VSYNC=1 runs uncapped, for frame-rate measurements.
+                    present_mode: if std::env::var_os("TF_NO_VSYNC").is_some() {
+                        bevy::window::PresentMode::AutoNoVsync
+                    } else {
+                        default()
+                    },
                     ..default()
-                })
-                .set(ImagePlugin { default_sampler: convert::sampler() })
-                .set(bevy::render::RenderPlugin {
-                    render_creation: bevy::render::settings::RenderCreation::Automatic(bevy::render::settings::WgpuSettings {
+                }),
+                ..default()
+            })
+            .set(ImagePlugin {
+                default_sampler: convert::sampler(),
+            })
+            .set(bevy::render::RenderPlugin {
+                render_creation: bevy::render::settings::RenderCreation::Automatic(
+                    bevy::render::settings::WgpuSettings {
                         // Materials without bindless binding arrays (lightmaps and light probes
                         // keep theirs: they don't need this feature). With them, every switch
                         // between material slabs (up to 2048 textures each) costs wgpu-core a
                         // walk over the whole slab when the pass is encoded: 4-6 ms per shadow
                         // cascade on Angel City. Per-material bind groups draw the same pixels.
                         // TF_BINDLESS=1 keeps them (A/B measurements).
-                        disabled_features: std::env::var_os("TF_BINDLESS").is_none().then_some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY),
+                        disabled_features: std::env::var_os("TF_BINDLESS")
+                            .is_none()
+                            .then_some(bevy::render::settings::WgpuFeatures::BUFFER_BINDING_ARRAY),
                         ..default()
-                    }),
-                    ..default()
-                }),
+                    },
+                ),
+                ..default()
+            }),
+    )
+    .add_plugins(FreeCameraPlugin)
+    .add_plugins(ui::PipelineWatchPlugin)
+    .add_plugins(audio::GameAudioPlugin)
+    .add_plugins(convert::BlendMaterialPlugin)
+    .add_plugins(propbatch::PropBatchPlugin)
+    .add_plugins(convert::TransparentOrderPlugin)
+    .add_plugins(pfx::SoftMaterialPlugin)
+    .add_plugins(spritebuf::SpriteBufPlugin)
+    .add_plugins(uber::UberPlugin)
+    .add_plugins(fxuber::FxUberPlugin)
+    .add_plugins(cloak::CloakPlugin)
+    .add_plugins(colorcorr::ColorCorrectionPlugin)
+    .add_plugins(minimap::MinimapPlugin)
+    .init_resource::<feed::Feed>()
+    .add_plugins(particles::ParticlePlugin)
+    .add_plugins((
+        GpuTimesPlugin,
+        bindcache::MeshBindCachePlugin,
+        shadowbatch::ShadowBatchPlugin,
+        transparentpass::ParallelTransparentPlugin,
+    ))
+    .add_systems(
+        Update,
+        (
+            perf_log,
+            fps_overlay,
+            speed_overlay,
+            speed_graph,
+            weapons::shimmer_shields,
+        ),
+    )
+    .insert_resource(args)
+    .insert_resource(script)
+    .insert_resource(mode)
+    .init_resource::<PlayerInput>()
+    .insert_resource(crate::audio::MasterVolume::new(
+        bevy::audio::Volume::Linear(start_volume.clamp(0.0, 1.0)),
+    ))
+    .insert_resource(user_settings)
+    .init_resource::<gamepad::PadConfig>()
+    .init_resource::<gamepad::PadState>()
+    .init_resource::<aimassist::AimAssist>()
+    .init_resource::<aimassist::PullClasses>()
+    .init_resource::<ui::Subtitles>()
+    .init_resource::<ui::MissionImages>()
+    .add_systems(
+        Update,
+        (
+            ui::sync_volume_setting,
+            settings::save_settings,
+            ui::update_subtitles,
         )
-        .add_plugins(FreeCameraPlugin)
-        .add_plugins(ui::PipelineWatchPlugin)
-        .add_plugins(audio::GameAudioPlugin)
-        .add_plugins(convert::BlendMaterialPlugin)
-        .add_plugins(propbatch::PropBatchPlugin)
-        .add_plugins(convert::TransparentOrderPlugin)
-        .add_plugins(pfx::SoftMaterialPlugin)
-        .add_plugins(spritebuf::SpriteBufPlugin)
-        .add_plugins(uber::UberPlugin)
-        .add_plugins(fxuber::FxUberPlugin)
-        .add_plugins(cloak::CloakPlugin)
-        .add_plugins(colorcorr::ColorCorrectionPlugin)
-        .add_plugins(minimap::MinimapPlugin)
-        .init_resource::<feed::Feed>()
-        .add_plugins(particles::ParticlePlugin)
-        .add_plugins((GpuTimesPlugin, bindcache::MeshBindCachePlugin, shadowbatch::ShadowBatchPlugin, transparentpass::ParallelTransparentPlugin))
-        .add_systems(Update, (perf_log, fps_overlay, speed_overlay, speed_graph, weapons::shimmer_shields))
-        .insert_resource(args)
-        .insert_resource(script)
-        .insert_resource(mode)
-        .init_resource::<PlayerInput>()
-        .insert_resource(crate::audio::MasterVolume::new(bevy::audio::Volume::Linear(start_volume.clamp(0.0, 1.0))))
-        .insert_resource(user_settings)
-        .init_resource::<gamepad::PadConfig>()
-        .init_resource::<gamepad::PadState>()
-        .init_resource::<aimassist::AimAssist>()
-        .init_resource::<aimassist::PullClasses>()
-        .init_resource::<ui::Subtitles>()
-        .init_resource::<ui::MissionImages>()
-        .add_systems(Update, (ui::sync_volume_setting, settings::save_settings, ui::update_subtitles).run_if(ui::loaded))
-        .add_systems(Update, (gamepad::load_pad_config, aimassist::load_pull_classes, hitbox::load_enemy_hitboxes).run_if(ui::world_ready))
-        .add_systems(Update, aimassist::aim_assist.run_if(ui::loaded).before(player::gather_input))
-        .add_systems(Update, settings::apply_fov.after(player::update_camera).after(pilotctl::pilot_camera).run_if(ui::loaded))
-        .add_systems(Update, pilotctl::cockpit_boot.run_if(ui::loaded))
-        .add_systems(First, ui::log_hitches)
-        .add_systems(
-            PostUpdate,
-            vmcam::one_shadow_cascade
-                .after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
-                .before(bevy::light::SimulationLightSystems::UpdateLightFrusta),
+            .run_if(ui::loaded),
+    )
+    .add_systems(
+        Update,
+        (
+            gamepad::load_pad_config,
+            aimassist::load_pull_classes,
+            hitbox::load_enemy_hitboxes,
         )
-        .add_systems(Update, (zipline::zipline_cables, zipline::zipline_sounds).run_if(ui::loaded))
-        .add_systems(Update, pilotability::grapple_cable.after(pilotctl::pilot_camera).run_if(ui::loaded))
-        .add_systems(Update, pilotctl::bt_sequence_sounds.after(pilotctl::control_transitions).run_if(ui::loaded))
-        .init_resource::<weapons::ViewPunch>()
-        .init_resource::<pilotctl::VmEye>()
-        .init_resource::<pilotability::GrenadeModels>()
-        .init_resource::<pilotweapon::VmPlacements>()
-        .init_resource::<crosshair::CrosshairState>()
-        .init_resource::<pilotctl::Shake>()
-        .init_resource::<hud::DamageFrom>()
-        .init_resource::<hitbox::RecentHits>()
-        .init_resource::<pilotability::PilotStatus>()
-        .init_resource::<executions::TitanExecution>()
-        .init_resource::<executions::PilotExecution>()
-        .init_resource::<executions::PilotMelee>()
-        .init_resource::<pilotability::OrdnanceThrow>()
-        .init_resource::<pilotability::Shields>()
-        .init_resource::<game::Game>()
-        .insert_resource(pilotctl::Control::Titan)
-        .insert_resource(pilotctl::PilotSettings(tf_sim::pilot::PilotParams::default()))
-        .insert_resource(ClearColor(Color::srgb(0.55, 0.66, 0.78)))
-        .insert_resource(ui::LoadState::Waiting(0))
-        .init_resource::<ui::Menu>()
-        .init_resource::<ui::Quality>()
-        .insert_resource(loadout)
-        .insert_resource(map_choice)
-        .insert_resource(game::NoEnemies(no_enemies))
-        .insert_resource(weapons::TitanKit(start_titan))
-        .init_resource::<titankit::ActiveKit>()
-        .init_resource::<offhandvm::Offhands>()
-        .init_resource::<titankit::BoltShields>()
-        .init_resource::<titankit::EnemyWalls>()
-        .init_resource::<weapons::GunMuzzle>()
-        .init_resource::<titankit::TitanBoltHits>()
-        .init_resource::<titankit::FireSpots>()
-        .init_resource::<titankit::KitView>()
-        .init_resource::<titankit::TitanMoveMods>()
-        .init_resource::<rodeo::Rodeo>()
-        .init_resource::<autotitan::AutoTitan>()
-        .init_resource::<fparms::FpSeq>()
-        .init_resource::<hud::HudHidden>()
-        .add_systems(Startup, (time_scale, weapons::setup_fx, ui::load_ui_assets, ui::spawn_loading_screen).chain())
-        .add_systems(First, script_time_scale)
-        .add_systems(Update, setup_world.run_if(ui::loading_world).before(ui::loading_tick))
-        .add_systems(Update, (setup, hud::spawn_hud, pilotability::spawn_pilot_slots, pilotability::setup_pilot_kit, pilotbody::spawn_pilot_body, rodeo::spawn_battery_hud, fparms::spawn_arms).chain().run_if(ui::loading).before(ui::loading_tick))
-        // While warming up too: the reflection cubemap it copies changes the viewmodels' pipelines.
-        .add_systems(Update, vmcam::follow_camera.run_if(ui::world_ready.and(not(ui::loaded))))
-        .add_systems(Update, (ui::loading_tick, ui::scale_ui, screenshots, env::nearest_reflection, uber::swap_materials, vmcam::tag_meshes))
-        .add_systems(Update, (ui::sync_menu, ui::menu_input, ui::menu_visuals, ui::mission_images, ui::apply_quality, pilotweapon::build_loadout, pilotweapon::ordnance_viewmodel, weapons::switch_titan_weapon, titankit::apply_kit, weapons::prepare_weapon_models, pilotability::preload_grenade_models, player::prepare_mirrored_clips, offhandvm::spawn_offhand_viewmodels).chain().run_if(ui::world_ready).before(player::gather_input))
-        .add_systems(Update, ruiscreen::weapon_screens.run_if(ui::loaded).after(pilotweapon::pilot_weapon_fire))
-        .add_systems(Update, launcherscreen::update.run_if(ui::loaded).after(pilotweapon::pilot_weapon_fire))
-        .add_systems(
-            Update,
+            .run_if(ui::world_ready),
+    )
+    .add_systems(
+        Update,
+        aimassist::aim_assist
+            .run_if(ui::loaded)
+            .before(player::gather_input),
+    )
+    .add_systems(
+        Update,
+        settings::apply_fov
+            .after(player::update_camera)
+            .after(pilotctl::pilot_camera)
+            .run_if(ui::loaded),
+    )
+    .add_systems(Update, pilotctl::cockpit_boot.run_if(ui::loaded))
+    .add_systems(First, ui::log_hitches)
+    .add_systems(
+        PostUpdate,
+        vmcam::one_shadow_cascade
+            .after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
+            .before(bevy::light::SimulationLightSystems::UpdateLightFrusta),
+    )
+    .add_systems(
+        Update,
+        (zipline::zipline_cables, zipline::zipline_sounds).run_if(ui::loaded),
+    )
+    .add_systems(
+        Update,
+        pilotability::grapple_cable
+            .after(pilotctl::pilot_camera)
+            .run_if(ui::loaded),
+    )
+    .add_systems(
+        Update,
+        pilotctl::bt_sequence_sounds
+            .after(pilotctl::control_transitions)
+            .run_if(ui::loaded),
+    )
+    .init_resource::<weapons::ViewPunch>()
+    .init_resource::<pilotctl::VmEye>()
+    .init_resource::<pilotability::GrenadeModels>()
+    .init_resource::<pilotweapon::VmPlacements>()
+    .init_resource::<crosshair::CrosshairState>()
+    .init_resource::<pilotctl::Shake>()
+    .init_resource::<hud::DamageFrom>()
+    .init_resource::<hitbox::RecentHits>()
+    .init_resource::<pilotability::PilotStatus>()
+    .init_resource::<executions::TitanExecution>()
+    .init_resource::<executions::PilotExecution>()
+    .init_resource::<executions::PilotMelee>()
+    .init_resource::<pilotability::OrdnanceThrow>()
+    .init_resource::<pilotability::Shields>()
+    .init_resource::<game::Game>()
+    .insert_resource(pilotctl::Control::Titan)
+    .insert_resource(pilotctl::PilotSettings(
+        tf_sim::pilot::PilotParams::default(),
+    ))
+    .insert_resource(ClearColor(Color::srgb(0.55, 0.66, 0.78)))
+    .insert_resource(ui::LoadState::Waiting(0))
+    .init_resource::<ui::Menu>()
+    .init_resource::<ui::Quality>()
+    .insert_resource(loadout)
+    .insert_resource(map_choice)
+    .insert_resource(game::NoEnemies(no_enemies))
+    .insert_resource(weapons::TitanKit(start_titan))
+    .init_resource::<titankit::ActiveKit>()
+    .init_resource::<offhandvm::Offhands>()
+    .init_resource::<titankit::BoltShields>()
+    .init_resource::<titankit::EnemyWalls>()
+    .init_resource::<weapons::GunMuzzle>()
+    .init_resource::<titankit::TitanBoltHits>()
+    .init_resource::<titankit::FireSpots>()
+    .init_resource::<titankit::KitView>()
+    .init_resource::<titankit::TitanMoveMods>()
+    .init_resource::<rodeo::Rodeo>()
+    .init_resource::<autotitan::AutoTitan>()
+    .init_resource::<fparms::FpSeq>()
+    .init_resource::<hud::HudHidden>()
+    .add_systems(
+        Startup,
+        (
+            time_scale,
+            weapons::setup_fx,
+            ui::load_ui_assets,
+            ui::spawn_loading_screen,
+        )
+            .chain(),
+    )
+    .add_systems(First, script_time_scale)
+    .add_systems(
+        Update,
+        setup_world
+            .run_if(ui::loading_world)
+            .before(ui::loading_tick),
+    )
+    .add_systems(
+        Update,
+        (
+            setup,
+            hud::spawn_hud,
+            pilotability::spawn_pilot_slots,
+            pilotability::setup_pilot_kit,
+            pilotbody::spawn_pilot_body,
+            rodeo::spawn_battery_hud,
+            fparms::spawn_arms,
+        )
+            .chain()
+            .run_if(ui::loading)
+            .before(ui::loading_tick),
+    )
+    // While warming up too: the reflection cubemap it copies changes the viewmodels' pipelines.
+    .add_systems(
+        Update,
+        vmcam::follow_camera.run_if(ui::world_ready.and(not(ui::loaded))),
+    )
+    .add_systems(
+        Update,
+        (
+            ui::loading_tick,
+            ui::scale_ui,
+            screenshots,
+            env::nearest_reflection,
+            uber::swap_materials,
+            vmcam::tag_meshes,
+        ),
+    )
+    .add_systems(
+        Update,
+        (
+            ui::sync_menu,
+            ui::menu_input,
+            ui::menu_visuals,
+            ui::mission_images,
+            ui::apply_quality,
+            pilotweapon::build_loadout,
+            pilotweapon::ordnance_viewmodel,
+            weapons::switch_titan_weapon,
+            titankit::apply_kit,
+            weapons::prepare_weapon_models,
+            pilotability::preload_grenade_models,
+            player::prepare_mirrored_clips,
+            offhandvm::spawn_offhand_viewmodels,
+        )
+            .chain()
+            .run_if(ui::world_ready)
+            .before(player::gather_input),
+    )
+    .add_systems(
+        Update,
+        ruiscreen::weapon_screens
+            .run_if(ui::loaded)
+            .after(pilotweapon::pilot_weapon_fire),
+    )
+    .add_systems(
+        Update,
+        launcherscreen::update
+            .run_if(ui::loaded)
+            .after(pilotweapon::pilot_weapon_fire),
+    )
+    .add_systems(
+        Update,
+        (
             (
+                (player::gather_input, inputrec::replay_input).chain(),
+                (game::gate_input, inputrec::record_input).chain(),
+                targets::script_aim,
+                game::director,
                 (
-                    (player::gather_input, inputrec::replay_input).chain(),
-                    (game::gate_input, inputrec::record_input).chain(),
-                    targets::script_aim,
-                    game::director,
-                    (zipline::zipline_grab, pilotctl::control_transitions, autotitan::auto_titan_think).chain(),
-                    player::route_input,
-                    player::simulate,
-                    (pilotctl::simulate_pilot, rodeo::rodeo_update, fparms::fp_seq_update).chain(),
-                    (executions::titan_execution, executions::pilot_execution).chain(),
-                    weapons::weapon_fire,
-                    pilotweapon::pilot_weapon_fire,
-                    (pilotweapon::update_pilot_bolts, pilotweapon::attach_projectile_models).chain(),
-                    abilities::update_abilities,
-                    abilities::update_missiles,
-                    titankit::kit_input,
-                    targets::update_enemies,
-                    (titankit::meteor_thermite, titankit::kit_world, titankit::utility_world, titankit::laser_towers, titankit::sonar_shots).chain(),
-                    (targets::update_bolts, combat::update_vortex_caught_fx).chain(),
-                    targets::death_explosions,
-                    combat::player_combat,
+                    zipline::zipline_grab,
+                    pilotctl::control_transitions,
+                    autotitan::auto_titan_think,
                 )
                     .chain(),
+                player::route_input,
+                player::simulate,
                 (
-                    player::drive_animation,
-                    (weapons::weapon_viewmodel, offhandvm::offhand_viewmodels).chain(),
-                    pilotweapon::pilot_viewmodel,
-                    (pilotbody::update_pilot_body, actor::animate_actors).chain(),
-                    actor::bone_merge,
-                    player::update_camera,
-                    (pilotctl::pilot_camera, rodeo::rodeo_camera, fparms::fp_seq_camera, executions::execution_camera).chain(),
-                    (sky::follow_camera, vmcam::follow_camera, pilotweapon::place_viewmodels),
-                    weapons::update_fx,
-                    targets::update_health_bars,
-                    titankit::kit_view,
-                    (hud::update_hud, crosshair::update, hud::hud_sway, hud::lost_health_flash, hud::fit_icons, minimap::update_minimap, feed::update),
-                    (hud::update_hud_state, hud::hud_boot, (hud::health_hex, hud::stim_fx), player::cockpit_damage_light).chain(),
-                    hud::hit_feedback,
-                    hud::update_damage_arcs,
-                    (hud::update_smart_hud, hud::update_tone_hud),
-                    (pilotability::pilot_abilities, pilotability::update_decoy).chain(),
-                    (pilotability::update_grenades, pilotability::grenade_visuals).chain(),
-                    (pilotability::update_pilot_slots, cloak::cloak_viewmodel, cloak::phase_shift_fx),
-                    (pilotability::update_pulse_markers, rodeo::battery_hud).chain(),
+                    pilotctl::simulate_pilot,
+                    rodeo::rodeo_update,
+                    fparms::fp_seq_update,
                 )
                     .chain(),
+                (executions::titan_execution, executions::pilot_execution).chain(),
+                weapons::weapon_fire,
+                pilotweapon::pilot_weapon_fire,
+                (
+                    pilotweapon::update_pilot_bolts,
+                    pilotweapon::attach_projectile_models,
+                )
+                    .chain(),
+                abilities::update_abilities,
+                abilities::update_missiles,
+                titankit::kit_input,
+                targets::update_enemies,
+                (
+                    titankit::meteor_thermite,
+                    titankit::kit_world,
+                    titankit::utility_world,
+                    titankit::laser_towers,
+                    titankit::sonar_shots,
+                )
+                    .chain(),
+                (targets::update_bolts, combat::update_vortex_caught_fx).chain(),
+                targets::death_explosions,
+                combat::player_combat,
             )
-                .chain()
-                .run_if(ui::loaded),
+                .chain(),
+            (
+                player::drive_animation,
+                (weapons::weapon_viewmodel, offhandvm::offhand_viewmodels).chain(),
+                pilotweapon::pilot_viewmodel,
+                (pilotbody::update_pilot_body, actor::animate_actors).chain(),
+                actor::bone_merge,
+                player::update_camera,
+                (
+                    pilotctl::pilot_camera,
+                    rodeo::rodeo_camera,
+                    fparms::fp_seq_camera,
+                    executions::execution_camera,
+                )
+                    .chain(),
+                (
+                    sky::follow_camera,
+                    vmcam::follow_camera,
+                    pilotweapon::place_viewmodels,
+                ),
+                weapons::update_fx,
+                targets::update_health_bars,
+                titankit::kit_view,
+                (
+                    hud::update_hud,
+                    crosshair::update,
+                    hud::hud_sway,
+                    hud::lost_health_flash,
+                    hud::fit_icons,
+                    minimap::update_minimap,
+                    feed::update,
+                ),
+                (
+                    hud::update_hud_state,
+                    hud::hud_boot,
+                    (hud::health_hex, hud::stim_fx),
+                    player::cockpit_damage_light,
+                )
+                    .chain(),
+                hud::hit_feedback,
+                hud::update_damage_arcs,
+                (hud::update_smart_hud, hud::update_tone_hud),
+                (pilotability::pilot_abilities, pilotability::update_decoy).chain(),
+                (pilotability::update_grenades, pilotability::grenade_visuals).chain(),
+                (
+                    pilotability::update_pilot_slots,
+                    cloak::cloak_viewmodel,
+                    cloak::phase_shift_fx,
+                ),
+                (pilotability::update_pulse_markers, rodeo::battery_hud).chain(),
+            )
+                .chain(),
         )
-        .run();
+            .chain()
+            .run_if(ui::loaded),
+    )
+    .run();
 }
 
 /// An enemy's sequences: locomotion, death, Titanfall, and the execution victim sequences.
@@ -428,7 +661,11 @@ fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
     if kit.infantry {
         seq_list.extend(executions::human_victim_sequences());
     } else {
-        seq_list.extend(["at_IDLE_2", "at_hotdrop_drop_2knee_turbo", "at_hotdrop_quickstand"]);
+        seq_list.extend([
+            "at_IDLE_2",
+            "at_hotdrop_drop_2knee_turbo",
+            "at_hotdrop_quickstand",
+        ]);
         if kit.model.contains("titan_medium") {
             seq_list.push("at_rodeo_ride_R_hijack_battery");
         }
@@ -442,12 +679,19 @@ const GRUNT_POOL: usize = 12;
 
 /// Find a Titan start spawn point in the map's spawn entity file.
 fn titan_spawn(gd: &GameData, map: &str) -> Option<(Vec3, f32)> {
-    let text = String::from_utf8_lossy(&gd.read_file(&format!("maps/{map}_spawn.ent")).ok()?).to_string();
+    let text =
+        String::from_utf8_lossy(&gd.read_file(&format!("maps/{map}_spawn.ent")).ok()?).to_string();
     let ents = tf_assets::bsp::parse_entities(&text);
-    let get = |e: &Vec<(String, String)>, k: &str| e.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
-    let e = ents.iter().find(|e| get(e, "classname").as_deref() == Some("info_spawnpoint_titan_start"))?;
+    let get = |e: &Vec<(String, String)>, k: &str| {
+        e.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone())
+    };
+    let e = ents
+        .iter()
+        .find(|e| get(e, "classname").as_deref() == Some("info_spawnpoint_titan_start"))?;
     let origin = parse_vec(&get(e, "origin")?)?;
-    let yaw = parse_vec(&get(e, "angles").unwrap_or_default()).map(|a| a.y).unwrap_or(0.0);
+    let yaw = parse_vec(&get(e, "angles").unwrap_or_default())
+        .map(|a| a.y)
+        .unwrap_or(0.0);
     Some((origin, yaw))
 }
 
@@ -456,9 +700,12 @@ fn titan_spawn(gd: &GameData, map: &str) -> Option<(Vec3, f32)> {
 /// others within 5000 units, facing their centre. Returns that spot, its yaw and every enemy
 /// placement. Maps without Titans fall back to `info_player_start`.
 fn campaign_arena(gd: &GameData, map: &str) -> Option<(Vec3, f32, Vec<Vec3>)> {
-    let text = String::from_utf8_lossy(&gd.read_file(&format!("maps/{map}_script.ent")).ok()?).to_string();
+    let text =
+        String::from_utf8_lossy(&gd.read_file(&format!("maps/{map}_script.ent")).ok()?).to_string();
     let ents = tf_assets::bsp::parse_entities(&text);
-    let get = |e: &Vec<(String, String)>, k: &str| e.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+    let get = |e: &Vec<(String, String)>, k: &str| {
+        e.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone())
+    };
     let titans: Vec<Vec3> = ents
         .iter()
         .filter(|e| get(e, "classname").is_some_and(|c| c.starts_with("npc_titan")))
@@ -467,24 +714,42 @@ fn campaign_arena(gd: &GameData, map: &str) -> Option<(Vec3, f32, Vec<Vec3>)> {
         .collect();
     let near = |p: &Vec3| titans.iter().filter(|q| q.distance(*p) < 5000.0).count();
     if let Some(best) = titans.iter().max_by_key(|p| near(p)) {
-        let group: Vec<Vec3> = titans.iter().copied().filter(|q| q.distance(*best) < 5000.0).collect();
+        let group: Vec<Vec3> = titans
+            .iter()
+            .copied()
+            .filter(|q| q.distance(*best) < 5000.0)
+            .collect();
         let centre = group.iter().copied().sum::<Vec3>() / group.len() as f32;
         let to = centre - *best;
-        let yaw = if to.truncate().length() > 1.0 { to.y.atan2(to.x).to_degrees() } else { 0.0 };
+        let yaw = if to.truncate().length() > 1.0 {
+            to.y.atan2(to.x).to_degrees()
+        } else {
+            0.0
+        };
         return Some((*best, yaw, titans));
     }
-    let start = ents.iter().find(|e| get(e, "classname").as_deref() == Some("info_player_start"))?;
+    let start = ents
+        .iter()
+        .find(|e| get(e, "classname").as_deref() == Some("info_player_start"))?;
     let origin = parse_vec(&get(start, "origin")?)?;
-    let yaw = parse_vec(&get(start, "angles").unwrap_or_default()).map(|a| a.y).unwrap_or(0.0);
+    let yaw = parse_vec(&get(start, "angles").unwrap_or_default())
+        .map(|a| a.y)
+        .unwrap_or(0.0);
     Some((origin, yaw, Vec::new()))
 }
 
 /// Pilot movement from the multiplayer pilot's .set file (pilot_mp.set over pilot_base.set: every
 /// MP Pilot class is pilot_mp.set plus models and footsteps), as in a Northstar match.
 fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
-    let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+    let mut read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
     let d = tf_sim::pilot::PilotParams::default();
-    let Some(s) = PlayerSettings::load("scripts/players/mp/pilot_mp.set", true, &mut read) else { return d };
+    let Some(s) = PlayerSettings::load("scripts/players/mp/pilot_mp.set", true, &mut read) else {
+        return d;
+    };
     let view = |k: &str, def: f32| s.vec3(k).map(|v| v[2]).unwrap_or(def);
     let ground_accel = s.f32("stand.acceleration", d.ground_accel);
     tf_sim::pilot::PilotParams {
@@ -499,7 +764,9 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
         pitch_offset_scale: s.f32("global.pitchoffsetscale", d.pitch_offset_scale),
         ground_accel,
         // deceleration -1 (the default): acceleration * 0.6 (GetDeceleration 0x1801fcf10).
-        ground_decel: Some(s.f32("stand.deceleration", -1.0)).filter(|v| *v >= 0.0).unwrap_or(ground_accel * 0.6),
+        ground_decel: Some(s.f32("stand.deceleration", -1.0))
+            .filter(|v| *v >= 0.0)
+            .unwrap_or(ground_accel * 0.6),
         air_speed: s.f32("global.airspeed", d.air_speed),
         air_accel: s.f32("global.airacceleration", d.air_accel),
         jump_height: s.f32("global.jumpheight", d.jump_height),
@@ -520,11 +787,15 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
         wallrun_accel_v: s.f32("global.wallrunacceleratevertical", d.wallrun_accel_v),
         wallrun_hang_time: s.f32("global.wallrun_hangtimelimit", d.wallrun_hang_time),
         // TF_WALLHANG=1: the MP wall-hang kit (pas_wallhang: wallrunAdsType "wallhang").
-        wallhang_on_ads: s.get("global.wallrunadstype").is_some_and(|v| v.eq_ignore_ascii_case("wallhang")) || std::env::var_os("TF_WALLHANG").is_some(),
+        wallhang_on_ads: s
+            .get("global.wallrunadstype")
+            .is_some_and(|v| v.eq_ignore_ascii_case("wallhang"))
+            || std::env::var_os("TF_WALLHANG").is_some(),
         impact_speed: s.f32("global.impactspeed", d.impact_speed),
         viewkick_fall_min: s.f32("global.viewkickfalldistmin", d.viewkick_fall_min),
         viewkick_fall_max: s.f32("global.viewkickfalldistmax", d.viewkick_fall_max),
-        viewkick_fall_max_scale: s.f32("global.viewkickfalldistmaxscale", d.viewkick_fall_max_scale),
+        viewkick_fall_max_scale: s
+            .f32("global.viewkickfalldistmaxscale", d.viewkick_fall_max_scale),
         wallrun_time: s.f32("global.wallrun_timelimit", d.wallrun_time),
         wallrun_max_h: s.f32("global.wallrunmaxspeedhorizontal", d.wallrun_max_h),
         wallrun_max_v: s.f32("global.wallrunmaxspeedvertical", d.wallrun_max_v),
@@ -542,7 +813,10 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
         pitch_max_down: s.f32("global.pitchmaxdown", d.pitch_max_down),
         eye_height: view("stand.viewheight", d.eye_height),
         crouch_eye_height: view("crouch.viewheight", d.crouch_eye_height),
-        crouch_height: s.vec3("crouch.hull_max").map(|v| v[2]).unwrap_or(d.crouch_height),
+        crouch_height: s
+            .vec3("crouch.hull_max")
+            .map(|v| v[2])
+            .unwrap_or(d.crouch_height),
         zipline: tf_sim::pilot::ZiplineParams {
             speed: s.f32("global.ziplinespeed", d.zipline.speed),
             accel: s.f32("global.ziplineacceleration", d.zipline.accel),
@@ -553,19 +827,49 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
         },
         // The grapple's .set keys (pilot_base.set global); the rest are client.dll convars.
         grapple: tf_sim::pilot::GrappleParams {
-            detach_length: (s.f32("global.grapple_detachlengthmin", d.grapple.detach_length.0), s.f32("global.grapple_detachlengthmax", d.grapple.detach_length.1)),
-            detach_away_speed: s.f32("global.grapple_detachawayspeed", d.grapple.detach_away_speed),
-            gravity_frac: (s.f32("global.grapple_gravityfracmin", d.grapple.gravity_frac.0), s.f32("global.grapple_gravityfracmax", d.grapple.gravity_frac.1)),
+            detach_length: (
+                s.f32("global.grapple_detachlengthmin", d.grapple.detach_length.0),
+                s.f32("global.grapple_detachlengthmax", d.grapple.detach_length.1),
+            ),
+            detach_away_speed: s.f32(
+                "global.grapple_detachawayspeed",
+                d.grapple.detach_away_speed,
+            ),
+            gravity_frac: (
+                s.f32("global.grapple_gravityfracmin", d.grapple.gravity_frac.0),
+                s.f32("global.grapple_gravityfracmax", d.grapple.gravity_frac.1),
+            ),
             detach_boost: s.f32("global.grapple_detachverticalboost", d.grapple.detach_boost),
-            detach_max: s.f32("global.grapple_detachverticalmaxspeed", d.grapple.detach_max),
+            detach_max: s.f32(
+                "global.grapple_detachverticalmaxspeed",
+                d.grapple.detach_max,
+            ),
             speed_loss: s.f32("global.grapple_detachspeedloss", d.grapple.speed_loss),
-            speed_loss_min: s.f32("global.grapple_detachspeedlossmin", d.grapple.speed_loss_min),
-            low_speed: s.f32("global.grapple_detachlowspeedthreshold", d.grapple.low_speed),
-            low_speed_time: s.f32("global.grapple_detachlowspeedtime", d.grapple.low_speed_time),
-            low_speed_wall_time: s.f32("global.grapple_detachlowspeedwalltime", d.grapple.low_speed_wall_time),
-            low_speed_ground_time: s.f32("global.grapple_detachlowspeedgroundtime", d.grapple.low_speed_ground_time),
+            speed_loss_min: s.f32(
+                "global.grapple_detachspeedlossmin",
+                d.grapple.speed_loss_min,
+            ),
+            low_speed: s.f32(
+                "global.grapple_detachlowspeedthreshold",
+                d.grapple.low_speed,
+            ),
+            low_speed_time: s.f32(
+                "global.grapple_detachlowspeedtime",
+                d.grapple.low_speed_time,
+            ),
+            low_speed_wall_time: s.f32(
+                "global.grapple_detachlowspeedwalltime",
+                d.grapple.low_speed_wall_time,
+            ),
+            low_speed_ground_time: s.f32(
+                "global.grapple_detachlowspeedgroundtime",
+                d.grapple.low_speed_ground_time,
+            ),
             impact_boost: s.f32("global.grapple_impactverticalboost", d.grapple.impact_boost),
-            impact_max: s.f32("global.grapple_impactverticalmaxspeed", d.grapple.impact_max),
+            impact_max: s.f32(
+                "global.grapple_impactverticalmaxspeed",
+                d.grapple.impact_max,
+            ),
             air_speed: s.f32("global.grapple_airspeedmax", d.grapple.air_speed),
             air_accel: s.f32("global.grapple_airaccel", d.grapple.air_accel),
             ..d.grapple.clone()
@@ -576,7 +880,11 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
 
 /// Movement tuning from a Titan .set file (falls back to built-in defaults).
 fn titan_params(gd: &GameData, path: &str) -> TitanParams {
-    let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+    let mut read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
     let Some(s) = PlayerSettings::load(path, true, &mut read) else {
         log::warn!("{path} not found, using defaults");
         return TitanParams::default();
@@ -609,13 +917,22 @@ fn titan_params(gd: &GameData, path: &str) -> TitanParams {
         step_height: s.f32("global.stepheight", d.step_height),
         radius: hull_max[0],
         height: hull_max[2],
-        eye_height: s.vec3("stand.viewheight").map(|v| v[2]).unwrap_or(d.eye_height),
+        eye_height: s
+            .vec3("stand.viewheight")
+            .map(|v| v[2])
+            .unwrap_or(d.eye_height),
         gravity: d.gravity,
         crouch_speed: s.f32("crouch.speed", d.crouch_speed),
         crouch_accel: s.f32("crouch.acceleration", d.crouch_accel),
         crouch_decel: s.f32("crouch.deceleration", d.crouch_decel),
-        crouch_height: s.vec3("crouch.hull_max").map(|v| v[2]).unwrap_or(d.crouch_height),
-        crouch_eye_height: s.vec3("crouch.viewheight").map(|v| v[2]).unwrap_or(d.crouch_eye_height),
+        crouch_height: s
+            .vec3("crouch.hull_max")
+            .map(|v| v[2])
+            .unwrap_or(d.crouch_height),
+        crouch_eye_height: s
+            .vec3("crouch.viewheight")
+            .map(|v| v[2])
+            .unwrap_or(d.crouch_eye_height),
     }
 }
 
@@ -662,7 +979,10 @@ fn setup_world(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut blends: ResMut<Assets<convert::BlendMaterial>>,
-    (mut batch_materials, mut buffers): (ResMut<Assets<propbatch::PropBatchMaterial>>, ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>),
+    (mut batch_materials, mut buffers): (
+        ResMut<Assets<propbatch::PropBatchMaterial>>,
+        ResMut<Assets<bevy::render::storage::ShaderStorageBuffer>>,
+    ),
 ) {
     let t = std::time::Instant::now();
     let mut ph = Phases(t);
@@ -678,7 +998,11 @@ fn setup_world(
             log::warn!("vpk {v}: {e:#}");
         }
     }
-    let patch_stems: &[&str] = if std::env::var_os("TF_NO_PATCH_PAKS").is_none() { &["common", "common_mp"] } else { &[] };
+    let patch_stems: &[&str] = if std::env::var_os("TF_NO_PATCH_PAKS").is_none() {
+        &["common", "common_mp"]
+    } else {
+        &[]
+    };
     let mut paks = vec!["common.rpak".to_string()];
     if !flat {
         paks.insert(0, format!("{}.rpak", args.map));
@@ -687,13 +1011,16 @@ fn setup_world(
     ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());
-    let map_lut = map_env.color_correction.as_deref().and_then(|f| match gd.read_file(f) {
-        Ok(raw) => colorcorr::lut_image(&raw).map(|img| images.add(img)),
-        Err(e) => {
-            log::warn!("map colour correction {f}: {e:#}");
-            None
-        }
-    });
+    let map_lut = map_env
+        .color_correction
+        .as_deref()
+        .and_then(|f| match gd.read_file(f) {
+            Ok(raw) => colorcorr::lut_image(&raw).map(|img| images.add(img)),
+            Err(e) => {
+                log::warn!("map colour correction {f}: {e:#}");
+                None
+            }
+        });
     commands.insert_resource(colorcorr::MapColorCorrection(map_lut));
     let params = titan_params(&gd, "scripts/players/mp/titan_buddy.set");
     let pilot = pilot_params(&gd);
@@ -701,21 +1028,37 @@ fn setup_world(
     commands.insert_resource(pilotctl::PilotSettings(pilot));
     log::info!("titan params: {params:?}");
     let (bt_vitals, mut kits) = {
-        let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
-        let buddy = PlayerSettings::load("scripts/players/mp/titan_buddy.set", true, &mut read).unwrap_or_default();
+        let mut read = |p: &str| {
+            gd.read_file(p)
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        };
+        let buddy = PlayerSettings::load("scripts/players/mp/titan_buddy.set", true, &mut read)
+            .unwrap_or_default();
         let bt = vitals::Vitals::from_settings(&buddy, None);
         let feel = player::TitanFeel::from_settings(&buddy);
         log::info!("BT feel: {feel:?}");
         commands.insert_resource(feel);
         commands.init_resource::<player::TitanView>();
-        let mut kits: Vec<targets::EnemyKit> = (0..targets::ENEMY_CLASSES.len()).map(|i| targets::EnemyKit::class(i, &mut read)).collect();
+        let mut kits: Vec<targets::EnemyKit> = (0..targets::ENEMY_CLASSES.len())
+            .map(|i| targets::EnemyKit::class(i, &mut read))
+            .collect();
         kits.push(targets::EnemyKit::infantry(&mut read));
         commands.insert_resource(executions::PilotMeleeDef::load(&mut read));
         commands.insert_resource(vmmotion::WeaponSprings::load(&mut read));
         let defs = pilotability::PilotAbilityDefs::load(&mut read);
         // TF_TACTICAL=N / TF_ORDNANCE=N pick the starting kit (scripted tests).
-        let pick = |k: &str, n: usize| std::env::var(k).ok().and_then(|v| v.parse::<usize>().ok()).map_or(0, |i| i.min(n - 1));
-        let mut status = pilotability::PilotStatus { tactical: pick("TF_TACTICAL", pilotability::TACTICALS.len()), ordnance: pick("TF_ORDNANCE", pilotability::ORDNANCE.len()), ..default() };
+        let pick = |k: &str, n: usize| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .map_or(0, |i| i.min(n - 1))
+        };
+        let mut status = pilotability::PilotStatus {
+            tactical: pick("TF_TACTICAL", pilotability::TACTICALS.len()),
+            ordnance: pick("TF_ORDNANCE", pilotability::ORDNANCE.len()),
+            ..default()
+        };
         status.refill(&defs);
         commands.insert_resource(status);
         commands.insert_resource(defs);
@@ -728,7 +1071,13 @@ fn setup_world(
         }
         log::info!(
             "enemy {}: {:?}, weapon {} ({} rps, bursts {}-{}, {} u/s)",
-            kit.name, kit.vitals, kit.weapon.name, kit.weapon.fire_rate, kit.weapon.npc_min_burst, kit.weapon.npc_max_burst, kit.projectile
+            kit.name,
+            kit.vitals,
+            kit.weapon.name,
+            kit.weapon.fire_rate,
+            kit.weapon.npc_min_burst,
+            kit.weapon.npc_max_burst,
+            kit.projectile
         );
     }
     commands.insert_resource(args.difficulty);
@@ -737,12 +1086,24 @@ fn setup_world(
     // (joined at the end of setup).
     let sounds = {
         let (game, sgd) = (args.game.clone(), gd.vpks_only());
-        let ability_sounds: Vec<String> = kits.iter().filter_map(|k| k.ability.as_ref()).map(|a| a.sound.clone()).filter(|s| !s.is_empty()).collect();
+        let ability_sounds: Vec<String> = kits
+            .iter()
+            .filter_map(|k| k.ability.as_ref())
+            .map(|a| a.sound.clone())
+            .filter(|s| !s.is_empty())
+            .collect();
         std::thread::spawn(move || {
             let mut sfx = audio::Sfx::open(&game);
             let ts = std::time::Instant::now();
             let mut cues: Vec<audio::Cue> = audio::ALL_CUES.to_vec();
-            cues.extend((0..pilotweapon::ARSENAL.len()).flat_map(|i| [audio::GunPart::First, audio::GunPart::Shot, audio::GunPart::Tail].map(|p| audio::Cue::Gun(i as u8, p))));
+            cues.extend((0..pilotweapon::ARSENAL.len()).flat_map(|i| {
+                [
+                    audio::GunPart::First,
+                    audio::GunPart::Shot,
+                    audio::GunPart::Tail,
+                ]
+                .map(|p| audio::Cue::Gun(i as u8, p))
+            }));
             sfx.preload(&cues);
             sfx.load_game_data(&sgd);
             sfx.preload_events(ability_sounds.iter().map(String::as_str));
@@ -752,13 +1113,16 @@ fn setup_world(
         })
     };
     if let Some(v) = args.volume {
-        commands.insert_resource(crate::audio::MasterVolume::new(bevy::audio::Volume::Linear(v.clamp(0.0, 1.0))));
+        commands.insert_resource(crate::audio::MasterVolume::new(
+            bevy::audio::Volume::Linear(v.clamp(0.0, 1.0)),
+        ));
     }
 
     // Everything from the game lives under this root, in game units and axes.
     let root = commands
         .spawn((
-            Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT)),
+            Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2))
+                .with_scale(Vec3::splat(UNIT)),
             Visibility::default(),
         ))
         .id();
@@ -766,21 +1130,44 @@ fn setup_world(
     // same transform. Bevy skips a hierarchy nothing in has moved, but recomputes every direct
     // child of a root whose tree changed: under `root`, with BT and everything that moves,
     // that was ~47k prop and world entities every frame (2-4 ms on one thread).
-    let static_root_tf = Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT));
+    let static_root_tf =
+        Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)).with_scale(Vec3::splat(UNIT));
     let static_root = commands.spawn((static_root_tf, Visibility::default())).id();
 
     let mut cache = convert::Cache::default();
     let mut collision = CollisionWorld::default();
     let mut sweep: Option<CollisionWorld> = None;
-    match if flat { Err(anyhow::anyhow!("built-in")) } else { gd.read_map(&args.map) } {
+    match if flat {
+        Err(anyhow::anyhow!("built-in"))
+    } else {
+        gd.read_map(&args.map)
+    } {
         Err(_) if flat => {
-            flatmap::spawn(&mut commands, static_root, &mut meshes, &mut images, &mut materials, &mut collision);
+            flatmap::spawn(
+                &mut commands,
+                static_root,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+                &mut collision,
+            );
             sky::spawn_sky_camera(&mut commands);
             ph.mark("flat test map");
         }
         Ok(bsp) => {
             ph.mark("bsp read");
-            world::spawn_world(&mut commands, static_root, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, &mut blends, &mut collision);
+            world::spawn_world(
+                &mut commands,
+                static_root,
+                &gd,
+                &bsp,
+                &mut cache,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+                &mut blends,
+                &mut collision,
+            );
             if let Some(m) = minimap::Minimap::load(&gd, &args.map, &mut cache, &mut images) {
                 commands.insert_resource(m);
             }
@@ -796,13 +1183,40 @@ fn setup_world(
             }
             ph.mark("world and map collision");
             if args.props {
-                world::spawn_static_props(&mut commands, static_root, &static_root_tf, &gd, &bsp, &mut cache, &mut meshes, &mut images, &mut materials, (&mut batch_materials, &mut buffers), &mut collision);
-                sky::spawn_sky(&mut commands, root, &gd, &bsp, &map_env, &mut cache, &mut meshes, &mut images, &mut materials);
+                world::spawn_static_props(
+                    &mut commands,
+                    static_root,
+                    &static_root_tf,
+                    &gd,
+                    &bsp,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                    (&mut batch_materials, &mut buffers),
+                    &mut collision,
+                );
+                sky::spawn_sky(
+                    &mut commands,
+                    root,
+                    &gd,
+                    &bsp,
+                    &map_env,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                );
             }
             ph.mark("props and sky");
             // Baked probes replace the flat ambient term for everything without a lightmap.
-            if std::env::var_os("TF_NO_PROBES").is_none() && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images) {
-                commands.insert_resource(GlobalAmbientLight { brightness: 0.0, ..map_env.ambient() });
+            if std::env::var_os("TF_NO_PROBES").is_none()
+                && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images)
+            {
+                commands.insert_resource(GlobalAmbientLight {
+                    brightness: 0.0,
+                    ..map_env.ambient()
+                });
             }
             let reflections = env::Reflections::load(&bsp, &mut images);
             reflections.spawn_probes(&mut commands, static_root);
@@ -827,29 +1241,50 @@ fn setup_world(
     // The cameras and the sun exist from this frame on, so the render world prepares the map
     // for them while the next frame runs. `setup` moves the camera to its final place (BT's
     // spawn on the ground).
-    let camera = commands.spawn((
-        Camera3d::default(),
-        Projection::Perspective(PerspectiveProjection { fov: 60f32.to_radians(), ..default() }),
-        camera_start(&args, bt_pos, bt_yaw.to_radians()),
-        FreeCamera { walk_speed: 8.0, run_speed: 40.0, ..default() },
-        MainCamera,
-        bevy::camera::Exposure { ev100: env::ev100() },
-        env::tonemapping(),
-        // The sky camera (sky.rs) clears and draws the skybox first.
-        // The viewmodel camera, drawing last into the same textures, copies the frame to the
-        // window (sky.rs).
-        Camera { clear_color: ClearColorConfig::None, output_mode: bevy::camera::CameraOutputMode::Skip, ..default() },
-        // Contact shading (SSAO needs MSAA off; SMAA smooths edges instead).
-        Msaa::Off,
-        bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
-        bevy::anti_alias::smaa::Smaa::default(),
-        bevy::post_process::bloom::Bloom { intensity: 0.05, ..bevy::post_process::bloom::Bloom::NATURAL },
-    )).id();
+    let camera = commands
+        .spawn((
+            Camera3d::default(),
+            Projection::Perspective(PerspectiveProjection {
+                fov: 60f32.to_radians(),
+                ..default()
+            }),
+            camera_start(&args, bt_pos, bt_yaw.to_radians()),
+            FreeCamera {
+                walk_speed: 8.0,
+                run_speed: 40.0,
+                ..default()
+            },
+            MainCamera,
+            bevy::camera::Exposure {
+                ev100: env::ev100(),
+            },
+            env::tonemapping(),
+            // The sky camera (sky.rs) clears and draws the skybox first.
+            // The viewmodel camera, drawing last into the same textures, copies the frame to the
+            // window (sky.rs).
+            Camera {
+                clear_color: ClearColorConfig::None,
+                output_mode: bevy::camera::CameraOutputMode::Skip,
+                ..default()
+            },
+            // Contact shading (SSAO needs MSAA off; SMAA smooths edges instead).
+            Msaa::Off,
+            bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
+            bevy::anti_alias::smaa::Smaa::default(),
+            bevy::post_process::bloom::Bloom {
+                intensity: 0.05,
+                ..bevy::post_process::bloom::Bloom::NATURAL
+            },
+        ))
+        .id();
     if let Some(fog) = map_env.distance_fog() {
         commands.entity(camera).insert(fog);
     }
     // The sun also lights the first-person models (their own camera and layer, vmcam.rs).
-    commands.spawn((map_env.sun(), bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER])));
+    commands.spawn((
+        map_env.sun(),
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, vmcam::VM_LAYER]),
+    ));
     vmcam::spawn_camera(&mut commands);
     ph.mark("cameras");
     commands.insert_resource(PendingWorld(Some(Box::new(WorldStage {
@@ -873,7 +1308,9 @@ fn setup_world(
 /// and above BT.
 fn camera_start(args: &Args, bt_pos: Vec3, yaw: f32) -> Transform {
     let fwd = Quat::from_rotation_z(yaw) * Vec3::X;
-    let cam = args.cam.unwrap_or(bt_pos + fwd * 650.0 + Vec3::new(0.0, 0.0, 220.0));
+    let cam = args
+        .cam
+        .unwrap_or(bt_pos + fwd * 650.0 + Vec3::new(0.0, 0.0, 220.0));
     let look = args.look.unwrap_or(bt_pos + Vec3::new(0.0, 0.0, 170.0));
     Transform::from_translation(to_bevy(cam)).looking_at(to_bevy(look), Vec3::Y)
 }
@@ -890,9 +1327,25 @@ fn setup(
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut pending: ResMut<PendingWorld>,
 ) {
-    let Some(stage) = pending.0.take() else { return };
+    let Some(stage) = pending.0.take() else {
+        return;
+    };
     commands.remove_resource::<PendingWorld>();
-    let WorldStage { t, mut ph, gd, mut cache, collision, sweep, kits, bt_vitals, params, sounds, root, camera, spawn } = *stage;
+    let WorldStage {
+        t,
+        mut ph,
+        gd,
+        mut cache,
+        collision,
+        sweep,
+        kits,
+        bt_vitals,
+        params,
+        sounds,
+        root,
+        camera,
+        spawn,
+    } = *stage;
     ph.mark("between the load frames");
     // The actors' templates (models, clips, meshes, textures) build on every core while the
     // collision hierarchy does; spawning them below only adds their assets.
@@ -924,7 +1377,13 @@ fn setup(
             "?bt_vortex_ion_arm_pose_add",
         ],
         // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
-        grids: &["combat_aim_stand", "combat_aim_run", "?MP_crouch_Aim_all", "?Walk_Crouch_forward_MP", "?Walk_Crouch_backward_MP"],
+        grids: &[
+            "combat_aim_stand",
+            "combat_aim_run",
+            "?MP_crouch_Aim_all",
+            "?Walk_Crouch_forward_MP",
+            "?Walk_Crouch_backward_MP",
+        ],
         body: &[],
     };
     let cockpit_spec = ActorSpec {
@@ -935,22 +1394,67 @@ fn setup(
     };
     let vm_spec = ActorSpec {
         path: "models/weapons/titan_xo16_shorty/atpov_xo16shorty.mdl",
-        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
+        sequences: &[
+            "draw_seq",
+            "ads_in_seq",
+            "reload_seq",
+            "reload_empty_seq",
+            "?reload_late1_seq",
+            "?reload_late2_seq",
+            "?reload_late3_seq",
+            "?reload_empty_late1_seq",
+            "?reload_empty_late2_seq",
+            "?reload_empty_late3_seq",
+            "sprint_seq",
+            "?sprintraise_seq",
+            "melee_seq",
+            "?melee_dash_seq",
+            "?ammo_swap_seq",
+            "?charge_seq",
+            "?power_shot_fire_seq",
+        ],
         grids: &["idle_seq", "attack_seq"],
         body: &[],
     };
-    let arms_spec = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
-    let gun_spec = ActorSpec { path: "models/weapons/titan_xo16_shorty/w_xo16shorty.mdl", sequences: &[], grids: &[], body: &[] };
-    let enemy_seqs: Vec<(Vec<&str>, [&str; 2])> = kits.iter().map(|k| (enemy_sequences(k), targets::aim_grids(&k.model))).collect();
+    let arms_spec = ActorSpec {
+        path: "models/weapons/arms/buddypov.mdl",
+        sequences: &[],
+        grids: &[],
+        body: &[],
+    };
+    let gun_spec = ActorSpec {
+        path: "models/weapons/titan_xo16_shorty/w_xo16shorty.mdl",
+        sequences: &[],
+        grids: &[],
+        body: &[],
+    };
+    let enemy_seqs: Vec<(Vec<&str>, [&str; 2])> = kits
+        .iter()
+        .map(|k| (enemy_sequences(k), targets::aim_grids(&k.model)))
+        .collect();
     let mut specs = vec![bt_spec, cockpit_spec, vm_spec, arms_spec, gun_spec];
     for (kit, (seqs, grids)) in kits.iter().zip(&enemy_seqs) {
-        specs.push(ActorSpec { path: &kit.model, sequences: seqs, grids, body: &[] });
-        specs.push(ActorSpec { path: &kit.weapon.playermodel, sequences: &[], grids: &[], body: &[] });
+        specs.push(ActorSpec {
+            path: &kit.model,
+            sequences: seqs,
+            grids,
+            body: &[],
+        });
+        specs.push(ActorSpec {
+            path: &kit.weapon.playermodel,
+            sequences: &[],
+            grids: &[],
+            body: &[],
+        });
     }
     let collision = std::thread::scope(|scope| {
         scope.spawn(|| actor::prefetch_actors(&gd, &cache, &specs));
         let (collision, took) = collision.join().expect("collision builder panicked");
-        log::info!("collision: {} triangles, BVH built in {:?}", collision.tris.len(), took);
+        log::info!(
+            "collision: {} triangles, BVH built in {:?}",
+            collision.tris.len(),
+            took
+        );
         collision
     });
     // TF_COLLISION_DUMP=<file>: save the movement collision for offline tests (tf-sim's
@@ -967,7 +1471,11 @@ fn setup(
     ph.mark("collision BVH");
     let (mut bt_pos, bt_yaw, placements) = spawn;
     // Stand on the ground under the spawn (campaign placements can float a little).
-    if let Some(h) = collision.raycast(tf_sim::glam::Vec3::new(bt_pos.x, bt_pos.y, bt_pos.z + 100.0), -tf_sim::glam::Vec3::Z, 3000.0) {
+    if let Some(h) = collision.raycast(
+        tf_sim::glam::Vec3::new(bt_pos.x, bt_pos.y, bt_pos.z + 100.0),
+        -tf_sim::glam::Vec3::Z,
+        3000.0,
+    ) {
         bt_pos.z = h.point.z;
     }
     let yaw = bt_yaw.to_radians();
@@ -975,7 +1483,9 @@ fn setup(
     input.yaw = yaw;
 
     // BT: the placement entity carries the simulation state; the actor hangs below it.
-    let anchor = commands.spawn((Transform::from_translation(bt_pos), Visibility::default())).id();
+    let anchor = commands
+        .spawn((Transform::from_translation(bt_pos), Visibility::default()))
+        .id();
     commands.entity(root).add_child(anchor);
     let bt = actor::spawn_actor(
         &mut commands,
@@ -990,7 +1500,9 @@ fn setup(
     );
 
     // First-person cockpit, placed at the eye every frame.
-    let cockpit_anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, vmcam::Viewmodel)).id();
+    let cockpit_anchor = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden, vmcam::Viewmodel))
+        .id();
     commands.entity(root).add_child(cockpit_anchor);
     let cockpit = actor::spawn_actor(
         &mut commands,
@@ -1008,10 +1520,16 @@ fn setup(
     }
 
     // XO-16: script, first-person viewmodel with BT's arms merged onto it, gun in BT's hand.
-    let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+    let mut read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
     let weapon_def = weapons::WeaponDef::load_player("mp_titanweapon_xo16_shorty", &mut read);
     log::info!("weapon: {weapon_def:?}");
-    let vm_anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, vmcam::Viewmodel)).id();
+    let vm_anchor = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden, vmcam::Viewmodel))
+        .id();
     commands.entity(root).add_child(vm_anchor);
     let viewmodel = actor::spawn_actor(
         &mut commands,
@@ -1038,7 +1556,9 @@ fn setup(
                 &mut bindposes,
             ) {
                 Ok(arms) => {
-                    commands.entity(arms.entity).insert(actor::BoneMergeTo(vm.entity));
+                    commands
+                        .entity(arms.entity)
+                        .insert(actor::BoneMergeTo(vm.entity));
                 }
                 Err(e) => log::warn!("arms: {e:#}"),
             }
@@ -1069,8 +1589,16 @@ fn setup(
         Ok(actor) => {
             let state = TitanState::new(tf_sim::glam::Vec3::new(bt_pos.x, bt_pos.y, bt_pos.z), yaw);
             commands.entity(anchor).insert((
-                PlayerTitan::new(state, actor.entity, cockpit.ok().map(|c| (cockpit_anchor, c.entity))),
-                weapons::Weapon::new(weapon_def, viewmodel.ok().map(|v| (vm_anchor, v.entity)), world_gun),
+                PlayerTitan::new(
+                    state,
+                    actor.entity,
+                    cockpit.ok().map(|c| (cockpit_anchor, c.entity)),
+                ),
+                weapons::Weapon::new(
+                    weapon_def,
+                    viewmodel.ok().map(|v| (vm_anchor, v.entity)),
+                    world_gun,
+                ),
                 abilities::Ordnance::default(),
                 abilities::TitanCore::default(),
                 combat::TitanHealth::new(bt_vitals.clone()),
@@ -1084,24 +1612,36 @@ fn setup(
     }
 
     // The pilot; the loadout's guns and viewmodels are built by pilotweapon::build_loadout.
-    commands.spawn((pilotctl::PlayerPilot::new(), pilotctl::PilotHealth::default(), pilotweapon::PilotLoadout::default()));
+    commands.spawn((
+        pilotctl::PlayerPilot::new(),
+        pilotctl::PilotHealth::default(),
+        pilotweapon::PilotLoadout::default(),
+    ));
     commands.insert_resource(pilotweapon::WorldRoot(root));
 
     // Enemy spawn spots: open ground on rings around the Titan spawn, near its height and
     // with nothing overhead.
     let sv = |v: Vec3| tf_sim::glam::Vec3::new(v.x, v.y, v.z);
     let down = -tf_sim::glam::Vec3::Z;
-    let bt_ground = collision.raycast(sv(bt_pos + Vec3::Z * 50.0), down, 2000.0).map(|h| h.point.z).unwrap_or(bt_pos.z);
+    let bt_ground = collision
+        .raycast(sv(bt_pos + Vec3::Z * 50.0), down, 2000.0)
+        .map(|h| h.point.z)
+        .unwrap_or(bt_pos.z);
     // The game's navmesh where the map ships one (campaign maps); a grid probed from the
     // collision mesh around the arena otherwise (MP maps have no client navmesh).
     ph.mark("world gun, pilot");
-    let nav_titan = nav::Nav::load(&gd, &args.map, "large").unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 6000.0, nav::Agent::TITAN));
+    let nav_titan = nav::Nav::load(&gd, &args.map, "large")
+        .unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 6000.0, nav::Agent::TITAN));
     ph.mark("titan nav");
-    let nav_small = nav::Nav::load(&gd, &args.map, "small").unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 4000.0, nav::Agent::GRUNT));
+    let nav_small = nav::Nav::load(&gd, &args.map, "small")
+        .unwrap_or_else(|| nav::Nav::probe(&collision, bt_pos, 4000.0, nav::Agent::GRUNT));
     ph.mark("grunt nav");
     let mut spots: Vec<Vec3> = Vec::new();
     // The campaign's own Titan placements near the arena come first.
-    for p in placements.iter().filter(|p| p.distance(bt_pos) > 1200.0 && p.distance(bt_pos) < 6000.0) {
+    for p in placements
+        .iter()
+        .filter(|p| p.distance(bt_pos) > 1200.0 && p.distance(bt_pos) < 6000.0)
+    {
         if let Some(hit) = collision.raycast(sv(*p + Vec3::Z * 100.0), down, 1000.0) {
             let q = Vec3::new(p.x, p.y, hit.point.z);
             if spots.iter().all(|s| s.distance(q) > 450.0) {
@@ -1112,16 +1652,35 @@ fn setup(
     for ring in [1600.0f32, 2200.0, 2800.0, 3400.0] {
         for k in 0..24 {
             let a = k as f32 / 24.0 * std::f32::consts::TAU;
-            let guess = Vec3::new(bt_pos.x + a.cos() * ring, bt_pos.y + a.sin() * ring, bt_ground);
-            let Some(hit) = collision.raycast(sv(guess + Vec3::Z * 400.0), down, 900.0) else { continue };
+            let guess = Vec3::new(
+                bt_pos.x + a.cos() * ring,
+                bt_pos.y + a.sin() * ring,
+                bt_ground,
+            );
+            let Some(hit) = collision.raycast(sv(guess + Vec3::Z * 400.0), down, 900.0) else {
+                continue;
+            };
             let p = Vec3::new(guess.x, guess.y, hit.point.z);
-            let open_above = collision.raycast(sv(p + Vec3::Z * 20.0), tf_sim::glam::Vec3::Z, 400.0).is_none();
+            let open_above = collision
+                .raycast(sv(p + Vec3::Z * 20.0), tf_sim::glam::Vec3::Z, 400.0)
+                .is_none();
             let clear = (0..8).all(|i| {
                 let b = i as f32 / 8.0 * std::f32::consts::TAU;
-                collision.raycast(sv(p + Vec3::Z * 120.0), tf_sim::glam::Vec3::new(b.cos(), b.sin(), 0.0), 150.0).is_none()
+                collision
+                    .raycast(
+                        sv(p + Vec3::Z * 120.0),
+                        tf_sim::glam::Vec3::new(b.cos(), b.sin(), 0.0),
+                        150.0,
+                    )
+                    .is_none()
             });
             let spaced = spots.iter().all(|q| q.distance(p) > 450.0);
-            if hit.normal.z > 0.8 && (p.z - bt_ground).abs() < 400.0 && open_above && clear && spaced {
+            if hit.normal.z > 0.8
+                && (p.z - bt_ground).abs() < 400.0
+                && open_above
+                && clear
+                && spaced
+            {
                 spots.push(p);
             }
         }
@@ -1129,24 +1688,43 @@ fn setup(
     // Only spots a Titan can walk to the player from (a gantry or a roof the ring probes
     // landed on would leave it pacing up there).
     ph.mark("spawn spot probes");
-    let reachable: Vec<Vec3> = spots.iter().copied().filter(|s| nav_titan.path(*s, bt_pos).is_some()).collect();
+    let reachable: Vec<Vec3> = spots
+        .iter()
+        .copied()
+        .filter(|s| nav_titan.path(*s, bt_pos).is_some())
+        .collect();
     if reachable.len() < spots.len() {
-        log::info!("{} of {} enemy spawn spots have no walking route to the player, dropped", spots.len() - reachable.len(), spots.len());
+        log::info!(
+            "{} of {} enemy spawn spots have no walking route to the player, dropped",
+            spots.len() - reachable.len(),
+            spots.len()
+        );
     }
     if !reachable.is_empty() {
         spots = reachable;
     }
     if spots.is_empty() {
         // Nowhere passes the checks (tight interiors): spawn around the player anyway.
-        spots = (0..8).map(|k| bt_pos + Vec3::new((k as f32 * 0.785).cos(), (k as f32 * 0.785).sin(), 0.0) * 1200.0).collect();
+        spots = (0..8)
+            .map(|k| {
+                bt_pos + Vec3::new((k as f32 * 0.785).cos(), (k as f32 * 0.785).sin(), 0.0) * 1200.0
+            })
+            .collect();
     }
     log::info!("{} enemy spawn spots", spots.len());
-    commands.insert_resource(game::Arena { player_spawn: bt_pos, player_yaw: yaw, enemy_spots: spots });
+    commands.insert_resource(game::Arena {
+        player_spawn: bt_pos,
+        player_yaw: yaw,
+        enemy_spots: spots,
+    });
 
     // A pool of enemy Titans, two of each class (hidden until a wave needs them), each holding
     // its class's weapon.
     ph.mark("spawn spot routes");
-    let mut prefetch: Vec<String> = kits.iter().flat_map(|k| [k.model.clone(), k.weapon.playermodel.clone()]).collect();
+    let mut prefetch: Vec<String> = kits
+        .iter()
+        .flat_map(|k| [k.model.clone(), k.weapon.playermodel.clone()])
+        .collect();
     prefetch.sort();
     prefetch.dedup();
     actor::prefetch_models(&gd, &prefetch);
@@ -1154,11 +1732,17 @@ fn setup(
     let titan_classes = kits.iter().filter(|k| !k.infantry).count();
     let grunt_class = kits.iter().position(|k| k.infantry);
     for i in 0..(titan_classes * 2 + grunt_class.map_or(0, |_| GRUNT_POOL)) as u64 {
-        let class = if (i as usize) < titan_classes * 2 { i as usize % titan_classes } else { grunt_class.unwrap() };
+        let class = if (i as usize) < titan_classes * 2 {
+            i as usize % titan_classes
+        } else {
+            grunt_class.unwrap()
+        };
         let kit = &kits[class];
         let seq_list = enemy_sequences(kit);
         let seqs: &[&str] = &seq_list;
-        let e_anchor = commands.spawn((Transform::from_translation(bt_pos), Visibility::Hidden)).id();
+        let e_anchor = commands
+            .spawn((Transform::from_translation(bt_pos), Visibility::Hidden))
+            .id();
         commands.entity(root).add_child(e_anchor);
         match actor::spawn_actor(
             &mut commands,
@@ -1178,26 +1762,65 @@ fn setup(
         ) {
             Ok(a) => {
                 if let Some(hand) = a.joint("ja_c_propGun") {
-                    let gun = ActorSpec { path: &kit.weapon.playermodel, sequences: &[], grids: &[], body: &[] };
-                    if let Err(e) = actor::spawn_actor(&mut commands, hand, &gd, &gun, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                    let gun = ActorSpec {
+                        path: &kit.weapon.playermodel,
+                        sequences: &[],
+                        grids: &[],
+                        body: &[],
+                    };
+                    if let Err(e) = actor::spawn_actor(
+                        &mut commands,
+                        hand,
+                        &gd,
+                        &gun,
+                        &mut cache,
+                        &mut meshes,
+                        &mut images,
+                        &mut materials,
+                        &mut bindposes,
+                    ) {
                         log::warn!("enemy gun: {e:#}");
                     }
                 }
-                commands.entity(e_anchor).insert(targets::Enemy::new(bt_pos, a.entity, 0x9E37_79B9 * (i + 1), class, kit));
+                commands.entity(e_anchor).insert(targets::Enemy::new(
+                    bt_pos,
+                    a.entity,
+                    0x9E37_79B9 * (i + 1),
+                    class,
+                    kit,
+                ));
             }
             Err(e) => log::warn!("enemy titan: {e:#}"),
         }
     }
     ph.mark("enemies");
     if !cache.missing_materials.is_empty() {
-        log::warn!("{} materials not found, e.g. {:?}", cache.missing_materials.len(), &cache.missing_materials[..cache.missing_materials.len().min(8)]);
+        log::warn!(
+            "{} materials not found, e.g. {:?}",
+            cache.missing_materials.len(),
+            &cache.missing_materials[..cache.missing_materials.len().min(8)]
+        );
     }
 
-    match world::build_static_model(&gd, "models/weapons/bullets/projectile_rocket_large.mdl", &mut cache, &mut meshes, &mut images, &mut materials) {
+    match world::build_static_model(
+        &gd,
+        "models/weapons/bullets/projectile_rocket_large.mdl",
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+    ) {
         Ok((parts, _)) => commands.insert_resource(abilities::MissileAssets { parts, root }),
         Err(e) => log::warn!("missile model: {e:#}"),
     }
-    match world::build_static_model(&gd, "models/weapons/caber_shot/caber_shot_thrown_xl.mdl", &mut cache, &mut meshes, &mut images, &mut materials) {
+    match world::build_static_model(
+        &gd,
+        "models/weapons/caber_shot/caber_shot_thrown_xl.mdl",
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+    ) {
         Ok((parts, _)) => commands.insert_resource(titankit::TetherAssets { parts, root }),
         Err(e) => log::warn!("tether model: {e:#}"),
     }
@@ -1211,7 +1834,9 @@ fn setup(
         let look = args.look.unwrap_or(bt_pos + Vec3::new(0.0, 0.0, 170.0));
         commands.insert_resource(player::FreeCamStart(to_bevy(cam), to_bevy(look)));
     }
-    commands.entity(camera).insert(camera_start(&args, bt_pos, yaw));
+    commands
+        .entity(camera)
+        .insert(camera_start(&args, bt_pos, yaw));
     ph.mark("rest");
     match sounds.join() {
         Ok(sfx) => commands.insert_resource(sfx),
@@ -1249,7 +1874,9 @@ fn screenshots(
         let loading_shot = *at <= 0.0 && matches!(*load, ui::LoadState::Waiting(n) if n >= 4);
         if (t > *at && *at > 0.0) || loading_shot {
             log::info!("screenshot {path} at {t:.1}s");
-            commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.clone()));
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path.clone()));
             *next += 1;
         }
     } else if t > args.shots.last().unwrap().0 + 1.5 {
@@ -1265,7 +1892,12 @@ fn perf_log(time: Res<Time<Real>>, mut acc: Local<(f32, u32, f32)>) {
     acc.1 += 1;
     acc.2 = acc.2.max(dt);
     if acc.0 >= 2.0 {
-        log::info!("perf: {:.1} fps ({:.1} ms/frame, slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
+        log::info!(
+            "perf: {:.1} fps ({:.1} ms/frame, slowest {:.1} ms)",
+            acc.1 as f32 / acc.0,
+            acc.0 * 1000.0 / acc.1 as f32,
+            acc.2 * 1000.0
+        );
         *acc = (0.0, 0, 0.0);
     }
 }
@@ -1275,7 +1907,12 @@ fn perf_log(time: Res<Time<Real>>, mut acc: Local<(f32, u32, f32)>) {
 #[derive(Component)]
 struct FpsText;
 
-fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&mut Text, With<FpsText>>, mut acc: Local<(f32, u32, f32)>) {
+fn fps_overlay(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut text: Query<&mut Text, With<FpsText>>,
+    mut acc: Local<(f32, u32, f32)>,
+) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*ON.get_or_init(|| std::env::var_os("TF_FPS").is_some_and(|v| v != "0")) {
         return;
@@ -1283,9 +1920,17 @@ fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&m
     let Ok(mut text) = text.single_mut() else {
         commands.spawn((
             Text::new(""),
-            TextFont { font_size: 18.0, ..default() },
+            TextFont {
+                font_size: 18.0,
+                ..default()
+            },
             TextColor(Color::srgb(1.0, 1.0, 0.3)),
-            Node { position_type: PositionType::Absolute, left: px(8), top: px(6), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(8),
+                top: px(6),
+                ..default()
+            },
             GlobalZIndex(200),
             FpsText,
         ));
@@ -1296,7 +1941,12 @@ fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&m
     acc.1 += 1;
     acc.2 = acc.2.max(dt);
     if acc.0 >= 0.5 {
-        text.0 = format!("{:.0} fps  {:.1} ms  (slowest {:.1} ms)", acc.1 as f32 / acc.0, acc.0 * 1000.0 / acc.1 as f32, acc.2 * 1000.0);
+        text.0 = format!(
+            "{:.0} fps  {:.1} ms  (slowest {:.1} ms)",
+            acc.1 as f32 / acc.0,
+            acc.0 * 1000.0 / acc.1 as f32,
+            acc.2 * 1000.0
+        );
         *acc = (0.0, 0, 0.0);
     }
 }
@@ -1306,7 +1956,12 @@ fn fps_overlay(mut commands: Commands, time: Res<Time<Real>>, mut text: Query<&m
 #[derive(Component)]
 struct SpeedText;
 
-fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots: Query<&pilotctl::PlayerPilot>, mut text: Query<(&mut Text, &mut Visibility), With<SpeedText>>) {
+fn speed_overlay(
+    mut commands: Commands,
+    control: Res<pilotctl::Control>,
+    pilots: Query<&pilotctl::PlayerPilot>,
+    mut text: Query<(&mut Text, &mut Visibility), With<SpeedText>>,
+) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*ON.get_or_init(|| std::env::var_os("TF_SPEED").is_some_and(|v| v != "0")) {
         return;
@@ -1314,16 +1969,28 @@ fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots
     let Ok((mut text, mut vis)) = text.single_mut() else {
         commands.spawn((
             Text::new(""),
-            TextFont { font_size: 22.0, ..default() },
+            TextFont {
+                font_size: 22.0,
+                ..default()
+            },
             TextColor(Color::srgb(1.0, 1.0, 0.3)),
-            Node { position_type: PositionType::Absolute, left: Val::Px(8.0), bottom: Val::Px(40.0), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(8.0),
+                bottom: Val::Px(40.0),
+                ..default()
+            },
             GlobalZIndex(200),
             SpeedText,
         ));
         return;
     };
     let on_foot = *control == pilotctl::Control::Pilot;
-    *vis = if on_foot { Visibility::Visible } else { Visibility::Hidden };
+    *vis = if on_foot {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
     if !on_foot {
         return;
     }
@@ -1331,7 +1998,15 @@ fn speed_overlay(mut commands: Commands, control: Res<pilotctl::Control>, pilots
     let s = &pilot.state;
     let h = s.vel.truncate().length();
     let mode = match s.mode {
-        tf_sim::pilot::PilotMove::Ground => if s.sprinting { "sprint" } else if s.crouched { "crouch" } else { "walk" },
+        tf_sim::pilot::PilotMove::Ground => {
+            if s.sprinting {
+                "sprint"
+            } else if s.crouched {
+                "crouch"
+            } else {
+                "walk"
+            }
+        }
         tf_sim::pilot::PilotMove::Air => "air",
         tf_sim::pilot::PilotMove::Slide => "slide",
         tf_sim::pilot::PilotMove::WallRun { .. } => "wallrun",
@@ -1363,7 +2038,16 @@ const GRAPH_H: usize = 80;
 const GRAPH_SECONDS: f32 = 10.0;
 const GRAPH_MAX: f32 = 600.0;
 /// Key lanes under the plot: label and the bit in a sample's keys.
-const KEY_LANES: &[(&str, u16)] = &[("W", 1), ("A", 2), ("S", 4), ("D", 8), ("Shift", 16), ("Ctrl", 64), ("Space", 128), ("ADS", 256)];
+const KEY_LANES: &[(&str, u16)] = &[
+    ("W", 1),
+    ("A", 2),
+    ("S", 4),
+    ("D", 8),
+    ("Shift", 16),
+    ("Ctrl", 64),
+    ("Space", 128),
+    ("ADS", 256),
+];
 /// The sprint latch without the key: drawn dim in the Shift lane.
 const KEY_LATCH: u16 = 32;
 const LANE_H: usize = 10;
@@ -1372,15 +2056,33 @@ const GRAPH_TOTAL_H: usize = GRAPH_H + LANE_H * KEY_LANES.len();
 
 fn graph_keys(i: &player::PlayerInput) -> u16 {
     let mut k = 0;
-    if i.forward > 0.0 { k |= 1 }
-    if i.right < 0.0 { k |= 2 }
-    if i.forward < 0.0 { k |= 4 }
-    if i.right > 0.0 { k |= 8 }
-    if i.sprint_key { k |= 16 }
-    if i.sprint && !i.sprint_key { k |= KEY_LATCH }
-    if i.crouch || i.crouch_toggle_key { k |= 64 }
-    if i.jump { k |= 128 }
-    if i.ads || i.pilot_ads { k |= 256 }
+    if i.forward > 0.0 {
+        k |= 1
+    }
+    if i.right < 0.0 {
+        k |= 2
+    }
+    if i.forward < 0.0 {
+        k |= 4
+    }
+    if i.right > 0.0 {
+        k |= 8
+    }
+    if i.sprint_key {
+        k |= 16
+    }
+    if i.sprint && !i.sprint_key {
+        k |= KEY_LATCH
+    }
+    if i.crouch || i.crouch_toggle_key {
+        k |= 64
+    }
+    if i.jump {
+        k |= 128
+    }
+    if i.ads || i.pilot_ads {
+        k |= 256
+    }
     k
 }
 
@@ -1400,11 +2102,16 @@ fn speed_graph(
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
     let Ok((mut g, mut vis)) = graph.single_mut() else {
         let img = Image::new_fill(
-            Extent3d { width: GRAPH_W as u32, height: GRAPH_TOTAL_H as u32, depth_or_array_layers: 1 },
+            Extent3d {
+                width: GRAPH_W as u32,
+                height: GRAPH_TOTAL_H as u32,
+                depth_or_array_layers: 1,
+            },
             TextureDimension::D2,
             &[0, 0, 0, 0],
             TextureFormat::Rgba8UnormSrgb,
-            bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
+            bevy::asset::RenderAssetUsages::MAIN_WORLD
+                | bevy::asset::RenderAssetUsages::RENDER_WORLD,
         );
         let image = images.add(img);
         let bottom = 175.0;
@@ -1412,24 +2119,48 @@ fn speed_graph(
         commands
             .spawn((
                 ImageNode::new(image.clone()),
-                Node { position_type: PositionType::Absolute, left: Val::Px(8.0 + LABEL_W), bottom: Val::Px(bottom), width: Val::Px(GRAPH_W as f32), height: Val::Px(GRAPH_TOTAL_H as f32), ..default() },
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(8.0 + LABEL_W),
+                    bottom: Val::Px(bottom),
+                    width: Val::Px(GRAPH_W as f32),
+                    height: Val::Px(GRAPH_TOTAL_H as f32),
+                    ..default()
+                },
                 GlobalZIndex(200),
-                SpeedGraph { image, samples: std::collections::VecDeque::with_capacity(GRAPH_W + 1), acc: 0.0 },
+                SpeedGraph {
+                    image,
+                    samples: std::collections::VecDeque::with_capacity(GRAPH_W + 1),
+                    acc: 0.0,
+                },
             ))
             .with_children(|p| {
                 p.spawn((
                     Text::new(labels.join("\n")),
-                    TextFont { font_size: 9.0, ..default() },
+                    TextFont {
+                        font_size: 9.0,
+                        ..default()
+                    },
                     bevy::text::LineHeight::Px(LANE_H as f32),
                     TextColor(Color::srgb(0.9, 0.9, 0.9)),
                     TextLayout::new_with_justify(Justify::Right),
-                    Node { position_type: PositionType::Absolute, right: Val::Px(GRAPH_W as f32 + 4.0), top: Val::Px(GRAPH_H as f32), width: Val::Px(LABEL_W - 4.0), ..default() },
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(GRAPH_W as f32 + 4.0),
+                        top: Val::Px(GRAPH_H as f32),
+                        width: Val::Px(LABEL_W - 4.0),
+                        ..default()
+                    },
                 ));
             });
         return;
     };
     let on_foot = *control == pilotctl::Control::Pilot;
-    *vis = if on_foot { Visibility::Visible } else { Visibility::Hidden };
+    *vis = if on_foot {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
     let Ok(pilot) = pilots.single() else { return };
     if !on_foot {
         g.samples.clear();
@@ -1439,7 +2170,9 @@ fn speed_graph(
     let colour = match s.mode {
         tf_sim::pilot::PilotMove::Slide => [255, 150, 40],
         tf_sim::pilot::PilotMove::Air => [80, 220, 255],
-        tf_sim::pilot::PilotMove::WallRun { .. } | tf_sim::pilot::PilotMove::WallHang { .. } => [80, 255, 120],
+        tf_sim::pilot::PilotMove::WallRun { .. } | tf_sim::pilot::PilotMove::WallHang { .. } => {
+            [80, 255, 120]
+        }
         _ => [255, 255, 80],
     };
     // One column per GRAPH_SECONDS / GRAPH_W of game time; the peak within the slot wins, so
@@ -1461,8 +2194,12 @@ fn speed_graph(
         }
         last.2 |= keys;
     }
-    let Some(img) = images.get_mut(&g.image) else { return };
-    let Some(data) = img.data.as_mut() else { return };
+    let Some(img) = images.get_mut(&g.image) else {
+        return;
+    };
+    let Some(data) = img.data.as_mut() else {
+        return;
+    };
     // y counts up from the bottom of the plot; lanes are below it (negative rows via `lane`).
     let mut put = |x: usize, row_from_top: usize, c: [u8; 3], a: u8| {
         if x < GRAPH_W && row_from_top < GRAPH_TOTAL_H {
@@ -1470,14 +2207,20 @@ fn speed_graph(
             data[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], a]);
         }
     };
-    let row = |v: f32| GRAPH_H - 1 - ((v / GRAPH_MAX).clamp(0.0, 1.0) * (GRAPH_H - 1) as f32).round() as usize;
+    let row = |v: f32| {
+        GRAPH_H - 1 - ((v / GRAPH_MAX).clamp(0.0, 1.0) * (GRAPH_H - 1) as f32).round() as usize
+    };
     for y in 0..GRAPH_TOTAL_H {
         let lane = y >= GRAPH_H && (y - GRAPH_H) / LANE_H % 2 == 1;
         for x in 0..GRAPH_W {
             put(x, y, if lane { [20, 20, 20] } else { [0, 0, 0] }, 110);
         }
     }
-    for (v, c) in [(260.0, [255, 255, 80]), (350.0, [80, 220, 255]), (400.0, [255, 150, 40])] {
+    for (v, c) in [
+        (260.0, [255, 255, 80]),
+        (350.0, [80, 220, 255]),
+        (400.0, [255, 150, 40]),
+    ] {
         for x in (0..GRAPH_W).step_by(3) {
             put(x, row(v), c, 90);
         }
@@ -1497,7 +2240,13 @@ fn speed_graph(
         prev = Some(y);
         for (l, &(_, bit)) in KEY_LANES.iter().enumerate() {
             let top = GRAPH_H + l * LANE_H + 2;
-            let (on, c) = if keys & bit != 0 { (true, [230, 230, 230]) } else if bit == 16 && keys & KEY_LATCH != 0 { (true, [120, 120, 120]) } else { (false, [0, 0, 0]) };
+            let (on, c) = if keys & bit != 0 {
+                (true, [230, 230, 230])
+            } else if bit == 16 && keys & KEY_LATCH != 0 {
+                (true, [120, 120, 120])
+            } else {
+                (false, [0, 0, 0])
+            };
             if on {
                 // One-shot presses (Space) are a frame long: widen them to three columns.
                 let w = if bit == 128 { 3 } else { 1 };
@@ -1520,7 +2269,10 @@ impl Plugin for GpuTimesPlugin {
         if std::env::var_os("TF_GPU_TIMES").is_some() {
             app.add_plugins((
                 bevy::render::diagnostic::RenderDiagnosticsPlugin,
-                bevy::diagnostic::LogDiagnosticsPlugin { wait_duration: std::time::Duration::from_secs(4), ..default() },
+                bevy::diagnostic::LogDiagnosticsPlugin {
+                    wait_duration: std::time::Duration::from_secs(4),
+                    ..default()
+                },
             ))
             .add_systems(Update, gpu_frame_log);
         }
@@ -1530,18 +2282,41 @@ impl Plugin for GpuTimesPlugin {
 /// With TF_GPU_TIMES: every two seconds, the GPU time per frame of each render pass summed over
 /// all the cameras that run it (Bevy's own log averages a pass name over its cameras), split
 /// into the cameras' runs (largest first), and the frame's total.
-fn gpu_frame_log(store: Res<bevy::diagnostic::DiagnosticsStore>, mut last: Local<Option<std::time::Instant>>, mut acc: Local<(u32, f32, std::collections::BTreeMap<String, Vec<f64>>)>, time: Res<Time<Real>>) {
+fn gpu_frame_log(
+    store: Res<bevy::diagnostic::DiagnosticsStore>,
+    mut last: Local<Option<std::time::Instant>>,
+    mut acc: Local<(u32, f32, std::collections::BTreeMap<String, Vec<f64>>)>,
+    time: Res<Time<Real>>,
+) {
     // All of one frame's render diagnostics are stored with the same instant.
-    let Some(newest) = store.iter().filter(|d| d.path().as_str().starts_with("render/")).filter_map(|d| d.measurement().map(|m| m.time)).max() else { return };
+    let Some(newest) = store
+        .iter()
+        .filter(|d| d.path().as_str().starts_with("render/"))
+        .filter_map(|d| d.measurement().map(|m| m.time))
+        .max()
+    else {
+        return;
+    };
     if *last == Some(newest) {
         return;
     }
     *last = Some(newest);
     acc.0 += 1;
     for d in store.iter() {
-        let Some(pass) = d.path().as_str().strip_prefix("render/").and_then(|p| p.strip_suffix("/elapsed_gpu")) else { continue };
+        let Some(pass) = d
+            .path()
+            .as_str()
+            .strip_prefix("render/")
+            .and_then(|p| p.strip_suffix("/elapsed_gpu"))
+        else {
+            continue;
+        };
         // Each camera's run, largest first.
-        let mut runs: Vec<f64> = d.measurements().filter(|m| m.time == newest).map(|m| m.value).collect();
+        let mut runs: Vec<f64> = d
+            .measurements()
+            .filter(|m| m.time == newest)
+            .map(|m| m.value)
+            .collect();
         runs.sort_by(|a, b| b.total_cmp(a));
         let e = acc.2.entry(pass.to_string()).or_default();
         e.resize(e.len().max(runs.len()), 0.0);
@@ -1552,11 +2327,32 @@ fn gpu_frame_log(store: Res<bevy::diagnostic::DiagnosticsStore>, mut last: Local
     acc.1 += time.delta_secs();
     if acc.1 >= 2.0 {
         let frames = acc.0 as f64;
-        let mut rows: Vec<_> = acc.2.iter().map(|(k, runs)| (k.clone(), runs.iter().sum::<f64>() / frames, runs.iter().map(|v| format!("{:.3}", v / frames)).collect::<Vec<_>>().join("+"))).collect();
+        let mut rows: Vec<_> = acc
+            .2
+            .iter()
+            .map(|(k, runs)| {
+                (
+                    k.clone(),
+                    runs.iter().sum::<f64>() / frames,
+                    runs.iter()
+                        .map(|v| format!("{:.3}", v / frames))
+                        .collect::<Vec<_>>()
+                        .join("+"),
+                )
+            })
+            .collect();
         rows.sort_by(|a, b| b.1.total_cmp(&a.1));
         let total: f64 = rows.iter().map(|r| r.1).sum();
-        let list: Vec<String> = rows.iter().filter(|r| r.1 >= 0.005).map(|r| format!("{} {}", r.0, r.2)).collect();
-        log::info!("gpu: {total:.2} ms/frame over {} frames: {}", acc.0, list.join(", "));
+        let list: Vec<String> = rows
+            .iter()
+            .filter(|r| r.1 >= 0.005)
+            .map(|r| format!("{} {}", r.0, r.2))
+            .collect();
+        log::info!(
+            "gpu: {total:.2} ms/frame over {} frames: {}",
+            acc.0,
+            list.join(", ")
+        );
         *acc = (0, 0.0, Default::default());
     }
 }

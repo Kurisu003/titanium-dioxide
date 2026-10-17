@@ -6,16 +6,29 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let map = &a[2];
     let data = vpk.read(&format!("maps/{map}.bsp"))?;
-    let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
+    let bsp = Bsp::parse(map, &data, |i| {
+        vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok()
+    })?;
     let t = std::time::Instant::now();
     let shapes = bsp.collision_shapes();
     println!("{} shapes in {:?}", shapes.len(), t.elapsed());
     let td = bsp.texture_data();
     let mut table = std::collections::BTreeMap::new();
     for s in &shapes {
-        let name = if s.texture_data < 0 { "<brush>".to_string() } else { td.get(s.texture_data as usize).map(|t| t.name.clone()).unwrap_or_default() };
+        let name = if s.texture_data < 0 {
+            "<brush>".to_string()
+        } else {
+            td.get(s.texture_data as usize)
+                .map(|t| t.name.clone())
+                .unwrap_or_default()
+        };
         let tool = name.to_ascii_uppercase().starts_with("TOOLS") || name.starts_with('<');
-        let e = table.entry((if tool { name } else { "(textured)".into() }, format!("{:#x}", s.contents))).or_insert((0, 0));
+        let e = table
+            .entry((
+                if tool { name } else { "(textured)".into() },
+                format!("{:#x}", s.contents),
+            ))
+            .or_insert((0, 0));
         e.0 += 1;
         e.1 += s.tris.len();
     }

@@ -10,7 +10,10 @@ fn main() -> anyhow::Result<()> {
     eprintln!("mbnk v{}, {} sources", bank.version, bank.sources.len());
     let filter = a.get(2).cloned().unwrap_or_default();
     for s in bank.sources.iter().filter(|s| s.name.contains(&filter)) {
-        println!("{:<60} {:>5} Hz {}ch lang {:>2} patch {} {}+{} bytes", s.name, s.sample_rate, s.channels, s.language, s.patch, s.header_size, s.data_size);
+        println!(
+            "{:<60} {:>5} Hz {}ch lang {:>2} patch {} {}+{} bytes",
+            s.name, s.sample_rate, s.channels, s.language, s.patch, s.header_size, s.data_size
+        );
     }
     Ok(())
 }

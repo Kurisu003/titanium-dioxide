@@ -27,8 +27,8 @@ use crate::combat::{TitanHealth, Vortex, VortexMode};
 use crate::gamedata::GameData;
 use crate::particles::{emit, Effect, Glow};
 use crate::pfx::Cp;
-use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
 use crate::pilotctl::Control;
+use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
 use crate::targets::Enemy;
 use crate::weapons::{ray_cylinder, TITAN_ARSENAL};
 use bevy::prelude::*;
@@ -135,18 +135,41 @@ pub struct TetherAssets {
 
 /// Spawn a tether entity at `pos` (game space) with the model (a child of the world root, so
 /// its transform stays in game units), or a glow in Bevy space without it.
-fn spawn_tether(commands: &mut Commands, assets: Option<&TetherAssets>, pos: Vec3, extra: impl Bundle) -> Entity {
+fn spawn_tether(
+    commands: &mut Commands,
+    assets: Option<&TetherAssets>,
+    pos: Vec3,
+    extra: impl Bundle,
+) -> Entity {
     match assets {
         Some(a) => {
-            let e = commands.spawn((Transform::from_translation(pos), Visibility::default(), extra)).id();
+            let e = commands
+                .spawn((
+                    Transform::from_translation(pos),
+                    Visibility::default(),
+                    extra,
+                ))
+                .id();
             for (mesh, mat) in &a.parts {
-                let c = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), Transform::IDENTITY)).id();
+                let c = commands
+                    .spawn((
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(mat.clone()),
+                        Transform::IDENTITY,
+                    ))
+                    .id();
                 commands.entity(e).add_child(c);
             }
             commands.entity(a.root).add_child(e);
             e
         }
-        None => commands.spawn((Transform::from_translation(to_bevy(pos)), Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.4, false), extra)).id(),
+        None => commands
+            .spawn((
+                Transform::from_translation(to_bevy(pos)),
+                Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.4, false),
+                extra,
+            ))
+            .id(),
     }
 }
 
@@ -179,16 +202,44 @@ pub struct TitanSmoke {
 /// on control point 1 (what the system's operators read it as). The Smokescreen script isn't
 /// in the shipped scripts, so the plain variant (beside `_burn_mod` and `_heal`) is a guess.
 pub fn spawn_smoke(commands: &mut Commands, at: Vec3, fwd: Vec3, enemy: bool) {
-    commands.spawn((Transform::from_translation(to_bevy(at)), TitanSmoke { pos: at, life: TITAN_SMOKE_LIFETIME, delay: 1.0, tick: 0.0, puff: 0.0, enemy, hurt_pilot: false }));
+    commands.spawn((
+        Transform::from_translation(to_bevy(at)),
+        TitanSmoke {
+            pos: at,
+            life: TITAN_SMOKE_LIFETIME,
+            delay: 1.0,
+            tick: 0.0,
+            puff: 0.0,
+            enemy,
+            hurt_pilot: false,
+        },
+    ));
     if std::env::var_os("TF_OLD_FX").is_some() {
         return;
     }
     let cp = Cp::facing(at, Vec3::new(fwd.x, fwd.y, 0.0).normalize_or(Vec3::X));
-    for o in [Vec3::new(-200.0, 0.0, 20.0), Vec3::new(0.0, 200.0, 20.0), Vec3::new(0.0, -200.0, 20.0), Vec3::new(0.0, 0.0, 148.0), Vec3::new(-200.0, 0.0, 148.0)] {
+    for o in [
+        Vec3::new(-200.0, 0.0, 20.0),
+        Vec3::new(0.0, 200.0, 20.0),
+        Vec3::new(0.0, -200.0, 20.0),
+        Vec3::new(0.0, 0.0, 148.0),
+        Vec3::new(-200.0, 0.0, 148.0),
+    ] {
         let pos = at + cp.fwd * o.x + cp.left * o.y + cp.up * o.z;
         // Control point 1's X is the cloud's lifetime: its smoke lives 1.25-1.5 times that and
         // its arcs stop after it.
-        crate::pfx::emit_named_cps(commands, "P_wpn_smk_electric", &[Cp { pos, ..cp }, Cp { pos: Vec3::new(TITAN_SMOKE_LIFETIME, 0.0, 0.0), ..cp }], Some(TITAN_SMOKE_LIFETIME));
+        crate::pfx::emit_named_cps(
+            commands,
+            "P_wpn_smk_electric",
+            &[
+                Cp { pos, ..cp },
+                Cp {
+                    pos: Vec3::new(TITAN_SMOKE_LIFETIME, 0.0, 0.0),
+                    ..cp
+                },
+            ],
+            Some(TITAN_SMOKE_LIFETIME),
+        );
     }
 }
 
@@ -233,7 +284,11 @@ fn fly_deployable(world: &Collision, pos: &mut Vec3, vel: &mut Vec3, dt: f32) ->
     let step = *vel * dt;
     let len = step.length().max(1e-4);
     let d = step / len;
-    if let Some(h) = world.0.raycast(SVec3::from(pos.to_array()), SVec3::from(d.to_array()), len + 8.0) {
+    if let Some(h) = world.0.raycast(
+        SVec3::from(pos.to_array()),
+        SVec3::from(d.to_array()),
+        len + 8.0,
+    ) {
         *pos += d * (h.t - 8.0).max(0.0);
         let n = Vec3::from(h.normal.to_array());
         if n.z > 0.5 {
@@ -297,43 +352,183 @@ pub enum CoreKind {
 
 /// (weapon script, kind, icon and label if the script or localisation has none)
 const ORDNANCE: &[(&str, OrdKind, &str, &str)] = &[
-    ("mp_titanweapon_shoulder_rockets", OrdKind::Missiles, "rui/titan_loadout/ordnance/multilock_rockets_menu", "MULTI-TARGET MISSILES"),
-    ("mp_titanweapon_laser_lite", OrdKind::LaserShot, "rui/titan_loadout/ordnance/laser_shot_menu", "LASER SHOT"),
-    ("mp_titanweapon_flame_wall", OrdKind::Firewall, "rui/titan_loadout/ordnance/flame_wall_menu", "FIREWALL"),
-    ("mp_titanweapon_dumbfire_rockets", OrdKind::Cluster, "rui/titan_loadout/ordnance/cluster_missile_menu", "CLUSTER MISSILE"),
-    ("mp_titanweapon_arc_wave", OrdKind::ArcWave, "rui/titan_loadout/ordnance/arc_wave_menu", "ARC WAVE"),
-    ("mp_titanweapon_tracker_rockets", OrdKind::Tracker, "rui/titan_loadout/ordnance/tracking_rockets_menu", "TRACKER ROCKETS"),
-    ("mp_titanability_power_shot", OrdKind::PowerShot, "rui/titan_loadout/ordnance/concussive_shot_short_menu", "POWER SHOT"),
+    (
+        "mp_titanweapon_shoulder_rockets",
+        OrdKind::Missiles,
+        "rui/titan_loadout/ordnance/multilock_rockets_menu",
+        "MULTI-TARGET MISSILES",
+    ),
+    (
+        "mp_titanweapon_laser_lite",
+        OrdKind::LaserShot,
+        "rui/titan_loadout/ordnance/laser_shot_menu",
+        "LASER SHOT",
+    ),
+    (
+        "mp_titanweapon_flame_wall",
+        OrdKind::Firewall,
+        "rui/titan_loadout/ordnance/flame_wall_menu",
+        "FIREWALL",
+    ),
+    (
+        "mp_titanweapon_dumbfire_rockets",
+        OrdKind::Cluster,
+        "rui/titan_loadout/ordnance/cluster_missile_menu",
+        "CLUSTER MISSILE",
+    ),
+    (
+        "mp_titanweapon_arc_wave",
+        OrdKind::ArcWave,
+        "rui/titan_loadout/ordnance/arc_wave_menu",
+        "ARC WAVE",
+    ),
+    (
+        "mp_titanweapon_tracker_rockets",
+        OrdKind::Tracker,
+        "rui/titan_loadout/ordnance/tracking_rockets_menu",
+        "TRACKER ROCKETS",
+    ),
+    (
+        "mp_titanability_power_shot",
+        OrdKind::PowerShot,
+        "rui/titan_loadout/ordnance/concussive_shot_short_menu",
+        "POWER SHOT",
+    ),
 ];
 
 const DEFENSIVE: &[(&str, DefKind, &str, &str)] = &[
-    ("mp_titanweapon_vortex_shield", DefKind::Vortex, "rui/titan_loadout/defensive/titan_defensive_vortex_menu", "VORTEX SHIELD"),
-    ("mp_titanweapon_vortex_shield_ion", DefKind::IonVortex, "rui/titan_loadout/defensive/titan_defensive_vortex_menu", "VORTEX SHIELD"),
-    ("mp_titanweapon_heat_shield", DefKind::HeatShield, "rui/titan_loadout/defensive/titan_defensive_heat_shield_menu", "THERMAL SHIELD"),
-    ("mp_titanability_basic_block", DefKind::SwordBlock, "rui/titan_loadout/defensive/titan_defensive_sword_block_menu", "SWORD BLOCK"),
-    ("mp_titanability_particle_wall", DefKind::ParticleWall, "rui/titan_loadout/defensive/titan_defensive_particle_wall_menu", "PARTICLE WALL"),
-    ("mp_titanability_tether_trap", DefKind::Tether, "rui/titan_loadout/ordnance/tether_menu", "TETHER TRAP"),
-    ("mp_titanability_gun_shield", DefKind::GunShield, "rui/titan_loadout/defensive/titan_defensive_gun_shield_menu", "GUN SHIELD"),
+    (
+        "mp_titanweapon_vortex_shield",
+        DefKind::Vortex,
+        "rui/titan_loadout/defensive/titan_defensive_vortex_menu",
+        "VORTEX SHIELD",
+    ),
+    (
+        "mp_titanweapon_vortex_shield_ion",
+        DefKind::IonVortex,
+        "rui/titan_loadout/defensive/titan_defensive_vortex_menu",
+        "VORTEX SHIELD",
+    ),
+    (
+        "mp_titanweapon_heat_shield",
+        DefKind::HeatShield,
+        "rui/titan_loadout/defensive/titan_defensive_heat_shield_menu",
+        "THERMAL SHIELD",
+    ),
+    (
+        "mp_titanability_basic_block",
+        DefKind::SwordBlock,
+        "rui/titan_loadout/defensive/titan_defensive_sword_block_menu",
+        "SWORD BLOCK",
+    ),
+    (
+        "mp_titanability_particle_wall",
+        DefKind::ParticleWall,
+        "rui/titan_loadout/defensive/titan_defensive_particle_wall_menu",
+        "PARTICLE WALL",
+    ),
+    (
+        "mp_titanability_tether_trap",
+        DefKind::Tether,
+        "rui/titan_loadout/ordnance/tether_menu",
+        "TETHER TRAP",
+    ),
+    (
+        "mp_titanability_gun_shield",
+        DefKind::GunShield,
+        "rui/titan_loadout/defensive/titan_defensive_gun_shield_menu",
+        "GUN SHIELD",
+    ),
 ];
 
 const UTILITY: &[(&str, UtilKind, &str, &str)] = &[
-    ("mp_titanability_smoke", UtilKind::Smoke, "rui/titan_loadout/tactical/titan_tactical_electric_smoke_menu", "ELECTRIC SMOKE"),
-    ("mp_titanability_sonar_pulse", UtilKind::SonarPulse, "rui/titan_loadout/tactical/titan_tactical_radar_pulse_menu", "SONAR PULSE"),
-    ("mp_titanability_slow_trap", UtilKind::SlowTrap, "rui/titan_loadout/tactical/titan_tactical_slow_trap_menu", "SLOW TRAP"),
-    ("mp_titanability_laser_trip", UtilKind::LaserTrip, "rui/titan_loadout/tactical/titan_tactical_laser_tripwire_menu", "LASER TRIPWIRE"),
-    ("mp_titanability_phase_dash", UtilKind::PhaseDash, "rui/titan_loadout/tactical/titan_tactical_phase_dash_menu", "PHASE DASH"),
-    ("mp_titanability_hover", UtilKind::Hover, "rui/titan_loadout/tactical/titan_tactical_hover_menu", "HOVER"),
-    ("mp_titanability_ammo_swap", UtilKind::AmmoSwap, "rui/titan_loadout/tactical/titan_tactical_ammo_swap_menu", "AMMO SWAP"),
+    (
+        "mp_titanability_smoke",
+        UtilKind::Smoke,
+        "rui/titan_loadout/tactical/titan_tactical_electric_smoke_menu",
+        "ELECTRIC SMOKE",
+    ),
+    (
+        "mp_titanability_sonar_pulse",
+        UtilKind::SonarPulse,
+        "rui/titan_loadout/tactical/titan_tactical_radar_pulse_menu",
+        "SONAR PULSE",
+    ),
+    (
+        "mp_titanability_slow_trap",
+        UtilKind::SlowTrap,
+        "rui/titan_loadout/tactical/titan_tactical_slow_trap_menu",
+        "SLOW TRAP",
+    ),
+    (
+        "mp_titanability_laser_trip",
+        UtilKind::LaserTrip,
+        "rui/titan_loadout/tactical/titan_tactical_laser_tripwire_menu",
+        "LASER TRIPWIRE",
+    ),
+    (
+        "mp_titanability_phase_dash",
+        UtilKind::PhaseDash,
+        "rui/titan_loadout/tactical/titan_tactical_phase_dash_menu",
+        "PHASE DASH",
+    ),
+    (
+        "mp_titanability_hover",
+        UtilKind::Hover,
+        "rui/titan_loadout/tactical/titan_tactical_hover_menu",
+        "HOVER",
+    ),
+    (
+        "mp_titanability_ammo_swap",
+        UtilKind::AmmoSwap,
+        "rui/titan_loadout/tactical/titan_tactical_ammo_swap_menu",
+        "AMMO SWAP",
+    ),
 ];
 
 const CORES: &[(&str, CoreKind, &str, &str)] = &[
-    ("mp_titancore_amp_core", CoreKind::Burst, "rui/titan_loadout/core/titan_core_burst_core", "BURST CORE"),
-    ("mp_titancore_flight_core", CoreKind::Flight, "rui/titan_loadout/core/titan_core_flight", "FLIGHT CORE"),
-    ("mp_titancore_laser_cannon", CoreKind::Laser, "rui/titan_loadout/core/titan_core_laser", "LASER CORE"),
-    ("mp_titancore_flame_wave", CoreKind::FlameWave, "rui/titan_loadout/core/titan_core_flame_wave", "FLAME CORE"),
-    ("mp_titancore_shift_core", CoreKind::Sword, "rui/titan_loadout/core/titan_core_sword", "SWORD CORE"),
-    ("mp_titancore_salvo_core", CoreKind::Salvo, "rui/titan_loadout/core/titan_core_salvo", "SALVO CORE"),
-    ("mp_titancore_siege_mode", CoreKind::Smart, "rui/titan_loadout/core/titan_core_smart", "SMART CORE"),
+    (
+        "mp_titancore_amp_core",
+        CoreKind::Burst,
+        "rui/titan_loadout/core/titan_core_burst_core",
+        "BURST CORE",
+    ),
+    (
+        "mp_titancore_flight_core",
+        CoreKind::Flight,
+        "rui/titan_loadout/core/titan_core_flight",
+        "FLIGHT CORE",
+    ),
+    (
+        "mp_titancore_laser_cannon",
+        CoreKind::Laser,
+        "rui/titan_loadout/core/titan_core_laser",
+        "LASER CORE",
+    ),
+    (
+        "mp_titancore_flame_wave",
+        CoreKind::FlameWave,
+        "rui/titan_loadout/core/titan_core_flame_wave",
+        "FLAME CORE",
+    ),
+    (
+        "mp_titancore_shift_core",
+        CoreKind::Sword,
+        "rui/titan_loadout/core/titan_core_sword",
+        "SWORD CORE",
+    ),
+    (
+        "mp_titancore_salvo_core",
+        CoreKind::Salvo,
+        "rui/titan_loadout/core/titan_core_salvo",
+        "SALVO CORE",
+    ),
+    (
+        "mp_titancore_siege_mode",
+        CoreKind::Smart,
+        "rui/titan_loadout/core/titan_core_smart",
+        "SMART CORE",
+    ),
 ];
 
 /// The weapon scripts behind a kit's ordnance, defensive, utility and core.
@@ -349,14 +544,62 @@ pub fn kit_scripts(k: &ActiveKit) -> [&'static str; 4] {
 /// titan_properties rows for BT's SP loadouts, used if the datatable can't be read:
 /// (primary, ordnance, special, antirodeo, core).
 const FALLBACK: &[(&str, &str, &str, &str, &str)] = &[
-    ("mp_titanweapon_xo16_shorty", "mp_titanweapon_shoulder_rockets", "mp_titanweapon_vortex_shield", "mp_titanability_smoke", "mp_titancore_amp_core"),
-    ("mp_titanweapon_sticky_40mm", "mp_titanweapon_tracker_rockets", "mp_titanability_particle_wall", "mp_titanability_sonar_pulse", "mp_titancore_salvo_core"),
-    ("mp_titanweapon_meteor", "mp_titanweapon_flame_wall", "mp_titanweapon_heat_shield", "mp_titanability_slow_trap", "mp_titancore_flame_wave"),
-    ("mp_titanweapon_rocketeer_rocketstream", "mp_titanweapon_shoulder_rockets", "mp_titanweapon_vortex_shield", "mp_titanability_hover", "mp_titancore_flight_core"),
-    ("mp_titanweapon_particle_accelerator", "mp_titanweapon_laser_lite", "mp_titanweapon_vortex_shield_ion", "mp_titanability_laser_trip", "mp_titancore_laser_cannon"),
-    ("mp_titanweapon_leadwall", "mp_titanweapon_arc_wave", "mp_titanability_basic_block", "mp_titanability_phase_dash", "mp_titancore_shift_core"),
-    ("mp_titanweapon_sniper", "mp_titanweapon_dumbfire_rockets", "mp_titanability_tether_trap", "mp_titanability_hover", "mp_titancore_flight_core"),
-    ("mp_titanweapon_predator_cannon", "mp_titanability_power_shot", "mp_titanability_gun_shield", "mp_titanability_ammo_swap", "mp_titancore_siege_mode"),
+    (
+        "mp_titanweapon_xo16_shorty",
+        "mp_titanweapon_shoulder_rockets",
+        "mp_titanweapon_vortex_shield",
+        "mp_titanability_smoke",
+        "mp_titancore_amp_core",
+    ),
+    (
+        "mp_titanweapon_sticky_40mm",
+        "mp_titanweapon_tracker_rockets",
+        "mp_titanability_particle_wall",
+        "mp_titanability_sonar_pulse",
+        "mp_titancore_salvo_core",
+    ),
+    (
+        "mp_titanweapon_meteor",
+        "mp_titanweapon_flame_wall",
+        "mp_titanweapon_heat_shield",
+        "mp_titanability_slow_trap",
+        "mp_titancore_flame_wave",
+    ),
+    (
+        "mp_titanweapon_rocketeer_rocketstream",
+        "mp_titanweapon_shoulder_rockets",
+        "mp_titanweapon_vortex_shield",
+        "mp_titanability_hover",
+        "mp_titancore_flight_core",
+    ),
+    (
+        "mp_titanweapon_particle_accelerator",
+        "mp_titanweapon_laser_lite",
+        "mp_titanweapon_vortex_shield_ion",
+        "mp_titanability_laser_trip",
+        "mp_titancore_laser_cannon",
+    ),
+    (
+        "mp_titanweapon_leadwall",
+        "mp_titanweapon_arc_wave",
+        "mp_titanability_basic_block",
+        "mp_titanability_phase_dash",
+        "mp_titancore_shift_core",
+    ),
+    (
+        "mp_titanweapon_sniper",
+        "mp_titanweapon_dumbfire_rockets",
+        "mp_titanability_tether_trap",
+        "mp_titanability_hover",
+        "mp_titancore_flight_core",
+    ),
+    (
+        "mp_titanweapon_predator_cannon",
+        "mp_titanability_power_shot",
+        "mp_titanability_gun_shield",
+        "mp_titanability_ammo_swap",
+        "mp_titancore_siege_mode",
+    ),
 ];
 
 /// One loadout's kit.
@@ -473,7 +716,10 @@ pub struct KitNumbers {
 /// SP_BASE, then MP_BASE, then the top level of a weapon script.
 fn num(s: &PlayerSettings, k: &str, d: f32) -> f32 {
     for pre in ["sp_base.", "mp_base.", "."] {
-        if let Some(v) = s.get(&format!("{pre}{k}")).and_then(|v| v.parse::<f32>().ok()) {
+        if let Some(v) = s
+            .get(&format!("{pre}{k}"))
+            .and_then(|v| v.parse::<f32>().ok())
+        {
             return v;
         }
     }
@@ -493,7 +739,10 @@ fn regen_cd(s: &PlayerSettings, d: f32) -> f32 {
 
 impl KitNumbers {
     fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let mut w = |n: &str| PlayerSettings::load(&format!("scripts/weapons/{n}.txt"), true, read).unwrap_or_default();
+        let mut w = |n: &str| {
+            PlayerSettings::load(&format!("scripts/weapons/{n}.txt"), true, read)
+                .unwrap_or_default()
+        };
         let laser = w("mp_titanweapon_laser_lite");
         let firewall = w("mp_titanweapon_flame_wall");
         let slow_trap = w("mp_titanability_slow_trap");
@@ -512,7 +761,13 @@ impl KitNumbers {
         let mut core_timing = HashMap::new();
         for (id, _, _, _) in CORES {
             let s = w(id);
-            core_timing.insert(*id, (num(&s, "charge_time", 1.0).max(0.1), num(&s, "core_duration", 6.0)));
+            core_timing.insert(
+                *id,
+                (
+                    num(&s, "charge_time", 1.0).max(0.1),
+                    num(&s, "core_duration", 6.0),
+                ),
+            );
         }
         // Burst Core's spin-up is BT's core animation (abilities::CORE_CHARGEUP).
         if let Some(t) = core_timing.get_mut("mp_titancore_amp_core") {
@@ -522,7 +777,16 @@ impl KitNumbers {
         for (id, _, _, _) in UTILITY {
             let s = w(id);
             let per_shot = num(&s, "ammo_per_shot", 100.0).max(1.0);
-            util.insert(*id, UtilNumbers { cooldown: per_shot / num(&s, "regen_ammo_refill_rate", 5.0).max(0.01), charges: (num(&s, "ammo_clip_size", per_shot) / per_shot).floor().max(1.0) as u32, duration: num(&s, "fire_duration", 0.0) });
+            util.insert(
+                *id,
+                UtilNumbers {
+                    cooldown: per_shot / num(&s, "regen_ammo_refill_rate", 5.0).max(0.01),
+                    charges: (num(&s, "ammo_clip_size", per_shot) / per_shot)
+                        .floor()
+                        .max(1.0) as u32,
+                    duration: num(&s, "fire_duration", 0.0),
+                },
+            );
         }
         Self {
             util,
@@ -542,18 +806,18 @@ impl KitNumbers {
             trap_count: num(&slow_trap, "wave_max_count", 15.0) as u32,
             // FLAME_WALL_THERMITE_DURATION * SP_FLAME_WALL_DURATION_SCALE for the player.
             thermite_life: 5.2 * 1.75,
-            thermite_tick: 100.0,     // PLAYER_METEOR_DAMAGE_TICK
+            thermite_tick: 100.0,      // PLAYER_METEOR_DAMAGE_TICK
             thermite_tick_pilot: 20.0, // PLAYER_METEOR_DAMAGE_TICK_PILOT
-            thermite_radius: 60.0,    // FLAME_WALL_DAMAGE_RADIUS_DEF
+            thermite_radius: 60.0,     // FLAME_WALL_DAMAGE_RADIUS_DEF
             cluster_cd: regen_cd(&cluster, 9.0),
             cluster_speed: 3500.0, // FireClusterRocket missileSpeed
             cluster_heavy: num(&cluster, "explosion_damage_heavy_armor", 150.0),
             cluster_pilot: num(&cluster, "explosion_damage", 66.0),
             cluster_inner: num(&cluster, "explosion_inner_radius", 150.0),
             cluster_radius: num(&cluster, "explosionradius", 220.0),
-            cluster_bursts: 20,     // CLUSTER_ROCKET_BURST_COUNT
-            cluster_duration: 5.0,  // CLUSTER_ROCKET_DURATION
-            cluster_range: 250.0,   // CLUSTER_ROCKET_BURST_RANGE
+            cluster_bursts: 20,    // CLUSTER_ROCKET_BURST_COUNT
+            cluster_duration: 5.0, // CLUSTER_ROCKET_DURATION
+            cluster_range: 250.0,  // CLUSTER_ROCKET_BURST_RANGE
             tether_cd: regen_cd(&tether, 20.0),
             tether_hold: 4.0,
             arc_cd: regen_cd(&arc, 10.0),
@@ -624,34 +888,102 @@ pub struct KitDefs {
 impl KitDefs {
     /// Read titan_properties and the ability scripts.
     pub fn load(gd: &GameData, strings: Option<&crate::pilotweapon::Strings>) -> Self {
-        let table = gd.paks.iter().find_map(|p| tf_assets::datatable::DataTable::load(p, "datatable/titan_properties.rpak"));
-        let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+        let table = gd.paks.iter().find_map(|p| {
+            tf_assets::datatable::DataTable::load(p, "datatable/titan_properties.rpak")
+        });
+        let mut read = |p: &str| {
+            gd.read_file(p)
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        };
         let n = KitNumbers::load(&mut read);
         // A weapon script's localised name, 1P fire sound, deploy time and HUD icon.
         let mut info = |id: &str| -> (Option<String>, String, f32, Option<String>) {
-            let Some(s) = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read) else { return (None, String::new(), 0.0, None) };
-            let name = s.get(".printname").map(|k| k.trim_start_matches('#').to_string()).and_then(|k| strings.and_then(|t| t.0.get(&k)).map(|v| v.to_uppercase()));
-            let deploy = s.get(".deploy_time").and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
-            let icon = s.get(".hud_icon").map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-            (name, s.get(".fire_sound_1_player_1p").unwrap_or_default().to_string(), deploy, icon)
+            let Some(s) =
+                PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read)
+            else {
+                return (None, String::new(), 0.0, None);
+            };
+            let name = s
+                .get(".printname")
+                .map(|k| k.trim_start_matches('#').to_string())
+                .and_then(|k| strings.and_then(|t| t.0.get(&k)).map(|v| v.to_uppercase()));
+            let deploy = s
+                .get(".deploy_time")
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0.0);
+            let icon = s
+                .get(".hud_icon")
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            (
+                name,
+                s.get(".fire_sound_1_player_1p")
+                    .unwrap_or_default()
+                    .to_string(),
+                deploy,
+                icon,
+            )
         };
         let mut kits = Vec::new();
         for gun in TITAN_ARSENAL {
             // (ordnance, special, core, core icon)
-            let row: Option<(String, String, String, String, String)> = table.as_ref().and_then(|t| {
-                let col = |n: &str| t.column(n);
-                let (p, o, s, a, c, i) = (col("primary")?, col("ordnance")?, col("special")?, col("antirodeo")?, col("coreAbility")?, col("coreReadyIcon")?);
-                t.rows.iter().find(|r| r[p].text() == gun.id).map(|r| (r[o].text(), r[s].text(), r[a].text(), r[c].text(), r[i].text().replace('\\', "/")))
-            });
+            let row: Option<(String, String, String, String, String)> =
+                table.as_ref().and_then(|t| {
+                    let col = |n: &str| t.column(n);
+                    let (p, o, s, a, c, i) = (
+                        col("primary")?,
+                        col("ordnance")?,
+                        col("special")?,
+                        col("antirodeo")?,
+                        col("coreAbility")?,
+                        col("coreReadyIcon")?,
+                    );
+                    t.rows.iter().find(|r| r[p].text() == gun.id).map(|r| {
+                        (
+                            r[o].text(),
+                            r[s].text(),
+                            r[a].text(),
+                            r[c].text(),
+                            r[i].text().replace('\\', "/"),
+                        )
+                    })
+                });
             let (ord_id, def_id, util_id, core_id, core_icon) = row.unwrap_or_else(|| {
-                let f = FALLBACK.iter().find(|f| f.0 == gun.id).copied().unwrap_or(FALLBACK[0]);
-                (f.1.to_string(), f.2.to_string(), f.3.to_string(), f.4.to_string(), String::new())
+                let f = FALLBACK
+                    .iter()
+                    .find(|f| f.0 == gun.id)
+                    .copied()
+                    .unwrap_or(FALLBACK[0]);
+                (
+                    f.1.to_string(),
+                    f.2.to_string(),
+                    f.3.to_string(),
+                    f.4.to_string(),
+                    String::new(),
+                )
             });
-            let u = UTILITY.iter().find(|x| x.0 == util_id).copied().unwrap_or(UTILITY[0]);
+            let u = UTILITY
+                .iter()
+                .find(|x| x.0 == util_id)
+                .copied()
+                .unwrap_or(UTILITY[0]);
             let (util_name, util_sound, _, util_icon) = info(u.0);
-            let o = ORDNANCE.iter().find(|x| x.0 == ord_id).copied().unwrap_or(ORDNANCE[0]);
-            let d = DEFENSIVE.iter().find(|x| x.0 == def_id).copied().unwrap_or(DEFENSIVE[0]);
-            let c = CORES.iter().find(|x| x.0 == core_id).copied().unwrap_or(CORES[0]);
+            let o = ORDNANCE
+                .iter()
+                .find(|x| x.0 == ord_id)
+                .copied()
+                .unwrap_or(ORDNANCE[0]);
+            let d = DEFENSIVE
+                .iter()
+                .find(|x| x.0 == def_id)
+                .copied()
+                .unwrap_or(DEFENSIVE[0]);
+            let c = CORES
+                .iter()
+                .find(|x| x.0 == core_id)
+                .copied()
+                .unwrap_or(CORES[0]);
             let (ord_name, ord_sound, ord_deploy, ord_icon) = info(o.0);
             let (def_name, def_sound, _, def_icon) = info(d.0);
             let (core_name, _, _, _) = info(c.0);
@@ -666,7 +998,11 @@ impl KitDefs {
                 util_icon: util_icon.unwrap_or_else(|| u.2.to_string()),
                 util_label: util_name.unwrap_or_else(|| u.3.to_string()),
                 util_sound,
-                core_icon: if core_icon.is_empty() { c.2.to_string() } else { core_icon },
+                core_icon: if core_icon.is_empty() {
+                    c.2.to_string()
+                } else {
+                    core_icon
+                },
                 ord_label: ord_name.unwrap_or_else(|| o.3.to_string()),
                 def_label: def_name.unwrap_or_else(|| d.3.to_string()),
                 core_label: core_name.unwrap_or_else(|| c.3.to_string()),
@@ -677,12 +1013,31 @@ impl KitDefs {
         }
         log::info!(
             "titan kits ({}): {}",
-            if table.is_some() { "titan_properties" } else { "fallback table" },
-            kits.iter().zip(TITAN_ARSENAL).map(|(k, g)| format!("{} {:?}/{:?}/{:?}/{:?}", g.kit, k.def, k.util, k.ord, k.core)).collect::<Vec<_>>().join(", ")
+            if table.is_some() {
+                "titan_properties"
+            } else {
+                "fallback table"
+            },
+            kits.iter()
+                .zip(TITAN_ARSENAL)
+                .map(|(k, g)| format!(
+                    "{} {:?}/{:?}/{:?}/{:?}",
+                    g.kit, k.def, k.util, k.ord, k.core
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         let predator = [
-            crate::weapons::WeaponDef::load_modded("mp_titanweapon_predator_cannon", &[], &mut read),
-            crate::weapons::WeaponDef::load_modded("mp_titanweapon_predator_cannon", &["LongRangeAmmo"], &mut read),
+            crate::weapons::WeaponDef::load_modded(
+                "mp_titanweapon_predator_cannon",
+                &[],
+                &mut read,
+            ),
+            crate::weapons::WeaponDef::load_modded(
+                "mp_titanweapon_predator_cannon",
+                &["LongRangeAmmo"],
+                &mut read,
+            ),
         ];
         Self { kits, n, predator }
     }
@@ -716,14 +1071,29 @@ pub struct BoltShield {
 
 impl BoltShield {
     fn disc(center: Vec3, normal: Vec3, radius: f32, owner: Option<Entity>) -> Self {
-        Self { center, normal, radius, owner, arc: None }
+        Self {
+            center,
+            normal,
+            radius,
+            owner,
+            arc: None,
+        }
     }
 
     /// A Particle Wall around `origin` facing `normal` (SHIELD_WALL_RADIUS 180, height
     /// radius * 2, SHIELD_WALL_FOV 120).
     fn wall(origin: Vec3, normal: Vec3, owner: Option<Entity>) -> Self {
         let n = Vec3::new(normal.x, normal.y, 0.0).normalize_or(Vec3::X);
-        Self { center: origin, normal: n, radius: SHIELD_WALL_RADIUS, owner, arc: Some(((SHIELD_WALL_FOV * 0.5).to_radians().cos(), SHIELD_WALL_RADIUS * 2.0)) }
+        Self {
+            center: origin,
+            normal: n,
+            radius: SHIELD_WALL_RADIUS,
+            owner,
+            arc: Some((
+                (SHIELD_WALL_FOV * 0.5).to_radians().cos(),
+                SHIELD_WALL_RADIUS * 2.0,
+            )),
+        }
     }
 
     /// Where the segment `from + dir * t, t < max` meets the shield from its front.
@@ -740,7 +1110,11 @@ impl BoltShield {
             Some((cos_half, height)) => {
                 // Entering the cylinder from outside, within the arc and its height.
                 let (p, d) = ((from - self.center).truncate(), dir.truncate());
-                let (a, b, c) = (d.length_squared(), p.dot(d), p.length_squared() - self.radius * self.radius);
+                let (a, b, c) = (
+                    d.length_squared(),
+                    p.dot(d),
+                    p.length_squared() - self.radius * self.radius,
+                );
                 let disc = b * b - a * c;
                 if a < 1e-8 || c <= 0.0 || disc < 0.0 {
                     return None;
@@ -748,7 +1122,9 @@ impl BoltShield {
                 let t = (-b - disc.sqrt()) / a;
                 let h = from + dir * t;
                 let radial = (h - self.center).truncate().normalize_or_zero();
-                let inside = radial.dot(self.normal.truncate()) >= cos_half && h.z >= self.center.z && h.z <= self.center.z + height;
+                let inside = radial.dot(self.normal.truncate()) >= cos_half
+                    && h.z >= self.center.z
+                    && h.z <= self.center.z + height;
                 inside.then_some(t)?
             }
         };
@@ -772,7 +1148,10 @@ impl BoltShields {
     pub fn hit(&self, from: Vec3, dir: Vec3, max: f32) -> Option<(usize, f32)> {
         let mut best: Option<(usize, f32)> = None;
         for (i, s) in self.shields.iter().enumerate() {
-            if let Some(t) = s.hit_t(from, dir, max).filter(|&t| best.is_none_or(|b| t < b.1)) {
+            if let Some(t) = s
+                .hit_t(from, dir, max)
+                .filter(|&t| best.is_none_or(|b| t < b.1))
+            {
                 best = Some((i, t));
             }
         }
@@ -950,8 +1329,40 @@ pub fn spawn_enemy_wave(commands: &mut Commands, kind: WaveKind, from: Vec3, dir
     let dir = dir.with_z(0.0).normalize_or(Vec3::X);
     let group = ENEMY_WAVE_GROUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let wave = match kind {
-        WaveKind::Arc => Wave { kind, pos: from + dir * 25.0, head: from + dir * 25.0, first: true, dir, step: ENEMY_ARC_STEP, left: ENEMY_ARC_COUNT, timer: 0.0, radius: 112.0, titan: ENEMY_ARC_TITAN, pilot: ENEMY_ARC_PILOT, group, enemy: true, trap: None, row: false },
-        _ => Wave { kind: WaveKind::Firewall, pos: from + dir * 25.0, head: from + dir * 25.0, first: true, dir, step: ENEMY_FIREWALL_STEP, left: ENEMY_FIREWALL_COUNT, timer: 0.0, radius: 60.0, titan: 0.0, pilot: 0.0, group, enemy: true, trap: None, row: false },
+        WaveKind::Arc => Wave {
+            kind,
+            pos: from + dir * 25.0,
+            head: from + dir * 25.0,
+            first: true,
+            dir,
+            step: ENEMY_ARC_STEP,
+            left: ENEMY_ARC_COUNT,
+            timer: 0.0,
+            radius: 112.0,
+            titan: ENEMY_ARC_TITAN,
+            pilot: ENEMY_ARC_PILOT,
+            group,
+            enemy: true,
+            trap: None,
+            row: false,
+        },
+        _ => Wave {
+            kind: WaveKind::Firewall,
+            pos: from + dir * 25.0,
+            head: from + dir * 25.0,
+            first: true,
+            dir,
+            step: ENEMY_FIREWALL_STEP,
+            left: ENEMY_FIREWALL_COUNT,
+            timer: 0.0,
+            radius: 60.0,
+            titan: 0.0,
+            pilot: 0.0,
+            group,
+            enemy: true,
+            trap: None,
+            row: false,
+        },
     };
     log::info!("enemy {kind:?} wave from {:?}", from.round());
     commands.spawn(wave);
@@ -1054,7 +1465,13 @@ const METEOR_THERMITE_LIFE: (f32, f32) = (2.0 * 1.25, 2.5 * 1.25);
 /// four trails (P_wpn_meteor_exp_trail) thrown along the shell's velocity, its speed capped at
 /// 2500 and scaled by 0.35 (singleplayer), the trails each nudged 50 along a random forward
 /// and up. `vel` is the shell's velocity; `on_world` stops the base where it hit.
-pub fn spawn_meteor_thermite(commands: &mut Commands, at: Vec3, vel: Vec3, on_world: bool, seed: u32) {
+pub fn spawn_meteor_thermite(
+    commands: &mut Commands,
+    at: Vec3,
+    vel: Vec3,
+    on_world: bool,
+    seed: u32,
+) {
     let mut rng = seed | 1;
     let mut rand = move |lo: f32, hi: f32| {
         rng ^= rng << 13;
@@ -1064,16 +1481,37 @@ pub fn spawn_meteor_thermite(commands: &mut Commands, at: Vec3, vel: Vec3, on_wo
     };
     let v = vel.normalize_or_zero() * vel.length().min(2500.0) * 0.35;
     let shot = seed;
-    let piece = |pos: Vec3, vel: Vec3, life: f32, still: bool| MeteorThermite { pos, vel, life, age: 0.0, still, last: pos, tick: 0.2, shot };
-    commands.spawn((Transform::from_translation(to_bevy(at)), crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"), piece(at, v, METEOR_THERMITE_LIFE.1, on_world)));
+    let piece = |pos: Vec3, vel: Vec3, life: f32, still: bool| MeteorThermite {
+        pos,
+        vel,
+        life,
+        age: 0.0,
+        still,
+        last: pos,
+        tick: 0.2,
+        shot,
+    };
+    commands.spawn((
+        Transform::from_translation(to_bevy(at)),
+        crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"),
+        piece(at, v, METEOR_THERMITE_LIFE.1, on_world),
+    ));
     for _ in 0..4 {
         // AnglesToForward / AnglesToUp of random angles in -360..360.
-        let (p, y, r) = (rand(-360.0, 360.0).to_radians(), rand(-360.0, 360.0).to_radians(), rand(-360.0, 360.0).to_radians());
+        let (p, y, r) = (
+            rand(-360.0, 360.0).to_radians(),
+            rand(-360.0, 360.0).to_radians(),
+            rand(-360.0, 360.0).to_radians(),
+        );
         let (sp, cp, sy, cy, sr, cr) = (p.sin(), p.cos(), y.sin(), y.cos(), r.sin(), r.cos());
         let fwd = Vec3::new(cp * cy, cp * sy, -sp);
         let up = Vec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
         let life = rand(METEOR_THERMITE_LIFE.0, METEOR_THERMITE_LIFE.1);
-        commands.spawn((Transform::from_translation(to_bevy(at)), crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp_trail"), piece(at, v + fwd * 50.0 + up * 50.0, life, false)));
+        commands.spawn((
+            Transform::from_translation(to_bevy(at)),
+            crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp_trail"),
+            piece(at, v + fwd * 50.0 + up * 50.0, life, false),
+        ));
     }
 }
 
@@ -1091,7 +1529,9 @@ pub fn meteor_thermite(
 ) {
     let dt = time.delta_secs().min(0.1);
     spots.burning.clear();
-    let (tick_titan, tick_pilot) = defs.as_ref().map_or((100.0, 20.0), |d| (d.n.thermite_tick, d.n.thermite_tick_pilot));
+    let (tick_titan, tick_pilot) = defs.as_ref().map_or((100.0, 20.0), |d| {
+        (d.n.thermite_tick, d.n.thermite_tick_pilot)
+    });
     let mut burned: Vec<(u32, Entity)> = Vec::new();
     for (id, mut t, mut tf) in &mut pieces {
         t.age += dt;
@@ -1106,7 +1546,11 @@ pub fn meteor_thermite(
             let len = step.length();
             if len > 1e-4 {
                 let d = step / len;
-                match world.0.raycast(SVec3::from(t.pos.to_array()), SVec3::from(d.to_array()), len + 2.0) {
+                match world.0.raycast(
+                    SVec3::from(t.pos.to_array()),
+                    SVec3::from(d.to_array()),
+                    len + 2.0,
+                ) {
                     Some(h) => {
                         let n = Vec3::from(h.normal.to_array());
                         t.pos += d * (h.t - 2.0).max(0.0);
@@ -1134,7 +1578,9 @@ pub fn meteor_thermite(
         }
         t.tick += 0.1;
         t.last = t.pos;
-        let Ok(mut core) = cores.single_mut() else { continue };
+        let Ok(mut core) = cores.single_mut() else {
+            continue;
+        };
         for (eid, mut e) in enemies.iter_mut() {
             if !e.alive() || burned.contains(&(t.shot, eid)) {
                 continue;
@@ -1212,7 +1658,13 @@ pub struct ParticleWall {
 impl ParticleWall {
     /// An enemy Titan's wall (SHIELD_WALL_HEALTH 1750, SP_PARTICLE_WALL_DURATION 8).
     pub fn enemy(feet: Vec3, normal: Vec3) -> Self {
-        Self { origin: feet + normal * 100.0 - Vec3::Z * 64.0, normal, life: 8.0, hp: 1750.0, enemy: true }
+        Self {
+            origin: feet + normal * 100.0 - Vec3::Z * 64.0,
+            normal,
+            life: 8.0,
+            hp: 1750.0,
+            enemy: true,
+        }
     }
 }
 
@@ -1229,7 +1681,10 @@ impl EnemyWalls {
     pub fn hit(&self, from: Vec3, dir: Vec3, max: f32) -> Option<(Entity, f32)> {
         let mut best: Option<(Entity, f32)> = None;
         for w in &self.walls {
-            if let Some(t) = w.hit_t(from, dir, max).filter(|&t| best.is_none_or(|b| t < b.1)) {
+            if let Some(t) = w
+                .hit_t(from, dir, max)
+                .filter(|&t| best.is_none_or(|b| t < b.1))
+            {
                 best = w.owner.map(|e| (e, t));
             }
         }
@@ -1246,14 +1701,22 @@ pub struct TetherTrap {
 }
 
 fn view_dir(yaw: f32, pitch: f32) -> Vec3 {
-    Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin())
+    Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        -pitch.sin(),
+    )
 }
 
 /// ApplyTrackerMark (mp_titanweapon_40mm.nut): one more tracker mark on `target`, lasting
 /// TRACKER_LIFETIME; the owner hears HUD_40mm_TrackerBeep_Locked at three, _Hit below. With three
 /// marks already, the oldest is renewed (a guess: the engine's SmartAmmo tracker list isn't in the
 /// scripts) and nothing plays, as the script returns when the count doesn't change.
-fn apply_tracker_mark(commands: &mut Commands, locks: &mut Vec<(Entity, Vec<f32>)>, target: Entity) {
+fn apply_tracker_mark(
+    commands: &mut Commands,
+    locks: &mut Vec<(Entity, Vec<f32>)>,
+    target: Entity,
+) {
     let marks = match locks.iter_mut().find(|l| l.0 == target) {
         Some(l) => &mut l.1,
         None => {
@@ -1269,20 +1732,46 @@ fn apply_tracker_mark(commands: &mut Commands, locks: &mut Vec<(Entity, Vec<f32>
     }
     marks.push(TRACKER_LIFETIME);
     log::debug!("tone tracker marks on {target:?}: {}", marks.len());
-    crate::audio::event(commands, if marks.len() >= TRACKER_MAX { "HUD_40mm_TrackerBeep_Locked" } else { "HUD_40mm_TrackerBeep_Hit" });
+    crate::audio::event(
+        commands,
+        if marks.len() >= TRACKER_MAX {
+            "HUD_40mm_TrackerBeep_Locked"
+        } else {
+            "HUD_40mm_TrackerBeep_Hit"
+        },
+    );
 }
 
 /// Damage an enemy with titan-armour or pilot damage and credit BT's core.
 fn hurt(e: &mut Enemy, titan: f32, pilot: f32, core: &mut TitanCore) {
     let amount = if e.infantry { pilot } else { titan };
     let hit = e.damage(amount, false);
-    log::debug!("kit hit {} for {:.0}", if e.infantry { "grunt" } else { "titan" }, hit.dealt);
+    log::debug!(
+        "kit hit {} for {:.0}",
+        if e.infantry { "grunt" } else { "titan" },
+        hit.dealt
+    );
     core.credit_inflicted(hit);
 }
 
 /// Hitscan along `dir`: world distance and the first enemy in the way.
-fn trace(world: &Collision, enemies: &Query<(Entity, &mut Enemy)>, from: Vec3, dir: Vec3, max: f32, pad: f32) -> (f32, Option<Entity>) {
-    let mut t = world.0.raycast(SVec3::from(from.to_array()), SVec3::from(dir.to_array()), max).map(|h| h.t).unwrap_or(max);
+fn trace(
+    world: &Collision,
+    enemies: &Query<(Entity, &mut Enemy)>,
+    from: Vec3,
+    dir: Vec3,
+    max: f32,
+    pad: f32,
+) -> (f32, Option<Entity>) {
+    let mut t = world
+        .0
+        .raycast(
+            SVec3::from(from.to_array()),
+            SVec3::from(dir.to_array()),
+            max,
+        )
+        .map(|h| h.t)
+        .unwrap_or(max);
     let mut who = None;
     for (id, e) in enemies.iter() {
         if e.alive() {
@@ -1297,7 +1786,15 @@ fn trace(world: &Collision, enemies: &Query<(Entity, &mut Enemy)>, from: Vec3, d
     (t, who)
 }
 
-fn splash(enemies: &mut Query<(Entity, &mut Enemy)>, at: Vec3, inner: f32, radius: f32, titan: f32, pilot: f32, core: &mut TitanCore) {
+fn splash(
+    enemies: &mut Query<(Entity, &mut Enemy)>,
+    at: Vec3,
+    inner: f32,
+    radius: f32,
+    titan: f32,
+    pilot: f32,
+    core: &mut TitanCore,
+) {
     for (_, mut e) in enemies.iter_mut() {
         if !e.alive() {
             continue;
@@ -1307,7 +1804,11 @@ fn splash(enemies: &mut Query<(Entity, &mut Enemy)>, at: Vec3, inner: f32, radiu
             let k = 1.0 - ((d - inner) / (radius - inner).max(1.0)).clamp(0.0, 1.0);
             let amount = if e.infantry { pilot } else { titan } * k;
             let hit = e.damage(amount, false);
-            log::debug!("kit splash {} for {:.0}", if e.infantry { "grunt" } else { "titan" }, hit.dealt);
+            log::debug!(
+                "kit splash {} for {:.0}",
+                if e.infantry { "grunt" } else { "titan" },
+                hit.dealt
+            );
             core.credit_inflicted(hit);
         }
     }
@@ -1322,13 +1823,20 @@ pub fn apply_kit(
     defs: Option<Res<KitDefs>>,
     mut active: ResMut<ActiveKit>,
     mut loaded: Local<bool>,
-    mut titans: Query<(&mut TitanCore, &mut Vortex, &mut KitState, &crate::weapons::Weapon)>,
+    mut titans: Query<(
+        &mut TitanCore,
+        &mut Vortex,
+        &mut KitState,
+        &crate::weapons::Weapon,
+    )>,
 ) {
     let Some(defs) = defs else {
         commands.insert_resource(KitDefs::load(&gd, strings.as_deref()));
         return;
     };
-    let Ok((mut core, mut vortex, mut st, weapon)) = titans.single_mut() else { return };
+    let Ok((mut core, mut vortex, mut st, weapon)) = titans.single_mut() else {
+        return;
+    };
     // The loadout BT is holding (switch_titan_weapon swaps the gun, and the kit follows).
     let index = weapon.arsenal.min(defs.kits.len().saturating_sub(1));
     let spec = &defs.kits[index];
@@ -1337,7 +1845,11 @@ pub fn apply_kit(
     // the meter is building again.
     if core.state == CoreState::Building && core.kind != spec.core {
         core.kind = spec.core;
-        let id = CORES.iter().find(|c| c.1 == spec.core).map(|c| c.0).unwrap_or("mp_titancore_amp_core");
+        let id = CORES
+            .iter()
+            .find(|c| c.1 == spec.core)
+            .map(|c| c.0)
+            .unwrap_or("mp_titancore_amp_core");
         let (charge, duration) = n.core_timing.get(id).copied().unwrap_or((1.0, 6.0));
         core.chargeup = charge;
         core.duration = duration;
@@ -1346,8 +1858,28 @@ pub fn apply_kit(
         return;
     }
     *loaded = true;
-    *active = ActiveKit { index, ord: spec.ord, def: spec.def, util: spec.util, core: spec.core };
-    let un = n.util.get(UTILITY.iter().find(|u| u.1 == spec.util).map(|u| u.0).unwrap_or("mp_titanability_smoke")).copied().unwrap_or(UtilNumbers { cooldown: 20.0, charges: 1, duration: 0.0 });
+    *active = ActiveKit {
+        index,
+        ord: spec.ord,
+        def: spec.def,
+        util: spec.util,
+        core: spec.core,
+    };
+    let un = n
+        .util
+        .get(
+            UTILITY
+                .iter()
+                .find(|u| u.1 == spec.util)
+                .map(|u| u.0)
+                .unwrap_or("mp_titanability_smoke"),
+        )
+        .copied()
+        .unwrap_or(UtilNumbers {
+            cooldown: 20.0,
+            charges: 1,
+            duration: 0.0,
+        });
     st.util_cd = 0.0;
     st.util_cd_max = un.cooldown;
     st.util_charges = un.charges;
@@ -1366,7 +1898,13 @@ pub fn apply_kit(
     let ronin = spec.def == DefKind::SwordBlock;
     st.melee_damage = if ronin { n.sword_damage } else { 500.0 };
     st.melee_range = if ronin { n.sword_range } else { 280.0 };
-    log::info!("BT kit: {:?} / {:?} / {:?} / {:?}", spec.def, spec.util, spec.ord, spec.core);
+    log::info!(
+        "BT kit: {:?} / {:?} / {:?} / {:?}",
+        spec.def,
+        spec.util,
+        spec.ord,
+        spec.core
+    );
 }
 
 /// Ordnance and defensive buttons, Ion's energy, core effects and rocket queues.
@@ -1383,16 +1921,31 @@ pub fn kit_input(
     assets: Option<Res<MissileAssets>>,
     mut bolt_hits: ResMut<TitanBoltHits>,
     control: Res<crate::pilotctl::Control>,
-    mut titans: Query<(&PlayerTitan, &mut KitState, &mut TitanCore, &mut TitanHealth, &Vortex, &mut crate::weapons::Weapon)>,
+    mut titans: Query<(
+        &PlayerTitan,
+        &mut KitState,
+        &mut TitanCore,
+        &mut TitanHealth,
+        &Vortex,
+        &mut crate::weapons::Weapon,
+    )>,
     mut enemies: Query<(Entity, &mut Enemy)>,
     mut mods: ResMut<TitanMoveMods>,
-    (mut vis, tether_assets, gun_muzzle): (Query<&mut Visibility>, Option<Res<TetherAssets>>, Res<crate::weapons::GunMuzzle>),
+    (mut vis, tether_assets, gun_muzzle): (
+        Query<&mut Visibility>,
+        Option<Res<TetherAssets>>,
+        Res<crate::weapons::GunMuzzle>,
+    ),
 ) {
     let Some(defs) = defs else { return };
     let n = &defs.n;
     let dt = time.delta_secs().min(0.1);
-    let Ok((titan, mut st, mut core, mut health, vortex, mut weapon)) = titans.single_mut() else { return };
-    let frozen = *mode == CameraMode::Free || health.dead_for.is_some() || *control != crate::pilotctl::Control::Titan;
+    let Ok((titan, mut st, mut core, mut health, vortex, mut weapon)) = titans.single_mut() else {
+        return;
+    };
+    let frozen = *mode == CameraMode::Free
+        || health.dead_for.is_some()
+        || *control != crate::pilotctl::Control::Titan;
     let s = &titan.state;
     let eye = Vec3::from(s.eye(&settings.0).to_array());
     let dir = view_dir(s.yaw, s.pitch);
@@ -1428,7 +1981,8 @@ pub fn kit_input(
         }
         l.1.retain(|t| *t > 0.0);
     }
-    st.locks.retain(|l| !l.1.is_empty() && enemies.get(l.0).is_ok_and(|(_, e)| e.alive()));
+    st.locks
+        .retain(|l| !l.1.is_empty() && enemies.get(l.0).is_ok_and(|(_, e)| e.alive()));
 
     // --- Ordnance (Q): press to fire ---
     let pressed = input.ordnance && !st.prev_ord && !frozen;
@@ -1439,7 +1993,12 @@ pub fn kit_input(
     // for a full lock when pressed.
     let deferred = !matches!(active.ord, OrdKind::Missiles | OrdKind::Tracker);
     let mut fire_now = pressed && st.ord_cd <= 0.0 && !deferred;
-    if pressed && st.ord_cd <= 0.0 && st.ord_pending.is_none() && deferred && (active.ord != OrdKind::LaserShot || st.energy >= n.laser_cost) {
+    if pressed
+        && st.ord_cd <= 0.0
+        && st.ord_pending.is_none()
+        && deferred
+        && (active.ord != OrdKind::LaserShot || st.energy >= n.laser_cost)
+    {
         st.ord_pending = Some(spec.ord_deploy);
     }
     if let Some(t) = st.ord_pending {
@@ -1464,14 +2023,47 @@ pub fn kit_input(
                 // From the laser pod's muzzle_flash at the end of its draw (atpov_titan_bt_laser_pod:
                 // 62.5 ahead, 17.3 left and 11.8 above the camera bone): the script's
                 // P_wpn_hand_laser_beam, and its exp_laser_lite impact table.
-                let (a, b) = (to_bevy(eye + dir * 62.5 - right * 17.3 + Vec3::Z * 11.8), to_bevy(eye + dir * t));
+                let (a, b) = (
+                    to_bevy(eye + dir * 62.5 - right * 17.3 + Vec3::Z * 11.8),
+                    to_bevy(eye + dir * t),
+                );
                 if std::env::var_os("TF_OLD_FX").is_none() {
                     crate::pfx::emit_beam(&mut commands, "P_wpn_hand_laser_beam", a, b);
-                    let surface = if who.is_some() { crate::particles::Surface::Titan } else { crate::particles::Surface::World };
-                    emit(&mut commands, Effect::Hit { at: b, normal: (a - b).normalize_or(Vec3::Y), table: "exp_laser_lite", surface, victim: false, scale: 2.5 });
+                    let surface = if who.is_some() {
+                        crate::particles::Surface::Titan
+                    } else {
+                        crate::particles::Surface::World
+                    };
+                    emit(
+                        &mut commands,
+                        Effect::Hit {
+                            at: b,
+                            normal: (a - b).normalize_or(Vec3::Y),
+                            table: "exp_laser_lite",
+                            surface,
+                            victim: false,
+                            scale: 2.5,
+                        },
+                    );
                 } else {
-                    emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.5, color: Vec3::new(8.0, 1.5, 1.0) });
-                    emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.5, energy: true });
+                    emit(
+                        &mut commands,
+                        Effect::Tracer {
+                            from: a,
+                            to: b,
+                            width: 0.5,
+                            color: Vec3::new(8.0, 1.5, 1.0),
+                        },
+                    );
+                    emit(
+                        &mut commands,
+                        Effect::Impact {
+                            at: b,
+                            normal: (a - b).normalize_or(Vec3::Y),
+                            scale: 2.5,
+                            energy: true,
+                        },
+                    );
                 }
                 true
             }
@@ -1480,7 +2072,23 @@ pub fn kit_input(
                 st.ord_cd_max = n.firewall_cd;
                 st.ord_cd = n.firewall_cd;
                 let group = next_group();
-                commands.spawn(Wave { kind: WaveKind::Firewall, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.firewall_step, left: n.firewall_count, timer: 0.0, radius: n.thermite_radius, titan: 0.0, pilot: 0.0, group, enemy: false, trap: None, row: false });
+                commands.spawn(Wave {
+                    kind: WaveKind::Firewall,
+                    pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0,
+                    head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0,
+                    first: true,
+                    dir: fwd,
+                    step: n.firewall_step,
+                    left: n.firewall_count,
+                    timer: 0.0,
+                    radius: n.thermite_radius,
+                    titan: 0.0,
+                    pilot: 0.0,
+                    group,
+                    enemy: false,
+                    trap: None,
+                    row: false,
+                });
                 crate::audio::event(&mut commands, "flamewall_flame_start");
                 true
             }
@@ -1488,13 +2096,27 @@ pub fn kit_input(
                 st.ord_cd_max = n.cluster_cd;
                 st.ord_cd = n.cluster_cd;
                 let from = eye + right * 60.0 + dir * 80.0;
-                let rocket = ClusterRocket { pos: from, vel: dir * n.cluster_speed, age: 0.0 };
-                let at = Transform::from_translation(to_bevy(from)).with_rotation(Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y)));
+                let rocket = ClusterRocket {
+                    pos: from,
+                    vel: dir * n.cluster_speed,
+                    age: 0.0,
+                };
+                let at = Transform::from_translation(to_bevy(from)).with_rotation(
+                    Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y)),
+                );
                 if std::env::var_os("TF_OLD_FX").is_some() {
                     commands.spawn((at, Glow::new(Vec3::new(5.0, 3.0, 1.2), 0.5, true), rocket));
                 } else {
                     // The script's projectile: projectilemodel and projectile_trail_effect_0.
-                    commands.spawn((at, Visibility::default(), rocket, crate::pfx::PfxTrail::new("Rocket_Smoke_SMALL_Titan_2"), crate::pilotweapon::ProjectileModel("models/weapons/bullets/projectile_rocket_largest.mdl")));
+                    commands.spawn((
+                        at,
+                        Visibility::default(),
+                        rocket,
+                        crate::pfx::PfxTrail::new("Rocket_Smoke_SMALL_Titan_2"),
+                        crate::pilotweapon::ProjectileModel(
+                            "models/weapons/bullets/projectile_rocket_largest.mdl",
+                        ),
+                    ));
                 }
                 true
             }
@@ -1502,7 +2124,23 @@ pub fn kit_input(
                 st.ord_cd_max = n.arc_cd;
                 st.ord_cd = n.arc_cd;
                 let group = next_group();
-                commands.spawn(Wave { kind: WaveKind::Arc, pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0, first: true, dir: fwd, step: n.arc_step, left: n.arc_count, timer: 0.0, radius: 112.0, titan: n.arc_titan, pilot: n.arc_pilot, group, enemy: false, trap: None, row: false });
+                commands.spawn(Wave {
+                    kind: WaveKind::Arc,
+                    pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0,
+                    head: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0,
+                    first: true,
+                    dir: fwd,
+                    step: n.arc_step,
+                    left: n.arc_count,
+                    timer: 0.0,
+                    radius: 112.0,
+                    titan: n.arc_titan,
+                    pilot: n.arc_pilot,
+                    group,
+                    enemy: false,
+                    trap: None,
+                    row: false,
+                });
                 true
             }
             OrdKind::Tracker => {
@@ -1511,7 +2149,16 @@ pub fn kit_input(
                     .locks
                     .iter()
                     .filter(|l| l.1.len() >= TRACKER_MAX)
-                    .filter_map(|l| enemies.get(l.0).ok().map(|(id, e)| (id, ((e.pos + Vec3::Z * e.height * 0.5) - eye).normalize().dot(dir))))
+                    .filter_map(|l| {
+                        enemies.get(l.0).ok().map(|(id, e)| {
+                            (
+                                id,
+                                ((e.pos + Vec3::Z * e.height * 0.5) - eye)
+                                    .normalize()
+                                    .dot(dir),
+                            )
+                        })
+                    })
                     .max_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|t| t.0);
                 if let Some(t) = target {
@@ -1519,7 +2166,14 @@ pub fn kit_input(
                     st.ord_cd_max = n.tracker_delay;
                     st.ord_cd = n.tracker_delay;
                     st.queue_rate = n.tracker_rate;
-                    let spec = MissileSpec { speed: TRACKER_ROCKET_SPEED, homing: crate::abilities::MTMS.homing * 2.0, direct: n.tracker_damage, splash: 0.0, radius: 1.0, out_time: 0.15 };
+                    let spec = MissileSpec {
+                        speed: TRACKER_ROCKET_SPEED,
+                        homing: crate::abilities::MTMS.homing * 2.0,
+                        direct: n.tracker_damage,
+                        splash: 0.0,
+                        radius: 1.0,
+                        out_time: 0.15,
+                    };
                     for _ in 0..n.tracker_count {
                         st.queue.push((Some(t), spec));
                     }
@@ -1566,9 +2220,22 @@ pub fn kit_input(
                 t += dt;
                 weapon.play_charge();
                 if st.power_fx.is_none() && std::env::var_os("TF_OLD_FX").is_none() {
-                    st.power_fx = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if gun_muzzle.cockpit { "P_predator_barrel_blur_glow_FP" } else { "P_predator_barrel_blur_glow" }))).id());
+                    st.power_fx = Some(
+                        commands
+                            .spawn((
+                                Transform::default(),
+                                crate::pfx::PfxTrail::oriented(if gun_muzzle.cockpit {
+                                    "P_predator_barrel_blur_glow_FP"
+                                } else {
+                                    "P_predator_barrel_blur_glow"
+                                }),
+                            ))
+                            .id(),
+                    );
                     if gun_muzzle.cockpit {
-                        commands.entity(st.power_fx.unwrap()).insert((crate::pfx::PfxVmSpace, crate::pfx::PfxOverlay));
+                        commands
+                            .entity(st.power_fx.unwrap())
+                            .insert((crate::pfx::PfxVmSpace, crate::pfx::PfxOverlay));
                     }
                 }
             }
@@ -1587,69 +2254,121 @@ pub fn kit_input(
                 if let Some(Ok(mut c)) = st.power_fx.take().map(|e| commands.get_entity(e)) {
                     c.despawn();
                 }
-                    let (t, who) = trace(&world, &enemies, eye, dir, 12000.0, 30.0);
-                    let at = eye + dir * t;
-                    if weapon.long_range() {
-                        // LongRangePowerShot: one straight round (200 / 2000 to Titans) with a
-                        // 150-unit explosion (200 / 1800 heavy) where it lands.
-                        if let Some(id) = who {
-                            if let Ok((_, mut e)) = enemies.get_mut(id) {
-                                hurt(&mut e, n.power_titan, n.power_pilot, &mut core);
-                            }
-                        }
-                        splash(&mut enemies, at, n.power_inner, n.power_radius, POWER_SHOT_SPLASH_HEAVY, n.power_pilot, &mut core);
-                    } else {
-                        // CloseRangePowerShot: a 16 degree blast - everything in the cone with a
-                        // clear line takes 200 (50 by 1600, from 800) / 2000 to Titans.
-                        let half = (POWER_SHOT_CLOSE_SPREAD * 0.5f32).to_radians().cos();
-                        for (_, mut e) in enemies.iter_mut() {
-                            if !e.alive() {
-                                continue;
-                            }
-                            let to = e.pos + Vec3::Z * e.height * 0.5 - eye;
-                            let d = to.length();
-                            if d > POWER_SHOT_CLOSE_FAR || to.normalize_or_zero().dot(dir) < half {
-                                continue;
-                            }
-                            if world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(to.normalize_or_zero().to_array()), d - e.radius).is_some() {
-                                continue;
-                            }
-                            let k = ((d - POWER_SHOT_CLOSE_NEAR) / (POWER_SHOT_CLOSE_FAR - POWER_SHOT_CLOSE_NEAR)).clamp(0.0, 1.0);
-                            hurt(&mut e, n.power_titan, n.power_pilot + (POWER_SHOT_CLOSE_FAR_PILOT - n.power_pilot) * k, &mut core);
+                let (t, who) = trace(&world, &enemies, eye, dir, 12000.0, 30.0);
+                let at = eye + dir * t;
+                if weapon.long_range() {
+                    // LongRangePowerShot: one straight round (200 / 2000 to Titans) with a
+                    // 150-unit explosion (200 / 1800 heavy) where it lands.
+                    if let Some(id) = who {
+                        if let Ok((_, mut e)) = enemies.get_mut(id) {
+                            hurt(&mut e, n.power_titan, n.power_pilot, &mut core);
                         }
                     }
-                    let b = to_bevy(at);
-                    match gun_muzzle.frame.filter(|_| std::env::var_os("TF_OLD_FX").is_none()) {
-                        // The Power Shot mods' effects (mp_titanweapon_predator_cannon.txt): their
-                        // muzzle flash, P_weapon_tracers_predator, and their impact table.
-                        Some((a, rot)) => {
-                            let long = weapon.long_range();
-                            let flash = match (gun_muzzle.cockpit, long) {
-                                (true, false) => "P_muzzleflash_predator_PS_FP",
-                                (true, true) => "P_muzzleflash_predator_PS_FP_ALT",
-                                (false, false) => "P_muzzleflash_predator_PS",
-                                (false, true) => "P_muzzleflash_predator_PS_ALT",
-                            };
-                            if gun_muzzle.cockpit {
-                                crate::pfx::emit_named_vm_frame(&mut commands, flash, a, rot);
-                            } else {
-                                crate::pfx::emit_named_frame(&mut commands, flash, a, rot);
-                            }
-                            crate::pfx::emit_beam(&mut commands, "P_weapon_tracers_predator", a, b);
-                            let surface = match who.and_then(|id| enemies.get(id).ok()) {
-                                Some((_, e)) if e.infantry => crate::particles::Surface::Flesh,
-                                Some(_) => crate::particles::Surface::Titan,
-                                None => crate::particles::Surface::World,
-                            };
-                            emit(&mut commands, Effect::Hit { at: b, normal: (a - b).normalize_or(Vec3::Y), table: if long { "predator_bullet_ps_alt" } else { "predator_bullet_ps" }, surface, victim: false, scale: 2.5 });
+                    splash(
+                        &mut enemies,
+                        at,
+                        n.power_inner,
+                        n.power_radius,
+                        POWER_SHOT_SPLASH_HEAVY,
+                        n.power_pilot,
+                        &mut core,
+                    );
+                } else {
+                    // CloseRangePowerShot: a 16 degree blast - everything in the cone with a
+                    // clear line takes 200 (50 by 1600, from 800) / 2000 to Titans.
+                    let half = (POWER_SHOT_CLOSE_SPREAD * 0.5f32).to_radians().cos();
+                    for (_, mut e) in enemies.iter_mut() {
+                        if !e.alive() {
+                            continue;
                         }
-                        None => {
-                            let a = to_bevy(eye + right * 50.0 - Vec3::Z * 40.0);
-                            emit(&mut commands, Effect::Tracer { from: a, to: b, width: 0.7, color: Vec3::new(6.0, 4.0, 1.5) });
-                            emit(&mut commands, Effect::Explosion { at: b, scale: 1.4 });
-                            crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
+                        let to = e.pos + Vec3::Z * e.height * 0.5 - eye;
+                        let d = to.length();
+                        if d > POWER_SHOT_CLOSE_FAR || to.normalize_or_zero().dot(dir) < half {
+                            continue;
                         }
+                        if world
+                            .0
+                            .raycast(
+                                SVec3::from(eye.to_array()),
+                                SVec3::from(to.normalize_or_zero().to_array()),
+                                d - e.radius,
+                            )
+                            .is_some()
+                        {
+                            continue;
+                        }
+                        let k = ((d - POWER_SHOT_CLOSE_NEAR)
+                            / (POWER_SHOT_CLOSE_FAR - POWER_SHOT_CLOSE_NEAR))
+                            .clamp(0.0, 1.0);
+                        hurt(
+                            &mut e,
+                            n.power_titan,
+                            n.power_pilot + (POWER_SHOT_CLOSE_FAR_PILOT - n.power_pilot) * k,
+                            &mut core,
+                        );
                     }
+                }
+                let b = to_bevy(at);
+                match gun_muzzle
+                    .frame
+                    .filter(|_| std::env::var_os("TF_OLD_FX").is_none())
+                {
+                    // The Power Shot mods' effects (mp_titanweapon_predator_cannon.txt): their
+                    // muzzle flash, P_weapon_tracers_predator, and their impact table.
+                    Some((a, rot)) => {
+                        let long = weapon.long_range();
+                        let flash = match (gun_muzzle.cockpit, long) {
+                            (true, false) => "P_muzzleflash_predator_PS_FP",
+                            (true, true) => "P_muzzleflash_predator_PS_FP_ALT",
+                            (false, false) => "P_muzzleflash_predator_PS",
+                            (false, true) => "P_muzzleflash_predator_PS_ALT",
+                        };
+                        if gun_muzzle.cockpit {
+                            crate::pfx::emit_named_vm_frame(&mut commands, flash, a, rot);
+                        } else {
+                            crate::pfx::emit_named_frame(&mut commands, flash, a, rot);
+                        }
+                        crate::pfx::emit_beam(&mut commands, "P_weapon_tracers_predator", a, b);
+                        let surface = match who.and_then(|id| enemies.get(id).ok()) {
+                            Some((_, e)) if e.infantry => crate::particles::Surface::Flesh,
+                            Some(_) => crate::particles::Surface::Titan,
+                            None => crate::particles::Surface::World,
+                        };
+                        emit(
+                            &mut commands,
+                            Effect::Hit {
+                                at: b,
+                                normal: (a - b).normalize_or(Vec3::Y),
+                                table: if long {
+                                    "predator_bullet_ps_alt"
+                                } else {
+                                    "predator_bullet_ps"
+                                },
+                                surface,
+                                victim: false,
+                                scale: 2.5,
+                            },
+                        );
+                    }
+                    None => {
+                        let a = to_bevy(eye + right * 50.0 - Vec3::Z * 40.0);
+                        emit(
+                            &mut commands,
+                            Effect::Tracer {
+                                from: a,
+                                to: b,
+                                width: 0.7,
+                                color: Vec3::new(6.0, 4.0, 1.5),
+                            },
+                        );
+                        emit(&mut commands, Effect::Explosion { at: b, scale: 1.4 });
+                        crate::audio::cue(
+                            &mut commands,
+                            crate::audio::Cue::MissileExplode,
+                            Some(at),
+                        );
+                    }
+                }
             }
         }
     }
@@ -1660,8 +2379,18 @@ pub fn kit_input(
     st.prev_def = held;
     st.blocking = active.def == DefKind::SwordBlock && held;
     let sword_core = core.kind == CoreKind::Sword && core.active();
-    health.block = if st.blocking { if sword_core { n.block_scale_core } else { n.block_scale } } else { 1.0 };
-    health.block_cone = st.blocking.then(|| (eye, Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0)));
+    health.block = if st.blocking {
+        if sword_core {
+            n.block_scale_core
+        } else {
+            n.block_scale
+        }
+    } else {
+        1.0
+    };
+    health.block_cone = st
+        .blocking
+        .then(|| (eye, Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0)));
     if def_pressed && st.def_cd <= 0.0 {
         let used = match active.def {
             DefKind::ParticleWall => {
@@ -1671,7 +2400,17 @@ pub fn kit_input(
                 let origin = Vec3::from(s.pos.to_array()) - Vec3::Z * 64.0;
                 let normal = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
                 log::debug!("particle wall up at {origin:.0} facing {normal:.2}");
-                commands.spawn((Transform::from_translation(to_bevy(origin)), Visibility::default(), ParticleWall { origin, normal, life: n.wall_life, hp: n.wall_hp, enemy: false }));
+                commands.spawn((
+                    Transform::from_translation(to_bevy(origin)),
+                    Visibility::default(),
+                    ParticleWall {
+                        origin,
+                        normal,
+                        life: n.wall_life,
+                        hp: n.wall_hp,
+                        enemy: false,
+                    },
+                ));
                 true
             }
             DefKind::Tether => {
@@ -1680,9 +2419,22 @@ pub fn kit_input(
                 // Two tethers (SP), thrown up 0.3 and right ±0.2 of the view at 1000 u/s.
                 let right = Vec3::new(dir.y, -dir.x, 0.0).normalize_or(Vec3::Y);
                 for side in [-1.0, 1.0] {
-                    let d = (dir + Vec3::Z * TETHER_OFFSET_UP + right * TETHER_OFFSET_RIGHT * side).normalize();
-                    let r = |k: f32| ((eye.x + eye.y * k + side * 31.0).sin() * 360.0).to_radians() * 2.0;
-                    spawn_tether(&mut commands, tether_assets.as_deref(), eye, TetherShot { pos: eye, vel: d * TETHER_SPEED, life: 10.0, spin: Vec3::new(r(1.7), r(2.3), r(3.1)) });
+                    let d = (dir + Vec3::Z * TETHER_OFFSET_UP + right * TETHER_OFFSET_RIGHT * side)
+                        .normalize();
+                    let r = |k: f32| {
+                        ((eye.x + eye.y * k + side * 31.0).sin() * 360.0).to_radians() * 2.0
+                    };
+                    spawn_tether(
+                        &mut commands,
+                        tether_assets.as_deref(),
+                        eye,
+                        TetherShot {
+                            pos: eye,
+                            vel: d * TETHER_SPEED,
+                            life: 10.0,
+                            spin: Vec3::new(r(1.7), r(2.3), r(3.1)),
+                        },
+                    );
                 }
                 true
             }
@@ -1710,12 +2462,30 @@ pub fn kit_input(
     weapon.forced_ads = st.gun_shield > 0.0;
 
     // --- Utility (E): the antirodeo slot ---
-    let un = n.util.get(UTILITY.iter().find(|u| u.1 == active.util).map(|u| u.0).unwrap_or("")).copied().unwrap_or(UtilNumbers { cooldown: 20.0, charges: 1, duration: 0.0 });
+    let un = n
+        .util
+        .get(
+            UTILITY
+                .iter()
+                .find(|u| u.1 == active.util)
+                .map(|u| u.0)
+                .unwrap_or(""),
+        )
+        .copied()
+        .unwrap_or(UtilNumbers {
+            cooldown: 20.0,
+            charges: 1,
+            duration: 0.0,
+        });
     if st.util_charges < un.charges {
         st.util_cd = (st.util_cd - dt).max(0.0);
         if st.util_cd <= 0.0 {
             st.util_charges += 1;
-            st.util_cd = if st.util_charges < un.charges { un.cooldown } else { 0.0 };
+            st.util_cd = if st.util_charges < un.charges {
+                un.cooldown
+            } else {
+                0.0
+            };
         }
     }
     let util_held = input.utility && !frozen;
@@ -1728,7 +2498,14 @@ pub fn kit_input(
                 // TitanSmokescreen: 240 units ahead when the line there is clear, else on BT.
                 let ahead = bt_pos + fwd * 240.0;
                 let to = ahead + Vec3::Z * 60.0 - eye;
-                let clear = world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(to.normalize_or_zero().to_array()), to.length()).is_none();
+                let clear = world
+                    .0
+                    .raycast(
+                        SVec3::from(eye.to_array()),
+                        SVec3::from(to.normalize_or_zero().to_array()),
+                        to.length(),
+                    )
+                    .is_none();
                 let at = if clear { ahead } else { bt_pos };
                 spawn_smoke(&mut commands, at, fwd, false);
                 true
@@ -1739,12 +2516,33 @@ pub fn kit_input(
                 // in for its muzzle) aimed at what the crosshair is on (projectile_adjust_to_gun_
                 // barrel), 1 degree higher (projectile_launch_pitch_offset).
                 let from = eye + right * 60.0 + dir * 80.0;
-                let reach = world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(dir.to_array()), 20000.0).map_or(20000.0, |h| h.t);
+                let reach = world
+                    .0
+                    .raycast(
+                        SVec3::from(eye.to_array()),
+                        SVec3::from(dir.to_array()),
+                        20000.0,
+                    )
+                    .map_or(20000.0, |h| h.t);
                 let aim = (eye + dir * reach - from).normalize_or(dir);
                 let d = view_dir(aim.y.atan2(aim.x), (-aim.z).asin() - 1f32.to_radians());
-                let shot = SonarShot { pos: from, vel: d * SONAR_SHOT_SPEED, age: 0.0 };
-                let at = Transform::from_translation(to_bevy(from)).with_rotation(Quat::from_rotation_arc(Vec3::Y, to_bevy(d).normalize_or(Vec3::Y)));
-                commands.spawn((at, Visibility::default(), shot, crate::pfx::PfxTrail::new("wpn_grenade_sonar_titan"), crate::pilotweapon::ProjectileModel("models/weapons/kunai/w_kunai_projectile.mdl")));
+                let shot = SonarShot {
+                    pos: from,
+                    vel: d * SONAR_SHOT_SPEED,
+                    age: 0.0,
+                };
+                let at = Transform::from_translation(to_bevy(from)).with_rotation(
+                    Quat::from_rotation_arc(Vec3::Y, to_bevy(d).normalize_or(Vec3::Y)),
+                );
+                commands.spawn((
+                    at,
+                    Visibility::default(),
+                    shot,
+                    crate::pfx::PfxTrail::new("wpn_grenade_sonar_titan"),
+                    crate::pilotweapon::ProjectileModel(
+                        "models/weapons/kunai/w_kunai_projectile.mdl",
+                    ),
+                ));
                 crate::audio::event(&mut commands, "Titan_Tone_SonarLock_Fired_ShoulderPod_1P");
                 true
             }
@@ -1752,7 +2550,11 @@ pub fn kit_input(
                 // PhaseShift for 1 s, launched along the movement input at PHASE_DASH_SPEED (+200 up).
                 st.phase = PHASE_DASH_TIME;
                 let wish = fwd * input.forward + right * input.right;
-                let launch = if wish.length() > 0.1 { wish.normalize() } else { fwd };
+                let launch = if wish.length() > 0.1 {
+                    wish.normalize()
+                } else {
+                    fwd
+                };
                 mods.launch = Some(launch * PHASE_DASH_SPEED + Vec3::Z * 200.0);
                 crate::audio::event(&mut commands, "Stryder.Dash");
                 true
@@ -1761,13 +2563,30 @@ pub fn kit_input(
                 st.hover_t = 0.0;
                 st.hover_len = un.duration.max(0.1);
                 st.hover_horiz = HOVER_HORIZ;
-                emit(&mut commands, Effect::DustRing { at: to_bevy(bt_pos), radius: 4.0 });
+                emit(
+                    &mut commands,
+                    Effect::DustRing {
+                        at: to_bevy(bt_pos),
+                        radius: 4.0,
+                    },
+                );
                 true
             }
             UtilKind::SlowTrap => {
                 // ThrowDeployable at 1500 u/s; the canister builds for 1 s and gasses 240 units for 12 s.
                 let p = eye + dir * 40.0;
-                commands.spawn((Transform::from_translation(to_bevy(p)), Glow::new(Vec3::new(2.0, 1.2, 0.3), 0.3, true), SlowTrap { pos: p, vel: dir * 1500.0, landed: false, build: SLOW_TRAP_BUILD_TIME, life: SLOW_TRAP_LIFETIME, puff: 0.0 }));
+                commands.spawn((
+                    Transform::from_translation(to_bevy(p)),
+                    Glow::new(Vec3::new(2.0, 1.2, 0.3), 0.3, true),
+                    SlowTrap {
+                        pos: p,
+                        vel: dir * 1500.0,
+                        landed: false,
+                        build: SLOW_TRAP_BUILD_TIME,
+                        life: SLOW_TRAP_LIFETIME,
+                        puff: 0.0,
+                    },
+                ));
                 true
             }
             UtilKind::LaserTrip => {
@@ -1781,15 +2600,41 @@ pub fn kit_input(
                 let side = dir.cross(Vec3::Z);
                 let mut d = dir;
                 d.z = d.z.min(-0.2);
-                for (id, (k, power)) in [(d - side, LASER_TRIP_DEPLOY_SIDE_POWER), (d, LASER_TRIP_DEPLOY_POWER), (d + side, LASER_TRIP_DEPLOY_SIDE_POWER)].into_iter().enumerate() {
+                for (id, (k, power)) in [
+                    (d - side, LASER_TRIP_DEPLOY_SIDE_POWER),
+                    (d, LASER_TRIP_DEPLOY_POWER),
+                    (d + side, LASER_TRIP_DEPLOY_SIDE_POWER),
+                ]
+                .into_iter()
+                .enumerate()
+                {
                     let yaw = k.y.atan2(k.x);
                     let pitch = (-k.z).atan2(k.truncate().length()).to_degrees() - 8.0;
-                    let power = if pitch < 80.0 { power * (1.0 + 2.0 * (pitch / 80.0).clamp(0.0, 1.0)) } else { power };
+                    let power = if pitch < 80.0 {
+                        power * (1.0 + 2.0 * (pitch / 80.0).clamp(0.0, 1.0))
+                    } else {
+                        power
+                    };
                     // The game throws from BT's TITAN_GRENADE attachment plus 50 along it; this
                     // spot below and right of the eye stands in for it.
                     let p = eye + Vec3::Z * -15.0 + right * 25.0;
                     let vel = view_dir(yaw, pitch.to_radians()) * power;
-                    commands.spawn((Transform::from_translation(to_bevy(p)), Visibility::default(), Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false), LaserPylon { pos: p, vel, landed: false, build: LASER_TRIP_BUILD_TIME, life: LASER_TRIP_LIFETIME, group, id: id as u8, yaw, link: None }));
+                    commands.spawn((
+                        Transform::from_translation(to_bevy(p)),
+                        Visibility::default(),
+                        Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false),
+                        LaserPylon {
+                            pos: p,
+                            vel,
+                            landed: false,
+                            build: LASER_TRIP_BUILD_TIME,
+                            life: LASER_TRIP_LIFETIME,
+                            group,
+                            id: id as u8,
+                            yaw,
+                            link: None,
+                        },
+                    ));
                 }
                 true
             }
@@ -1804,7 +2649,14 @@ pub fn kit_input(
                 weapon.ammo = weapon.def.clip;
                 weapon.reload_left = 0.0;
                 weapon.play_ammo_swap();
-                crate::audio::event(&mut commands, if long { "weapon_predator_rangeswitch_toshort_1p" } else { "weapon_predator_rangeswitch_tolong_1p" });
+                crate::audio::event(
+                    &mut commands,
+                    if long {
+                        "weapon_predator_rangeswitch_toshort_1p"
+                    } else {
+                        "weapon_predator_rangeswitch_tolong_1p"
+                    },
+                );
                 log::info!("ammo swap: {} range", if long { "close" } else { "long" });
                 true
             }
@@ -1820,7 +2672,11 @@ pub fn kit_input(
             if !spec.util_sound.is_empty() {
                 crate::audio::event(&mut commands, &spec.util_sound);
             }
-            log::info!("utility: {:?} ({} charges left)", active.util, st.util_charges);
+            log::info!(
+                "utility: {:?} ({} charges left)",
+                active.util,
+                st.util_charges
+            );
         }
     }
     // Phase Dash: phased BT takes no damage and isn't drawn; move_slow 0.6 fades over 0.5 s after.
@@ -1835,7 +2691,11 @@ pub fn kit_input(
     if !mods.phased && st.phase_hidden {
         // Back from a phase in third person: show BT again (the cockpit view keeps it hidden).
         if let Ok(mut v) = vis.get_mut(titan.actor) {
-            v.set_if_neq(if *mode == CameraMode::Cockpit { Visibility::Hidden } else { Visibility::Inherited });
+            v.set_if_neq(if *mode == CameraMode::Cockpit {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            });
         }
     }
     st.phase_hidden = mods.phased;
@@ -1853,7 +2713,10 @@ pub fn kit_input(
         } else {
             70.0
         };
-        if t >= st.hover_len || health.dead_for.is_some() || *control != crate::pilotctl::Control::Titan {
+        if t >= st.hover_len
+            || health.dead_for.is_some()
+            || *control != crate::pilotctl::Control::Titan
+        {
             st.hover_len = 0.0;
             st.hover_slow = HOVER_FADE;
         } else {
@@ -1861,10 +2724,20 @@ pub fn kit_input(
         }
     }
     st.hover_slow = (st.hover_slow - dt).max(0.0);
-    let phase_k = if st.phase > 0.0 { 1.0 } else { st.phase_slow / PHASE_FADE };
-    let hover_k = if st.hover_len > 0.0 { 1.0 } else { st.hover_slow / HOVER_FADE };
+    let phase_k = if st.phase > 0.0 {
+        1.0
+    } else {
+        st.phase_slow / PHASE_FADE
+    };
+    let hover_k = if st.hover_len > 0.0 {
+        1.0
+    } else {
+        st.hover_slow / HOVER_FADE
+    };
     mods.arc_slow = (mods.arc_slow - dt).max(0.0);
-    mods.speed_scale = (1.0 - 0.6 * phase_k).min(1.0 - 0.65 * hover_k).min(if mods.arc_slow > 0.0 { ARC_SLOW } else { 1.0 });
+    mods.speed_scale = (1.0 - 0.6 * phase_k)
+        .min(1.0 - 0.65 * hover_k)
+        .min(if mods.arc_slow > 0.0 { ARC_SLOW } else { 1.0 });
 
     // --- Cores ---
     // TF_CORE_FULL=1 keeps the meter full (testing cores in scripted runs).
@@ -1878,8 +2751,28 @@ pub fn kit_input(
             CoreKind::FlameWave => {
                 let group = next_group();
                 let base = Vec3::from(s.pos.to_array()) + fwd * 25.0;
-                for (off, sfx) in [(-1.0, "flamewave_blast_right"), (0.0, "flamewave_blast_middle"), (1.0, "flamewave_blast_left")] {
-                    commands.spawn(Wave { kind: WaveKind::Flame, pos: base + right * off * 128.0, head: base + right * off * 128.0, first: true, dir: fwd, step: n.flame_step, left: n.flame_count, timer: 0.0, radius: 180.0, titan: n.flame_titan, pilot: n.flame_pilot, group, enemy: false, trap: None, row: off == 0.0 });
+                for (off, sfx) in [
+                    (-1.0, "flamewave_blast_right"),
+                    (0.0, "flamewave_blast_middle"),
+                    (1.0, "flamewave_blast_left"),
+                ] {
+                    commands.spawn(Wave {
+                        kind: WaveKind::Flame,
+                        pos: base + right * off * 128.0,
+                        head: base + right * off * 128.0,
+                        first: true,
+                        dir: fwd,
+                        step: n.flame_step,
+                        left: n.flame_count,
+                        timer: 0.0,
+                        radius: 180.0,
+                        titan: n.flame_titan,
+                        pilot: n.flame_pilot,
+                        group,
+                        enemy: false,
+                        trap: None,
+                        row: off == 0.0,
+                    });
                     crate::audio::event(&mut commands, sfx);
                 }
             }
@@ -1888,15 +2781,28 @@ pub fn kit_input(
                 let targets: Vec<Entity> = enemies
                     .iter()
                     .filter(|(_, e)| e.alive())
-                    .filter(|(_, e)| ((e.pos + Vec3::Z * e.height * 0.5) - eye).normalize().dot(dir) > 0.6)
+                    .filter(|(_, e)| {
+                        ((e.pos + Vec3::Z * e.height * 0.5) - eye)
+                            .normalize()
+                            .dot(dir)
+                            > 0.6
+                    })
                     .map(|(id, _)| id)
                     .collect();
                 st.queue_rate = n.salvo_rate;
                 for i in 0..n.salvo_count as usize {
-                    let t = if targets.is_empty() { None } else { Some(targets[i % targets.len()]) };
+                    let t = if targets.is_empty() {
+                        None
+                    } else {
+                        Some(targets[i % targets.len()])
+                    };
                     st.queue.push((t, n.salvo_rocket));
                 }
-                log::info!("salvo core: {} rockets at {} targets", n.salvo_count, targets.len());
+                log::info!(
+                    "salvo core: {} rockets at {} targets",
+                    n.salvo_count,
+                    targets.len()
+                );
             }
             CoreKind::Laser => crate::audio::event(&mut commands, "Titan_Core_Laser_FireBeam_1P"),
             CoreKind::Flight => {
@@ -1904,7 +2810,13 @@ pub fn kit_input(
                 st.hover_t = 0.0;
                 st.hover_len = core.duration.max(0.1);
                 st.hover_horiz = FLIGHT_CORE_HORIZ;
-                emit(&mut commands, Effect::DustRing { at: to_bevy(bt_pos), radius: 4.0 });
+                emit(
+                    &mut commands,
+                    Effect::DustRing {
+                        at: to_bevy(bt_pos),
+                        radius: 4.0,
+                    },
+                );
                 crate::audio::event(&mut commands, "titan_core_flight_liftoff_1p");
                 log::info!("flight core: {:.1} s of flight", core.duration);
             }
@@ -1918,45 +2830,98 @@ pub fn kit_input(
             commands.entity(glow).despawn();
         }
     }
-    st.melee_damage = if active.def == DefKind::SwordBlock { n.sword_damage + if sword_core { n.sword_core_bonus } else { 0.0 } } else { 500.0 };
+    st.melee_damage = if active.def == DefKind::SwordBlock {
+        n.sword_damage + if sword_core { n.sword_core_bonus } else { 0.0 }
+    } else {
+        500.0
+    };
     if core_on && !frozen {
         match core.kind {
-            CoreKind::Flight if matches!(core.state, CoreState::Active(t) if t < FLIGHT_CORE_TAKEOFF) => {}
+            CoreKind::Flight if matches!(core.state, CoreState::Active(t) if t < FLIGHT_CORE_TAKEOFF) =>
+                {}
             CoreKind::Flight => {
                 // Flight Core rockets at fire_rate from the shoulder pods, straight at the crosshair.
                 st.core_tick -= dt;
                 while st.core_tick <= 0.0 {
                     st.core_tick += 1.0 / n.flight_rate.max(1.0);
-                    let jitter = Vec3::new(st.rand() - 0.5, st.rand() - 0.5, st.rand() - 0.5) * 0.06;
+                    let jitter =
+                        Vec3::new(st.rand() - 0.5, st.rand() - 0.5, st.rand() - 0.5) * 0.06;
                     st.queue_rate = n.flight_rate;
                     if let Some(a) = assets.as_ref() {
                         st.pod_right = !st.pod_right;
                         let side = right * if st.pod_right { 70.0 } else { -70.0 };
-                        spawn_missile(&mut commands, a, eye + side + Vec3::Z * 40.0, (dir + jitter).normalize(), None, n.flight_rocket);
+                        spawn_missile(
+                            &mut commands,
+                            a,
+                            eye + side + Vec3::Z * 40.0,
+                            (dir + jitter).normalize(),
+                            None,
+                            n.flight_rocket,
+                        );
                     }
                     crate::audio::cue(&mut commands, crate::audio::Cue::MissileFire, None);
                 }
             }
             CoreKind::Laser => {
                 // A continuous beam; each server frame it damages what it touches.
-                let (t, who) = trace(&world, &enemies, eye, dir, n.laser_core_range, n.laser_core_radius);
+                let (t, who) = trace(
+                    &world,
+                    &enemies,
+                    eye,
+                    dir,
+                    n.laser_core_range,
+                    n.laser_core_radius,
+                );
                 // From the chest: the Laser Core viewmodel's muzzle_flash (atpov_laser_cannon:
                 // 32 ahead of and 44 below the camera bone; its arms hang out of view).
-                let (a, b) = (to_bevy(eye + dir * 32.0 - Vec3::Z * 44.0), to_bevy(eye + dir * t));
+                let (a, b) = (
+                    to_bevy(eye + dir * 32.0 - Vec3::Z * 44.0),
+                    to_bevy(eye + dir * t),
+                );
                 if std::env::var_os("TF_OLD_FX").is_none() {
                     // The script's sustained laser: P_wpn_lasercannon_FP from the muzzle to the
                     // hit point, P_lasercannon_endglow on the hit point, both kept running.
                     let (beam, glow) = *st.laser_fx.get_or_insert_with(|| {
                         (
-                            commands.spawn((Transform::from_translation(a), crate::pfx::PfxTrail::new("P_wpn_lasercannon_FP"), crate::pfx::PfxBeamEnd(b))).id(),
-                            commands.spawn((Transform::from_translation(b), crate::pfx::PfxTrail::new("P_lasercannon_endglow"))).id(),
+                            commands
+                                .spawn((
+                                    Transform::from_translation(a),
+                                    crate::pfx::PfxTrail::new("P_wpn_lasercannon_FP"),
+                                    crate::pfx::PfxBeamEnd(b),
+                                ))
+                                .id(),
+                            commands
+                                .spawn((
+                                    Transform::from_translation(b),
+                                    crate::pfx::PfxTrail::new("P_lasercannon_endglow"),
+                                ))
+                                .id(),
                         )
                     });
-                    commands.entity(beam).insert((Transform::from_translation(a).looking_at(b, Vec3::Y), crate::pfx::PfxBeamEnd(b)));
+                    commands.entity(beam).insert((
+                        Transform::from_translation(a).looking_at(b, Vec3::Y),
+                        crate::pfx::PfxBeamEnd(b),
+                    ));
                     commands.entity(glow).insert(Transform::from_translation(b));
                 } else {
-                    emit(&mut commands, Effect::Tracer { from: a, to: b, width: 1.2, color: Vec3::new(2.0, 4.0, 8.0) });
-                    emit(&mut commands, Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 2.0, energy: true });
+                    emit(
+                        &mut commands,
+                        Effect::Tracer {
+                            from: a,
+                            to: b,
+                            width: 1.2,
+                            color: Vec3::new(2.0, 4.0, 8.0),
+                        },
+                    );
+                    emit(
+                        &mut commands,
+                        Effect::Impact {
+                            at: b,
+                            normal: (a - b).normalize_or(Vec3::Y),
+                            scale: 2.0,
+                            energy: true,
+                        },
+                    );
                 }
                 st.core_tick -= dt;
                 if st.core_tick <= 0.0 {
@@ -1982,7 +2947,14 @@ pub fn kit_input(
                 st.pod_right = !st.pod_right;
                 let side = right * if st.pod_right { 70.0 } else { -70.0 };
                 let out = (dir + side.normalize() * 0.2 + Vec3::Z * 0.2).normalize();
-                spawn_missile(&mut commands, a, eye + side + Vec3::Z * 40.0, out, target, spec);
+                spawn_missile(
+                    &mut commands,
+                    a,
+                    eye + side + Vec3::Z * 40.0,
+                    out,
+                    target,
+                    spec,
+                );
                 crate::audio::cue(&mut commands, crate::audio::Cue::MissileFire, None);
             }
         } else {
@@ -2005,21 +2977,49 @@ pub fn kit_world(
     mut thermite: Query<(Entity, &mut Thermite)>,
     mut rockets: Query<(Entity, &mut ClusterRocket, &mut Transform), Without<ParticleWall>>,
     mut bursts: Query<(Entity, &mut ClusterBursts)>,
-    mut walls: Query<(Entity, &mut ParticleWall, &mut Transform, Option<&Children>), Without<ClusterRocket>>,
+    mut walls: Query<
+        (Entity, &mut ParticleWall, &mut Transform, Option<&Children>),
+        Without<ClusterRocket>,
+    >,
     mut traps: Query<(Entity, &mut TetherTrap)>,
     mut titans: Query<(&PlayerTitan, &mut KitState, &mut TitanCore)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
-    (mut tick, mut hit_groups, gas, vortex, mut tethers, tether_assets, (control, difficulty, mut pilots, mut player, mut mods, mut enemy_walls, mode, gun_muzzle, mut spots)): (
+    (
+        mut tick,
+        mut hit_groups,
+        gas,
+        vortex,
+        mut tethers,
+        tether_assets,
+        (
+            control,
+            difficulty,
+            mut pilots,
+            mut player,
+            mut mods,
+            mut enemy_walls,
+            mode,
+            gun_muzzle,
+            mut spots,
+        ),
+    ): (
         Local<f32>,
         Local<HashMap<u32, Vec<Entity>>>,
         Query<(Entity, &SlowTrap)>,
         Query<&Vortex, With<PlayerTitan>>,
-        Query<(Entity, &mut TetherShot, &mut Transform), (Without<ParticleWall>, Without<ClusterRocket>)>,
+        Query<
+            (Entity, &mut TetherShot, &mut Transform),
+            (Without<ParticleWall>, Without<ClusterRocket>),
+        >,
         Option<Res<TetherAssets>>,
         (
             Res<Control>,
             Res<crate::vitals::Difficulty>,
-            Query<(Entity, &crate::pilotctl::PlayerPilot, &mut crate::pilotctl::PilotHealth)>,
+            Query<(
+                Entity,
+                &crate::pilotctl::PlayerPilot,
+                &mut crate::pilotctl::PilotHealth,
+            )>,
             Query<(Entity, &PlayerTitan, &mut TitanHealth)>,
             ResMut<TitanMoveMods>,
             ResMut<EnemyWalls>,
@@ -2032,7 +3032,9 @@ pub fn kit_world(
     let Some(defs) = defs else { return };
     let n = &defs.n;
     let dt = time.delta_secs().min(0.1);
-    let Ok((titan, mut st, mut core)) = titans.single_mut() else { return };
+    let Ok((titan, mut st, mut core)) = titans.single_mut() else {
+        return;
+    };
 
     // Damage the shields soaked up last frame.
     let owners: Vec<Option<Entity>> = shields.shields.iter().map(|s| s.owner).collect();
@@ -2059,21 +3061,57 @@ pub fn kit_world(
             // WeaponAttackWave: trace forward (and 40 down after the first step) from 80 above
             // the last segment; if that's blocked, try climbing (up to step * 0.577) instead.
             // Then the ground is 1000 below at most, or the wave ends.
-            let start = if w.first { w.head } else { w.pos + Vec3::Z * 80.0 };
+            let start = if w.first {
+                w.head
+            } else {
+                w.pos + Vec3::Z * 80.0
+            };
             let new = w.head + w.dir * w.step;
             let under = Vec3::new(new.x, new.y, if w.first { start.z } else { start.z - 40.0 });
-            let over = Vec3::new(new.x, new.y, if w.first { start.z } else { start.z + w.step * 0.577_350_3 });
+            let over = Vec3::new(
+                new.x,
+                new.y,
+                if w.first {
+                    start.z
+                } else {
+                    start.z + w.step * 0.577_350_3
+                },
+            );
             let trace = |a: Vec3, b: Vec3| {
                 let d = b - a;
-                world.0.raycast(SVec3::from(a.to_array()), SVec3::from(d.normalize_or_zero().to_array()), d.length()).map(|h| a + d.normalize_or_zero() * h.t)
+                world
+                    .0
+                    .raycast(
+                        SVec3::from(a.to_array()),
+                        SVec3::from(d.normalize_or_zero().to_array()),
+                        d.length(),
+                    )
+                    .map(|h| a + d.normalize_or_zero() * h.t)
             };
-            let ground = |p: Vec3| world.0.raycast(SVec3::from(p.to_array()), -SVec3::Z, 1000.0).map(|h| p - Vec3::Z * h.t);
+            let ground = |p: Vec3| {
+                world
+                    .0
+                    .raycast(SVec3::from(p.to_array()), -SVec3::Z, 1000.0)
+                    .map(|h| p - Vec3::Z * h.t)
+            };
             let (head, seg) = match trace(start, under) {
                 None => (under, ground(under)),
-                Some(hit) => (hit, if trace(start, over).is_some() { None } else { ground(over) }),
+                Some(hit) => (
+                    hit,
+                    if trace(start, over).is_some() {
+                        None
+                    } else {
+                        ground(over)
+                    },
+                ),
             };
             let Some(seg) = seg else {
-                log::debug!("{:?} wave ended at {:?} ({} steps left)", w.kind, w.pos.round(), w.left);
+                log::debug!(
+                    "{:?} wave ended at {:?} ({} steps left)",
+                    w.kind,
+                    w.pos.round(),
+                    w.left
+                );
                 w.left = 0;
                 break;
             };
@@ -2087,17 +3125,39 @@ pub fn kit_world(
             // The scripts' effects stand on the segment (downTrace.endPos), facing the wave.
             let ground = Cp::facing(w.pos, w.dir);
             match w.kind {
-                WaveKind::Arc if old_fx => emit(&mut commands, Effect::Impact { at, normal: Vec3::Y, scale: 2.4, energy: true }),
+                WaveKind::Arc if old_fx => emit(
+                    &mut commands,
+                    Effect::Impact {
+                        at,
+                        normal: Vec3::Y,
+                        scale: 2.4,
+                        energy: true,
+                    },
+                ),
                 // CreateEmpWaveSegment.
                 WaveKind::Arc => crate::pfx::emit_named_cp(&mut commands, "P_arcwave_exp", ground),
-                WaveKind::Flame if old_fx => emit(&mut commands, Effect::Explosion { at, scale: 0.9 }),
+                WaveKind::Flame if old_fx => {
+                    emit(&mut commands, Effect::Explosion { at, scale: 0.9 })
+                }
                 WaveKind::Flame => {
                     // CreateFlameWaveSegment: two P_wpn_meteor_waveCP per row, from the middle
                     // wave out to either side (control point 1), killed after 3 s.
                     if w.row {
-                        let side = w.dir.cross(Vec3::Z).normalize_or(Vec3::X) * FLAME_ROW_HALF_WIDTH;
+                        let side =
+                            w.dir.cross(Vec3::Z).normalize_or(Vec3::X) * FLAME_ROW_HALF_WIDTH;
                         for s in [side, -side] {
-                            crate::pfx::emit_named_cps(&mut commands, "P_wpn_meteor_waveCP", &[ground, Cp { pos: w.pos + s, ..ground }], Some(3.0));
+                            crate::pfx::emit_named_cps(
+                                &mut commands,
+                                "P_wpn_meteor_waveCP",
+                                &[
+                                    ground,
+                                    Cp {
+                                        pos: w.pos + s,
+                                        ..ground
+                                    },
+                                ],
+                                Some(3.0),
+                            );
                         }
                     }
                 }
@@ -2105,12 +3165,34 @@ pub fn kit_world(
                 // where the wave is.
                 WaveKind::Firewall => {
                     if let Some(prev) = prev {
-                        let life = if w.enemy { ENEMY_FIREWALL_THERMITE_SECS } else { n.thermite_life };
-                        let patch = commands.spawn((Transform::from_translation(at), Thermite { pos: w.pos, life, group: w.group, radius: w.radius, flicker: w.left as f32 * 0.13, enemy: w.enemy, trap: w.trap.map(|o| (o, 0.0)) })).id();
+                        let life = if w.enemy {
+                            ENEMY_FIREWALL_THERMITE_SECS
+                        } else {
+                            n.thermite_life
+                        };
+                        let patch = commands
+                            .spawn((
+                                Transform::from_translation(at),
+                                Thermite {
+                                    pos: w.pos,
+                                    life,
+                                    group: w.group,
+                                    radius: w.radius,
+                                    flicker: w.left as f32 * 0.13,
+                                    enemy: w.enemy,
+                                    trap: w.trap.map(|o| (o, 0.0)),
+                                },
+                            ))
+                            .id();
                         // The effect runs from this segment back to the last one (control point
                         // 1); a Slow Trap line's runs from its end back to the trap once the line
                         // is laid (FlameOn). It goes with the patch.
-                        log::debug!("thermite patch at {:?} (wave {:?} left {})", w.pos.round(), w.kind, w.left);
+                        log::debug!(
+                            "thermite patch at {:?} (wave {:?} left {})",
+                            w.pos.round(),
+                            w.kind,
+                            w.left
+                        );
                         let fx = match w.trap {
                             None => Some(("P_wpn_meteor_wall", prev)),
                             Some(origin) if w.left == 0 => Some(("P_meteor_trap_burn", origin)),
@@ -2118,10 +3200,18 @@ pub fn kit_world(
                         };
                         if old_fx {
                             emit(&mut commands, Effect::Explosion { at, scale: 0.45 });
-                            commands.entity(patch).insert(Glow::new(Vec3::new(6.0, 2.2, 0.4), 2.2, true));
+                            commands.entity(patch).insert(Glow::new(
+                                Vec3::new(6.0, 2.2, 0.4),
+                                2.2,
+                                true,
+                            ));
                         } else if let Some((name, end)) = fx {
                             let local = to_bevy(w.pos) - at;
-                            commands.entity(patch).with_child((Transform::from_translation(local), crate::pfx::PfxTrail::new(name), crate::pfx::PfxBeamEnd(to_bevy(end))));
+                            commands.entity(patch).with_child((
+                                Transform::from_translation(local),
+                                crate::pfx::PfxTrail::new(name),
+                                crate::pfx::PfxBeamEnd(to_bevy(end)),
+                            ));
                         }
                     }
                 }
@@ -2133,7 +3223,13 @@ pub fn kit_world(
                 if let Ok((bid, bt, mut health)) = player.single_mut() {
                     let bp = Vec3::from(bt.state.pos.to_array());
                     let d = (bp - w.pos).truncate().length() - settings.0.radius;
-                    if !hit.contains(&bid) && !mods.phased && health.dead_for.is_none() && d < w.radius && (w.pos.z - bp.z) < settings.0.height && (bp.z - w.pos.z) < w.radius {
+                    if !hit.contains(&bid)
+                        && !mods.phased
+                        && health.dead_for.is_none()
+                        && d < w.radius
+                        && (w.pos.z - bp.z) < settings.0.height
+                        && (bp.z - w.pos.z) < w.radius
+                    {
                         hit.push(bid);
                         health.damage_from(w.titan * scale, true, w.pos);
                         mods.arc_slow = ARC_SLOW_SECS;
@@ -2144,9 +3240,16 @@ pub fn kit_world(
                     if let Ok((pid, pilot, mut health)) = pilots.single_mut() {
                         let pp = Vec3::from(pilot.state.pos.to_array());
                         let d = (pp - w.pos).truncate().length() - 16.0;
-                        if !hit.contains(&pid) && d < w.radius && (w.pos.z - pp.z) < 72.0 && (pp.z - w.pos.z) < w.radius {
+                        if !hit.contains(&pid)
+                            && d < w.radius
+                            && (w.pos.z - pp.z) < 72.0
+                            && (pp.z - w.pos.z) < w.radius
+                        {
                             hit.push(pid);
-                            health.damage_capped(w.pilot * scale, difficulty.max_pilot_damage_per_hit());
+                            health.damage_capped(
+                                w.pilot * scale,
+                                difficulty.max_pilot_damage_per_hit(),
+                            );
                             log::info!("enemy arc wave hit the Pilot for {:.0}", w.pilot * scale);
                         }
                     }
@@ -2158,7 +3261,10 @@ pub fn kit_world(
                         continue;
                     }
                     let d = (e.pos - w.pos).truncate().length() - e.radius;
-                    if d < w.radius && (w.pos.z - e.pos.z) < e.height && (e.pos.z - w.pos.z) < w.radius {
+                    if d < w.radius
+                        && (w.pos.z - e.pos.z) < e.height
+                        && (e.pos.z - w.pos.z) < w.radius
+                    {
                         hit.push(eid);
                         hurt(&mut e, w.titan, w.pilot, &mut core);
                     }
@@ -2191,7 +3297,13 @@ pub fn kit_world(
         t.flicker -= dt;
         if t.flicker <= 0.0 && std::env::var_os("TF_OLD_FX").is_some() {
             t.flicker += 0.35;
-            emit(&mut commands, Effect::Explosion { at: to_bevy(t.pos + Vec3::Z * 40.0), scale: 0.4 });
+            emit(
+                &mut commands,
+                Effect::Explosion {
+                    at: to_bevy(t.pos + Vec3::Z * 40.0),
+                    scale: 0.4,
+                },
+            );
         }
         // A trap segment ticks every 0.2 s from when it lands; all of a trap's segments share
         // one CreateOncePerTickDamageInflictorHelper, so a target takes one tick per server
@@ -2217,7 +3329,13 @@ pub fn kit_world(
             if let Ok((bid, bt, mut health)) = player.single_mut() {
                 let bp = Vec3::from(bt.state.pos.to_array());
                 let d = (bp - t.pos).truncate().length() - settings.0.radius;
-                if !burned.contains(&(t.group, bid)) && !mods.phased && health.dead_for.is_none() && d < t.radius && (t.pos.z - bp.z) < settings.0.height && (bp.z - t.pos.z) < 100.0 {
+                if !burned.contains(&(t.group, bid))
+                    && !mods.phased
+                    && health.dead_for.is_none()
+                    && d < t.radius
+                    && (t.pos.z - bp.z) < settings.0.height
+                    && (bp.z - t.pos.z) < 100.0
+                {
                     burned.push((t.group, bid));
                     health.damage_from(n.thermite_tick * scale, true, t.pos);
                 }
@@ -2226,9 +3344,16 @@ pub fn kit_world(
                 if let Ok((pid, pilot, mut health)) = pilots.single_mut() {
                     let pp = Vec3::from(pilot.state.pos.to_array());
                     let d = (pp - t.pos).truncate().length() - 16.0;
-                    if !burned.contains(&(t.group, pid)) && d < t.radius && (t.pos.z - pp.z) < 72.0 && (pp.z - t.pos.z) < 100.0 {
+                    if !burned.contains(&(t.group, pid))
+                        && d < t.radius
+                        && (t.pos.z - pp.z) < 72.0
+                        && (pp.z - t.pos.z) < 100.0
+                    {
                         burned.push((t.group, pid));
-                        health.damage_capped(n.thermite_tick_pilot * scale, difficulty.max_pilot_damage_per_hit());
+                        health.damage_capped(
+                            n.thermite_tick_pilot * scale,
+                            difficulty.max_pilot_damage_per_hit(),
+                        );
                     }
                 }
             }
@@ -2245,7 +3370,11 @@ pub fn kit_world(
             if d < t.radius && (t.pos.z - e.pos.z) < e.height && (e.pos.z - t.pos.z) < 100.0 {
                 burned.push((key, eid));
                 // RadiusDamage: shields that catch rounds don't stop it.
-                let amount = if e.infantry { n.thermite_tick_pilot } else { n.thermite_tick };
+                let amount = if e.infantry {
+                    n.thermite_tick_pilot
+                } else {
+                    n.thermite_tick
+                };
                 let hit = e.damage_radius(amount, false);
                 core.credit_inflicted(hit);
             }
@@ -2265,9 +3394,20 @@ pub fn kit_world(
         if !trap.landed || trap.build > 0.0 {
             continue;
         }
-        let lit = fire.iter().any(|(p, r)| (*p - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + r && (p.z - trap.pos.z).abs() < 150.0)
-            || waves.iter().any(|(_, w)| w.kind == WaveKind::Flame && (w.pos - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + w.radius && (w.pos.z - trap.pos.z).abs() < 150.0)
-            || (vortex.single().is_ok_and(|v| v.active && v.mode == VortexMode::Heat) && (Vec3::from(titan.state.pos.to_array()) - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + 250.0);
+        let lit = fire.iter().any(|(p, r)| {
+            (*p - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + r
+                && (p.z - trap.pos.z).abs() < 150.0
+        }) || waves.iter().any(|(_, w)| {
+            w.kind == WaveKind::Flame
+                && (w.pos - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + w.radius
+                && (w.pos.z - trap.pos.z).abs() < 150.0
+        }) || (vortex
+            .single()
+            .is_ok_and(|v| v.active && v.mode == VortexMode::Heat)
+            && (Vec3::from(titan.state.pos.to_array()) - trap.pos)
+                .truncate()
+                .length()
+                < SLOW_TRAP_RADIUS + 250.0);
         if !lit {
             continue;
         }
@@ -2275,9 +3415,20 @@ pub fn kit_world(
         let origin = trap.pos + Vec3::Z * SLOW_TRAP_GAS_HEIGHT;
         // IgniteTrap: P_meteor_trap_center at the gas, killed after 3 s.
         if std::env::var_os("TF_OLD_FX").is_some() {
-            emit(&mut commands, Effect::Explosion { at: to_bevy(origin), scale: 1.6 });
+            emit(
+                &mut commands,
+                Effect::Explosion {
+                    at: to_bevy(origin),
+                    scale: 1.6,
+                },
+            );
         } else {
-            crate::pfx::emit_named_cps(&mut commands, "P_meteor_trap_center", &[Cp::facing(origin, Vec3::X)], Some(3.0));
+            crate::pfx::emit_named_cps(
+                &mut commands,
+                "P_meteor_trap_center",
+                &[Cp::facing(origin, Vec3::X)],
+                Some(3.0),
+            );
         }
         crate::audio::event_at(&mut commands, "incendiary_trap_explode", origin);
         crate::audio::event_at(&mut commands, "incendiary_trap_burn", origin);
@@ -2286,9 +3437,30 @@ pub fn kit_world(
             let yaw = (30.0 * i as f32).to_radians();
             let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
             let dir = if i > 5 { -fwd } else { fwd };
-            commands.spawn(Wave { kind: WaveKind::Firewall, pos: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS, head: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS, first: true, dir, step: n.trap_step, left: n.trap_count, timer: i as f32 * 0.008, radius: FIRE_TRAP_MINI_EXPLOSION_RADIUS, titan: 0.0, pilot: 0.0, group: group + i, enemy: false, trap: Some(origin), row: false });
+            commands.spawn(Wave {
+                kind: WaveKind::Firewall,
+                pos: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS,
+                head: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS,
+                first: true,
+                dir,
+                step: n.trap_step,
+                left: n.trap_count,
+                timer: i as f32 * 0.008,
+                radius: FIRE_TRAP_MINI_EXPLOSION_RADIUS,
+                titan: 0.0,
+                pilot: 0.0,
+                group: group + i,
+                enemy: false,
+                trap: Some(origin),
+                row: false,
+            });
         }
-        log::info!("slow trap ignited ({} lines of {} x {:.0})", 12, n.trap_count, n.trap_step);
+        log::info!(
+            "slow trap ignited ({} lines of {} x {:.0})",
+            12,
+            n.trap_count,
+            n.trap_step
+        );
     }
 
     // --- Cluster Missile ---
@@ -2300,10 +3472,17 @@ pub fn kit_world(
         let dir = step / len;
         let mut t_end = len;
         let mut normal = -dir;
-        let mut hit = world.0.raycast(SVec3::from(r.pos.to_array()), SVec3::from(dir.to_array()), len).map(|h| {
-            normal = Vec3::from(h.normal.to_array());
-            h.t
-        });
+        let mut hit = world
+            .0
+            .raycast(
+                SVec3::from(r.pos.to_array()),
+                SVec3::from(dir.to_array()),
+                len,
+            )
+            .map(|h| {
+                normal = Vec3::from(h.normal.to_array());
+                h.t
+            });
         if let Some(t) = hit {
             t_end = t;
         }
@@ -2326,21 +3505,64 @@ pub fn kit_world(
         }
         commands.entity(id).despawn();
         let at = r.pos - dir * 10.0;
-        splash(&mut enemies, at, n.cluster_inner, n.cluster_radius, n.cluster_heavy, n.cluster_pilot, &mut core);
+        splash(
+            &mut enemies,
+            at,
+            n.cluster_inner,
+            n.cluster_radius,
+            n.cluster_heavy,
+            n.cluster_pilot,
+            &mut core,
+        );
         let base = if old_fx {
-            emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 1.3 });
+            emit(
+                &mut commands,
+                Effect::Explosion {
+                    at: to_bevy(at),
+                    scale: 1.3,
+                },
+            );
             crate::audio::cue(&mut commands, crate::audio::Cue::MissileExplode, Some(at));
             None
         } else {
-            emit(&mut commands, Effect::Hit { at: to_bevy(r.pos), normal: to_bevy(normal).normalize_or(Vec3::Y), table: "exp_rocket_dumbfire", surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
+            emit(
+                &mut commands,
+                Effect::Hit {
+                    at: to_bevy(r.pos),
+                    normal: to_bevy(normal).normalize_or(Vec3::Y),
+                    table: "exp_rocket_dumbfire",
+                    surface: crate::particles::Surface::World,
+                    victim: false,
+                    scale: 1.0,
+                },
+            );
             // exp_rocket_dumbfire's Sound_attacker, and the base's sound.
-            crate::audio::event_at(&mut commands, "Default.ClusterRocket_Primary_Explosion_1P_vs_3P", at);
+            crate::audio::event_at(
+                &mut commands,
+                "Default.ClusterRocket_Primary_Explosion_1P_vs_3P",
+                at,
+            );
             crate::audio::event_at(&mut commands, "Explo_ThermiteGrenade_Impact_3P", at);
             // CLUSTER_BASE_FX on a mover facing along the surface normal.
             let rot = Quat::from_rotation_arc(Vec3::NEG_Z, to_bevy(normal).normalize_or(Vec3::Y));
-            Some(commands.spawn((Transform::from_translation(to_bevy(r.pos)).with_rotation(rot), crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"))).id())
+            Some(
+                commands
+                    .spawn((
+                        Transform::from_translation(to_bevy(r.pos)).with_rotation(rot),
+                        crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"),
+                    ))
+                    .id(),
+            )
         };
-        commands.spawn(ClusterBursts { center: r.pos, normal, delay: CLUSTER_EXPLOSION_DELAY, life: CLUSTER_EXPLOSION_DELAY + n.cluster_duration, base, hops: Vec::new(), rng: (r.age.to_bits() as u64) | 1 });
+        commands.spawn(ClusterBursts {
+            center: r.pos,
+            normal,
+            delay: CLUSTER_EXPLOSION_DELAY,
+            life: CLUSTER_EXPLOSION_DELAY + n.cluster_duration,
+            base,
+            hops: Vec::new(),
+            rng: (r.age.to_bits() as u64) | 1,
+        });
     }
     for (id, mut b) in &mut bursts {
         let b = &mut *b;
@@ -2364,7 +3586,8 @@ pub fn kit_world(
             commands.entity(id).despawn();
             continue;
         }
-        let burst_delay = n.cluster_duration / (n.cluster_bursts / CLUSTER_GROUP_SIZE).max(1) as f32;
+        let burst_delay =
+            n.cluster_duration / (n.cluster_bursts / CLUSTER_GROUP_SIZE).max(1) as f32;
         // The next pop: a random point in the dome over the hit, out to the burst range, cut
         // short by the world (ClusterRocketBurst).
         let next_pop = |from: Vec3, rand: &mut dyn FnMut() -> f32| -> (Vec3, Vec3, f32) {
@@ -2377,10 +3600,23 @@ pub fn kit_world(
             };
             let pop_vec = v * n.cluster_range * rand();
             let len = pop_vec.length();
-            let frac = world.0.raycast(SVec3::from(b.center.to_array()), SVec3::from((pop_vec / len.max(1e-4)).to_array()), len).map_or(1.0, |h| h.t / len.max(1e-4));
+            let frac = world
+                .0
+                .raycast(
+                    SVec3::from(b.center.to_array()),
+                    SVec3::from((pop_vec / len.max(1e-4)).to_array()),
+                    len,
+                )
+                .map_or(1.0, |h| h.t / len.max(1e-4));
             let to = b.center + pop_vec * frac;
-            let dur = (burst_delay - CLUSTER_BURST_DELAY - (rand() * 2.0 - 1.0) * CLUSTER_BURST_OFFSET).max(0.05);
-            let vel = Vec3::new((to.x - from.x) / dur, (to.y - from.y) / dur, (to.z + 0.5 * 750.0 * dur * dur - from.z) / dur);
+            let dur =
+                (burst_delay - CLUSTER_BURST_DELAY - (rand() * 2.0 - 1.0) * CLUSTER_BURST_OFFSET)
+                    .max(0.05);
+            let vel = Vec3::new(
+                (to.x - from.x) / dur,
+                (to.y - from.y) / dur,
+                (to.z + 0.5 * 750.0 * dur * dur - from.z) / dur,
+            );
             (to, vel, dur)
         };
         if b.delay > 0.0 {
@@ -2391,8 +3627,25 @@ pub fn kit_world(
                 let from = b.center + b.normal * 8.0;
                 for k in 0..CLUSTER_GROUP_SIZE {
                     let (to, vel, dur) = next_pop(from, &mut rand);
-                    let ent = commands.spawn((Transform::from_translation(to_bevy(from)), Visibility::default(), crate::pfx::PfxTrail::new("P_wpn_dumbfire_burst_trail"), crate::pilotweapon::ProjectileModel("models/weapons/grenades/m20_f_grenade.mdl"))).id();
-                    b.hops.push(ClusterHop { ent, from, to, vel, t: -(k as f32) / 60.0, dur, left: n.cluster_bursts / CLUSTER_GROUP_SIZE });
+                    let ent = commands
+                        .spawn((
+                            Transform::from_translation(to_bevy(from)),
+                            Visibility::default(),
+                            crate::pfx::PfxTrail::new("P_wpn_dumbfire_burst_trail"),
+                            crate::pilotweapon::ProjectileModel(
+                                "models/weapons/grenades/m20_f_grenade.mdl",
+                            ),
+                        ))
+                        .id();
+                    b.hops.push(ClusterHop {
+                        ent,
+                        from,
+                        to,
+                        vel,
+                        t: -(k as f32) / 60.0,
+                        dur,
+                        left: n.cluster_bursts / CLUSTER_GROUP_SIZE,
+                    });
                 }
             }
             continue;
@@ -2406,7 +3659,9 @@ pub fn kit_world(
             h.t += dt;
             if h.t < h.dur {
                 let p = h.from + h.vel * h.t - Vec3::Z * 0.5 * 750.0 * h.t * h.t;
-                commands.entity(h.ent).insert(Transform::from_translation(to_bevy(p)));
+                commands
+                    .entity(h.ent)
+                    .insert(Transform::from_translation(to_bevy(p)));
                 continue;
             }
             pops.push(h.to);
@@ -2428,21 +3683,61 @@ pub fn kit_world(
             (h.to, h.vel, h.dur) = (to, vel, dur);
         }
         for at in pops {
-            splash(&mut enemies, at, n.cluster_inner, n.cluster_radius, n.cluster_heavy, n.cluster_pilot, &mut core);
+            splash(
+                &mut enemies,
+                at,
+                n.cluster_inner,
+                n.cluster_radius,
+                n.cluster_heavy,
+                n.cluster_pilot,
+                &mut core,
+            );
             if old_fx {
-                emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 0.6 });
+                emit(
+                    &mut commands,
+                    Effect::Explosion {
+                        at: to_bevy(at),
+                        scale: 0.6,
+                    },
+                );
             } else {
-                emit(&mut commands, Effect::Hit { at: to_bevy(at), normal: to_bevy(b.normal).normalize_or(Vec3::Y), table: "exp_rocket_cluster_secondary", surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
+                emit(
+                    &mut commands,
+                    Effect::Hit {
+                        at: to_bevy(at),
+                        normal: to_bevy(b.normal).normalize_or(Vec3::Y),
+                        table: "exp_rocket_cluster_secondary",
+                        surface: crate::particles::Surface::World,
+                        victim: false,
+                        scale: 1.0,
+                    },
+                );
             }
-            crate::audio::event_at(&mut commands, "Default.ClusterRocket_Explosion_1P_vs_3P", at);
+            crate::audio::event_at(
+                &mut commands,
+                "Default.ClusterRocket_Explosion_1P_vs_3P",
+                at,
+            );
         }
     }
 
     // --- Particle Wall ---
-    let disc = |meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, r: f32, color: Color, glow: LinearRgba| {
+    let disc = |meshes: &mut Assets<Mesh>,
+                materials: &mut Assets<StandardMaterial>,
+                r: f32,
+                color: Color,
+                glow: LinearRgba| {
         (
             meshes.add(Circle::new(r * crate::player::UNIT)),
-            materials.add(StandardMaterial { base_color: color, emissive: glow, alpha_mode: AlphaMode::Add, unlit: true, double_sided: true, cull_mode: None, ..default() }),
+            materials.add(StandardMaterial {
+                base_color: color,
+                emissive: glow,
+                alpha_mode: AlphaMode::Add,
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            }),
         )
     };
     for (ent, dmg) in std::mem::take(&mut enemy_walls.absorbed) {
@@ -2458,7 +3753,10 @@ pub fn kit_world(
     for (id, mut w, mut tf, children) in &mut walls {
         w.life -= dt;
         if w.life <= 0.0 || w.hp <= 0.0 {
-            log::debug!("particle wall down ({})", if w.hp <= 0.0 { "broken" } else { "expired" });
+            log::debug!(
+                "particle wall down ({})",
+                if w.hp <= 0.0 { "broken" } else { "expired" }
+            );
             commands.entity(id).despawn();
             continue;
         }
@@ -2466,27 +3764,59 @@ pub fn kit_world(
             if std::env::var_os("TF_OLD_FX").is_none() {
                 // SHIELD_WALL_FX at the wall's origin with its angles (control point 0 facing
                 // the normal), looping until the wall goes.
-                let fx = commands.spawn((Transform::IDENTITY, Visibility::default(), crate::pfx::PfxTrail::oriented("P_xo_shield_wall"))).id();
+                let fx = commands
+                    .spawn((
+                        Transform::IDENTITY,
+                        Visibility::default(),
+                        crate::pfx::PfxTrail::oriented("P_xo_shield_wall"),
+                    ))
+                    .id();
                 commands.entity(id).add_child(fx);
             } else {
                 // A wide, tall pane facing where BT looked.
-                let (m, mat) = disc(&mut meshes, &mut materials, 1.0, Color::srgba(0.3, 0.7, 1.0, 0.2), LinearRgba::rgb(0.4, 1.2, 2.4));
-                let pane = commands.spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::from_xyz(0.0, 194.0 * crate::player::UNIT, -SHIELD_WALL_RADIUS * crate::player::UNIT).with_scale(Vec3::new(156.0, 180.0, 1.0)))).id();
+                let (m, mat) = disc(
+                    &mut meshes,
+                    &mut materials,
+                    1.0,
+                    Color::srgba(0.3, 0.7, 1.0, 0.2),
+                    LinearRgba::rgb(0.4, 1.2, 2.4),
+                );
+                let pane = commands
+                    .spawn((
+                        Mesh3d(m),
+                        MeshMaterial3d(mat),
+                        Transform::from_xyz(
+                            0.0,
+                            194.0 * crate::player::UNIT,
+                            -SHIELD_WALL_RADIUS * crate::player::UNIT,
+                        )
+                        .with_scale(Vec3::new(156.0, 180.0, 1.0)),
+                    ))
+                    .id();
                 commands.entity(id).add_child(pane);
             }
         }
         // Control point 0 takes the entity's rotation, forward (Bevy -Z) along the normal.
-        *tf = Transform::from_translation(to_bevy(w.origin)).looking_to(to_bevy(w.normal).normalize(), Vec3::Y);
+        *tf = Transform::from_translation(to_bevy(w.origin))
+            .looking_to(to_bevy(w.normal).normalize(), Vec3::Y);
         // UpdateShieldWallColorForFrac( shieldWallFX, GetHealthFrac( vortexSphere ) ): control
         // point 1 carries GetShieldTriLerpColor( 1 - health fraction ), so the wall goes from
         // blue through orange to red as it takes damage.
         for &c in children.into_iter().flatten() {
-            commands.entity(c).insert(crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - w.hp / 1750.0)));
+            commands
+                .entity(c)
+                .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(
+                    1.0 - w.hp / 1750.0,
+                )));
         }
         if w.enemy {
-            enemy_walls.walls.push(BoltShield::wall(w.origin, w.normal, Some(id)));
+            enemy_walls
+                .walls
+                .push(BoltShield::wall(w.origin, w.normal, Some(id)));
         } else {
-            shields.shields.push(BoltShield::wall(w.origin, w.normal, Some(id)));
+            shields
+                .shields
+                .push(BoltShield::wall(w.origin, w.normal, Some(id)));
         }
     }
 
@@ -2498,7 +3828,9 @@ pub fn kit_world(
         // TITAN_GUN_SHIELD_RADIUS around the Predator's muzzle, out in front of BT's right hand.
         let side = Vec3::new(s.yaw.sin(), -s.yaw.cos(), 0.0);
         let center = eye + view * 220.0 + side * 45.0 - Vec3::Z * 45.0;
-        shields.shields.push(BoltShield::disc(center, view, 105.0, None));
+        shields
+            .shields
+            .push(BoltShield::disc(center, view, 105.0, None));
         // The game plays P_titan_gun_shield_FP on the owner's viewmodel and the 3P system on
         // everyone else's screen; swap when the camera changes.
         let fp = *mode == CameraMode::Cockpit;
@@ -2511,15 +3843,34 @@ pub fn kit_world(
         let e = match st.gun_vis {
             Some(e) => e,
             None => {
-                let (m, mat) = disc(&mut meshes, &mut materials, 105.0, Color::srgba(1.0, 0.6, 0.2, 0.12), LinearRgba::rgb(1.6, 0.8, 0.2));
-                let e = commands.spawn((Transform::from_translation(to_bevy(center + Vec3::Z * 80.0)), Visibility::default())).id();
+                let (m, mat) = disc(
+                    &mut meshes,
+                    &mut materials,
+                    105.0,
+                    Color::srgba(1.0, 0.6, 0.2, 0.12),
+                    LinearRgba::rgb(1.6, 0.8, 0.2),
+                );
+                let e = commands
+                    .spawn((
+                        Transform::from_translation(to_bevy(center + Vec3::Z * 80.0)),
+                        Visibility::default(),
+                    ))
+                    .id();
                 if std::env::var_os("TF_OLD_FX").is_some() {
-                    let d = commands.spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::IDENTITY)).id();
+                    let d = commands
+                        .spawn((Mesh3d(m), MeshMaterial3d(mat), Transform::IDENTITY))
+                        .id();
                     commands.entity(e).add_child(d);
                 } else {
                     // The game's hex gun shield (P_titan_gun_shield_FP in the cockpit; the 3P
                     // system is the same models with a different trail).
-                    commands.entity(e).insert(crate::pfx::PfxTrail::oriented(if fp { "P_titan_gun_shield_FP" } else { "P_titan_gun_shield_3P" }));
+                    commands
+                        .entity(e)
+                        .insert(crate::pfx::PfxTrail::oriented(if fp {
+                            "P_titan_gun_shield_FP"
+                        } else {
+                            "P_titan_gun_shield_3P"
+                        }));
                     if fp {
                         commands.entity(e).insert(crate::pfx::PfxVmSpace);
                     }
@@ -2533,12 +3884,23 @@ pub fn kit_world(
         // targets.rs); the FP system is built around the muzzle itself.
         // In the cockpit it stands at the viewmodel's gun_shield_fp (FX_TITAN_GUN_SHIELD_VM).
         let old_fx = std::env::var_os("TF_OLD_FX").is_some();
-        let fx_center = if old_fx || fp { to_bevy(center) } else { to_bevy(center + Vec3::Z * 80.0) };
-        let fx_center = gun_muzzle.shield_fp.filter(|_| fp && !old_fx && gun_muzzle.cockpit).unwrap_or(fx_center);
+        let fx_center = if old_fx || fp {
+            to_bevy(center)
+        } else {
+            to_bevy(center + Vec3::Z * 80.0)
+        };
+        let fx_center = gun_muzzle
+            .shield_fp
+            .filter(|_| fp && !old_fx && gun_muzzle.cockpit)
+            .unwrap_or(fx_center);
         // mp_titanability_gun_shield.nut's UpdateShieldColor: control point 1 carries
         // GetShieldTriLerpColor( 1 - health / TITAN_GUN_SHIELD_HEALTH ).
-        let color = crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - st.gun_shield_hp / 2500.0));
-        commands.entity(e).insert((Transform::from_translation(fx_center).looking_to(to_bevy(view).normalize(), Vec3::Y), color));
+        let color =
+            crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - st.gun_shield_hp / 2500.0));
+        commands.entity(e).insert((
+            Transform::from_translation(fx_center).looking_to(to_bevy(view).normalize(), Vec3::Y),
+            color,
+        ));
     } else if let Some(e) = st.gun_vis.take() {
         commands.entity(e).despawn();
     }
@@ -2551,28 +3913,53 @@ pub fn kit_world(
         let len = step.length();
         if len > 1e-4 {
             let dir = step / len;
-            let world_hit = world.0.raycast(SVec3::from(g.pos.to_array()), SVec3::from(dir.to_array()), len + 4.0);
+            let world_hit = world.0.raycast(
+                SVec3::from(g.pos.to_array()),
+                SVec3::from(dir.to_array()),
+                len + 4.0,
+            );
             // A tether that strikes an enemy Titan tethers it on the spot: the anchor goes on
             // the ground up to 256 below the hit (OnProjectileCollision_weapon_tether).
             let limit = world_hit.as_ref().map_or(len + 4.0, |h| h.t);
             let direct = enemies
                 .iter()
                 .filter(|(_, e)| e.alive() && !e.infantry)
-                .filter_map(|(eid, e)| ray_cylinder(g.pos, dir, e.pos, e.radius + 4.0, e.height).filter(|t| *t < limit).map(|t| (eid, e.pos, t)))
+                .filter_map(|(eid, e)| {
+                    ray_cylinder(g.pos, dir, e.pos, e.radius + 4.0, e.height)
+                        .filter(|t| *t < limit)
+                        .map(|t| (eid, e.pos, t))
+                })
                 .min_by(|a, b| a.2.total_cmp(&b.2));
             if let Some((eid, epos, t)) = direct {
                 let hit = g.pos + dir * t;
                 let nrm = (hit - epos).with_z(0.0).normalize_or(Vec3::X);
                 let probe = Vec3::new(nrm.x * 100.0, nrm.y * 100.0, -256.0);
                 commands.entity(id).despawn();
-                if let Some(h) = world.0.raycast(SVec3::from(hit.to_array()), SVec3::from(probe.normalize().to_array()), probe.length()) {
+                if let Some(h) = world.0.raycast(
+                    SVec3::from(hit.to_array()),
+                    SVec3::from(probe.normalize().to_array()),
+                    probe.length(),
+                ) {
                     let ground = Vec3::from(h.normal.to_array());
                     let pos = hit + probe.normalize() * h.t + ground * 2.0;
                     crate::audio::event_at(&mut commands, "Wpn_TetherTrap_PopOpen_3p", pos);
                     log::info!("tether trap struck an enemy Titan");
-                    let e = spawn_tether(&mut commands, tether_assets.as_deref(), pos, TetherTrap { pos, arm: 0.0, victim: Some((eid, epos, n.tether_hold)), life: TETHER_LIFETIME });
+                    let e = spawn_tether(
+                        &mut commands,
+                        tether_assets.as_deref(),
+                        pos,
+                        TetherTrap {
+                            pos,
+                            arm: 0.0,
+                            victim: Some((eid, epos, n.tether_hold)),
+                            life: TETHER_LIFETIME,
+                        },
+                    );
                     if tether_assets.is_some() {
-                        commands.entity(e).insert(Transform::from_translation(pos).with_rotation(Quat::from_rotation_arc(Vec3::Z, ground)));
+                        commands.entity(e).insert(
+                            Transform::from_translation(pos)
+                                .with_rotation(Quat::from_rotation_arc(Vec3::Z, ground)),
+                        );
                     }
                 }
                 continue;
@@ -2585,15 +3972,32 @@ pub fn kit_world(
                         // PlantStickyEntityOnWorldThatBouncesOffWalls: a floor plants it.
                         let pos = at + nrm * 2.0;
                         crate::audio::event_at(&mut commands, "Wpn_TetherTrap_Land", pos);
-                        log::info!("tether trap landed {:.0} out", (pos - Vec3::from(titan.state.pos.to_array())).length());
+                        log::info!(
+                            "tether trap landed {:.0} out",
+                            (pos - Vec3::from(titan.state.pos.to_array())).length()
+                        );
                         commands.entity(id).despawn();
-                        let e = spawn_tether(&mut commands, tether_assets.as_deref(), pos, TetherTrap { pos, arm: TETHER_ARM, victim: None, life: TETHER_LIFETIME });
+                        let e = spawn_tether(
+                            &mut commands,
+                            tether_assets.as_deref(),
+                            pos,
+                            TetherTrap {
+                                pos,
+                                arm: TETHER_ARM,
+                                victim: None,
+                                life: TETHER_LIFETIME,
+                            },
+                        );
                         if tether_assets.is_some() {
                             // Planted flat on the surface (SetAngles(surfaceNormal)).
-                            commands.entity(e).insert(Transform::from_translation(pos).with_rotation(Quat::from_rotation_arc(Vec3::Z, nrm)));
+                            commands.entity(e).insert(
+                                Transform::from_translation(pos)
+                                    .with_rotation(Quat::from_rotation_arc(Vec3::Z, nrm)),
+                            );
                         }
                         // projectile_max_deployed: the oldest trap goes when a fifth lands.
-                        let mut planted: Vec<(Entity, f32)> = traps.iter().map(|(e, t)| (e, t.life)).collect();
+                        let mut planted: Vec<(Entity, f32)> =
+                            traps.iter().map(|(e, t)| (e, t.life)).collect();
                         if planted.len() >= TETHERS_MAX {
                             planted.sort_by(|a, b| a.1.total_cmp(&b.1));
                             for (e, _) in planted.iter().take(planted.len() + 1 - TETHERS_MAX) {
@@ -2603,7 +4007,8 @@ pub fn kit_world(
                         continue;
                     }
                     let into = -dir.dot(nrm);
-                    let keep = TETHER_BOUNCE_SHALLOW + (TETHER_BOUNCE_SHARP - TETHER_BOUNCE_SHALLOW) * into.clamp(0.0, 1.0);
+                    let keep = TETHER_BOUNCE_SHALLOW
+                        + (TETHER_BOUNCE_SHARP - TETHER_BOUNCE_SHALLOW) * into.clamp(0.0, 1.0);
                     g.vel = (g.vel - 2.0 * g.vel.dot(nrm) * nrm) * keep;
                     g.pos = at + nrm * 0.5;
                 }
@@ -2611,9 +4016,14 @@ pub fn kit_world(
             }
         }
         // With the model the entity lives under the world root (game units); the glow doesn't.
-        tf.translation = if tether_assets.is_some() { g.pos } else { to_bevy(g.pos) };
+        tf.translation = if tether_assets.is_some() {
+            g.pos
+        } else {
+            to_bevy(g.pos)
+        };
         if tether_assets.is_some() {
-            tf.rotation *= Quat::from_euler(EulerRot::XYZ, g.spin.x * dt, g.spin.y * dt, g.spin.z * dt);
+            tf.rotation *=
+                Quat::from_euler(EulerRot::XYZ, g.spin.x * dt, g.spin.y * dt, g.spin.z * dt);
         }
         if g.life <= 0.0 {
             commands.entity(id).despawn();
@@ -2630,7 +4040,14 @@ pub fn kit_world(
                     let eye = e.pos + Vec3::Z * (e.height - 40.0);
                     let from = t.pos + Vec3::Z;
                     let d = eye - from;
-                    world.0.raycast(SVec3::from(from.to_array()), SVec3::from(d.normalize_or_zero().to_array()), d.length() - e.radius * 0.5).is_none()
+                    world
+                        .0
+                        .raycast(
+                            SVec3::from(from.to_array()),
+                            SVec3::from(d.normalize_or_zero().to_array()),
+                            d.length() - e.radius * 0.5,
+                        )
+                        .is_none()
                 };
                 let catch = enemies
                     .iter()
@@ -2652,7 +4069,15 @@ pub fn kit_world(
                         e.state.pos = SVec3::from(anchor.to_array());
                         e.state.vel = SVec3::ZERO;
                         t.victim = Some((eid, anchor, left));
-                        emit(&mut commands, Effect::Tracer { from: to_bevy(t.pos), to: to_bevy(anchor + Vec3::Z * 120.0), width: 0.08, color: Vec3::new(1.5, 3.0, 6.0) });
+                        emit(
+                            &mut commands,
+                            Effect::Tracer {
+                                from: to_bevy(t.pos),
+                                to: to_bevy(anchor + Vec3::Z * 120.0),
+                                width: 0.08,
+                                color: Vec3::new(1.5, 3.0, 6.0),
+                            },
+                        );
                     }
                     _ => {
                         commands.entity(id).despawn();
@@ -2679,31 +4104,85 @@ pub fn kit_view(
     mut view: ResMut<KitView>,
     titans: Query<(&KitState, &Ordnance, &Vortex)>,
     mut icons: Query<(&crate::hud::SlotIcon, &mut ImageNode), Without<crate::hud::CoreIcon>>,
-    mut labels: Query<(Option<&crate::hud::SlotLabel>, Option<&crate::hud::CoreLabel>, &mut Text)>,
+    mut labels: Query<(
+        Option<&crate::hud::SlotLabel>,
+        Option<&crate::hud::CoreLabel>,
+        &mut Text,
+    )>,
     mut shown: Local<Option<usize>>,
 ) {
     let Some(defs) = defs else { return };
-    let Ok((st, ord, vortex)) = titans.single() else { return };
+    let Ok((st, ord, vortex)) = titans.single() else {
+        return;
+    };
     let n = &defs.n;
     let spec = &defs.kits[active.index.min(defs.kits.len() - 1)];
-    let frac = |cd: f32, max: f32| if cd > 0.0 { (cd / max.max(0.01)).clamp(0.0, 1.0) } else { 0.0 };
+    let frac = |cd: f32, max: f32| {
+        if cd > 0.0 {
+            (cd / max.max(0.01)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
     (view.ord_left, view.ord_text) = match active.ord {
         OrdKind::Missiles if ord.charging => (0.0, format!("{}", ord.locks.len())),
-        OrdKind::Missiles if !ord.ready() => (1.0 - ord.fraction(), format!("{:.0}", (ord.cooldown + ord.delay.max(0.0)).ceil())),
+        OrdKind::Missiles if !ord.ready() => (
+            1.0 - ord.fraction(),
+            format!("{:.0}", (ord.cooldown + ord.delay.max(0.0)).ceil()),
+        ),
         OrdKind::Missiles => (0.0, String::new()),
         OrdKind::LaserShot => {
             let need = (n.laser_cost - st.energy).max(0.0);
-            (need / n.laser_cost, if need > 0.0 { format!("{:.0}%", st.energy / n.energy_max * 100.0) } else { String::new() })
+            (
+                need / n.laser_cost,
+                if need > 0.0 {
+                    format!("{:.0}%", st.energy / n.energy_max * 100.0)
+                } else {
+                    String::new()
+                },
+            )
         }
         OrdKind::Tracker => {
             let best = st.locks.iter().map(|l| l.1.len()).max().unwrap_or(0);
-            (if best >= 3 { frac(st.ord_cd, st.ord_cd_max) } else { 1.0 - best as f32 / 3.0 }, format!("LOCK {best}/3"))
+            (
+                if best >= 3 {
+                    frac(st.ord_cd, st.ord_cd_max)
+                } else {
+                    1.0 - best as f32 / 3.0
+                },
+                format!("LOCK {best}/3"),
+            )
         }
-        _ => (frac(st.ord_cd, st.ord_cd_max), if st.ord_cd > 0.0 { format!("{:.0}", st.ord_cd.ceil()) } else { String::new() }),
+        _ => (
+            frac(st.ord_cd, st.ord_cd_max),
+            if st.ord_cd > 0.0 {
+                format!("{:.0}", st.ord_cd.ceil())
+            } else {
+                String::new()
+            },
+        ),
     };
     (view.util_left, view.util_text) = {
-        let un = n.util.get(UTILITY.iter().find(|u| u.1 == active.util).map(|u| u.0).unwrap_or("")).copied().unwrap_or(UtilNumbers { cooldown: 20.0, charges: 1, duration: 0.0 });
-        let left = if st.util_charges == 0 { frac(st.util_cd, st.util_cd_max) } else { 0.0 };
+        let un = n
+            .util
+            .get(
+                UTILITY
+                    .iter()
+                    .find(|u| u.1 == active.util)
+                    .map(|u| u.0)
+                    .unwrap_or(""),
+            )
+            .copied()
+            .unwrap_or(UtilNumbers {
+                cooldown: 20.0,
+                charges: 1,
+                duration: 0.0,
+            });
+        let left = if st.util_charges == 0 {
+            frac(st.util_cd, st.util_cd_max)
+        } else {
+            0.0
+        };
         let text = if st.phase > 0.0 {
             "PHASED".into()
         } else if st.hover_len > 0.0 {
@@ -2718,13 +4197,43 @@ pub fn kit_view(
         (left, text)
     };
     (view.def_left, view.def_text) = match active.def {
-        DefKind::Vortex => (1.0 - vortex.fraction(), if vortex.active { format!("{}", vortex.caught + vortex.absorbed) } else { String::new() }),
+        DefKind::Vortex => (
+            1.0 - vortex.fraction(),
+            if vortex.active {
+                format!("{}", vortex.caught + vortex.absorbed)
+            } else {
+                String::new()
+            },
+        ),
         // The Thermal Shield keeps nothing to count.
         DefKind::HeatShield => (1.0 - vortex.fraction(), String::new()),
-        DefKind::IonVortex => (1.0 - st.energy / n.energy_max, if vortex.active { format!("{}", vortex.caught + vortex.absorbed) } else { String::new() }),
-        DefKind::SwordBlock => (0.0, if st.blocking { "BLOCK".into() } else { String::new() }),
-        DefKind::GunShield if st.gun_shield > 0.0 => (0.0, format!("{:.0}", st.gun_shield_hp.max(0.0))),
-        _ => (frac(st.def_cd, st.def_cd_max), if st.def_cd > 0.0 { format!("{:.0}", st.def_cd.ceil()) } else { String::new() }),
+        DefKind::IonVortex => (
+            1.0 - st.energy / n.energy_max,
+            if vortex.active {
+                format!("{}", vortex.caught + vortex.absorbed)
+            } else {
+                String::new()
+            },
+        ),
+        DefKind::SwordBlock => (
+            0.0,
+            if st.blocking {
+                "BLOCK".into()
+            } else {
+                String::new()
+            },
+        ),
+        DefKind::GunShield if st.gun_shield > 0.0 => {
+            (0.0, format!("{:.0}", st.gun_shield_hp.max(0.0)))
+        }
+        _ => (
+            frac(st.def_cd, st.def_cd_max),
+            if st.def_cd > 0.0 {
+                format!("{:.0}", st.def_cd.ceil())
+            } else {
+                String::new()
+            },
+        ),
     };
     if *shown == Some(active.index) && icons.iter().count() > 0 {
         return;
@@ -2756,7 +4265,6 @@ pub fn kit_view(
         }
     }
 }
-
 
 /// Tone's Sonar Pulse in flight (the kunai model with wpn_grenade_sonar_titan).
 #[derive(Component)]
@@ -2790,10 +4298,17 @@ pub fn sonar_shots(
         let dir = step / len;
         let mut t_end = len;
         let mut normal = -dir;
-        let mut hit = world.0.raycast(SVec3::from(sh.pos.to_array()), SVec3::from(dir.to_array()), len).map(|h| {
-            normal = Vec3::from(h.normal.to_array());
-            h.t
-        });
+        let mut hit = world
+            .0
+            .raycast(
+                SVec3::from(sh.pos.to_array()),
+                SVec3::from(dir.to_array()),
+                len,
+            )
+            .map(|h| {
+                normal = Vec3::from(h.normal.to_array());
+                h.t
+            });
         if let Some(t) = hit {
             t_end = t;
         }
@@ -2818,7 +4333,17 @@ pub fn sonar_shots(
         let at = sh.pos;
         log::debug!("sonar pulse at ({:.0}, {:.0}, {:.0})", at.x, at.y, at.z);
         status.pulse = Some((at, SONAR_PULSE_DURATION));
-        emit(&mut commands, Effect::Hit { at: to_bevy(at), normal: to_bevy(normal).normalize_or(Vec3::Y), table: "exp_sonar_pulse", surface: crate::particles::Surface::World, victim: false, scale: 1.0 });
+        emit(
+            &mut commands,
+            Effect::Hit {
+                at: to_bevy(at),
+                normal: to_bevy(normal).normalize_or(Vec3::Y),
+                table: "exp_sonar_pulse",
+                surface: crate::particles::Surface::World,
+                victim: false,
+                scale: 1.0,
+            },
+        );
         crate::audio::event_at(&mut commands, "Titan_Tone_SonarLock_Impact_Pulse_1P", at);
         if active.ord == OrdKind::Tracker {
             if let Ok(mut kit) = kits.single_mut() {
@@ -2850,8 +4375,23 @@ pub fn laser_towers(
     for (id, mut t) in &mut towers {
         t.age += time.delta_secs();
         let Some(a) = t.actor else {
-            let spec = crate::actor::ActorSpec { path: LASER_TRIP_MODEL, sequences: &["trip_wire_closed_to_open"], grids: &[], body: &[] };
-            match crate::actor::spawn_actor(&mut commands, id, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+            let spec = crate::actor::ActorSpec {
+                path: LASER_TRIP_MODEL,
+                sequences: &["trip_wire_closed_to_open"],
+                grids: &[],
+                body: &[],
+            };
+            match crate::actor::spawn_actor(
+                &mut commands,
+                id,
+                &gd,
+                &spec,
+                &mut cache,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+                &mut bindposes,
+            ) {
                 Ok(sp) => t.actor = Some(sp.entity),
                 Err(e) => {
                     log::warn!("laser tripwire tower: {e:#}");
@@ -2860,11 +4400,17 @@ pub fn laser_towers(
             }
             continue;
         };
-        let Ok(mut actor) = actors.get_mut(a) else { continue };
+        let Ok(mut actor) = actors.get_mut(a) else {
+            continue;
+        };
         actor.autoplay = false;
         if let Some(clip) = actor.clip("trip_wire_closed_to_open") {
             let cycle = (t.age / actor.clips[clip].duration.max(1e-3)).min(0.999);
-            actor.layers = vec![crate::actor::Layer { clip, cycle, weight: 1.0 }];
+            actor.layers = vec![crate::actor::Layer {
+                clip,
+                cycle,
+                weight: 1.0,
+            }];
         }
     }
 }
@@ -2882,7 +4428,10 @@ pub fn utility_world(
     (control, difficulty, mut pilots, mut player): (
         Res<crate::pilotctl::Control>,
         Res<crate::vitals::Difficulty>,
-        Query<(&crate::pilotctl::PlayerPilot, &mut crate::pilotctl::PilotHealth)>,
+        Query<(
+            &crate::pilotctl::PlayerPilot,
+            &mut crate::pilotctl::PilotHealth,
+        )>,
         Query<(&PlayerTitan, &mut TitanHealth)>,
     ),
 ) {
@@ -2896,10 +4445,29 @@ pub fn utility_world(
             sm.puff = 0.0;
             let a = sm.life * 9.1;
             let r = TITAN_SMOKE_OUTER * 0.7 * (a * 0.41).sin().abs();
-            let p = sm.pos + Vec3::new(a.cos() * r, a.sin() * r, 40.0 + (a * 0.7).sin().abs() * 120.0);
-            emit(&mut commands, Effect::TrailPuff { at: to_bevy(p), scale: 7.0 });
+            let p = sm.pos
+                + Vec3::new(
+                    a.cos() * r,
+                    a.sin() * r,
+                    40.0 + (a * 0.7).sin().abs() * 120.0,
+                );
+            emit(
+                &mut commands,
+                Effect::TrailPuff {
+                    at: to_bevy(p),
+                    scale: 7.0,
+                },
+            );
             if sm.puff == 0.0 && (sm.life * 5.0) as u32 % 2 == 0 {
-                emit(&mut commands, Effect::Impact { at: to_bevy(p), normal: Vec3::Y, scale: 1.2, energy: true });
+                emit(
+                    &mut commands,
+                    Effect::Impact {
+                        at: to_bevy(p),
+                        normal: Vec3::Y,
+                        scale: 1.2,
+                        energy: true,
+                    },
+                );
             }
         }
         if sm.delay <= 0.0 {
@@ -2909,12 +4477,19 @@ pub fn utility_world(
                 if sm.enemy {
                     // An enemy's smoke: the Pilot on foot (or on the Titan's back) and BT.
                     let centre = sm.pos + Vec3::Z * 60.0;
-                    let falloff = |d: f32| 1.0 - ((d - TITAN_SMOKE_INNER) / (TITAN_SMOKE_OUTER - TITAN_SMOKE_INNER)).clamp(0.0, 1.0);
+                    let falloff = |d: f32| {
+                        1.0 - ((d - TITAN_SMOKE_INNER) / (TITAN_SMOKE_OUTER - TITAN_SMOKE_INNER))
+                            .clamp(0.0, 1.0)
+                    };
                     if *control == Control::Pilot {
                         if let Ok((pilot, mut health)) = pilots.single_mut() {
-                            let d = (Vec3::from(pilot.state.pos.to_array()) + Vec3::Z * 36.0).distance(centre);
+                            let d = (Vec3::from(pilot.state.pos.to_array()) + Vec3::Z * 36.0)
+                                .distance(centre);
                             if d < TITAN_SMOKE_OUTER {
-                                let dmg = TITAN_SMOKE_DPS_PILOT * SERVER_FRAME * falloff(d) * difficulty.damage_to_player();
+                                let dmg = TITAN_SMOKE_DPS_PILOT
+                                    * SERVER_FRAME
+                                    * falloff(d)
+                                    * difficulty.damage_to_player();
                                 if !sm.hurt_pilot {
                                     sm.hurt_pilot = true;
                                     log::info!("electric smoke: the Pilot is in an enemy's cloud ({dmg:.1} per tick)");
@@ -2924,9 +4499,17 @@ pub fn utility_world(
                         }
                     }
                     if let Ok((titan, mut health)) = player.single_mut() {
-                        let d = (Vec3::from(titan.state.pos.to_array()) + Vec3::Z * 120.0).distance(centre) - 60.0;
+                        let d = (Vec3::from(titan.state.pos.to_array()) + Vec3::Z * 120.0)
+                            .distance(centre)
+                            - 60.0;
                         if d < TITAN_SMOKE_OUTER && health.dead_for.is_none() {
-                            health.damage(TITAN_SMOKE_DPS_TITAN * SERVER_FRAME * falloff(d) * difficulty.damage_to_player(), true);
+                            health.damage(
+                                TITAN_SMOKE_DPS_TITAN
+                                    * SERVER_FRAME
+                                    * falloff(d)
+                                    * difficulty.damage_to_player(),
+                                true,
+                            );
                         }
                     }
                     continue;
@@ -2935,10 +4518,17 @@ pub fn utility_world(
                     if !e.alive() {
                         continue;
                     }
-                    let d = (e.pos + Vec3::Z * e.height * 0.5).distance(sm.pos + Vec3::Z * 60.0) - e.radius;
+                    let d = (e.pos + Vec3::Z * e.height * 0.5).distance(sm.pos + Vec3::Z * 60.0)
+                        - e.radius;
                     if d < TITAN_SMOKE_OUTER {
-                        let k = 1.0 - ((d - TITAN_SMOKE_INNER) / (TITAN_SMOKE_OUTER - TITAN_SMOKE_INNER)).clamp(0.0, 1.0);
-                        let dps = if e.infantry { TITAN_SMOKE_DPS_PILOT } else { TITAN_SMOKE_DPS_TITAN };
+                        let k = 1.0
+                            - ((d - TITAN_SMOKE_INNER) / (TITAN_SMOKE_OUTER - TITAN_SMOKE_INNER))
+                                .clamp(0.0, 1.0);
+                        let dps = if e.infantry {
+                            TITAN_SMOKE_DPS_PILOT
+                        } else {
+                            TITAN_SMOKE_DPS_TITAN
+                        };
                         e.damage(dps * SERVER_FRAME * k, false);
                     }
                 }
@@ -2966,8 +4556,14 @@ pub fn utility_world(
                 // the canister (its "smoke" attachment, taken as the canister's origin).
                 if std::env::var_os("TF_OLD_FX").is_none() {
                     commands.entity(id).with_children(|c| {
-                        c.spawn((Transform::default(), crate::pfx::PfxTrail::oriented("P_meteor_Trap_start")));
-                        c.spawn((Transform::default(), crate::pfx::PfxTrail::oriented("P_meteor_trap_gas")));
+                        c.spawn((
+                            Transform::default(),
+                            crate::pfx::PfxTrail::oriented("P_meteor_Trap_start"),
+                        ));
+                        c.spawn((
+                            Transform::default(),
+                            crate::pfx::PfxTrail::oriented("P_meteor_trap_gas"),
+                        ));
                     });
                 }
             }
@@ -2978,10 +4574,19 @@ pub fn utility_world(
                 t.puff = 0.0;
                 let a = t.life * 6.3;
                 let r = SLOW_TRAP_RADIUS * 0.8 * (a * 0.53).sin().abs();
-                emit(&mut commands, Effect::TrailPuff { at: to_bevy(t.pos + Vec3::new(a.cos() * r, a.sin() * r, 45.0)), scale: 5.0 });
+                emit(
+                    &mut commands,
+                    Effect::TrailPuff {
+                        at: to_bevy(t.pos + Vec3::new(a.cos() * r, a.sin() * r, 45.0)),
+                        scale: 5.0,
+                    },
+                );
             }
             for (_, mut e) in enemies.iter_mut() {
-                if e.alive() && (e.pos - t.pos).truncate().length() - e.radius < SLOW_TRAP_RADIUS && (e.pos.z - t.pos.z).abs() < 200.0 {
+                if e.alive()
+                    && (e.pos - t.pos).truncate().length() - e.radius < SLOW_TRAP_RADIUS
+                    && (e.pos.z - t.pos.z).abs() < 200.0
+                {
                     e.slow = SLOW_TRAP_SLOW;
                     e.slow_t = 0.3;
                 }
@@ -3001,7 +4606,11 @@ pub fn utility_world(
     // so does running out of time. Every pylon destroyed blows up: P_impact_exp_XLG_metal and 200
     // (1500 to heavy armour) within 400.
     let old_fx = std::env::var_os("TF_OLD_FX").is_some();
-    let planted: Vec<(Entity, u32, u8, Vec3)> = pylons.iter().filter(|(_, p, _)| p.landed).map(|(id, p, _)| (id, p.group, p.id, p.pos)).collect();
+    let planted: Vec<(Entity, u32, u8, Vec3)> = pylons
+        .iter()
+        .filter(|(_, p, _)| p.landed)
+        .map(|(id, p, _)| (id, p.group, p.id, p.pos))
+        .collect();
     let mut blow: Vec<u32> = Vec::new();
     for (id, mut p, mut tf) in &mut pylons {
         if !p.landed {
@@ -3010,11 +4619,26 @@ pub fn utility_world(
             p.pos = pos;
             p.vel = v;
             if p.landed {
-                log::debug!("laser pylon {} landed at ({:.0}, {:.0}, {:.0})", p.id, p.pos.x, p.pos.y, p.pos.z);
+                log::debug!(
+                    "laser pylon {} landed at ({:.0}, {:.0}, {:.0})",
+                    p.id,
+                    p.pos.x,
+                    p.pos.y,
+                    p.pos.z
+                );
                 commands.entity(id).remove::<Glow>();
                 // The tower: upright, turned to the throw's heading, in game units.
-                let root = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
-                commands.entity(id).with_child((root.mul_transform(Transform::from_rotation(Quat::from_rotation_z(p.yaw))), Visibility::default(), LaserTower { age: 0.0, actor: None }));
+                let root =
+                    Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+                        .with_scale(Vec3::splat(crate::player::UNIT));
+                commands.entity(id).with_child((
+                    root.mul_transform(Transform::from_rotation(Quat::from_rotation_z(p.yaw))),
+                    Visibility::default(),
+                    LaserTower {
+                        age: 0.0,
+                        actor: None,
+                    },
+                ));
             }
         } else if p.build > 0.0 {
             p.build -= dt;
@@ -3023,17 +4647,32 @@ pub fn utility_world(
                 let local = to_bevy(head) - to_bevy(p.pos);
                 if !old_fx {
                     // PlayLoopFXOnEntity( LASER_TRIP_FX_ALL, pylon ).
-                    commands.entity(id).with_child((Transform::from_translation(local).with_rotation(Quat::from_rotation_y(p.yaw)), crate::pfx::PfxTrail::oriented("P_wpn_lasertrip_base")));
+                    commands.entity(id).with_child((
+                        Transform::from_translation(local)
+                            .with_rotation(Quat::from_rotation_y(p.yaw)),
+                        crate::pfx::PfxTrail::oriented("P_wpn_lasertrip_base"),
+                    ));
                 }
                 let next = planted.iter().find(|n| n.1 == p.group && n.2 == p.id + 1);
                 if let Some(&(other, _, _, other_pos)) = next {
                     let end = other_pos + Vec3::Z * LASER_TRIP_RISE;
                     let to = end - head;
-                    let blocked = world.0.raycast(SVec3::from(head.to_array()), SVec3::from(to.normalize_or_zero().to_array()), to.length() * 0.99).is_some();
+                    let blocked = world
+                        .0
+                        .raycast(
+                            SVec3::from(head.to_array()),
+                            SVec3::from(to.normalize_or_zero().to_array()),
+                            to.length() * 0.99,
+                        )
+                        .is_some();
                     if !blocked {
                         p.link = Some((other, end));
                         if !old_fx {
-                            commands.entity(id).with_child((Transform::from_translation(local), crate::pfx::PfxTrail::new("P_wpn_lasertrip_beam"), crate::pfx::PfxBeamEnd(to_bevy(end))));
+                            commands.entity(id).with_child((
+                                Transform::from_translation(local),
+                                crate::pfx::PfxTrail::new("P_wpn_lasertrip_beam"),
+                                crate::pfx::PfxBeamEnd(to_bevy(end)),
+                            ));
                         }
                         log::debug!("laser pylon {} beams to pylon {}", p.id, p.id + 1);
                     }
@@ -3058,7 +4697,15 @@ pub fn utility_world(
         let Some((_, b)) = p.link else { continue };
         let a = p.pos + Vec3::Z * LASER_TRIP_RISE;
         if old_fx {
-            emit(&mut commands, Effect::Tracer { from: to_bevy(a), to: to_bevy(b), width: 0.08, color: Vec3::new(1.0, 2.5, 6.0) });
+            emit(
+                &mut commands,
+                Effect::Tracer {
+                    from: to_bevy(a),
+                    to: to_bevy(b),
+                    width: 0.08,
+                    color: Vec3::new(1.0, 2.5, 6.0),
+                },
+            );
         }
         let seg = b - a;
         let len = seg.length().max(1e-3);
@@ -3072,8 +4719,14 @@ pub fn utility_world(
             let t = (c - a).dot(sd).clamp(0.0, len);
             let q = a + sd * t;
             let horiz = (c - q).truncate().length();
-            if horiz < e.radius + LASER_TRIP_BEAM_HALF && q.z > e.pos.z - LASER_TRIP_BEAM_HALF && q.z < e.pos.z + e.height + LASER_TRIP_BEAM_HALF {
-                log::info!("laser tripwire tripped by {}", if e.infantry { "a grunt" } else { "a titan" });
+            if horiz < e.radius + LASER_TRIP_BEAM_HALF
+                && q.z > e.pos.z - LASER_TRIP_BEAM_HALF
+                && q.z < e.pos.z + e.height + LASER_TRIP_BEAM_HALF
+            {
+                log::info!(
+                    "laser tripwire tripped by {}",
+                    if e.infantry { "a grunt" } else { "a titan" }
+                );
                 if !blow.contains(&p.group) {
                     blow.push(p.group);
                 }
@@ -3081,18 +4734,38 @@ pub fn utility_world(
             }
         }
     }
-    let blasts: Vec<(Entity, Vec3)> = pylons.iter().filter(|(_, p, _)| blow.contains(&p.group)).map(|(id, p, _)| (id, p.pos)).collect();
+    let blasts: Vec<(Entity, Vec3)> = pylons
+        .iter()
+        .filter(|(_, p, _)| blow.contains(&p.group))
+        .map(|(id, p, _)| (id, p.pos))
+        .collect();
     for (id, at) in blasts {
         commands.entity(id).despawn();
         if old_fx {
-            emit(&mut commands, Effect::Explosion { at: to_bevy(at), scale: 1.0 });
+            emit(
+                &mut commands,
+                Effect::Explosion {
+                    at: to_bevy(at),
+                    scale: 1.0,
+                },
+            );
         } else {
-            crate::pfx::emit_named_cp(&mut commands, "P_impact_exp_XLG_metal", Cp::facing(at, Vec3::Z));
+            crate::pfx::emit_named_cp(
+                &mut commands,
+                "P_impact_exp_XLG_metal",
+                Cp::facing(at, Vec3::Z),
+            );
         }
         crate::audio::event_at(&mut commands, "Wpn_LaserTripMine_MineDestroyed", at);
         for (_, mut e) in enemies.iter_mut() {
-            if e.alive() && (e.pos + Vec3::Z * e.height * 0.5).distance(at) - e.radius < LASER_TRIP_RADIUS {
-                let dmg = if e.infantry { LASER_TRIP_DAMAGE } else { LASER_TRIP_DAMAGE_HEAVY };
+            if e.alive()
+                && (e.pos + Vec3::Z * e.height * 0.5).distance(at) - e.radius < LASER_TRIP_RADIUS
+            {
+                let dmg = if e.infantry {
+                    LASER_TRIP_DAMAGE
+                } else {
+                    LASER_TRIP_DAMAGE_HEAVY
+                };
                 e.damage(dmg, false);
             }
         }
@@ -3108,15 +4781,30 @@ mod tests {
         // A wall around the origin facing +X: 180 out, 120 degrees wide, 360 tall.
         let w = BoltShield::wall(Vec3::ZERO, Vec3::X, None);
         // Straight at the Titan from ahead: stops on the arc, 180 out.
-        let t = w.hit_t(Vec3::new(1000.0, 0.0, 100.0), -Vec3::X, 2000.0).unwrap();
+        let t = w
+            .hit_t(Vec3::new(1000.0, 0.0, 100.0), -Vec3::X, 2000.0)
+            .unwrap();
         assert!((t - 820.0).abs() < 0.5, "{t}");
         // 50 degrees off the facing is still on the arc; 70 is past its edge.
-        let at = |deg: f32| Vec3::new(deg.to_radians().cos(), deg.to_radians().sin(), 0.0) * 1000.0 + Vec3::Z * 100.0;
-        assert!(w.hit_t(at(50.0), -at(50.0).with_z(0.0).normalize(), 2000.0).is_some());
-        assert!(w.hit_t(at(70.0), -at(70.0).with_z(0.0).normalize(), 2000.0).is_none());
+        let at = |deg: f32| {
+            Vec3::new(deg.to_radians().cos(), deg.to_radians().sin(), 0.0) * 1000.0
+                + Vec3::Z * 100.0
+        };
+        assert!(w
+            .hit_t(at(50.0), -at(50.0).with_z(0.0).normalize(), 2000.0)
+            .is_some());
+        assert!(w
+            .hit_t(at(70.0), -at(70.0).with_z(0.0).normalize(), 2000.0)
+            .is_none());
         // From behind, over the top, or out from inside: no hit.
-        assert!(w.hit_t(Vec3::new(-1000.0, 0.0, 100.0), Vec3::X, 2000.0).is_none());
-        assert!(w.hit_t(Vec3::new(1000.0, 0.0, 400.0), -Vec3::X, 2000.0).is_none());
-        assert!(w.hit_t(Vec3::new(0.0, 0.0, 100.0), Vec3::X, 2000.0).is_none());
+        assert!(w
+            .hit_t(Vec3::new(-1000.0, 0.0, 100.0), Vec3::X, 2000.0)
+            .is_none());
+        assert!(w
+            .hit_t(Vec3::new(1000.0, 0.0, 400.0), -Vec3::X, 2000.0)
+            .is_none());
+        assert!(w
+            .hit_t(Vec3::new(0.0, 0.0, 100.0), Vec3::X, 2000.0)
+            .is_none());
     }
 }

@@ -20,10 +20,19 @@ fn main() -> anyhow::Result<()> {
         let mut seen = std::collections::BTreeSet::new();
         for m in &all {
             for s in &m.sequences {
-                for e in s.events.iter().filter(|e| e.name == "AE_CL_PLAYSOUND" || e.name.contains("SOUND")) {
+                for e in s
+                    .events
+                    .iter()
+                    .filter(|e| e.name == "AE_CL_PLAYSOUND" || e.name.contains("SOUND"))
+                {
                     if seen.insert(e.options.clone()) {
                         let n = bank.event_variants(&e.options).len();
-                        if n == 0 { missing += 1; println!("{path}: {} {} MISSING", s.label, e.options); } else { ok += 1; }
+                        if n == 0 {
+                            missing += 1;
+                            println!("{path}: {} {} MISSING", s.label, e.options);
+                        } else {
+                            ok += 1;
+                        }
                     }
                 }
             }

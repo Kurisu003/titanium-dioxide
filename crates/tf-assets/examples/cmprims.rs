@@ -6,9 +6,19 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let map = &a[2];
     let data = vpk.read(&format!("maps/{map}.bsp"))?;
-    let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
-    let uc: Vec<u32> = bsp.lump(0x5B).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
-    let prims: Vec<u32> = bsp.lump(0x59).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+    let bsp = Bsp::parse(map, &data, |i| {
+        vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok()
+    })?;
+    let uc: Vec<u32> = bsp
+        .lump(0x5B)
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
+    let prims: Vec<u32> = bsp
+        .lump(0x59)
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .collect();
     let sp = bsp.static_props()?;
     let mut prop_prim = vec![false; sp.props.len()];
     let mut out_of_range = 0;
@@ -29,7 +39,10 @@ fn main() -> anyhow::Result<()> {
     println!("props {} ; (solid byte, has collision primitive) -> count: {:?} ; prop prims out of range {out_of_range}", sp.props.len(), table);
     for (i, p) in sp.props.iter().enumerate() {
         if prop_prim[i] && p.solid == 0 {
-            println!("  game-solid prop with solid=0: {} at {:?} flags {:#x}", sp.model_names[p.model as usize], p.origin, p.flags);
+            println!(
+                "  game-solid prop with solid=0: {} at {:?} flags {:#x}",
+                sp.model_names[p.model as usize], p.origin, p.flags
+            );
         }
     }
     Ok(())

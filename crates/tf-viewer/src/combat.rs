@@ -2,11 +2,11 @@
 //! Shield (catch rounds, fling them back) and the Titan punch.
 //! Values from titan_buddy.set, mp_titanweapon_vortex_shield.txt and melee_titan_punch.txt.
 
+use crate::audio::{self, Cue};
 use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
 use crate::targets::Enemy;
 use crate::vitals::{Hit, Vitals};
 use crate::weapons::{FxAssets, VortexRefire};
-use crate::audio::{self, Cue};
 use bevy::prelude::*;
 use tf_sim::glam::Vec3 as SVec3;
 
@@ -96,7 +96,14 @@ pub const BLOCK_ANGLE: f32 = 150.0;
 
 impl TitanHealth {
     pub fn new(full: Vitals) -> Self {
-        Self { v: full.clone(), full, dead_for: None, hurt: 0.0, block: 1.0, block_cone: None }
+        Self {
+            v: full.clone(),
+            full,
+            dead_for: None,
+            hurt: 0.0,
+            block: 1.0,
+            block_cone: None,
+        }
     }
     pub fn reset(&mut self) {
         *self = Self::new(self.full.clone());
@@ -109,7 +116,9 @@ impl TitanHealth {
     /// the block cone (`BasicBlock_OnDamage`).
     pub fn damage_from(&mut self, dmg: f32, stops_regen: bool, origin: Vec3) -> Hit {
         let blocked = self.block < 1.0
-            && self.block_cone.is_none_or(|(eye, fwd)| (origin - eye).normalize_or_zero().dot(fwd) >= BLOCK_ANGLE.to_radians().cos());
+            && self.block_cone.is_none_or(|(eye, fwd)| {
+                (origin - eye).normalize_or_zero().dot(fwd) >= BLOCK_ANGLE.to_radians().cos()
+            });
         self.apply(if blocked { dmg * self.block } else { dmg }, stops_regen)
     }
     fn apply(&mut self, dmg: f32, stops_regen: bool) -> Hit {
@@ -119,7 +128,12 @@ impl TitanHealth {
         let hit = self.v.damage(dmg, stops_regen);
         if hit.dealt > 0.0 {
             self.hurt = 0.15;
-            log::debug!("BT hit: {dmg:.1} dealt {:.1} -> health {:.0} shield {:.0}", hit.dealt, self.v.health, self.v.shield);
+            log::debug!(
+                "BT hit: {dmg:.1} dealt {:.1} -> health {:.0} shield {:.0}",
+                hit.dealt,
+                self.v.health,
+                self.v.shield
+            );
         }
         // TF_BT_GOD=1: BT logs the hits but keeps his health (testing enemy weapons).
         static GOD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -162,20 +176,40 @@ pub struct Vortex {
 
 impl Default for Vortex {
     fn default() -> Self {
-        Self { charge: VORTEX_HOLD, active: false, caught: 0, rounds: Vec::new(), absorbed: 0, delay: 0.0, shield: None, shield_fp: false, shield_arm: false, mode: VortexMode::Vortex, burn_timer: 0.0 }
+        Self {
+            charge: VORTEX_HOLD,
+            active: false,
+            caught: 0,
+            rounds: Vec::new(),
+            absorbed: 0,
+            delay: 0.0,
+            shield: None,
+            shield_fp: false,
+            shield_arm: false,
+            mode: VortexMode::Vortex,
+            burn_timer: 0.0,
+        }
     }
 }
 
 impl Vortex {
     fn hold(&self) -> f32 {
-        if self.mode == VortexMode::Heat { HEAT_HOLD } else { VORTEX_HOLD }
+        if self.mode == VortexMode::Heat {
+            HEAT_HOLD
+        } else {
+            VORTEX_HOLD
+        }
     }
     pub fn fraction(&self) -> f32 {
         self.charge / self.hold()
     }
     /// The catch sphere's radius around the eye.
     pub fn sphere_radius(&self) -> f32 {
-        if self.mode == VortexMode::Heat { HEAT_SPHERE_RADIUS } else { VORTEX_RADIUS }
+        if self.mode == VortexMode::Heat {
+            HEAT_SPHERE_RADIUS
+        } else {
+            VORTEX_RADIUS
+        }
     }
 }
 
@@ -186,7 +220,11 @@ pub struct VortexCaughtFx;
 /// GetBulletCollectionOffset for a Titan: (300, -90, -70) from the eye in the view's frame
 /// (forward, left, up), where caught rounds swirl to (the absorb effects' control point 1).
 pub fn vortex_collection_point(eye: Vec3, yaw: f32, pitch: f32) -> Vec3 {
-    let fwd = Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin());
+    let fwd = Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        -pitch.sin(),
+    );
     let left = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
     let up = fwd.cross(left);
     eye + fwd * 300.0 - left * 90.0 - up * 70.0
@@ -200,9 +238,15 @@ pub fn update_vortex_caught_fx(
     titans: Query<(&crate::player::PlayerTitan, &Vortex)>,
     mut fx: Query<(Entity, &mut crate::pfx::PfxBeamEnd), With<VortexCaughtFx>>,
 ) {
-    let Ok((titan, vortex)) = titans.single() else { return };
+    let Ok((titan, vortex)) = titans.single() else {
+        return;
+    };
     let eye = Vec3::from(titan.state.eye(&settings.0).to_array());
-    let end = crate::player::to_bevy(vortex_collection_point(eye, titan.state.yaw, titan.state.pitch));
+    let end = crate::player::to_bevy(vortex_collection_point(
+        eye,
+        titan.state.yaw,
+        titan.state.pitch,
+    ));
     for (e, mut cp) in &mut fx {
         if vortex.active {
             cp.0 = end;
@@ -228,10 +272,30 @@ fn rand(state: &mut u64) -> f32 {
 }
 
 fn spawn_tracer(commands: &mut Commands, _fx: &FxAssets, from: Vec3, to: Vec3, enemy: bool) {
-    let color = if enemy { Vec3::new(5.0, 1.0, 0.5) } else { Vec3::new(4.0, 2.2, 0.8) };
+    let color = if enemy {
+        Vec3::new(5.0, 1.0, 0.5)
+    } else {
+        Vec3::new(4.0, 2.2, 0.8)
+    };
     let (a, b) = (to_bevy(from), to_bevy(to));
-    crate::particles::emit(commands, crate::particles::Effect::Tracer { from: a, to: b, width: 0.12, color });
-    crate::particles::emit(commands, crate::particles::Effect::Impact { at: b, normal: (a - b).normalize_or(Vec3::Y), scale: 1.6, energy: false });
+    crate::particles::emit(
+        commands,
+        crate::particles::Effect::Tracer {
+            from: a,
+            to: b,
+            width: 0.12,
+            color,
+        },
+    );
+    crate::particles::emit(
+        commands,
+        crate::particles::Effect::Impact {
+            at: b,
+            normal: (a - b).normalize_or(Vec3::Y),
+            scale: 1.6,
+            energy: false,
+        },
+    );
 }
 
 /// Health regen, death and respawn; Vortex and melee input.
@@ -244,7 +308,14 @@ pub fn player_combat(
     world: Res<Collision>,
     settings: Res<TitanSettings>,
     fx: Res<FxAssets>,
-    mut player: Query<(&mut PlayerTitan, &mut TitanHealth, &mut Vortex, &mut Melee, Option<&mut crate::abilities::TitanCore>, Option<&mut crate::titankit::KitState>)>,
+    mut player: Query<(
+        &mut PlayerTitan,
+        &mut TitanHealth,
+        &mut Vortex,
+        &mut Melee,
+        Option<&mut crate::abilities::TitanCore>,
+        Option<&mut crate::titankit::KitState>,
+    )>,
     mut dummies: Query<&mut Enemy>,
     mut shields: Query<&mut Transform>,
     kit: Option<Res<crate::titankit::ActiveKit>>,
@@ -253,10 +324,19 @@ pub fn player_combat(
     pfx: Option<Res<crate::pfx::Pfx>>,
 ) {
     let dt = time.delta_secs();
-    let Ok((mut titan, mut health, mut vortex, mut melee, mut core, kit_state)) = player.single_mut() else { return };
+    let Ok((mut titan, mut health, mut vortex, mut melee, mut core, kit_state)) =
+        player.single_mut()
+    else {
+        return;
+    };
     // Only the Vortex family uses the shield here; other defensives live in titankit.
     use crate::titankit::DefKind;
-    let vortex_kit = kit.as_ref().is_none_or(|k| matches!(k.def, DefKind::Vortex | DefKind::IonVortex | DefKind::HeatShield));
+    let vortex_kit = kit.as_ref().is_none_or(|k| {
+        matches!(
+            k.def,
+            DefKind::Vortex | DefKind::IonVortex | DefKind::HeatShield
+        )
+    });
     let (hold, recover, delay) = match vortex.mode {
         VortexMode::Heat => (HEAT_HOLD, HEAT_RECOVER, HEAT_DELAY),
         _ => (VORTEX_HOLD, VORTEX_RECOVER, VORTEX_DELAY),
@@ -286,7 +366,11 @@ pub fn player_combat(
     }
     let s = titan.state.clone();
     let eye = Vec3::from(s.eye(&settings.0).to_array());
-    let view = Vec3::new(s.pitch.cos() * s.yaw.cos(), s.pitch.cos() * s.yaw.sin(), -s.pitch.sin());
+    let view = Vec3::new(
+        s.pitch.cos() * s.yaw.cos(),
+        s.pitch.cos() * s.yaw.sin(),
+        -s.pitch.sin(),
+    );
 
     // --- Vortex Shield ---
     let want = input.vortex && !frozen && vortex_kit;
@@ -327,9 +411,12 @@ pub fn player_combat(
                     // Nearest point of the target's hull to the muzzle.
                     let flat = (muzzle - d.pos).truncate();
                     let side = (flat.length() - d.radius).max(0.0);
-                    let up = (d.pos.z - muzzle.z).max(muzzle.z - (d.pos.z + d.height)).max(0.0);
+                    let up = (d.pos.z - muzzle.z)
+                        .max(muzzle.z - (d.pos.z + d.height))
+                        .max(0.0);
                     let center = d.pos + Vec3::Z * d.height * 0.5;
-                    let facing = (center - eye).normalize_or_zero().dot(view) >= HEAT_CONE.to_radians().cos();
+                    let facing = (center - eye).normalize_or_zero().dot(view)
+                        >= HEAT_CONE.to_radians().cos();
                     if side.hypot(up) < HEAT_RADIUS && facing {
                         let amount = if d.infantry { HEAT_PILOT } else { HEAT_TITAN };
                         let hit = d.damage_radius(amount, false);
@@ -338,11 +425,28 @@ pub fn player_combat(
                         }
                         // The titan's burn sits on exp_torso_front; a point up its front stands in.
                         let (fx, sound, at) = if d.infantry {
-                            ("P_wpn_HeatSheild_burn_human", "heat_shield_burn_human_3p", d.pos)
+                            (
+                                "P_wpn_HeatSheild_burn_human",
+                                "heat_shield_burn_human_3p",
+                                d.pos,
+                            )
                         } else {
-                            ("P_wpn_HeatSheild_burn_titan", "heat_shield_burn_titan_3p", center + (eye - center).truncate().normalize_or_zero().extend(0.0) * d.radius * 0.8 + Vec3::Z * d.height * 0.15)
+                            (
+                                "P_wpn_HeatSheild_burn_titan",
+                                "heat_shield_burn_titan_3p",
+                                center
+                                    + (eye - center).truncate().normalize_or_zero().extend(0.0)
+                                        * d.radius
+                                        * 0.8
+                                    + Vec3::Z * d.height * 0.15,
+                            )
                         };
-                        crate::pfx::emit_named(&mut commands, fx, to_bevy(at), to_bevy(eye - at).normalize_or(Vec3::Y));
+                        crate::pfx::emit_named(
+                            &mut commands,
+                            fx,
+                            to_bevy(at),
+                            to_bevy(eye - at).normalize_or(Vec3::Y),
+                        );
                         audio::event_at(&mut commands, sound, at);
                     }
                 }
@@ -363,20 +467,46 @@ pub fn player_combat(
             // weapon's look (Vortex_ProjectileCommonSetup).
             vortex.active = false;
             vortex.delay = delay;
-            audio::cue(&mut commands, if vortex.caught > 0 { Cue::VortexThrow } else { Cue::VortexEnd }, None);
+            audio::cue(
+                &mut commands,
+                if vortex.caught > 0 {
+                    Cue::VortexThrow
+                } else {
+                    Cue::VortexEnd
+                },
+                None,
+            );
             vortex.charge = vortex.charge.max(0.0);
-            let game_fx = pfx.as_deref().is_some_and(|p| p.ready()) && std::env::var_os("TF_OLD_FX").is_none();
+            let game_fx = pfx.as_deref().is_some_and(|p| p.ready())
+                && std::env::var_os("TF_OLD_FX").is_none();
             // A fresh stream per release, independent of the clock (repeatable runs).
             static RELEASES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let mut rng = RELEASES.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_mul(0x9E3779B97F4A7C15) | 1;
+            let mut rng = RELEASES
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_mul(0x9E3779B97F4A7C15)
+                | 1;
             let rounds = std::mem::take(&mut vortex.rounds);
             let from = eye + view * VORTEX_DIST;
             for &(refire, kit) in &rounds {
-                let jitter = |rng: &mut u64, xy: f32, z: f32| Vec3::new((rand(rng) - 0.5) * 2.0 * xy, (rand(rng) - 0.5) * 2.0 * xy, (rand(rng) - 0.5) * 2.0 * z);
+                let jitter = |rng: &mut u64, xy: f32, z: f32| {
+                    Vec3::new(
+                        (rand(rng) - 0.5) * 2.0 * xy,
+                        (rand(rng) - 0.5) * 2.0 * xy,
+                        (rand(rng) - 0.5) * 2.0 * z,
+                    )
+                };
                 match refire {
                     VortexRefire::Bullet => {
                         let dir = (view + jitter(&mut rng, 0.04, 0.04)).normalize();
-                        let mut hit_t = world.0.raycast(SVec3::from(from.to_array()), SVec3::from(dir.to_array()), 12000.0).map(|h| h.t).unwrap_or(12000.0);
+                        let mut hit_t = world
+                            .0
+                            .raycast(
+                                SVec3::from(from.to_array()),
+                                SVec3::from(dir.to_array()),
+                                12000.0,
+                            )
+                            .map(|h| h.t)
+                            .unwrap_or(12000.0);
                         let mut victim = None;
                         let mut nearest = f32::MAX;
                         for (i, d) in dummies.iter().enumerate() {
@@ -404,13 +534,29 @@ pub fn player_combat(
                         }
                         let stop = from + dir * hit_t;
                         if game_fx {
-                            crate::pfx::emit_beam(&mut commands, "weapon_tracers_vortex", to_bevy(from), to_bevy(stop));
-                            crate::particles::emit(&mut commands, crate::particles::Effect::Impact { at: to_bevy(stop), normal: -to_bevy(dir).normalize_or(Vec3::Y), scale: 1.6, energy: victim.is_none() });
+                            crate::pfx::emit_beam(
+                                &mut commands,
+                                "weapon_tracers_vortex",
+                                to_bevy(from),
+                                to_bevy(stop),
+                            );
+                            crate::particles::emit(
+                                &mut commands,
+                                crate::particles::Effect::Impact {
+                                    at: to_bevy(stop),
+                                    normal: -to_bevy(dir).normalize_or(Vec3::Y),
+                                    scale: 1.6,
+                                    energy: victim.is_none(),
+                                },
+                            );
                         } else {
                             spawn_tracer(&mut commands, &fx, from, stop, false);
                         }
                     }
-                    VortexRefire::ExplosiveRound | VortexRefire::Rocket | VortexRefire::Grenade | VortexRefire::GrenadeLongFuse => {
+                    VortexRefire::ExplosiveRound
+                    | VortexRefire::Rocket
+                    | VortexRefire::Grenade
+                    | VortexRefire::GrenadeLongFuse => {
                         let k = &kits.0[(kit % crate::targets::ABILITY_BOLT).min(kits.0.len() - 1)];
                         let w = match (&k.ability, kit >= crate::targets::ABILITY_BOLT) {
                             (Some(a), true) => &a.weapon,
@@ -436,14 +582,26 @@ pub fn player_combat(
                         };
                         let dir = (view + jitter(&mut rng, sxy, sz)).normalize();
                         let origin = from + jitter(&mut rng, 25.0, 25.0);
-                        crate::pilotweapon::spawn_bolt(&mut commands, &fx, origin, dir * speed, gravity, &def, true);
+                        crate::pilotweapon::spawn_bolt(
+                            &mut commands,
+                            &fx,
+                            origin,
+                            dir * speed,
+                            gravity,
+                            &def,
+                            true,
+                        );
                         log::debug!("vortex return {refire:?} from {}", w.name);
                     }
                     VortexRefire::None | VortexRefire::Absorb => {}
                 }
             }
             if vortex.caught > 0 || vortex.absorbed > 0 {
-                log::info!("vortex returned {} rounds, absorbed {}", vortex.caught, vortex.absorbed);
+                log::info!(
+                    "vortex returned {} rounds, absorbed {}",
+                    vortex.caught,
+                    vortex.absorbed
+                );
             }
             vortex.caught = 0;
         }
@@ -472,20 +630,31 @@ pub fn player_combat(
     let arm = actors.get(titan.actor).ok().and_then(|a| {
         let jx = a.bone_names.iter().position(|n| n == "jx_vortex")?;
         let (lp, lq) = a.clips[a.clip("bt_vortex_arm_pose_add")?].frames.first()?[jx];
-        let (bone, p, [fwd, up]) = a.mirrored_frame("def_r_elbow", lp + lq * TAG, [lq * Vec3::X, lq * Vec3::Z])?;
-        Some((a.joint(bone)?, Transform::from_translation(p).looking_to(fwd, up)))
+        let (bone, p, [fwd, up]) =
+            a.mirrored_frame("def_r_elbow", lp + lq * TAG, [lq * Vec3::X, lq * Vec3::Z])?;
+        Some((
+            a.joint(bone)?,
+            Transform::from_translation(p).looking_to(fwd, up),
+        ))
     });
     let arm_joint = arm.map(|a| a.0);
-    let arm_tf = arm.map_or(Transform::IDENTITY, |a| a.1).with_scale(Vec3::splat(1.0 / crate::player::UNIT));
+    let arm_tf = arm
+        .map_or(Transform::IDENTITY, |a| a.1)
+        .with_scale(Vec3::splat(1.0 / crate::player::UNIT));
     let shield_tf = |fp: bool, heat: bool| {
         if fp && game_fx && !heat {
             let r = Quat::from_rotation_z(s.yaw) * Quat::from_rotation_y(s.pitch);
             let at = eye + r * Vec3::new(105.1, 24.0, -20.5);
-            let (fwd, up) = (r * Vec3::new(0.936, -0.302, 0.18), r * Vec3::new(-0.323, -0.942, 0.1));
-            Transform::from_translation(to_bevy(at)).looking_to(to_bevy(fwd).normalize(), to_bevy(up).normalize())
+            let (fwd, up) = (
+                r * Vec3::new(0.936, -0.302, 0.18),
+                r * Vec3::new(-0.323, -0.942, 0.1),
+            );
+            Transform::from_translation(to_bevy(at))
+                .looking_to(to_bevy(fwd).normalize(), to_bevy(up).normalize())
         } else {
             let dist = if fp { VORTEX_DIST_FP } else { VORTEX_DIST };
-            Transform::from_translation(to_bevy(eye + view * dist)).looking_to(to_bevy(view).normalize(), Vec3::Y)
+            Transform::from_translation(to_bevy(eye + view * dist))
+                .looking_to(to_bevy(view).normalize(), Vec3::Y)
         }
     };
     if let (true, Some(e)) = (vortex.active, vortex.shield) {
@@ -497,9 +666,22 @@ pub fn player_combat(
     match (vortex.active, vortex.shield) {
         (true, None) => {
             let heat = vortex.mode == VortexMode::Heat;
-            let (mesh, mat) = if heat { fx.heat_disc.clone() } else { fx.vortex_disc.clone() };
+            let (mesh, mat) = if heat {
+                fx.heat_disc.clone()
+            } else {
+                fx.vortex_disc.clone()
+            };
             let arm = arm_joint.filter(|_| !fp && game_fx && !heat);
-            let root = commands.spawn((if arm.is_some() { arm_tf } else { shield_tf(fp, heat) }, Visibility::default())).id();
+            let root = commands
+                .spawn((
+                    if arm.is_some() {
+                        arm_tf
+                    } else {
+                        shield_tf(fp, heat)
+                    },
+                    Visibility::default(),
+                ))
+                .id();
             if let Some(j) = arm {
                 commands.entity(j).add_child(root);
             }
@@ -513,7 +695,9 @@ pub fn player_combat(
                     (false, true) => "wpn_vortex_chargingCP_titan_FP",
                     (false, false) => "wpn_vortex_chargingCP_titan",
                 };
-                commands.entity(root).insert(crate::pfx::PfxTrail::oriented(name));
+                commands
+                    .entity(root)
+                    .insert(crate::pfx::PfxTrail::oriented(name));
             }
             vortex.shield_fp = fp;
             // The effect's dome model (fx\vortex_shield_hld) is drawn by the game's own shader
@@ -524,10 +708,22 @@ pub fn player_combat(
             // fan is a drawn model.
             if !game_fx || (!heat && std::env::var_os("TF_OLD_SHIELDS").is_some()) {
                 // (The size rides on a holder: the shimmer animates the disc's own scale.)
-                let local = if (fp || vortex.shield_arm) && game_fx { Transform::from_translation(Vec3::NEG_Z * 10.0 * crate::player::UNIT).with_scale(Vec3::splat(30.0 / VORTEX_RADIUS)) } else { Transform::IDENTITY };
+                let local = if (fp || vortex.shield_arm) && game_fx {
+                    Transform::from_translation(Vec3::NEG_Z * 10.0 * crate::player::UNIT)
+                        .with_scale(Vec3::splat(30.0 / VORTEX_RADIUS))
+                } else {
+                    Transform::IDENTITY
+                };
                 let holder = commands.spawn((local, Visibility::default())).id();
                 commands.entity(root).add_child(holder);
-                let disc = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, crate::weapons::ShieldShimmer)).id();
+                let disc = commands
+                    .spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(mat),
+                        Transform::IDENTITY,
+                        crate::weapons::ShieldShimmer,
+                    ))
+                    .id();
                 commands.entity(holder).add_child(disc);
             }
             vortex.shield = Some(root);
@@ -542,7 +738,11 @@ pub fn player_combat(
     // GetVortexSphereCurrentColor( weapon.GetWeaponChargeFraction() ), blue while fresh,
     // orange then red as the hold runs out (Ion's: 1 - its energy fraction).
     if let (Some(e), true) = (vortex.shield, game_fx && vortex.mode != VortexMode::Heat) {
-        commands.entity(e).insert(crate::pfx::PfxColor(crate::fxuber::shield_color(1.0 - vortex.fraction())));
+        commands
+            .entity(e)
+            .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(
+                1.0 - vortex.fraction(),
+            )));
     }
     if let Some(e) = vortex.shield.filter(|_| !vortex.shield_arm) {
         if let Ok(mut tf) = shields.get_mut(e) {
@@ -571,20 +771,30 @@ pub fn player_combat(
                 }
                 let to = (d.pos - Vec3::from(s.pos.to_array())).truncate();
                 let dist = to.length() - d.radius;
-                let ang = to.normalize_or_zero().dot(fwd.truncate()).clamp(-1.0, 1.0).acos().to_degrees();
-                let (range, damage) = kit_state.as_ref().map(|k| (k.melee_range, k.melee_damage)).unwrap_or((MELEE_RANGE, MELEE_DAMAGE));
+                let ang = to
+                    .normalize_or_zero()
+                    .dot(fwd.truncate())
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
+                let (range, damage) = kit_state
+                    .as_ref()
+                    .map(|k| (k.melee_range, k.melee_damage))
+                    .unwrap_or((MELEE_RANGE, MELEE_DAMAGE));
                 if dist < range && ang < MELEE_ANGLE {
                     let hit = d.damage_unblockable(damage, false);
                     if let Some(c) = core.as_mut() {
                         c.credit_inflicted(hit);
                     }
                     log::info!("melee hit for {damage}");
-                    audio::cue(&mut commands, Cue::PunchImpact, Some(d.pos + Vec3::Z * 150.0));
+                    audio::cue(
+                        &mut commands,
+                        Cue::PunchImpact,
+                        Some(d.pos + Vec3::Z * 150.0),
+                    );
                 }
             }
         }
         melee.t = if t >= MELEE_ANIM { None } else { Some(t) };
     }
 }
-
-

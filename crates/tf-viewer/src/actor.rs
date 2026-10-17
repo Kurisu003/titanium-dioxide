@@ -89,10 +89,11 @@ pub struct Clip {
 }
 
 impl Clip {
-
     /// The average pose over all frames (quaternions summed in one hemisphere).
     pub fn mean(&self) -> Pose {
-        let Some(first) = self.frames.first() else { return Vec::new() };
+        let Some(first) = self.frames.first() else {
+            return Vec::new();
+        };
         let n = self.frames.len() as f32;
         first
             .iter()
@@ -102,7 +103,11 @@ impl Clip {
                 for f in &self.frames {
                     let (fp, fq) = f[b];
                     p += fp;
-                    q += if Vec4::from(fq).dot(Vec4::from(q0)) < 0.0 { -Vec4::from(fq) } else { Vec4::from(fq) };
+                    q += if Vec4::from(fq).dot(Vec4::from(q0)) < 0.0 {
+                        -Vec4::from(fq)
+                    } else {
+                        Vec4::from(fq)
+                    };
                 }
                 (p / n, Quat::from_vec4(q).normalize())
             })
@@ -116,7 +121,10 @@ impl Clip {
         let n = self.movement.len();
         let f = (t / self.duration.max(1e-3)).clamp(0.0, 1.0) * (n - 1) as f32;
         let (i, k) = (f.floor() as usize, f.fract());
-        let (a, b) = (self.movement[i.min(n - 1)], self.movement[(i + 1).min(n - 1)]);
+        let (a, b) = (
+            self.movement[i.min(n - 1)],
+            self.movement[(i + 1).min(n - 1)],
+        );
         Some(std::array::from_fn(|c| a[c] + (b[c] - a[c]) * k))
     }
 
@@ -229,7 +237,10 @@ pub struct Actor {
 impl Actor {
     /// Joint entity of a bone by name.
     pub fn joint(&self, name: &str) -> Option<Entity> {
-        self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name)).map(|i| self.joints[i])
+        self.bone_names
+            .iter()
+            .position(|b| b.eq_ignore_ascii_case(name))
+            .map(|i| self.joints[i])
     }
 
     /// Everything [`Actor::evaluate`] reads, as bits: the same key gives the same pose.
@@ -284,7 +295,10 @@ impl Actor {
 
     /// Model-space transform of a bone in the current pose.
     pub fn bone_model_transform(&self, name: &str) -> Option<Transform> {
-        let target = self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name))?;
+        let target = self
+            .bone_names
+            .iter()
+            .position(|b| b.eq_ignore_ascii_case(name))?;
         let pose = self.evaluate();
         let mut chain = vec![target];
         while let Some(&b) = chain.last() {
@@ -301,8 +315,19 @@ impl Actor {
     }
 
     /// Add a clip to `layers` (full pose) or `additive` (delta), depending on how it's stored.
-    pub fn push_clip(&self, layers: &mut Vec<Layer>, additive: &mut Vec<Layer>, clip: usize, cycle: f32, weight: f32) {
-        let l = Layer { clip, cycle, weight };
+    pub fn push_clip(
+        &self,
+        layers: &mut Vec<Layer>,
+        additive: &mut Vec<Layer>,
+        clip: usize,
+        cycle: f32,
+        weight: f32,
+    ) {
+        let l = Layer {
+            clip,
+            cycle,
+            weight,
+        };
         if self.clips[clip].delta {
             additive.push(l);
         } else {
@@ -312,26 +337,51 @@ impl Actor {
 
     /// Prepare [`Mirror`] data from the bind pose, pairing `_l_` and `_r_` bones by name.
     pub fn enable_mirror(&mut self) {
-        let lower: Vec<String> = self.bone_names.iter().map(|n| n.to_ascii_lowercase()).collect();
+        let lower: Vec<String> = self
+            .bone_names
+            .iter()
+            .map(|n| n.to_ascii_lowercase())
+            .collect();
         let twin: Vec<usize> = (0..lower.len())
             .map(|i| {
                 let n = &lower[i];
-                let other = if n.contains("_l_") { n.replacen("_l_", "_r_", 1) } else if n.contains("_r_") { n.replacen("_r_", "_l_", 1) } else { return i };
+                let other = if n.contains("_l_") {
+                    n.replacen("_l_", "_r_", 1)
+                } else if n.contains("_r_") {
+                    n.replacen("_r_", "_l_", 1)
+                } else {
+                    return i;
+                };
                 lower.iter().position(|m| *m == other).unwrap_or(i)
             })
             .collect();
         let (bind, _) = root_space(&self.parents, &self.rest);
-        let spread = (0..bind.len()).filter(|&b| twin[b] != b).map(|b| (bind[b].1 - bind[twin[b]].1).abs()).fold(Vec3::ZERO, |a, d| a + d);
-        let axis = if spread.x >= spread.y && spread.x >= spread.z { 0 } else if spread.y >= spread.z { 1 } else { 2 };
-        let fix = (0..bind.len()).map(|b| rmul(rinv(rreflect(bind[twin[b]], axis)), bind[b])).collect();
+        let spread = (0..bind.len())
+            .filter(|&b| twin[b] != b)
+            .map(|b| (bind[b].1 - bind[twin[b]].1).abs())
+            .fold(Vec3::ZERO, |a, d| a + d);
+        let axis = if spread.x >= spread.y && spread.x >= spread.z {
+            0
+        } else if spread.y >= spread.z {
+            1
+        } else {
+            2
+        };
+        let fix = (0..bind.len())
+            .map(|b| rmul(rinv(rreflect(bind[twin[b]], axis)), bind[b]))
+            .collect();
         self.mirror = Some(Arc::new(Mirror { twin, axis, fix }));
     }
 
     /// Reflect a full pose (see [`Mirror`]); needs [`Actor::enable_mirror`].
     pub fn mirror_pose(&self, pose: &Pose) -> Pose {
-        let Some(m) = self.mirror.as_ref() else { return pose.clone() };
+        let Some(m) = self.mirror.as_ref() else {
+            return pose.clone();
+        };
         let (rel, root) = root_space(&self.parents, pose);
-        let mirrored: Vec<Rigid> = (0..rel.len()).map(|b| rmul(root, rmul(rreflect(rel[m.twin[b]], m.axis), m.fix[b]))).collect();
+        let mirrored: Vec<Rigid> = (0..rel.len())
+            .map(|b| rmul(root, rmul(rreflect(rel[m.twin[b]], m.axis), m.fix[b])))
+            .collect();
         (0..mirrored.len())
             .map(|b| {
                 let local = match self.parents[b] {
@@ -345,9 +395,17 @@ impl Actor {
 
     /// A point and directions given in `bone`'s frame of the unmirrored clips, carried over
     /// to its twin's frame under the mirrored ones: the twin's name, the point, the directions.
-    pub fn mirrored_frame(&self, bone: &str, p: Vec3, dirs: [Vec3; 2]) -> Option<(&str, Vec3, [Vec3; 2])> {
+    pub fn mirrored_frame(
+        &self,
+        bone: &str,
+        p: Vec3,
+        dirs: [Vec3; 2],
+    ) -> Option<(&str, Vec3, [Vec3; 2])> {
         let m = self.mirror.as_ref()?;
-        let b = self.bone_names.iter().position(|n| n.eq_ignore_ascii_case(bone))?;
+        let b = self
+            .bone_names
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(bone))?;
         let t = m.twin[b];
         let f = rinv(m.fix[t]);
         // The twin's mirrored frame is reflect(bone's) * fix, so a point p of the bone's frame
@@ -356,7 +414,11 @@ impl Actor {
             v[m.axis] = -v[m.axis];
             v
         };
-        Some((&self.bone_names[t], f.1 + f.0 * s(p), dirs.map(|d| f.0 * s(d))))
+        Some((
+            &self.bone_names[t],
+            f.1 + f.0 * s(p),
+            dirs.map(|d| f.0 * s(d)),
+        ))
     }
 
     /// A mirrored copy of a clip. A delta clip is applied to the bind pose (post-multiplied,
@@ -371,8 +433,26 @@ impl Actor {
                 if !c.delta {
                     return self.mirror_pose(f);
                 }
-                let full: Pose = f.iter().zip(&self.rest).map(|(&(dp, dq), &(rp, rq))| (rp + dp, if post { rq * dq } else { dq * rq })).collect();
-                self.mirror_pose(&full).into_iter().zip(&self.rest).map(|((p, q), &(rp, rq))| (p - rp, if post { rq.inverse() * q } else { q * rq.inverse() }.normalize())).collect()
+                let full: Pose = f
+                    .iter()
+                    .zip(&self.rest)
+                    .map(|(&(dp, dq), &(rp, rq))| (rp + dp, if post { rq * dq } else { dq * rq }))
+                    .collect();
+                self.mirror_pose(&full)
+                    .into_iter()
+                    .zip(&self.rest)
+                    .map(|((p, q), &(rp, rq))| {
+                        (
+                            p - rp,
+                            if post {
+                                rq.inverse() * q
+                            } else {
+                                q * rq.inverse()
+                            }
+                            .normalize(),
+                        )
+                    })
+                    .collect()
             })
             .collect();
         Clip {
@@ -380,11 +460,18 @@ impl Actor {
             frames,
             ground_speed: c.ground_speed,
             duration: c.duration,
-            movement: c.movement.iter().map(|&[x, y, z, yaw]| [x, -y, z, -yaw]).collect(),
+            movement: c
+                .movement
+                .iter()
+                .map(|&[x, y, z, yaw]| [x, -y, z, -yaw])
+                .collect(),
             sounds: c.sounds.clone(),
             typed_sounds: c.typed_sounds.clone(),
             milestones: c.milestones.clone(),
-            bone_weights: c.bone_weights.as_ref().map(|w| m.twin.iter().map(|&t| w[t]).collect()),
+            bone_weights: c
+                .bone_weights
+                .as_ref()
+                .map(|w| m.twin.iter().map(|&t| w[t]).collect()),
         }
     }
 
@@ -394,27 +481,47 @@ impl Actor {
     pub fn add_mirrored(&mut self, clips: &[&str], grids: &[&str]) {
         let mut all: Vec<Clip> = self.clips.iter().cloned().collect();
         let mut by_name = (*self.by_name).clone();
-        let mut gmap: HashMap<String, AimGrid> = self.grids.iter().map(|(k, g)| (k.clone(), g.clone())).collect();
+        let mut gmap: HashMap<String, AimGrid> = self
+            .grids
+            .iter()
+            .map(|(k, g)| (k.clone(), g.clone()))
+            .collect();
         // Every mirrored clip is independent: build them on all cores (BT's set took 190 ms
         // on one), then add them in the same order.
-        let mut jobs: Vec<(usize, bool)> = clips.iter().filter_map(|name| self.clip(name)).map(|c| (c, true)).collect();
+        let mut jobs: Vec<(usize, bool)> = clips
+            .iter()
+            .filter_map(|name| self.clip(name))
+            .map(|c| (c, true))
+            .collect();
         for name in grids {
-            let Some(g) = self.grids.get(*name) else { continue };
+            let Some(g) = self.grids.get(*name) else {
+                continue;
+            };
             jobs.extend(g.clips.iter().map(|&c| (c, g.post)));
         }
-        let mut mirrored = crate::world::parallel_map(&jobs, |&(c, post)| self.mirrored_clip(&self.clips[c], post)).into_iter().map(|c| c.expect("mirrored clip"));
+        let mut mirrored = crate::world::parallel_map(&jobs, |&(c, post)| {
+            self.mirrored_clip(&self.clips[c], post)
+        })
+        .into_iter()
+        .map(|c| c.expect("mirrored clip"));
         for name in clips {
             let Some(_) = self.clip(name) else { continue };
             by_name.insert(format!("{}#m", name.to_ascii_lowercase()), all.len());
             all.push(mirrored.next().expect("mirrored clip"));
         }
         for name in grids {
-            let Some(g) = self.grids.get(*name) else { continue };
+            let Some(g) = self.grids.get(*name) else {
+                continue;
+            };
             let mut ng = g.clone();
-            ng.clips = g.clips.iter().map(|_| {
-                all.push(mirrored.next().expect("mirrored clip"));
-                all.len() - 1
-            }).collect();
+            ng.clips = g
+                .clips
+                .iter()
+                .map(|_| {
+                    all.push(mirrored.next().expect("mirrored clip"));
+                    all.len() - 1
+                })
+                .collect();
             gmap.insert(format!("{name}#m"), ng);
         }
         self.clips = Arc::new(all);
@@ -424,7 +531,11 @@ impl Actor {
 
     /// Add a gesture clip: a delta clip goes to `additive`, a full-pose one to `overlays`.
     pub fn push_gesture(&mut self, clip: usize, cycle: f32, weight: f32) {
-        let l = Layer { clip, cycle, weight };
+        let l = Layer {
+            clip,
+            cycle,
+            weight,
+        };
         if self.clips[clip].delta {
             self.additive.push(l);
         } else {
@@ -437,7 +548,10 @@ impl Actor {
     }
     /// The name a clip index was registered under (logging).
     pub fn clip_name(&self, clip: usize) -> Option<&str> {
-        self.by_name.iter().find(|(_, &c)| c == clip).map(|(n, _)| n.as_str())
+        self.by_name
+            .iter()
+            .find(|(_, &c)| c == clip)
+            .map(|(n, _)| n.as_str())
     }
 
     /// Weighted blend of the base layers followed by the aim layer.
@@ -462,7 +576,9 @@ impl Actor {
                     acc[i].1 += v * w;
                 }
             }
-            acc.into_iter().map(|(p, q)| (p, Quat::from_vec4(q).normalize())).collect()
+            acc.into_iter()
+                .map(|(p, q)| (p, Quat::from_vec4(q).normalize()))
+                .collect()
         };
         if let Some(aim) = &self.aim {
             if let Some(g) = self.grids.get(&aim.grid) {
@@ -476,7 +592,9 @@ impl Actor {
             }
         }
         for l in &self.grid_layers {
-            let Some(g) = self.grids.get(l.grid) else { continue };
+            let Some(g) = self.grids.get(l.grid) else {
+                continue;
+            };
             if l.weight <= 0.0 {
                 continue;
             }
@@ -485,7 +603,11 @@ impl Actor {
                 let base = self.sample_grid_mean(g, l.x, l.y);
                 for ((dp, dq), (bp, bq)) in delta.iter_mut().zip(base) {
                     *dp -= bp;
-                    *dq = if g.post { bq.inverse() * *dq } else { *dq * bq.inverse() };
+                    *dq = if g.post {
+                        bq.inverse() * *dq
+                    } else {
+                        *dq * bq.inverse()
+                    };
                 }
             }
             for (b, (dp, dq)) in pose.iter_mut().zip(delta) {
@@ -531,7 +653,13 @@ impl Actor {
 
     /// Bilinear blend of the grid's clips' average poses at the parameter values.
     pub fn sample_grid_mean(&self, g: &AimGrid, x: f32, y: f32) -> Pose {
-        let norm = |v: f32, r: (f32, f32), n: usize| if n < 2 || (r.1 - r.0).abs() < 1e-6 { 0.0 } else { ((v - r.0) / (r.1 - r.0)).clamp(0.0, 1.0) * (n - 1) as f32 };
+        let norm = |v: f32, r: (f32, f32), n: usize| {
+            if n < 2 || (r.1 - r.0).abs() < 1e-6 {
+                0.0
+            } else {
+                ((v - r.0) / (r.1 - r.0)).clamp(0.0, 1.0) * (n - 1) as f32
+            }
+        };
         let fx = norm(x, g.x_range, g.width);
         let fy = norm(y, g.y_range, g.height);
         let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
@@ -539,7 +667,10 @@ impl Actor {
         let (sx, sy) = (fx - x0 as f32, fy - y0 as f32);
         let get = |xx: usize, yy: usize| self.clips[g.clips[xx + yy * g.width]].mean();
         let lerp = |a: Pose, b: Pose, s: f32| -> Pose {
-            a.into_iter().zip(b).map(|((p0, q0), (p1, q1))| (p0.lerp(p1, s), q0.slerp(q1, s))).collect()
+            a.into_iter()
+                .zip(b)
+                .map(|((p0, q0), (p1, q1))| (p0.lerp(p1, s), q0.slerp(q1, s)))
+                .collect()
         };
         let top = lerp(get(x0, y0), get(x1, y0), sx);
         let bottom = lerp(get(x0, y1), get(x1, y1), sx);
@@ -549,7 +680,13 @@ impl Actor {
     /// Bilinear blend of the grid's clips at the parameter values, each sampled at `cycle`.
     pub fn sample_grid_at(&self, g: &AimGrid, x: f32, y: f32, cycle: f32) -> Pose {
         // A one-wide axis has an empty parameter range (0/0): treat it as 0.
-        let norm = |v: f32, r: (f32, f32), n: usize| if n < 2 || (r.1 - r.0).abs() < 1e-6 { 0.0 } else { ((v - r.0) / (r.1 - r.0)).clamp(0.0, 1.0) * (n - 1) as f32 };
+        let norm = |v: f32, r: (f32, f32), n: usize| {
+            if n < 2 || (r.1 - r.0).abs() < 1e-6 {
+                0.0
+            } else {
+                ((v - r.0) / (r.1 - r.0)).clamp(0.0, 1.0) * (n - 1) as f32
+            }
+        };
         let fx = norm(x, g.x_range, g.width);
         let fy = norm(y, g.y_range, g.height);
         let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
@@ -557,7 +694,10 @@ impl Actor {
         let (sx, sy) = (fx - x0 as f32, fy - y0 as f32);
         let get = |xx: usize, yy: usize| self.clips[g.clips[xx + yy * g.width]].sample(cycle);
         let lerp = |a: Pose, b: Pose, s: f32| -> Pose {
-            a.into_iter().zip(b).map(|((p0, q0), (p1, q1))| (p0.lerp(p1, s), q0.slerp(q1, s))).collect()
+            a.into_iter()
+                .zip(b)
+                .map(|((p0, q0), (p1, q1))| (p0.lerp(p1, s), q0.slerp(q1, s)))
+                .collect()
         };
         let top = lerp(get(x0, y0), get(x1, y0), sx);
         let bottom = lerp(get(x0, y1), get(x1, y1), sx);
@@ -580,11 +720,17 @@ fn neutral_anim(owner: &Model, si: usize) -> Option<usize> {
         }
         ((-lo / (hi - lo)) * (n - 1) as f32).round() as usize
     };
-    let (x, y) = (cell(seq.group_size[0], (f(0x54), f(0x5C))), cell(seq.group_size[1], (f(0x58), f(0x60))));
+    let (x, y) = (
+        cell(seq.group_size[0], (f(0x54), f(0x5C))),
+        cell(seq.group_size[1], (f(0x58), f(0x60))),
+    );
     let w = seq.group_size[0].max(1) as usize;
     let i = x + y * w;
     if i != 0 {
-        log::debug!("{}: playing grid cell {i} (the neutral one) instead of the first", seq.label);
+        log::debug!(
+            "{}: playing grid cell {i} (the neutral one) instead of the first",
+            seq.label
+        );
     }
     seq.anims.get(i).or(seq.anims.first()).copied()
 }
@@ -593,7 +739,11 @@ fn neutral_anim(owner: &Model, si: usize) -> Option<usize> {
 fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
     let anim = owner.animation(anim_index)?;
     let delta = anim.flags & 0x4 != 0;
-    let map: Vec<Option<usize>> = model.bones.iter().map(|b| owner.bone_index(&b.name)).collect();
+    let map: Vec<Option<usize>> = model
+        .bones
+        .iter()
+        .map(|b| owner.bone_index(&b.name))
+        .collect();
     let frames = anim
         .frames
         .iter()
@@ -603,7 +753,10 @@ fn retarget(model: &Model, owner: &Model, anim_index: usize) -> Result<Clip> {
                 .iter()
                 .enumerate()
                 .map(|(bi, b)| match map[bi] {
-                    Some(oi) => (Vec3::from(pose[oi].0), Quat::from_array(pose[oi].1).normalize()),
+                    Some(oi) => (
+                        Vec3::from(pose[oi].0),
+                        Quat::from_array(pose[oi].1).normalize(),
+                    ),
                     None if delta => (Vec3::ZERO, Quat::IDENTITY),
                     None => (Vec3::from(b.pos), Quat::from_array(b.quat).normalize()),
                 })
@@ -642,7 +795,10 @@ pub struct Spawned {
 
 impl Spawned {
     pub fn joint(&self, name: &str) -> Option<Entity> {
-        self.bone_names.iter().position(|b| b.eq_ignore_ascii_case(name)).map(|i| self.joints[i])
+        self.bone_names
+            .iter()
+            .position(|b| b.eq_ignore_ascii_case(name))
+            .map(|i| self.joints[i])
     }
 }
 
@@ -670,12 +826,23 @@ pub fn spawn_actor(
     };
 
     // Skeleton: one entity per bone, in the bind pose until animated.
-    let actor = commands.spawn((Transform::IDENTITY, Visibility::default())).id();
+    let actor = commands
+        .spawn((Transform::IDENTITY, Visibility::default()))
+        .id();
     commands.entity(parent).add_child(actor);
     let mut joints = Vec::with_capacity(tpl.bones.len());
     for (_, parent_idx, p, q) in tpl.bones.iter() {
-        let j = commands.spawn((Transform::from_translation(*p).with_rotation(*q), Visibility::default())).id();
-        let par = if *parent_idx >= 0 { joints[*parent_idx as usize] } else { actor };
+        let j = commands
+            .spawn((
+                Transform::from_translation(*p).with_rotation(*q),
+                Visibility::default(),
+            ))
+            .id();
+        let par = if *parent_idx >= 0 {
+            joints[*parent_idx as usize]
+        } else {
+            actor
+        };
         commands.entity(par).add_child(j);
         joints.push(j);
     }
@@ -684,7 +851,10 @@ pub fn spawn_actor(
             .spawn((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(mat.clone()),
-                SkinnedMesh { inverse_bindposes: tpl.inverse.clone(), joints: joints.clone() },
+                SkinnedMesh {
+                    inverse_bindposes: tpl.inverse.clone(),
+                    joints: joints.clone(),
+                },
                 NoFrustumCulling,
                 BodyPartMesh(*part),
             ))
@@ -694,8 +864,20 @@ pub fn spawn_actor(
     let bone_names: Vec<String> = tpl.bones.iter().map(|b| b.0.clone()).collect();
     let parents = tpl.bones.iter().map(|b| b.1).collect();
     let rest: Pose = tpl.bones.iter().map(|b| (b.2, b.3)).collect();
-    let spawned = Spawned { entity: actor, joints: joints.clone(), bone_names: bone_names.clone() };
-    let layers = if tpl.clips.is_empty() { vec![] } else { vec![Layer { clip: 0, cycle: 0.0, weight: 1.0 }] };
+    let spawned = Spawned {
+        entity: actor,
+        joints: joints.clone(),
+        bone_names: bone_names.clone(),
+    };
+    let layers = if tpl.clips.is_empty() {
+        vec![]
+    } else {
+        vec![Layer {
+            clip: 0,
+            cycle: 0.0,
+            weight: 1.0,
+        }]
+    };
     commands.entity(actor).insert(Actor {
         joints,
         bone_names,
@@ -735,11 +917,14 @@ pub struct ActorTemplate {
 
 #[allow(clippy::too_many_arguments)]
 /// Parsed models by path, shared between actors (Titan chassis share their animation includes).
-static MODELS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Arc<Model>>>> = std::sync::LazyLock::new(Default::default);
+static MODELS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Arc<Model>>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// A model's default hitbox set (bone indices match the actor's joints).
 pub fn model_hitboxes(gd: &GameData, path: &str) -> Vec<tf_assets::mdl::Hitbox> {
-    parsed_model(gd, path).map(|m| m.hitboxes.clone()).unwrap_or_default()
+    parsed_model(gd, path)
+        .map(|m| m.hitboxes.clone())
+        .unwrap_or_default()
 }
 
 pub fn parsed_model(gd: &GameData, path: &str) -> Result<Arc<Model>> {
@@ -756,15 +941,28 @@ pub fn parsed_model(gd: &GameData, path: &str) -> Result<Arc<Model>> {
 pub fn prefetch_models(gd: &GameData, paths: &[String]) {
     let t = std::time::Instant::now();
     let models = crate::world::parallel_map(paths, |p| parsed_model(gd, p).ok());
-    let mut includes: Vec<String> = models.into_iter().flatten().flatten().flat_map(|m| m.include_models.clone()).collect();
+    let mut includes: Vec<String> = models
+        .into_iter()
+        .flatten()
+        .flatten()
+        .flat_map(|m| m.include_models.clone())
+        .collect();
     includes.sort();
     includes.dedup();
     crate::world::parallel_map(&includes, |p| parsed_model(gd, p).ok());
-    log::info!("prefetched {} models and {} includes in {:?}", paths.len(), includes.len(), t.elapsed());
+    log::info!(
+        "prefetched {} models and {} includes in {:?}",
+        paths.len(),
+        includes.len(),
+        t.elapsed()
+    );
 }
 
 fn spec_key(spec: &ActorSpec) -> String {
-    format!("{}|{:?}|{:?}|{:?}", spec.path, spec.sequences, spec.grids, spec.body)
+    format!(
+        "{}|{:?}|{:?}|{:?}",
+        spec.path, spec.sequences, spec.grids, spec.body
+    )
 }
 
 /// The part of an actor template that needs no Bevy assets (the model, clips, grids and
@@ -779,7 +977,11 @@ pub struct TemplateData {
     parts: Vec<(String, usize, usize, Mesh)>,
     includes: usize,
     bone_count: usize,
-    took: (std::time::Duration, std::time::Duration, std::time::Duration),
+    took: (
+        std::time::Duration,
+        std::time::Duration,
+        std::time::Duration,
+    ),
 }
 
 /// Build the templates of `specs` (their asset-free part, textures included) on every core,
@@ -790,7 +992,11 @@ pub fn prefetch_actors(gd: &GameData, cache: &Cache, specs: &[ActorSpec]) {
     let todo: Vec<(&ActorSpec, String)> = specs
         .iter()
         .map(|s| (s, spec_key(s)))
-        .filter(|(_, k)| !cache.actors.contains_key(k) && !cache.templates.lock().is_ok_and(|m| m.contains_key(k)) && keys.insert(k.clone()))
+        .filter(|(_, k)| {
+            !cache.actors.contains_key(k)
+                && !cache.templates.lock().is_ok_and(|m| m.contains_key(k))
+                && keys.insert(k.clone())
+        })
         .collect();
     let built = crate::world::parallel_map(&todo, |(spec, _)| template_data(gd, spec, cache));
     if let Ok(mut map) = cache.templates.lock() {
@@ -800,7 +1006,11 @@ pub fn prefetch_actors(gd: &GameData, cache: &Cache, specs: &[ActorSpec]) {
             }
         }
     }
-    log::info!("prefetched {} actor templates in {:?}", todo.len(), t.elapsed());
+    log::info!(
+        "prefetched {} actor templates in {:?}",
+        todo.len(),
+        t.elapsed()
+    );
 }
 
 fn build_template(
@@ -813,7 +1023,11 @@ fn build_template(
     bindposes: &mut Assets<SkinnedMeshInverseBindposes>,
 ) -> Result<ActorTemplate> {
     let t = std::time::Instant::now();
-    let prepared = cache.templates.lock().ok().and_then(|mut m| m.remove(&spec_key(spec)));
+    let prepared = cache
+        .templates
+        .lock()
+        .ok()
+        .and_then(|mut m| m.remove(&spec_key(spec)));
     let data = match prepared {
         Some(d) => d?,
         None => template_data(gd, spec, cache)?,
@@ -854,7 +1068,11 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
     let model = parsed_model(gd, path)?;
     // Included animation models are shared between chassis; read them in parallel.
     let includes: Vec<Arc<Model>> = std::thread::scope(|scope| {
-        let jobs: Vec<_> = model.include_models.iter().map(|p| scope.spawn(move || (p, parsed_model(gd, p)))).collect();
+        let jobs: Vec<_> = model
+            .include_models
+            .iter()
+            .map(|p| scope.spawn(move || (p, parsed_model(gd, p))))
+            .collect();
         jobs.into_iter()
             .filter_map(|j| match j.join() {
                 Ok((_, Ok(m))) => Some(m),
@@ -867,35 +1085,82 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
             .collect()
     });
     let t_parse = t.elapsed();
-    let owners: Vec<&Model> = std::iter::once(&*model).chain(includes.iter().map(|m| &**m)).collect();
+    let owners: Vec<&Model> = std::iter::once(&*model)
+        .chain(includes.iter().map(|m| &**m))
+        .collect();
     // TF_DUMP_SEQS=<part of a model path>: log that model's bodyparts, bones (bind pose) and
     // attachments, and its sequences with their activities, flags and events;
     // TF_DUMP_WEIGHTS=<part of a sequence label> adds those sequences' bone weights.
     if std::env::var("TF_DUMP_SEQS").is_ok_and(|f| !f.is_empty() && path.contains(&f)) {
-        log::info!("{path}: bodyparts {:?}", model.bodyparts.iter().map(|b| (&b.name, b.num_models)).collect::<Vec<_>>());
+        log::info!(
+            "{path}: bodyparts {:?}",
+            model
+                .bodyparts
+                .iter()
+                .map(|b| (&b.name, b.num_models))
+                .collect::<Vec<_>>()
+        );
         for (i, b) in model.bones.iter().enumerate() {
-            log::info!("{path}: bone {i} {} parent {} pos {:?} quat {:?}", b.name, b.parent, b.pos, b.quat);
+            log::info!(
+                "{path}: bone {i} {} parent {} pos {:?} quat {:?}",
+                b.name,
+                b.parent,
+                b.pos,
+                b.quat
+            );
         }
         for a in &model.attachments {
-            log::info!("{path}: attachment {} on bone {}", a.name, model.bones.get(a.bone as usize).map_or("?", |b| b.name.as_str()));
+            log::info!(
+                "{path}: attachment {} on bone {}",
+                a.name,
+                model
+                    .bones
+                    .get(a.bone as usize)
+                    .map_or("?", |b| b.name.as_str())
+            );
         }
         for o in &owners {
             for s in &o.sequences {
-                log::info!("{path}: sequence {} act={} mods={:?} flags={:#x} anims={:?}", s.label, s.activity, s.modifiers, s.flags, s.anims);
+                log::info!(
+                    "{path}: sequence {} act={} mods={:?} flags={:#x} anims={:?}",
+                    s.label,
+                    s.activity,
+                    s.modifiers,
+                    s.flags,
+                    s.anims
+                );
                 if std::env::var("TF_DUMP_WEIGHTS").is_ok_and(|f| s.label.contains(&f)) {
                     for (b, w) in s.bone_weights.iter().enumerate() {
-                        log::info!("{path}:     weight {b} {} {w}", o.bones.get(b).map_or("?", |b| b.name.as_str()));
+                        log::info!(
+                            "{path}:     weight {b} {} {w}",
+                            o.bones.get(b).map_or("?", |b| b.name.as_str())
+                        );
                     }
                     for &ai in &s.anims {
                         if let Ok(a) = o.animation(ai) {
-                            log::info!("{path}:     anim {ai} flags={:#x} frames={}", a.flags, a.num_frames);
+                            log::info!(
+                                "{path}:     anim {ai} flags={:#x} frames={}",
+                                a.flags,
+                                a.num_frames
+                            );
                             // Model-space positions of the hands and the gun prop in frame 0.
                             let mut g: Vec<(Vec3, Quat)> = Vec::new();
                             for (bi, b) in o.bones.iter().enumerate() {
-                                let (p, q) = (Vec3::from(a.frames[0][bi].0), Quat::from_array(a.frames[0][bi].1));
-                                let w = if b.parent >= 0 { let (pp, pq) = g[b.parent as usize]; (pp + pq * p, pq * q) } else { (p, q) };
+                                let (p, q) = (
+                                    Vec3::from(a.frames[0][bi].0),
+                                    Quat::from_array(a.frames[0][bi].1),
+                                );
+                                let w = if b.parent >= 0 {
+                                    let (pp, pq) = g[b.parent as usize];
+                                    (pp + pq * p, pq * q)
+                                } else {
+                                    (p, q)
+                                };
                                 g.push(w);
-                                if matches!(b.name.as_str(), "def_l_wrist" | "def_r_wrist" | "ja_c_propGun" | "jx_vortex") {
+                                if matches!(
+                                    b.name.as_str(),
+                                    "def_l_wrist" | "def_r_wrist" | "ja_c_propGun" | "jx_vortex"
+                                ) {
                                     log::info!("{path}:       {} at {:.1}", b.name, w.0);
                                 }
                             }
@@ -910,7 +1175,10 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
     }
     let find = |label: &str| {
         owners.iter().find_map(|o| {
-            o.sequences.iter().position(|s| s.label.eq_ignore_ascii_case(label)).map(|i| (*o, i))
+            o.sequences
+                .iter()
+                .position(|s| s.label.eq_ignore_ascii_case(label))
+                .map(|i| (*o, i))
         })
     };
 
@@ -924,7 +1192,11 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
         };
         let r = (|| -> Result<Clip> {
             let (owner, si) = find(label).with_context(|| format!("sequence {label} not found"))?;
-            let mut clip = retarget(&model, owner, neutral_anim(owner, si).context("empty sequence")?)?;
+            let mut clip = retarget(
+                &model,
+                owner,
+                neutral_anim(owner, si).context("empty sequence")?,
+            )?;
             clip.sounds = owner.sequences[si]
                 .events
                 .iter()
@@ -940,11 +1212,25 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
             clip.milestones = owner.sequences[si]
                 .events
                 .iter()
-                .filter_map(|e| Some((e.name.strip_prefix("AE_WPN_RELOAD_MILESTONE_")?.parse().ok()?, e.cycle)))
+                .filter_map(|e| {
+                    Some((
+                        e.name
+                            .strip_prefix("AE_WPN_RELOAD_MILESTONE_")?
+                            .parse()
+                            .ok()?,
+                        e.cycle,
+                    ))
+                })
                 .collect();
             let ws = &owner.sequences[si].bone_weights;
             if ws.len() == owner.bones.len() && ws.iter().any(|&w| w < 1.0) {
-                clip.bone_weights = Some(model.bones.iter().map(|b| owner.bone_index(&b.name).map_or(0.0, |oi| ws[oi])).collect());
+                clip.bone_weights = Some(
+                    model
+                        .bones
+                        .iter()
+                        .map(|b| owner.bone_index(&b.name).map_or(0.0, |oi| ws[oi]))
+                        .collect(),
+                );
             }
             Ok(clip)
         })();
@@ -968,8 +1254,11 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
             let (owner, si) = find(label).with_context(|| format!("grid {label} not found"))?;
             let seq = &owner.sequences[si];
             // Parameter ranges live at paramstart/paramend in the sequence descriptor.
-            let o = i32::from_le_bytes(owner.raw[0xC4..0xC8].try_into().unwrap()) as usize + si * 0xE8;
-            let f = |off: usize| f32::from_le_bytes(owner.raw[o + off..o + off + 4].try_into().unwrap());
+            let o =
+                i32::from_le_bytes(owner.raw[0xC4..0xC8].try_into().unwrap()) as usize + si * 0xE8;
+            let f = |off: usize| {
+                f32::from_le_bytes(owner.raw[o + off..o + off + 4].try_into().unwrap())
+            };
             let mut ids = Vec::new();
             for &ai in &seq.anims {
                 ids.push(clips.len());
@@ -1012,31 +1301,75 @@ fn template_data(gd: &GameData, spec: &ActorSpec, prep: &Cache) -> Result<Templa
     // thread (`build_template`).
     let mut mesh_data = model.meshes(spec.body)?;
     hide_behind_screen(&model, &mut mesh_data, spec.sequences.first().copied());
-    let mds: Vec<std::sync::Mutex<Option<tf_assets::mdl::MeshData>>> = mesh_data.into_iter().map(|m| std::sync::Mutex::new(Some(m))).collect();
+    let mds: Vec<std::sync::Mutex<Option<tf_assets::mdl::MeshData>>> = mesh_data
+        .into_iter()
+        .map(|m| std::sync::Mutex::new(Some(m)))
+        .collect();
     let built = crate::world::parallel_map(&mds, |slot| {
         let md = slot.lock().ok()?.take()?;
-        let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+        let tex = model
+            .skin_families
+            .first()
+            .and_then(|f| f.get(md.material))
+            .copied()
+            .unwrap_or(0) as usize;
         let mat_name = model.textures.get(tex).cloned().unwrap_or_default();
         // The cockpit's main screen shows a camera feed in the game; leave it out so the
         // world is visible through it.
         // TF_HIDE=substr also leaves out animated models' materials (debugging).
-        let hidden = std::env::var("TF_HIDE").is_ok_and(|h| !h.is_empty() && mat_name.to_ascii_lowercase().contains(&h.to_ascii_lowercase()));
-        if hidden || mat_name.contains("debugempty") || mat_name.to_ascii_lowercase().contains("_int_screen") {
+        let hidden = std::env::var("TF_HIDE").is_ok_and(|h| {
+            !h.is_empty()
+                && mat_name
+                    .to_ascii_lowercase()
+                    .contains(&h.to_ascii_lowercase())
+        });
+        if hidden
+            || mat_name.contains("debugempty")
+            || mat_name.to_ascii_lowercase().contains("_int_screen")
+        {
             return None;
         }
         // The material's textures decode here too (the main thread only adds them).
         convert::prefetch_material(gd, prep, &mat_name, false);
         let n = md.indices.len() / 3;
         let part = md.bodypart;
-        Some((mat_name, n, part, convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, Some((md.joints, md.weights)))))
+        Some((
+            mat_name,
+            n,
+            part,
+            convert::build_mesh(
+                md.positions,
+                md.normals,
+                md.uvs,
+                md.indices,
+                Some((md.joints, md.weights)),
+            ),
+        ))
     });
     let parts: Vec<(String, usize, usize, Mesh)> = built.into_iter().flatten().flatten().collect();
     let bones = model
         .bones
         .iter()
-        .map(|b| (b.name.clone(), b.parent, Vec3::from(b.pos), Quat::from_array(b.quat).normalize()))
+        .map(|b| {
+            (
+                b.name.clone(),
+                b.parent,
+                Vec3::from(b.pos),
+                Quat::from_array(b.quat).normalize(),
+            )
+        })
         .collect();
-    Ok(TemplateData { bones, clips, by_name, grids, inverse, parts, includes: includes.len(), bone_count: model.bones.len(), took: (t.elapsed(), t_parse, t_anim - t_parse) })
+    Ok(TemplateData {
+        bones,
+        clips,
+        by_name,
+        grids,
+        inverse,
+        parts,
+        includes: includes.len(),
+        bone_count: model.bones.len(),
+        took: (t.elapsed(), t_parse, t_anim - t_parse),
+    })
 }
 
 /// The last pose evaluated for each actor, with the inputs it came from ([`Actor::pose_key`]).
@@ -1046,7 +1379,12 @@ pub struct PoseCache {
     poses: HashMap<Entity, (Vec<u32>, Pose, u64)>,
 }
 
-pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, mut transforms: Query<&mut Transform>, mut cache: Local<PoseCache>) {
+pub fn animate_actors(
+    time: Res<Time>,
+    mut actors: Query<(Entity, &mut Actor)>,
+    mut transforms: Query<&mut Transform>,
+    mut cache: Local<PoseCache>,
+) {
     let dt = time.delta_secs();
     cache.frame += 1;
     let frame = cache.frame;
@@ -1057,7 +1395,11 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, 
             continue;
         }
         if actor.autoplay {
-            let durations: Vec<f32> = actor.layers.iter().map(|l| actor.clips[l.clip].duration).collect();
+            let durations: Vec<f32> = actor
+                .layers
+                .iter()
+                .map(|l| actor.clips[l.clip].duration)
+                .collect();
             for (l, d) in actor.layers.iter_mut().zip(durations) {
                 l.cycle = (l.cycle + dt / d.max(1e-3)).rem_euclid(1.0);
             }
@@ -1067,7 +1409,10 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, 
         // written when they move, so still ones don't mark their transforms changed (which
         // sends them through transform propagation and the skinning upload again).
         let key = actor.pose_key();
-        let entry = cache.poses.entry(e).or_insert_with(|| (Vec::new(), Pose::new(), 0));
+        let entry = cache
+            .poses
+            .entry(e)
+            .or_insert_with(|| (Vec::new(), Pose::new(), 0));
         entry.2 = frame;
         if entry.0 != key {
             entry.0 = key;
@@ -1078,7 +1423,10 @@ pub fn animate_actors(time: Res<Time>, mut actors: Query<(Entity, &mut Actor)>, 
     }
     // The new poses, each from its own actor alone, on every core. (Every actor has joints of
     // its own, so writing them after the cached ones gives the same transforms.)
-    let refs: Vec<&Actor> = changed.iter().filter_map(|&e| actors.get(e).ok().map(|(_, a)| a)).collect();
+    let refs: Vec<&Actor> = changed
+        .iter()
+        .filter_map(|&e| actors.get(e).ok().map(|(_, a)| a))
+        .collect();
     let poses: Vec<Pose> = if refs.len() > 1 {
         bevy::tasks::ComputeTaskPool::get().scope(|s| {
             for a in &refs {
@@ -1143,7 +1491,11 @@ pub fn actor_event_sounds(mut commands: Commands, mut actors: Query<&mut Actor>)
             }
         }
         for &(clip, cur) in &seen {
-            let prev = actor.last_cycles.iter().find(|(c, _)| *c == clip).map(|(_, p)| *p);
+            let prev = actor
+                .last_cycles
+                .iter()
+                .find(|(c, _)| *c == clip)
+                .map(|(_, p)| *p);
             let from = match prev {
                 Some(p) if cur > p => p,
                 Some(p) if cur < p => -1.0, // restarted or looped
@@ -1153,9 +1505,19 @@ pub fn actor_event_sounds(mut commands: Commands, mut actors: Query<&mut Actor>)
             };
             let passed = |at: f32| at > from && at <= cur;
             let c = &actor.clips[clip];
-            let mut names: Vec<String> = c.sounds.iter().filter(|(at, _)| passed(*at)).map(|(_, n)| n.clone()).collect();
+            let mut names: Vec<String> = c
+                .sounds
+                .iter()
+                .filter(|(at, _)| passed(*at))
+                .map(|(_, n)| n.clone())
+                .collect();
             if let Some(t) = actor.sound_type {
-                names.extend(c.typed_sounds.iter().filter(|(at, _)| passed(*at)).map(|(_, n)| format!("{t}_{n}")));
+                names.extend(
+                    c.typed_sounds
+                        .iter()
+                        .filter(|(at, _)| passed(*at))
+                        .map(|(_, n)| format!("{t}_{n}")),
+                );
             }
             for name in names {
                 match actor.sound_at {
@@ -1170,29 +1532,57 @@ pub fn actor_event_sounds(mut commands: Commands, mut actors: Query<&mut Actor>)
 
 pub fn bone_merge(
     mut commands: Commands,
-    followers: Query<(Entity, &Actor, Option<&BoneMerge>, Option<&BoneMergeSplit>), With<BoneMergeTo>>,
+    followers: Query<
+        (Entity, &Actor, Option<&BoneMerge>, Option<&BoneMergeSplit>),
+        With<BoneMergeTo>,
+    >,
     leaders: Query<&Actor, Without<BoneMergeTo>>,
     targets: Query<&BoneMergeTo>,
     mut transforms: Query<&mut Transform>,
 ) {
     for (e, actor, merge, split) in &followers {
         let Ok(target) = targets.get(e) else { continue };
-        let Ok(leader) = leaders.get(target.0) else { continue };
+        let Ok(leader) = leaders.get(target.0) else {
+            continue;
+        };
         let Some(merge) = merge else {
             // Build the bone map once both actors exist.
-            let map = actor.bone_names.iter().map(|n| leader.bone_names.iter().position(|l| l.eq_ignore_ascii_case(n))).collect();
+            let map = actor
+                .bone_names
+                .iter()
+                .map(|n| {
+                    leader
+                        .bone_names
+                        .iter()
+                        .position(|l| l.eq_ignore_ascii_case(n))
+                })
+                .collect();
             commands.entity(e).insert(BoneMerge { map });
             continue;
         };
         // A split hands the bones from `root` down to a second leader, matched by name.
-        let second = split.and_then(|sp| Some((sp, leaders.get(sp.leader).ok()?, actor.bone_names.iter().position(|n| n.eq_ignore_ascii_case(sp.root))?)));
+        let second = split.and_then(|sp| {
+            Some((
+                sp,
+                leaders.get(sp.leader).ok()?,
+                actor
+                    .bone_names
+                    .iter()
+                    .position(|n| n.eq_ignore_ascii_case(sp.root))?,
+            ))
+        });
         for (i, &j) in actor.joints.iter().enumerate() {
             let other = second.as_ref().and_then(|(_, l2, root)| {
                 let mut b = i as i32;
                 while b >= 0 && b as usize != *root {
                     b = actor.parents[b as usize];
                 }
-                (b >= 0).then(|| l2.bone_names.iter().position(|n| n.eq_ignore_ascii_case(&actor.bone_names[i])).map(|k| l2.joints[k]))?
+                (b >= 0).then(|| {
+                    l2.bone_names
+                        .iter()
+                        .position(|n| n.eq_ignore_ascii_case(&actor.bone_names[i]))
+                        .map(|k| l2.joints[k])
+                })?
             });
             let src_joint = match other {
                 Some(k) => k,
@@ -1201,7 +1591,9 @@ pub fn bone_merge(
                     leader.joints[li]
                 }
             };
-            let Ok(src) = transforms.get(src_joint).copied() else { continue };
+            let Ok(src) = transforms.get(src_joint).copied() else {
+                continue;
+            };
             if let Ok(mut dst) = transforms.get_mut(j) {
                 *dst = src;
             }
@@ -1224,22 +1616,55 @@ pub struct BoneMergeSplit {
 /// The cockpit's main screen is left out (see `spawn_actor`), which would show the parts of the
 /// cockpit it covers in the game: drop the triangles that lie behind it (or on it) seen from
 /// the camera bone in the first frame of `sequence`.
-fn hide_behind_screen(model: &tf_assets::mdl::Model, meshes: &mut [tf_assets::mdl::MeshData], sequence: Option<&str>) {
+fn hide_behind_screen(
+    model: &tf_assets::mdl::Model,
+    meshes: &mut [tf_assets::mdl::MeshData],
+    sequence: Option<&str>,
+) {
     let mat = |md: &tf_assets::mdl::MeshData| {
-        let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+        let tex = model
+            .skin_families
+            .first()
+            .and_then(|f| f.get(md.material))
+            .copied()
+            .unwrap_or(0) as usize;
         model.textures.get(tex).cloned().unwrap_or_default()
     };
     let mats: Vec<String> = meshes.iter().map(mat).collect();
-    if !mats.iter().any(|m| m.to_ascii_lowercase().contains("_int_screen")) {
+    if !mats
+        .iter()
+        .any(|m| m.to_ascii_lowercase().contains("_int_screen"))
+    {
         return;
     }
-    let Some(cam) = model.bone_index("jx_c_camera") else { return };
-    let Some(seq) = sequence.and_then(|n| model.sequences.iter().find(|s| s.label.eq_ignore_ascii_case(n))) else { return };
-    let Some(pose) = seq.anims.first().and_then(|&a| tf_assets::mdl::screen_cull::pose(model, a).ok()) else { return };
+    let Some(cam) = model.bone_index("jx_c_camera") else {
+        return;
+    };
+    let Some(seq) = sequence.and_then(|n| {
+        model
+            .sequences
+            .iter()
+            .find(|s| s.label.eq_ignore_ascii_case(n))
+    }) else {
+        return;
+    };
+    let Some(pose) = seq
+        .anims
+        .first()
+        .and_then(|&a| tf_assets::mdl::screen_cull::pose(model, a).ok())
+    else {
+        return;
+    };
     let hidden = tf_assets::mdl::screen_cull::hidden_triangles(model, meshes, &mats, &pose, cam);
     let mut n = 0;
     for (md, hid) in meshes.iter_mut().zip(&hidden) {
-        let kept: Vec<u32> = md.indices.chunks_exact(3).zip(hid).filter(|(_, &h)| !h).flat_map(|(t, _)| t.iter().copied()).collect();
+        let kept: Vec<u32> = md
+            .indices
+            .chunks_exact(3)
+            .zip(hid)
+            .filter(|(_, &h)| !h)
+            .flat_map(|(t, _)| t.iter().copied())
+            .collect();
         n += (md.indices.len() - kept.len()) / 3;
         md.indices = kept;
     }

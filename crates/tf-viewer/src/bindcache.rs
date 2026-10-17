@@ -9,7 +9,10 @@
 //! rebuild it when those are the same. Any lightmap allocation or removal, or morph targets,
 //! fall back to Bevy's rebuild. `TF_NO_BIND_CACHE=1` turns it off.
 
-use bevy::pbr::{prepare_mesh_bind_groups, Lightmap, MeshBindGroups, MeshInputUniform, MeshUniform, MorphUniforms, SkinUniforms};
+use bevy::pbr::{
+    prepare_mesh_bind_groups, Lightmap, MeshBindGroups, MeshInputUniform, MeshUniform,
+    MorphUniforms, SkinUniforms,
+};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::batching::gpu_preprocessing::BatchedInstanceBuffers;
@@ -25,9 +28,15 @@ impl Plugin for MeshBindCachePlugin {
         if std::env::var_os("TF_NO_BIND_CACHE").is_some() {
             return;
         }
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
         // Bevy's system again, behind a run condition (a system's own set can't take one).
-        if let Err(e) = render_app.remove_systems_in_set(Render, prepare_mesh_bind_groups, bevy::ecs::schedule::ScheduleCleanupPolicy::RemoveSystemsOnly) {
+        if let Err(e) = render_app.remove_systems_in_set(
+            Render,
+            prepare_mesh_bind_groups,
+            bevy::ecs::schedule::ScheduleCleanupPolicy::RemoveSystemsOnly,
+        ) {
             log::warn!("mesh bind group cache off: {e:?}");
             return;
         }
@@ -38,11 +47,20 @@ impl Plugin for MeshBindCachePlugin {
                 Render,
                 reserve_instance_buffers
                     .in_set(RenderSystems::PrepareResourcesFlush)
-                    .before(bevy::render::batching::gpu_preprocessing::write_batched_instance_buffers::<bevy::pbr::MeshPipeline>),
+                    .before(
+                        bevy::render::batching::gpu_preprocessing::write_batched_instance_buffers::<
+                            bevy::pbr::MeshPipeline,
+                        >,
+                    ),
             )
             .add_systems(
                 Render,
-                (restore, prepare_mesh_bind_groups.run_if(|c: Res<BindCache>| !c.reused)).chain().in_set(RenderSystems::PrepareBindGroups),
+                (
+                    restore,
+                    prepare_mesh_bind_groups.run_if(|c: Res<BindCache>| !c.reused),
+                )
+                    .chain()
+                    .in_set(RenderSystems::PrepareBindGroups),
             );
     }
 }
@@ -75,7 +93,15 @@ struct BindCache {
 /// visible, and loses it when the `Lightmap` goes. Either changes a slab's bind group.
 fn watch_lightmaps(
     mut cache: ResMut<BindCache>,
-    changed: Extract<Query<(Entity, &ViewVisibility), (With<Lightmap>, Or<(Changed<ViewVisibility>, Changed<Lightmap>)>)>>,
+    changed: Extract<
+        Query<
+            (Entity, &ViewVisibility),
+            (
+                With<Lightmap>,
+                Or<(Changed<ViewVisibility>, Changed<Lightmap>)>,
+            ),
+        >,
+    >,
     mut removed: Extract<RemovedComponents<Lightmap>>,
 ) {
     let cache = cache.as_mut();
@@ -89,7 +115,10 @@ fn watch_lightmaps(
         touched |= cache.lit.remove(&e);
     }
     if touched {
-        log::debug!("mesh bind groups: lightmap slots changed ({} lit)", cache.lit.len());
+        log::debug!(
+            "mesh bind groups: lightmap slots changed ({} lit)",
+            cache.lit.len()
+        );
         // Bevy fills a slot once its image is on the GPU (normally the same frame).
         cache.dirty = 3;
     }
@@ -98,13 +127,21 @@ fn watch_lightmaps(
 /// Grow the per-phase instance buffers with headroom. Bevy sizes them to exactly this frame's
 /// instance count, so walking into a view with one more mesh than ever before made a new buffer,
 /// and with it a full rebuild of the mesh bind groups (a 5 ms frame), many times a minute.
-fn reserve_instance_buffers(device: Res<bevy::render::renderer::RenderDevice>, buffers: Option<ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>>) {
+fn reserve_instance_buffers(
+    device: Res<bevy::render::renderer::RenderDevice>,
+    buffers: Option<ResMut<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>>,
+) {
     let Some(mut buffers) = buffers else { return };
     for phase in buffers.phase_instance_buffers.values_mut() {
         let len = phase.data_buffer.len();
-        let capacity = phase.data_buffer.buffer().map_or(0, |b| b.size() as usize / size_of::<MeshUniform>());
+        let capacity = phase
+            .data_buffer
+            .buffer()
+            .map_or(0, |b| b.size() as usize / size_of::<MeshUniform>());
         if len > capacity {
-            phase.data_buffer.reserve((len + len / 2).max(1024), &device);
+            phase
+                .data_buffer
+                .reserve((len + len / 2).max(1024), &device);
         }
     }
 }
@@ -113,7 +150,8 @@ fn restore(world: &mut World) {
     let key = {
         let skins = world.resource::<SkinUniforms>();
         let morphs = world.resource::<MorphUniforms>();
-        let instances = world.get_resource::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>();
+        let instances =
+            world.get_resource::<BatchedInstanceBuffers<MeshUniform, MeshInputUniform>>();
         match instances {
             Some(instances) if morphs.current_buffer.buffer().is_none() => {
                 let mut phases: Vec<_> = instances
@@ -122,7 +160,10 @@ fn restore(world: &mut World) {
                     .filter_map(|(t, b)| Some((*t, b.data_buffer.buffer()?.id())))
                     .collect();
                 phases.sort_unstable_by_key(|(t, _)| *t);
-                Some(Key { skin: (skins.current_buffer.id(), skins.prev_buffer.id()), phases })
+                Some(Key {
+                    skin: (skins.current_buffer.id(), skins.prev_buffer.id()),
+                    phases,
+                })
             }
             _ => None,
         }
@@ -134,7 +175,11 @@ fn restore(world: &mut World) {
         cache.stats.1 += 1;
     }
     if cache.stats.0 + cache.stats.1 >= 600 {
-        log::debug!("mesh bind groups: {} frames reused, {} rebuilt", cache.stats.0, cache.stats.1);
+        log::debug!(
+            "mesh bind groups: {} frames reused, {} rebuilt",
+            cache.stats.0,
+            cache.stats.1
+        );
         cache.stats = (0, 0);
     }
     cache.reused = false;
@@ -151,7 +196,11 @@ fn restore(world: &mut World) {
     }
     let previous = cache.current.take();
     if cache.spare.as_ref().is_none_or(|(k, _)| *k != key) {
-        log::debug!("mesh bind groups: new buffers (skin {}, phases {})", previous.as_ref().is_some_and(|p| p.skin != key.skin), previous.as_ref().is_some_and(|p| p.phases != key.phases));
+        log::debug!(
+            "mesh bind groups: new buffers (skin {}, phases {})",
+            previous.as_ref().is_some_and(|p| p.skin != key.skin),
+            previous.as_ref().is_some_and(|p| p.phases != key.phases)
+        );
     }
     let spare = cache.spare.take_if(|(k, _)| *k == key);
     let reused = spare.is_some();

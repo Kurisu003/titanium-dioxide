@@ -12,13 +12,19 @@ fn main() -> anyhow::Result<()> {
         let mut bins: std::collections::BTreeMap<i32, (usize, f32, f32)> = Default::default();
         for p in &md.positions {
             let r = (p[0] * p[0] + p[1] * p[1]).sqrt();
-            let e = bins.entry((p[2] * 2.0).floor() as i32).or_insert((0, f32::MAX, 0.0));
+            let e = bins
+                .entry((p[2] * 2.0).floor() as i32)
+                .or_insert((0, f32::MAX, 0.0));
             e.0 += 1;
             e.1 = e.1.min(r);
             e.2 = e.2.max(r);
         }
         for (z, (n, lo, hi)) in bins {
-            println!("  z {:5.1}..{:5.1}: {n:5} verts, radius {lo:.2}..{hi:.2}", z as f32 / 2.0, z as f32 / 2.0 + 0.5);
+            println!(
+                "  z {:5.1}..{:5.1}: {n:5} verts, radius {lo:.2}..{hi:.2}",
+                z as f32 / 2.0,
+                z as f32 / 2.0 + 0.5
+            );
         }
     }
     Ok(())

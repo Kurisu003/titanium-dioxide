@@ -197,9 +197,19 @@ fn vec3_at(b: &[u8], o: usize) -> [f32; 3] {
 /// polygon: a big square on the plane clipped by every other plane.
 pub(crate) fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec<[f32; 3]> {
     let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
     let (n, d) = planes[i];
-    let up = if n[2].abs() < 0.9 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+    let up = if n[2].abs() < 0.9 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
     let u = cross(n, up);
     let ul = dot(u, u).sqrt();
     let u = u.map(|x| x / ul);
@@ -207,7 +217,13 @@ pub(crate) fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec
     let c = n.map(|x| x * d);
     // Larger than the brush (`size` reaches from its centre past every corner).
     let r = size * 2.0;
-    let at = |a: f32, b: f32| [c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b, c[2] + u[2] * a + v[2] * b];
+    let at = |a: f32, b: f32| {
+        [
+            c[0] + u[0] * a + v[0] * b,
+            c[1] + u[1] * a + v[1] * b,
+            c[2] + u[2] * a + v[2] * b,
+        ]
+    };
     let mut poly = vec![at(-r, -r), at(r, -r), at(r, r), at(-r, r)];
     for (j, &(m, e)) in planes.iter().enumerate() {
         if j == i || poly.is_empty() {
@@ -229,7 +245,11 @@ pub(crate) fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec
             }
             if (dp < 0.0) != (dq < 0.0) && dp != dq {
                 let t = dp / (dp - dq);
-                out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t]);
+                out.push([
+                    p[0] + (q[0] - p[0]) * t,
+                    p[1] + (q[1] - p[1]) * t,
+                    p[2] + (q[2] - p[2]) * t,
+                ]);
             }
         }
         poly = out;
@@ -240,7 +260,11 @@ pub(crate) fn brush_face(planes: &[([f32; 3], f32)], i: usize, size: f32) -> Vec
 impl Bsp {
     /// Parse a map. `read_external(i)` is asked for lump `i`'s `<name>.bsp.XXXX.bsp_lump` file
     /// when the lump is not stored inline; lumps are read in parallel.
-    pub fn parse(name: &str, data: &[u8], read_external: impl Fn(usize) -> Option<Vec<u8>> + Sync) -> Result<Self> {
+    pub fn parse(
+        name: &str,
+        data: &[u8],
+        read_external: impl Fn(usize) -> Option<Vec<u8>> + Sync,
+    ) -> Result<Self> {
         if data.len() < 16 + NUM_LUMPS * 16 || &data[0..4] != b"rBSP" {
             bail!("{name} is not a Respawn BSP");
         }
@@ -251,7 +275,11 @@ impl Bsp {
         let mut headers = [LumpHeader::default(); NUM_LUMPS];
         for (i, h) in headers.iter_mut().enumerate() {
             let o = 16 + i * 16;
-            *h = LumpHeader { offset: u32_at(data, o), length: u32_at(data, o + 4), version: u32_at(data, o + 8) };
+            *h = LumpHeader {
+                offset: u32_at(data, o),
+                length: u32_at(data, o + 4),
+                version: u32_at(data, o + 8),
+            };
         }
         let lumps: Vec<Vec<u8>> = std::thread::scope(|scope| {
             let jobs: Vec<_> = headers
@@ -261,12 +289,25 @@ impl Bsp {
                     let (s, e) = (h.offset as usize, h.offset as usize + h.length as usize);
                     let inline = h.length > 0 && e <= data.len();
                     let read = &read_external;
-                    scope.spawn(move || if inline { data[s..e].to_vec() } else { read(i).unwrap_or_default() })
+                    scope.spawn(move || {
+                        if inline {
+                            data[s..e].to_vec()
+                        } else {
+                            read(i).unwrap_or_default()
+                        }
+                    })
                 })
                 .collect();
-            jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+            jobs.into_iter()
+                .map(|j| j.join().unwrap_or_default())
+                .collect()
         });
-        Ok(Self { name: name.to_string(), version, headers, lumps })
+        Ok(Self {
+            name: name.to_string(),
+            version,
+            headers,
+            lumps,
+        })
     }
 
     /// The bytes of lump `i` (see [`lump`]).
@@ -301,7 +342,12 @@ impl Bsp {
         (0..b.len() / 12)
             .map(|i| {
                 let o = i * 12;
-                MaterialSort { texture_data: i16_at(b, o), lightmap: i16_at(b, o + 2), cubemap: i16_at(b, o + 4), vertex_offset: i32_at(b, o + 8) }
+                MaterialSort {
+                    texture_data: i16_at(b, o),
+                    lightmap: i16_at(b, o + 2),
+                    cubemap: i16_at(b, o + 4),
+                    vertex_offset: i32_at(b, o + 8),
+                }
             })
             .collect()
     }
@@ -315,7 +361,11 @@ impl Bsp {
             .map(|i| {
                 let o = i * 36;
                 let name_index = i32_at(b, o + 12) as usize;
-                let so = if name_index * 4 + 4 <= table.len() { i32_at(table, name_index * 4) as usize } else { usize::MAX };
+                let so = if name_index * 4 + 4 <= table.len() {
+                    i32_at(table, name_index * 4) as usize
+                } else {
+                    usize::MAX
+                };
                 let name = if so < strings.len() {
                     let end = strings[so..].iter().position(|&c| c == 0).unwrap_or(0);
                     String::from_utf8_lossy(&strings[so..so + end]).to_string()
@@ -354,7 +404,11 @@ impl Bsp {
     /// Layouts from bsp_tool (branches/respawn/titanfall.py); a primitive is
     /// type << 24 | index << 8 | unique contents index.
     pub fn collision_shapes(&self) -> Vec<CollisionShape> {
-        let uc: Vec<u32> = self.lump(lump::CM_UNIQUE_CONTENTS).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        let uc: Vec<u32> = self
+            .lump(lump::CM_UNIQUE_CONTENTS)
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
         let verts = self.lump(lump::VERTICES);
         let hdr = self.lump(lump::TRICOLL_HEADERS);
         let tris = self.lump(lump::TRICOLL_TRIANGLES);
@@ -363,9 +417,17 @@ impl Bsp {
         let planes = self.lump(lump::PLANES);
         let grid = self.lump(lump::CM_GRID);
         // CMGrid: scale, offset[2], count[2], num_straddle_groups, first_brush_plane.
-        let first_plane = if grid.len() >= 28 { i32_at(grid, 24).max(0) as usize } else { 0 };
+        let first_plane = if grid.len() >= 28 {
+            i32_at(grid, 24).max(0) as usize
+        } else {
+            0
+        };
         let mut out = Vec::new();
-        for p in self.lump(lump::CM_PRIMITIVES).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())) {
+        for p in self
+            .lump(lump::CM_PRIMITIVES)
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        {
             let (kind, index) = (p >> 24, ((p >> 8) & 0xffff) as usize);
             let contents = uc.get((p & 0xff) as usize).copied().unwrap_or(0);
             match kind {
@@ -378,15 +440,35 @@ impl Bsp {
                     if o + 44 > hdr.len() {
                         continue;
                     }
-                    let (texture_data, num_verts, num_tris) = (i16_at(hdr, o + 4), i16_at(hdr, o + 6).max(0) as usize, i16_at(hdr, o + 8).max(0) as usize);
-                    let (first_vert, first_tri) = (i32_at(hdr, o + 12).max(0) as usize, i32_at(hdr, o + 16).max(0) as usize);
-                    let vert = |i: usize| (i < num_verts && (first_vert + i + 1) * 12 <= verts.len()).then(|| vec3_at(verts, (first_vert + i) * 12));
-                    let mut shape = CollisionShape { texture_data, contents, tris: Vec::with_capacity(num_tris) };
+                    let (texture_data, num_verts, num_tris) = (
+                        i16_at(hdr, o + 4),
+                        i16_at(hdr, o + 6).max(0) as usize,
+                        i16_at(hdr, o + 8).max(0) as usize,
+                    );
+                    let (first_vert, first_tri) = (
+                        i32_at(hdr, o + 12).max(0) as usize,
+                        i32_at(hdr, o + 16).max(0) as usize,
+                    );
+                    let vert = |i: usize| {
+                        (i < num_verts && (first_vert + i + 1) * 12 <= verts.len())
+                            .then(|| vec3_at(verts, (first_vert + i) * 12))
+                    };
+                    let mut shape = CollisionShape {
+                        texture_data,
+                        contents,
+                        tris: Vec::with_capacity(num_tris),
+                    };
                     for t in 0..num_tris {
-                        let Some(v) = tris.get((first_tri + t) * 4..(first_tri + t) * 4 + 4) else { break };
+                        let Some(v) = tris.get((first_tri + t) * 4..(first_tri + t) * 4 + 4) else {
+                            break;
+                        };
                         let v = u32::from_le_bytes(v.try_into().unwrap()) as usize;
                         let a = v & 0x3ff;
-                        if let (Some(pa), Some(pb), Some(pc)) = (vert(a), vert(a + ((v >> 10) & 0x7f)), vert(a + ((v >> 17) & 0x7f))) {
+                        if let (Some(pa), Some(pb), Some(pc)) = (
+                            vert(a),
+                            vert(a + ((v >> 10) & 0x7f)),
+                            vert(a + ((v >> 17) & 0x7f)),
+                        ) {
                             shape.tris.push([pa, pb, pc]);
                         }
                     }
@@ -413,13 +495,20 @@ impl Bsp {
                         ([0.0, 0.0, -1.0], -(org[2] - ext[2])),
                     ];
                     for k in side..side + n_planes {
-                        let Some(off) = offsets.get(k * 2..k * 2 + 2) else { break };
-                        let pi = first_plane + k - (u16::from_le_bytes(off.try_into().unwrap()) as usize).min(k);
+                        let Some(off) = offsets.get(k * 2..k * 2 + 2) else {
+                            break;
+                        };
+                        let pi = first_plane + k
+                            - (u16::from_le_bytes(off.try_into().unwrap()) as usize).min(k);
                         if (pi + 1) * 16 <= planes.len() {
                             sides.push((vec3_at(planes, pi * 16), f32_at(planes, pi * 16 + 12)));
                         }
                     }
-                    let mut shape = CollisionShape { texture_data: -1, contents, tris: Vec::new() };
+                    let mut shape = CollisionShape {
+                        texture_data: -1,
+                        contents,
+                        tris: Vec::new(),
+                    };
                     let size = (ext[0] * ext[0] + ext[1] * ext[1] + ext[2] * ext[2]).sqrt() + 1.0;
                     // Clip about the brush centre (small numbers keep the clip precise).
                     for s in sides.iter_mut() {
@@ -431,8 +520,15 @@ impl Bsp {
                         for k in 1..face.len().saturating_sub(1) {
                             let (p, q, r) = (face[0], face[k], face[k + 1]);
                             // Bevel planes only touch the brush along an edge: no area.
-                            let (u, v) = ([q[0] - p[0], q[1] - p[1], q[2] - p[2]], [r[0] - p[0], r[1] - p[1], r[2] - p[2]]);
-                            let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                            let (u, v) = (
+                                [q[0] - p[0], q[1] - p[1], q[2] - p[2]],
+                                [r[0] - p[0], r[1] - p[1], r[2] - p[2]],
+                            );
+                            let n = [
+                                u[1] * v[2] - u[2] * v[1],
+                                u[2] * v[0] - u[0] * v[2],
+                                u[0] * v[1] - u[1] * v[0],
+                            ];
                             if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-2 {
                                 shape.tris.push([at(p), at(q), at(r)]);
                             }
@@ -450,19 +546,31 @@ impl Bsp {
     /// bits as engine.dll's handler 0x1801288e0 reads it), with their CM_UNIQUE_CONTENTS
     /// flags, by static prop index. Props not listed are never traced, whatever their `solid`.
     pub fn static_prop_contents(&self) -> std::collections::HashMap<usize, u32> {
-        let uc: Vec<u32> = self.lump(lump::CM_UNIQUE_CONTENTS).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        let uc: Vec<u32> = self
+            .lump(lump::CM_UNIQUE_CONTENTS)
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
         self.lump(lump::CM_PRIMITIVES)
             .chunks_exact(4)
             .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
             .filter(|p| p >> 29 == 3)
-            .map(|p| (((p >> 8) & 0x1f_ffff) as usize, uc.get((p & 0xff) as usize).copied().unwrap_or(0)))
+            .map(|p| {
+                (
+                    ((p >> 8) & 0x1f_ffff) as usize,
+                    uc.get((p & 0xff) as usize).copied().unwrap_or(0),
+                )
+            })
             .collect()
     }
 
     /// MESH_INDICES: per mesh triangle corner, a vertex index relative to its material sort's
     /// `vertex_offset`.
     pub fn mesh_indices(&self) -> Vec<u16> {
-        self.lump(lump::MESH_INDICES).chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+        self.lump(lump::MESH_INDICES)
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect()
     }
 
     /// Resolve vertex `index` of the vertex lump selected by mesh `flags`.
@@ -483,12 +591,23 @@ impl Bsp {
         let verts = self.lump(lump::VERTICES);
         let norms = self.lump(lump::VERTEX_NORMALS);
         Some(Vertex {
-            pos: if pi * 12 + 12 <= verts.len() { vec3_at(verts, pi * 12) } else { [0.0; 3] },
-            normal: if ni * 12 + 12 <= norms.len() { vec3_at(norms, ni * 12) } else { [0.0, 0.0, 1.0] },
+            pos: if pi * 12 + 12 <= verts.len() {
+                vec3_at(verts, pi * 12)
+            } else {
+                [0.0; 3]
+            },
+            normal: if ni * 12 + 12 <= norms.len() {
+                vec3_at(norms, ni * 12)
+            } else {
+                [0.0, 0.0, 1.0]
+            },
             uv: [f32_at(b, o + 8), f32_at(b, o + 12)],
             color: b[o + 16..o + 20].try_into().unwrap(),
-            lightmap_uv: matches!(flags & mesh_flags::VERTEX_MASK, mesh_flags::VERTEX_LIT_FLAT | mesh_flags::VERTEX_LIT_BUMP)
-                .then(|| [f32_at(b, o + 20), f32_at(b, o + 24)]),
+            lightmap_uv: matches!(
+                flags & mesh_flags::VERTEX_MASK,
+                mesh_flags::VERTEX_LIT_FLAT | mesh_flags::VERTEX_LIT_BUMP
+            )
+            .then(|| [f32_at(b, o + 20), f32_at(b, o + 24)]),
         })
     }
 
@@ -504,7 +623,12 @@ impl Bsp {
             if o + 2 * n > sky.len() {
                 break;
             }
-            out.push(LightmapPage { width: w as u32, height: hh as u32, sky_a: sky[o..o + n].to_vec(), sky_b: sky[o + n..o + 2 * n].to_vec() });
+            out.push(LightmapPage {
+                width: w as u32,
+                height: hh as u32,
+                sky_a: sky[o..o + n].to_vec(),
+                sky_b: sky[o + n..o + 2 * n].to_vec(),
+            });
             o += 2 * n;
         }
         out
@@ -516,7 +640,13 @@ impl Bsp {
     pub fn light_probes(&self) -> Vec<[[i16; 4]; 3]> {
         self.lump(lump::LIGHTPROBES)
             .chunks_exact(48)
-            .map(|c| std::array::from_fn(|ch| std::array::from_fn(|k| i16::from_le_bytes([c[ch * 8 + k * 2], c[ch * 8 + k * 2 + 1]]))))
+            .map(|c| {
+                std::array::from_fn(|ch| {
+                    std::array::from_fn(|k| {
+                        i16::from_le_bytes([c[ch * 8 + k * 2], c[ch * 8 + k * 2 + 1]])
+                    })
+                })
+            })
             .collect()
     }
 
@@ -541,7 +671,11 @@ impl Bsp {
             .chunks_exact(112)
             .map(|c| {
                 let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
-                (i32::from_le_bytes([c[52], c[53], c[54], c[55]]), [f(0), f(4), f(8)], [f(12), f(16), f(20)])
+                (
+                    i32::from_le_bytes([c[52], c[53], c[54], c[55]]),
+                    [f(0), f(4), f(8)],
+                    [f(12), f(16), f(20)],
+                )
             })
             .collect()
     }
@@ -552,7 +686,10 @@ impl Bsp {
             .chunks_exact(20)
             .map(|c| {
                 let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
-                ([f(0), f(4), f(8)], u32::from_le_bytes([c[12], c[13], c[14], c[15]]))
+                (
+                    [f(0), f(4), f(8)],
+                    u32::from_le_bytes([c[12], c[13], c[14], c[15]]),
+                )
             })
             .collect()
     }
@@ -562,7 +699,11 @@ impl Bsp {
     pub fn cubemap_origins(&self) -> Vec<[f32; 3]> {
         self.lump(lump::CUBEMAPS)
             .chunks_exact(16)
-            .map(|c| std::array::from_fn(|k| i32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]]) as f32))
+            .map(|c| {
+                std::array::from_fn(|k| {
+                    i32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]]) as f32
+                })
+            })
             .collect()
     }
 
@@ -575,7 +716,8 @@ impl Bsp {
             let method = u16_(o + 8);
             let size = u32::from_le_bytes([z[o + 18], z[o + 19], z[o + 20], z[o + 21]]) as usize;
             let (n, e) = (u16_(o + 26), u16_(o + 28));
-            let name = String::from_utf8_lossy(&z[o + 30..(o + 30 + n).min(z.len())]).to_ascii_lowercase();
+            let name =
+                String::from_utf8_lossy(&z[o + 30..(o + 30 + n).min(z.len())]).to_ascii_lowercase();
             let data = o + 30 + n + e;
             if method == 0 && name.ends_with(name_suffix) {
                 return z.get(data..data + size);
@@ -587,12 +729,16 @@ impl Bsp {
 
     /// The static prop records as raw 64-byte slices (for inspecting unparsed fields).
     pub fn static_prop_records(&self) -> Result<Vec<Vec<u8>>> {
-        let Some(d) = self.sprp_data()? else { return Ok(Vec::new()) };
+        let Some(d) = self.sprp_data()? else {
+            return Ok(Vec::new());
+        };
         let n_names = u32_at(d, 0) as usize;
         let p = 4 + n_names * 128;
         let n_props = u32_at(d, p) as usize;
         let p = p + 12;
-        Ok((0..n_props).map(|i| d[p + i * 64..p + i * 64 + 64].to_vec()).collect())
+        Ok((0..n_props)
+            .map(|i| d[p + i * 64..p + i * 64 + 64].to_vec())
+            .collect())
     }
 
     /// The `sprp` game lump's data, if the map has one.
@@ -616,15 +762,22 @@ impl Bsp {
             }
             // Game lump offsets are relative to the start of the .bsp file.
             let base = self.headers[lump::GAME_LUMP].offset as usize;
-            let s = fileofs.checked_sub(base).context("game lump offset before lump start")?;
-            return Ok(Some(g.get(s..s + filelen).context("static prop lump out of range")?));
+            let s = fileofs
+                .checked_sub(base)
+                .context("game lump offset before lump start")?;
+            return Ok(Some(
+                g.get(s..s + filelen)
+                    .context("static prop lump out of range")?,
+            ));
         }
         Ok(None)
     }
 
     /// Static props from the `sprp` game lump (version 13).
     pub fn static_props(&self) -> Result<StaticProps> {
-        let Some(d) = self.sprp_data()? else { return Ok(StaticProps::default()) };
+        let Some(d) = self.sprp_data()? else {
+            return Ok(StaticProps::default());
+        };
         let n_names = u32_at(d, 0) as usize;
         let mut p = 4;
         let mut model_names = Vec::with_capacity(n_names);
@@ -711,9 +864,16 @@ mod tests {
         // The bevel through the corner may leave repeated points (no-area triangles, dropped).
         top.dedup_by(|a, b| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4));
         assert_eq!(top.len(), 4, "{top:?}");
-        assert!(top.iter().all(|p| (p[2] - 1.0).abs() < 1e-4 && p[0].abs() <= 1.0001 && p[1].abs() <= 1.0001));
+        assert!(top
+            .iter()
+            .all(|p| (p[2] - 1.0).abs() < 1e-4 && p[0].abs() <= 1.0001 && p[1].abs() <= 1.0001));
         // The bevel's face shrinks to the box edge (no area).
         let bevel = brush_face(&planes, 6, 2.0);
-        assert!(bevel.iter().all(|p| (p[0] - 1.0).abs() < 1e-3 && (p[1] - 1.0).abs() < 1e-3), "{bevel:?}");
+        assert!(
+            bevel
+                .iter()
+                .all(|p| (p[0] - 1.0).abs() < 1e-3 && (p[1] - 1.0).abs() < 1e-3),
+            "{bevel:?}"
+        );
     }
 }

@@ -11,10 +11,30 @@ fn main() -> anyhow::Result<()> {
         .collect();
     for asset in pak.assets.iter().filter(|x| x.kind_str() == "uimg") {
         let at = tf_assets::uimg::load(&pak, asset)?;
-        let named = at.images.iter().filter(|i| names.contains_key(&i.hash)).count();
-        println!("atlas {:016x} texture {:016x} {}x{} images {} named {}", at.guid, at.texture, at.width, at.height, at.images.len(), named);
+        let named = at
+            .images
+            .iter()
+            .filter(|i| names.contains_key(&i.hash))
+            .count();
+        println!(
+            "atlas {:016x} texture {:016x} {}x{} images {} named {}",
+            at.guid,
+            at.texture,
+            at.width,
+            at.height,
+            at.images.len(),
+            named
+        );
         for i in &at.images {
-            println!("  {:08x} {:5} {:5} {:5}x{:<5} {}", i.hash, i.x, i.y, i.w, i.h, names.get(&i.hash).map(String::as_str).unwrap_or("?"));
+            println!(
+                "  {:08x} {:5} {:5} {:5}x{:<5} {}",
+                i.hash,
+                i.x,
+                i.y,
+                i.w,
+                i.h,
+                names.get(&i.hash).map(String::as_str).unwrap_or("?")
+            );
         }
     }
     Ok(())

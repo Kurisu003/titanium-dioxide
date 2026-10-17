@@ -71,7 +71,11 @@ impl Vitals {
 
     /// Fraction for a health bar: undoomed health, or what is left of the doomed health.
     pub fn fraction(&self) -> f32 {
-        let max = if self.doomed.is_some() { self.doomed_health } else { self.max_health };
+        let max = if self.doomed.is_some() {
+            self.doomed_health
+        } else {
+            self.max_health
+        };
         (self.health / max.max(1.0)).clamp(0.0, 1.0)
     }
 
@@ -89,7 +93,10 @@ impl Vitals {
         let absorbed = dmg.min(self.shield);
         self.shield -= absorbed;
         let rest = dmg - absorbed;
-        let mut hit = Hit { dealt: absorbed, ..Hit::default() };
+        let mut hit = Hit {
+            dealt: absorbed,
+            ..Hit::default()
+        };
         if self.health - rest <= DOOMED_MIN_HEALTH {
             hit.dealt += self.health;
             if self.doomed.is_none() && self.doomed_health > 0.0 {
@@ -117,7 +124,8 @@ impl Vitals {
         }
         self.regen_in -= dt;
         if self.regen_in <= 0.0 && self.shield < self.max_shield {
-            self.shield = (self.shield + self.max_shield / SHIELD_REGEN_TIME * dt).min(self.max_shield);
+            self.shield =
+                (self.shield + self.max_shield / SHIELD_REGEN_TIME * dt).min(self.max_shield);
         }
     }
 }
@@ -235,7 +243,15 @@ mod tests {
     use super::*;
 
     fn bt() -> Vitals {
-        Vitals { health: 9000.0, max_health: 9000.0, shield: 1000.0, max_shield: 1000.0, doomed_health: 2500.0, regen_delay: 6.0, ..Default::default() }
+        Vitals {
+            health: 9000.0,
+            max_health: 9000.0,
+            shield: 1000.0,
+            max_shield: 1000.0,
+            doomed_health: 2500.0,
+            regen_delay: 6.0,
+            ..Default::default()
+        }
     }
 
     #[test]

@@ -10,8 +10,19 @@ fn main() -> anyhow::Result<()> {
             body[bpi] = mi;
             let meshes = m.meshes(&body)?;
             for md in meshes.iter().filter(|md| md.bodypart == bpi) {
-                let tex = m.skin_families.first().and_then(|f| f.get(md.material)).map(|&t| m.textures.get(t as usize).cloned().unwrap_or_default()).unwrap_or_default();
-                println!("bodypart {} ({}) model {mi}: mat {} -> {tex} tris {}", bp.name, bpi, md.material, md.indices.len() / 3);
+                let tex = m
+                    .skin_families
+                    .first()
+                    .and_then(|f| f.get(md.material))
+                    .map(|&t| m.textures.get(t as usize).cloned().unwrap_or_default())
+                    .unwrap_or_default();
+                println!(
+                    "bodypart {} ({}) model {mi}: mat {} -> {tex} tris {}",
+                    bp.name,
+                    bpi,
+                    md.material,
+                    md.indices.len() / 3
+                );
             }
         }
     }

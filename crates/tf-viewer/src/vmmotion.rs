@@ -12,7 +12,9 @@ use tf_assets::settings::PlayerSettings;
 
 /// A weapon script value: the `sp_base` block's copy if there is one, else the top level.
 fn val(s: &PlayerSettings, k: &str) -> Option<f32> {
-    s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).and_then(|v| v.trim().parse().ok())
+    s.get(&format!("sp_base.{k}"))
+        .or_else(|| s.get(&format!(".{k}")))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 /// One damped spring per axis (pitch, yaw, roll): `springConstant` and `damping`.
@@ -25,7 +27,10 @@ pub struct SpringAxes {
 impl Default for SpringAxes {
     /// Source's view punch spring (PUNCH_SPRING_CONSTANT 65, PUNCH_DAMPING 9).
     fn default() -> Self {
-        Self { k: Vec3::splat(65.0), c: Vec3::splat(9.0) }
+        Self {
+            k: Vec3::splat(65.0),
+            c: Vec3::splat(9.0),
+        }
     }
 }
 
@@ -39,16 +44,30 @@ impl WeaponSprings {
             log::warn!("scripts/weapons/springs.txt not found; recoil uses Source's punch spring");
             return Self::default();
         };
-        let mut names: Vec<String> = s.values.keys().filter_map(|k| k.split_once('.').map(|(n, _)| n.to_string())).filter(|n| !n.is_empty()).collect();
+        let mut names: Vec<String> = s
+            .values
+            .keys()
+            .filter_map(|k| k.split_once('.').map(|(n, _)| n.to_string()))
+            .filter(|n| !n.is_empty())
+            .collect();
         names.sort();
         names.dedup();
         let mut out = HashMap::new();
         for n in names {
             let axes = |mode: &str| {
-                let g = |axis: &str, what: &str, d: f32| s.f32(&format!("{n}.{mode}_{axis}_{what}"), d);
+                let g =
+                    |axis: &str, what: &str, d: f32| s.f32(&format!("{n}.{mode}_{axis}_{what}"), d);
                 SpringAxes {
-                    k: Vec3::new(g("pitch", "springconstant", 65.0), g("yaw", "springconstant", 65.0), g("roll", "springconstant", 65.0)),
-                    c: Vec3::new(g("pitch", "damping", 9.0), g("yaw", "damping", 9.0), g("roll", "damping", 9.0)),
+                    k: Vec3::new(
+                        g("pitch", "springconstant", 65.0),
+                        g("yaw", "springconstant", 65.0),
+                        g("roll", "springconstant", 65.0),
+                    ),
+                    c: Vec3::new(
+                        g("pitch", "damping", 9.0),
+                        g("yaw", "damping", 9.0),
+                        g("roll", "damping", 9.0),
+                    ),
                 }
             };
             out.insert(n.clone(), (axes("hipfire"), axes("ads")));
@@ -94,27 +113,73 @@ impl KickDef {
     pub fn from_settings(s: &PlayerSettings) -> Self {
         let f = |k: &str, d: f32| val(s, k).unwrap_or(d);
         Self {
-            spring: s.get("sp_base.viewkick_spring").or_else(|| s.get(".viewkick_spring")).unwrap_or("").trim().to_ascii_lowercase(),
-            pitch: [f("viewkick_pitch_base", 0.0), f("viewkick_pitch_random", 0.0), f("viewkick_pitch_softscale", 0.0), f("viewkick_pitch_hardscale", 0.0)],
-            yaw: [f("viewkick_yaw_base", 0.0), f("viewkick_yaw_random", 0.0), f("viewkick_yaw_softscale", 0.0), f("viewkick_yaw_hardscale", 0.0)],
+            spring: s
+                .get("sp_base.viewkick_spring")
+                .or_else(|| s.get(".viewkick_spring"))
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase(),
+            pitch: [
+                f("viewkick_pitch_base", 0.0),
+                f("viewkick_pitch_random", 0.0),
+                f("viewkick_pitch_softscale", 0.0),
+                f("viewkick_pitch_hardscale", 0.0),
+            ],
+            yaw: [
+                f("viewkick_yaw_base", 0.0),
+                f("viewkick_yaw_random", 0.0),
+                f("viewkick_yaw_softscale", 0.0),
+                f("viewkick_yaw_hardscale", 0.0),
+            ],
             pitch_inner_exclude: f("viewkick_pitch_random_innerexclude", 0.0),
             yaw_inner_exclude: f("viewkick_yaw_random_innerexclude", 0.0),
-            roll: [f("viewkick_roll_base", 0.0), f("viewkick_roll_randommin", 0.0), f("viewkick_roll_randommax", 0.0), f("viewkick_roll_softscale", 0.0), f("viewkick_roll_hardscale", 0.0)],
-            hip_fraction: (f("viewkick_hipfire_weaponfraction", 0.0), f("viewkick_hipfire_weaponfraction_vmscale", 0.0)),
-            ads_fraction: (f("viewkick_ads_weaponfraction", 0.0), f("viewkick_ads_weaponfraction_vmscale", 0.0)),
+            roll: [
+                f("viewkick_roll_base", 0.0),
+                f("viewkick_roll_randommin", 0.0),
+                f("viewkick_roll_randommax", 0.0),
+                f("viewkick_roll_softscale", 0.0),
+                f("viewkick_roll_hardscale", 0.0),
+            ],
+            hip_fraction: (
+                f("viewkick_hipfire_weaponfraction", 0.0),
+                f("viewkick_hipfire_weaponfraction_vmscale", 0.0),
+            ),
+            ads_fraction: (
+                f("viewkick_ads_weaponfraction", 0.0),
+                f("viewkick_ads_weaponfraction_vmscale", 0.0),
+            ),
             // A first-shot scale of 0 (the default) isn't used (client.dll 0x1805a7990).
             first_hip: val(s, "viewkick_scale_firstshot_hipfire").filter(|&v| v != 0.0),
             first_ads: val(s, "viewkick_scale_firstshot_ads").filter(|&v| v != 0.0),
-            scale_hip: (f("viewkick_scale_min_hipfire", 1.0), f("viewkick_scale_max_hipfire", 1.0)),
-            scale_ads: (f("viewkick_scale_min_ads", 1.0), f("viewkick_scale_max_ads", 1.0)),
+            scale_hip: (
+                f("viewkick_scale_min_hipfire", 1.0),
+                f("viewkick_scale_max_hipfire", 1.0),
+            ),
+            scale_ads: (
+                f("viewkick_scale_min_ads", 1.0),
+                f("viewkick_scale_max_ads", 1.0),
+            ),
             per_shot: f("viewkick_scale_valuepershot", 0.0),
-            lerp: (f("viewkick_scale_valuelerpstart", 0.0), f("viewkick_scale_valuelerpend", 0.0)),
+            lerp: (
+                f("viewkick_scale_valuelerpstart", 0.0),
+                f("viewkick_scale_valuelerpend", 0.0),
+            ),
             decay_delay: f("viewkick_scale_valuedecaydelay", 0.0),
             decay_rate: f("viewkick_scale_valuedecayrate", 0.0),
-            perm_pitch: (f("viewkick_perm_pitch_base", 0.0), f("viewkick_perm_pitch_random", 0.0)),
-            perm_yaw: (f("viewkick_perm_yaw_base", 0.0), f("viewkick_perm_yaw_random", 0.0)),
+            perm_pitch: (
+                f("viewkick_perm_pitch_base", 0.0),
+                f("viewkick_perm_pitch_random", 0.0),
+            ),
+            perm_yaw: (
+                f("viewkick_perm_yaw_base", 0.0),
+                f("viewkick_perm_yaw_random", 0.0),
+            ),
             duck_scale: f("viewkick_duck_scale", 1.0),
-            vm_shake: Vec3::new(f("viewmodel_shake_forward", 0.0), f("viewmodel_shake_up", 0.0), f("viewmodel_shake_right", 0.0)),
+            vm_shake: Vec3::new(
+                f("viewmodel_shake_forward", 0.0),
+                f("viewmodel_shake_up", 0.0),
+                f("viewmodel_shake_right", 0.0),
+            ),
         }
     }
 }
@@ -163,16 +228,36 @@ pub struct ViewPunch {
 impl ViewPunch {
     /// One shot's kick, times `extra` (a charge level's scale). `r` are four uniform random
     /// numbers in 0..1.
-    pub fn kick(&mut self, def: &KickDef, springs: &WeaponSprings, ads: f32, crouched: bool, extra: f32, r: [f32; 4]) {
+    pub fn kick(
+        &mut self,
+        def: &KickDef,
+        springs: &WeaponSprings,
+        ads: f32,
+        crouched: bool,
+        extra: f32,
+        r: [f32; 4],
+    ) {
         self.springs = springs.0.get(&def.spring).copied().unwrap_or_default();
         self.fractions = (def.hip_fraction, def.ads_fraction);
         // Kick scale ramps from min to max as shots pile up (value per shot, lerp window); with
         // no window (start = end, the default) it is the max (client.dll 0x1805a7990).
         let w = def.lerp.1 - def.lerp.0;
-        let t = if w == 0.0 { 1.0 } else { ((self.value - def.lerp.0) / w).clamp(0.0, 1.0) };
+        let t = if w == 0.0 {
+            1.0
+        } else {
+            ((self.value - def.lerp.0) / w).clamp(0.0, 1.0)
+        };
         let first = self.value <= 0.0;
-        let hip = if first { def.first_hip.unwrap_or(def.scale_hip.0) } else { def.scale_hip.0 + (def.scale_hip.1 - def.scale_hip.0) * t };
-        let ads_s = if first { def.first_ads.unwrap_or(def.scale_ads.0) } else { def.scale_ads.0 + (def.scale_ads.1 - def.scale_ads.0) * t };
+        let hip = if first {
+            def.first_hip.unwrap_or(def.scale_hip.0)
+        } else {
+            def.scale_hip.0 + (def.scale_hip.1 - def.scale_hip.0) * t
+        };
+        let ads_s = if first {
+            def.first_ads.unwrap_or(def.scale_ads.0)
+        } else {
+            def.scale_ads.0 + (def.scale_ads.1 - def.scale_ads.0) * t
+        };
         let mut scale = hip + (ads_s - hip) * ads;
         if crouched {
             scale *= def.duck_scale;
@@ -189,7 +274,9 @@ impl ViewPunch {
         let yaw = def.yaw[0] + rand(def.yaw[1], def.yaw_inner_exclude, r[1]) * side(r[3]);
         // (Sums of two of the four draws, wrapped, are new uniform draws for the roll.)
         let (roll_u, roll_side) = ((r[0] + r[3]).fract(), (r[1] + r[2]).fract());
-        let roll = (def.roll[0] + (def.roll[1] + (def.roll[2] - def.roll[1]) * roll_u) * side(roll_side)) * extra;
+        let roll = (def.roll[0]
+            + (def.roll[1] + (def.roll[2] - def.roll[1]) * roll_u) * side(roll_side))
+            * extra;
         let kick = Vec3::new(pitch * scale, yaw * scale, roll);
         let soft = kick * Vec3::new(def.pitch[2], def.yaw[2], def.roll[3]);
         let hard = kick * Vec3::new(def.pitch[3], def.yaw[3], def.roll[4]);
@@ -198,10 +285,20 @@ impl ViewPunch {
         self.ang += hard;
         self.vel += soft * 20.0;
         self.split(ads);
-        log::debug!("kick x{scale:.2} ({:.2} {:.2} {:.2}) punch now {:.2?} vel {:.1?}", kick.x, kick.y, kick.z, self.ang, self.vel);
+        log::debug!(
+            "kick x{scale:.2} ({:.2} {:.2} {:.2}) punch now {:.2?} vel {:.1?}",
+            kick.x,
+            kick.y,
+            kick.z,
+            self.ang,
+            self.vel
+        );
         self.shake = def.vm_shake;
         // The permanent kick works the same way, times the kick scale.
-        self.perm += Vec2::new(def.perm_pitch.0 + rand(def.perm_pitch.1, 0.0, r[0]) * side(r[2]), def.perm_yaw.0 + rand(def.perm_yaw.1, 0.0, r[1]) * side(r[3])) * scale;
+        self.perm += Vec2::new(
+            def.perm_pitch.0 + rand(def.perm_pitch.1, 0.0, r[0]) * side(r[2]),
+            def.perm_yaw.0 + rand(def.perm_yaw.1, 0.0, r[1]) * side(r[3]),
+        ) * scale;
     }
 
     /// The camera, shot and viewmodel shares of the weapon punch at zoom `ads`.
@@ -212,7 +309,11 @@ impl ViewPunch {
         self.pitch = self.ang.x * (1.0 - frac);
         self.yaw = self.ang.y * (1.0 - frac);
         self.roll = self.ang.z;
-        self.vm = Vec3::new(self.ang.x * frac * vm_scale, self.ang.y * frac * vm_scale, -self.ang.z);
+        self.vm = Vec3::new(
+            self.ang.x * frac * vm_scale,
+            self.ang.y * frac * vm_scale,
+            -self.ang.z,
+        );
         let s = (self.ang.z / VM_SHAKE_ROLL_RANGE).clamp(-3.0, 3.0);
         self.vm_shake = Vec3::new(self.shake.x, -self.shake.z, self.shake.y) * s;
     }
@@ -220,7 +321,9 @@ impl ViewPunch {
     /// Spring the punch back and decay the kick scale; `ads` is the gun's zoom now.
     pub fn step(&mut self, dt: f32, def: Option<&KickDef>, ads: f32) {
         self.since_shot += dt;
-        let (delay, rate) = def.map(|d| (d.decay_delay, d.decay_rate)).unwrap_or((0.0, 0.0));
+        let (delay, rate) = def
+            .map(|d| (d.decay_delay, d.decay_rate))
+            .unwrap_or((0.0, 0.0));
         if self.since_shot > delay {
             self.value = (self.value - rate * dt).max(0.0);
         }
@@ -283,9 +386,33 @@ impl MotionDef {
             // the hip values (guess: ADS stays steady unless a script asks for sway).
             let g = |k: &str| val(s, &format!("{k}{suffix}")).unwrap_or(0.0);
             let v3 = |a: &str, b: &str, c: &str| Vec3::new(g(a), g(b), g(c));
-            let dir_t = |d: &str| Vec3::new(g(&format!("sway_{d}_translate_x")), g(&format!("sway_{d}_translate_y")), g(&format!("sway_{d}_translate_z")));
-            let dir_r = |d: &str| Vec3::new(g(&format!("sway_{d}_rotate_pitch")), g(&format!("sway_{d}_rotate_yaw")), g(&format!("sway_{d}_rotate_roll")));
-            let gain = |k: &str, d: f32| val(s, &format!("{k}{suffix}")).unwrap_or(fallback.map(|f| if k.contains("translate") { f.t_gain } else { f.r_gain }).unwrap_or(d));
+            let dir_t = |d: &str| {
+                Vec3::new(
+                    g(&format!("sway_{d}_translate_x")),
+                    g(&format!("sway_{d}_translate_y")),
+                    g(&format!("sway_{d}_translate_z")),
+                )
+            };
+            let dir_r = |d: &str| {
+                Vec3::new(
+                    g(&format!("sway_{d}_rotate_pitch")),
+                    g(&format!("sway_{d}_rotate_yaw")),
+                    g(&format!("sway_{d}_rotate_roll")),
+                )
+            };
+            let gain = |k: &str, d: f32| {
+                val(s, &format!("{k}{suffix}")).unwrap_or(
+                    fallback
+                        .map(|f| {
+                            if k.contains("translate") {
+                                f.t_gain
+                            } else {
+                                f.r_gain
+                            }
+                        })
+                        .unwrap_or(d),
+                )
+            };
             let attach = s
                 .get(&format!("sp_base.sway_rotate_attach{suffix}"))
                 .or_else(|| s.get(&format!(".sway_rotate_attach{suffix}")))
@@ -300,8 +427,24 @@ impl MotionDef {
                 max_r: v3("sway_max_pitch", "sway_max_yaw", "sway_max_roll"),
                 t_gain: gain("sway_translate_gain", 5.0),
                 r_gain: gain("sway_rotate_gain", 5.0),
-                move_t: ["move_forward", "move_back", "move_left", "move_right", "move_up", "move_down"].map(dir_t),
-                move_r: ["move_forward", "move_back", "move_left", "move_right", "move_up", "move_down"].map(dir_r),
+                move_t: [
+                    "move_forward",
+                    "move_back",
+                    "move_left",
+                    "move_right",
+                    "move_up",
+                    "move_down",
+                ]
+                .map(dir_t),
+                move_r: [
+                    "move_forward",
+                    "move_back",
+                    "move_left",
+                    "move_right",
+                    "move_up",
+                    "move_down",
+                ]
+                .map(dir_r),
                 turn_t: ["turn_left", "turn_right", "turn_up", "turn_down"].map(dir_t),
                 turn_r: ["turn_left", "turn_right", "turn_up", "turn_down"].map(dir_r),
             }
@@ -321,7 +464,12 @@ impl MotionDef {
         };
         let b = bob("", 0.4);
         let bz = bob("_zoomed", b.cycle);
-        Self { hip, zoomed, bob: b, bob_zoomed: bz }
+        Self {
+            hip,
+            zoomed,
+            bob: b,
+            bob_zoomed: bz,
+        }
     }
 }
 
@@ -368,7 +516,8 @@ impl VmMotion {
         let (dyaw, dpitch) = match self.last {
             Some((y, p)) => {
                 let mut dy = inp.yaw - y;
-                dy = (dy + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                dy = (dy + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
                 (dy.to_degrees() / dt, (inp.pitch - p).to_degrees() / dt)
             }
             None => (0.0, 0.0),
@@ -377,9 +526,21 @@ impl VmMotion {
         let lerp = |a: Vec3, b: Vec3| a.lerp(b, inp.ads);
         let (h, z) = (&def.hip, &def.zoomed);
         // Pushes: positive yaw rate turns left; positive pitch rate looks down.
-        let turn = [(dyaw / TURN_FULL).clamp(0.0, 1.0), (-dyaw / TURN_FULL).clamp(0.0, 1.0), (-dpitch / TURN_FULL).clamp(0.0, 1.0), (dpitch / TURN_FULL).clamp(0.0, 1.0)];
+        let turn = [
+            (dyaw / TURN_FULL).clamp(0.0, 1.0),
+            (-dyaw / TURN_FULL).clamp(0.0, 1.0),
+            (-dpitch / TURN_FULL).clamp(0.0, 1.0),
+            (dpitch / TURN_FULL).clamp(0.0, 1.0),
+        ];
         let m = inp.vel / MOVE_FULL;
-        let mv = [m.x.clamp(0.0, 1.0), (-m.x).clamp(0.0, 1.0), m.y.clamp(0.0, 1.0), (-m.y).clamp(0.0, 1.0), m.z.clamp(0.0, 1.0), (-m.z).clamp(0.0, 1.0)];
+        let mv = [
+            m.x.clamp(0.0, 1.0),
+            (-m.x).clamp(0.0, 1.0),
+            m.y.clamp(0.0, 1.0),
+            (-m.y).clamp(0.0, 1.0),
+            m.z.clamp(0.0, 1.0),
+            (-m.z).clamp(0.0, 1.0),
+        ];
         let mut target_t = Vec3::ZERO;
         let mut target_r = Vec3::ZERO;
         for i in 0..6 {
@@ -404,9 +565,14 @@ impl VmMotion {
         let cycle = (b.cycle + (bz.cycle - b.cycle) * inp.ads).max(0.05);
         let max_speed = (b.max_speed + (bz.max_speed - b.max_speed) * inp.ads).max(1.0);
         let speed = Vec2::new(inp.vel.x, inp.vel.y).length();
-        let want = if inp.on_ground && inp.bob { (speed / max_speed).min(1.0) } else { 0.0 };
+        let want = if inp.on_ground && inp.bob {
+            (speed / max_speed).min(1.0)
+        } else {
+            0.0
+        };
         self.bob_amount += (want - self.bob_amount) * (1.0 - (-10.0 * dt).exp());
-        self.bob_phase = (self.bob_phase + dt / cycle * std::f32::consts::TAU).rem_euclid(std::f32::consts::TAU * 2.0);
+        self.bob_phase = (self.bob_phase + dt / cycle * std::f32::consts::TAU)
+            .rem_euclid(std::f32::consts::TAU * 2.0);
         let vert = b.vert + (bz.vert - b.vert) * inp.ads;
         let horz = b.horz + (bz.horz - b.horz) * inp.ads;
         let ang = b.angles.lerp(bz.angles, inp.ads);
@@ -414,7 +580,10 @@ impl VmMotion {
         let a = self.bob_amount;
         let bob_t = Vec3::new(0.0, horz * s, vert * v) * a;
         let bob_r = Vec3::new(ang.x * v, ang.y * s, ang.z * s) * a;
-        VmOffset { rot: self.r + bob_r, trans: self.t + bob_t }
+        VmOffset {
+            rot: self.r + bob_r,
+            trans: self.t + bob_t,
+        }
     }
 }
 
@@ -422,7 +591,13 @@ impl VmMotion {
 /// `ads_fov_zoomfrac_start..end` part of the transition (the Kraber's 0.5..0.9: the scope comes up
 /// first, then the view zooms), eased with a smoothstep (the easing is a guess).
 pub fn ads_fov_blend(ads: f32, (start, end): (f32, f32)) -> f32 {
-    let t = if end > start { ((ads - start) / (end - start)).clamp(0.0, 1.0) } else if ads >= end { 1.0 } else { 0.0 };
+    let t = if end > start {
+        ((ads - start) / (end - start)).clamp(0.0, 1.0)
+    } else if ads >= end {
+        1.0
+    } else {
+        0.0
+    };
     t * t * (3.0 - 2.0 * t)
 }
 
@@ -449,12 +624,18 @@ pub fn ads_out_step(out: f32, ads: f32, last_ads: f32, dt: f32) -> f32 {
         return out;
     };
     let step = dt / ADS_SEQ_CROSSFADE;
-    if target > out { (out + step).min(1.0) } else { (out - step).max(0.0) }
+    if target > out {
+        (out + step).min(1.0)
+    } else {
+        (out - step).max(0.0)
+    }
 }
 
 /// Rotation for (pitch, yaw, roll) degrees in the view frame (x forward, y left, z up).
 pub fn angles_quat(a: Vec3) -> Quat {
-    Quat::from_rotation_z(a.y.to_radians()) * Quat::from_rotation_y(a.x.to_radians()) * Quat::from_rotation_x(a.z.to_radians())
+    Quat::from_rotation_z(a.y.to_radians())
+        * Quat::from_rotation_y(a.x.to_radians())
+        * Quat::from_rotation_x(a.z.to_radians())
 }
 
 /// Cockpit sway (`cockpitSway*`): the cockpit model (BT's frame; the Pilot's HUD rides the
@@ -484,9 +665,25 @@ pub struct CockpitSwayDef {
 
 impl CockpitSwayDef {
     /// pilot_base.set (the Pilot's helmet HUD).
-    pub const PILOT: Self = Self { turn_angle: -0.6, turn_roll: 0.2, turn_origin: -0.15, move_angle: -0.4, move_roll: -0.2, move_origin: -0.15, gain: 1.0 };
+    pub const PILOT: Self = Self {
+        turn_angle: -0.6,
+        turn_roll: 0.2,
+        turn_origin: -0.15,
+        move_angle: -0.4,
+        move_roll: -0.2,
+        move_origin: -0.15,
+        gain: 1.0,
+    };
     /// Engine defaults (BT's cockpit: titan_buddy.set sets none).
-    pub const TITAN: Self = Self { turn_angle: -4.0, turn_roll: 0.0, turn_origin: -1.0, move_angle: -0.3, move_roll: -0.2, move_origin: -0.15, gain: 3.0 };
+    pub const TITAN: Self = Self {
+        turn_angle: -4.0,
+        turn_roll: 0.0,
+        turn_origin: -1.0,
+        move_angle: -0.3,
+        move_roll: -0.2,
+        move_origin: -0.15,
+        gain: 3.0,
+    };
 }
 
 /// cockpitSwayMin/MaxAngle* and Min/MaxOrigin* engine defaults.
@@ -526,7 +723,8 @@ impl CockpitSway {
         let dt = dt.max(1e-4);
         let (dyaw, dpitch) = match self.last {
             Some((y, p)) => {
-                let dy = (yaw - y + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                let dy = (yaw - y + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
                 (dy.to_degrees() / dt, (pitch - p).to_degrees() / dt)
             }
             None => (0.0, 0.0),
@@ -535,7 +733,10 @@ impl CockpitSway {
         self.rates[self.slot] = (dpitch, dyaw);
         self.slot = (self.slot + 1) % SWAY_RATE_FRAMES;
         let k = 1.0 / SWAY_RATE_FRAMES as f32;
-        let (pitch_in, yaw_in) = self.rates.iter().fold((0.0, 0.0), |(p, y), r| (p + r.0 * k, y + r.1 * k));
+        let (pitch_in, yaw_in) = self
+            .rates
+            .iter()
+            .fold((0.0, 0.0), |(p, y), r| (p + r.0 * k, y + r.1 * k));
         let (pitch_in, yaw_in) = (pitch_in * TICK_INTERVAL, yaw_in * TICK_INTERVAL);
         // The velocity in the view frame (pitch included), times the frame time.
         let (sp, cp) = pitch.sin_cos();
@@ -616,7 +817,12 @@ mod tests {
                 assert!(s.angles.y < -0.25 && s.angles.y > -0.33, "{}", s.angles.y);
             }
         }
-        assert!((s.angles.y + 0.5).abs() < 0.01 && (s.origin.y + 1.0).abs() < 0.02, "{:?} {:?}", s.angles, s.origin);
+        assert!(
+            (s.angles.y + 0.5).abs() < 0.01 && (s.origin.y + 1.0).abs() < 0.02,
+            "{:?} {:?}",
+            s.angles,
+            s.origin
+        );
         // Stopped: it eases back to rest.
         for _ in 0..120 {
             s.step(&CockpitSwayDef::TITAN, yaw, 0.0, Vec3::ZERO, dt);
@@ -646,8 +852,18 @@ mod tests {
         let mut p = ViewPunch::default();
         p.kick(&def, &springs, 1.0, false, 1.0, [0.5; 4]);
         p.step(0.01, Some(&def), 1.0);
-        assert!(p.pitch.abs() < 1e-6 && p.yaw.abs() < 1e-6, "{} {}", p.pitch, p.yaw);
-        assert!(p.vm.x < -0.05 && p.roll.abs() > 0.5 && (p.vm.z + p.roll).abs() < 1e-6, "{} {:?}", p.roll, p.vm);
+        assert!(
+            p.pitch.abs() < 1e-6 && p.yaw.abs() < 1e-6,
+            "{} {}",
+            p.pitch,
+            p.yaw
+        );
+        assert!(
+            p.vm.x < -0.05 && p.roll.abs() > 0.5 && (p.vm.z + p.roll).abs() < 1e-6,
+            "{} {:?}",
+            p.roll,
+            p.vm
+        );
         // From the hip: the camera takes 90% of the kick, the gun no pitch or yaw.
         let mut h = ViewPunch::default();
         h.kick(&def, &springs, 0.0, false, 1.0, [0.5; 4]);

@@ -41,7 +41,9 @@ pub fn string_to_guid(s: &[u8]) -> u64 {
         if v4 != 0 {
             let v13 = 31 - v5.leading_zeros() as i32;
             let n = (i as i32 + v13 / 8) as u32;
-            return v12.wrapping_add(v11).wrapping_sub(0xAE502812AA7333u64.wrapping_mul(n as u64));
+            return v12
+                .wrapping_add(v11)
+                .wrapping_sub(0xAE502812AA7333u64.wrapping_mul(n as u64));
         }
         i += 4;
         let sum = v11.wrapping_add(v12);

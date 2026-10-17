@@ -35,16 +35,30 @@ pub fn spawn_camera(commands: &mut Commands) {
     commands.spawn((
         Camera3d::default(),
         // After the world, keeping its picture; its own depth buffer starts empty.
-        Camera { order: 1, clear_color: ClearColorConfig::None, ..default() },
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
         bevy::render::view::Hdr,
         Msaa::Off,
-        bevy::camera::Exposure { ev100: crate::env::ev100() },
+        bevy::camera::Exposure {
+            ev100: crate::env::ev100(),
+        },
         crate::env::tonemapping(),
         // Bevy 0.18 also clips at `near_clip_plane`, whose default is the 0.1 near plane.
         Projection::Perspective({
             // TF_VM_NEAR=metres overrides the near plane (testing).
-            let near = std::env::var("TF_VM_NEAR").ok().and_then(|v| v.parse().ok()).unwrap_or(VM_NEAR);
-            PerspectiveProjection { fov: vertical_from_43(PILOT_VM_FOV), near, near_clip_plane: Vec4::new(0.0, 0.0, -1.0, -near), ..default() }
+            let near = std::env::var("TF_VM_NEAR")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(VM_NEAR);
+            PerspectiveProjection {
+                fov: vertical_from_43(PILOT_VM_FOV),
+                near,
+                near_clip_plane: Vec4::new(0.0, 0.0, -1.0, -near),
+                ..default()
+            }
         }),
         RenderLayers::layer(VM_LAYER),
         Transform::default(),
@@ -56,17 +70,36 @@ pub fn spawn_camera(commands: &mut Commands) {
 #[allow(clippy::type_complexity)]
 pub fn follow_camera(
     control: Res<crate::pilotctl::Control>,
-    main: Query<(&Transform, Option<&bevy::light::EnvironmentMapLight>), (With<MainCamera>, Without<ViewmodelCamera>)>,
-    mut cam: Query<(Entity, &mut Transform, &mut Projection, Option<&bevy::light::EnvironmentMapLight>), With<ViewmodelCamera>>,
+    main: Query<
+        (&Transform, Option<&bevy::light::EnvironmentMapLight>),
+        (With<MainCamera>, Without<ViewmodelCamera>),
+    >,
+    mut cam: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut Projection,
+            Option<&bevy::light::EnvironmentMapLight>,
+        ),
+        With<ViewmodelCamera>,
+    >,
     mut commands: Commands,
 ) {
     // The world camera's Transform as set this frame (it has no parent); its GlobalTransform
     // is last frame's until transform propagation, which left the viewmodels a frame (4 units
     // at sprint speed) ahead of their camera.
-    let Ok((main_t, env)) = main.single() else { return };
-    let Ok((e, mut t, mut p, my_env)) = cam.single_mut() else { return };
+    let Ok((main_t, env)) = main.single() else {
+        return;
+    };
+    let Ok((e, mut t, mut p, my_env)) = cam.single_mut() else {
+        return;
+    };
     *t = *main_t;
-    let fov = if matches!(*control, crate::pilotctl::Control::Titan) { TITAN_VM_FOV } else { PILOT_VM_FOV };
+    let fov = if matches!(*control, crate::pilotctl::Control::Titan) {
+        TITAN_VM_FOV
+    } else {
+        PILOT_VM_FOV
+    };
     if let Projection::Perspective(pp) = p.as_mut() {
         pp.fov = vertical_from_43(fov);
     }
@@ -90,7 +123,11 @@ pub fn tag_meshes(
     for root in &roots {
         for e in children.iter_descendants(root) {
             if untagged.contains(e) {
-                commands.entity(e).insert((RenderLayers::layer(VM_LAYER), NotShadowCaster, bevy::camera::visibility::NoFrustumCulling));
+                commands.entity(e).insert((
+                    RenderLayers::layer(VM_LAYER),
+                    NotShadowCaster,
+                    bevy::camera::visibility::NoFrustumCulling,
+                ));
             }
         }
     }
@@ -107,7 +144,6 @@ pub fn to_world(p: Vec3, cam: &GlobalTransform, world_fov: f32, vm_fov: f32) -> 
     c.y *= k;
     cam.affine().transform_point3(c)
 }
-
 
 /// Where to put a first-person (`_FP`) particle system emitted at a viewmodel point, given that
 /// particles are drawn through the world camera: the same screen position, with the depth
@@ -126,7 +162,10 @@ pub fn fx_to_world(p: Vec3, cam: &GlobalTransform, world_fov: f32, vm_fov: f32) 
 /// within a few metres of the eye, well inside the first cascade (0.1-10 m, blending into the
 /// next only past 8 m), so the viewmodel camera never samples the others. That saved three
 /// shadow passes of the whole map, and their visibility checks, every frame.
-pub fn one_shadow_cascade(vm: Query<Entity, With<ViewmodelCamera>>, mut lights: Query<&mut bevy::light::Cascades>) {
+pub fn one_shadow_cascade(
+    vm: Query<Entity, With<ViewmodelCamera>>,
+    mut lights: Query<&mut bevy::light::Cascades>,
+) {
     let Ok(vm) = vm.single() else { return };
     for mut c in &mut lights {
         if let Some(v) = c.cascades.get_mut(&vm) {

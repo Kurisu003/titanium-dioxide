@@ -44,7 +44,11 @@ fn crc32(s: &[u8]) -> u32 {
     for &b in s {
         c ^= b as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+            c = if c & 1 != 0 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
         }
     }
     !c
@@ -78,11 +82,19 @@ impl Captions {
             log::warn!("no closed captions");
             return Self::default();
         };
-        let i32_at = |o: usize| d.get(o..o + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap())).unwrap_or(0);
+        let i32_at = |o: usize| {
+            d.get(o..o + 4)
+                .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
+                .unwrap_or(0)
+        };
         if d.len() < 24 || &d[0..4] != b"VCCD" {
             return Self::default();
         }
-        let (block_size, entries, data) = (i32_at(12) as usize, i32_at(16) as usize, i32_at(20) as usize);
+        let (block_size, entries, data) = (
+            i32_at(12) as usize,
+            i32_at(16) as usize,
+            i32_at(20) as usize,
+        );
         let mut by_crc = HashMap::new();
         for k in 0..entries {
             let e = 24 + k * 12;
@@ -94,8 +106,13 @@ impl Captions {
             let off = u16::from_le_bytes([d[e + 8], d[e + 9]]) as usize;
             let len = u16::from_le_bytes([d[e + 10], d[e + 11]]) as usize;
             let at = data + block * block_size + off;
-            let Some(bytes) = d.get(at..at + len) else { continue };
-            let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let Some(bytes) = d.get(at..at + len) else {
+                continue;
+            };
+            let utf16: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
             by_crc.insert(crc, plain(&String::from_utf16_lossy(&utf16)));
         }
         Self { by_crc }
@@ -165,7 +182,8 @@ pub fn announcer(
                     "diag_mcor_cmdr_fd_newWaveStartPrefix"
                 };
                 q.lines.push_back((prefix, now));
-                q.lines.push_back(("diag_mcor_cmdr_fd_waveTypeTitanReg", now));
+                q.lines
+                    .push_back(("diag_mcor_cmdr_fd_waveTypeTitanReg", now));
             }
             Intermission if prev == Some(Playing) => {
                 q.lines.clear();

@@ -195,15 +195,17 @@ pub fn decompress_pak(file: &[u8], header_size: usize) -> Result<Vec<u8>> {
             v71 = 0;
             let s = ((v21.wrapping_sub(31)) >> 3) & 6;
             let v22 = (((v19 as u32) as u64) >> s) & 0x3F;
-            let t = ((v19 >> 4) & (((24 * (((v21.wrapping_sub(31)) >> 3) & 2)) >> 4) as u64)) as u32;
+            let t =
+                ((v19 >> 4) & (((24 * (((v21.wrapping_sub(31)) >> 3) & 2)) >> 4) as u64)) as u32;
             let v23 = 1u32 << (v21 + t);
             let lut_a = LUT[v22 as usize + 1088] as u32;
             v7 += s + lut_a + v21 + t;
-            let v25 = 16u32.wrapping_mul(
-                v23.wrapping_add(((v23 - 1) as u64 & (v19 >> (s + lut_a))) as u32),
-            );
+            let v25 = 16u32
+                .wrapping_mul(v23.wrapping_add(((v23 - 1) as u64 & (v19 >> (s + lut_a))) as u32));
             v19 >>= s + lut_a + v21 + t;
-            let v26 = v25.wrapping_add(LUT[v22 as usize + 1024] as u32).wrapping_sub(16);
+            let v26 = v25
+                .wrapping_add(LUT[v22 as usize + 1024] as u32)
+                .wrapping_sub(16);
             let src = v5.wrapping_sub(v26 as u64) as usize;
             let dst = v5 as usize;
             if v20 == 17 {

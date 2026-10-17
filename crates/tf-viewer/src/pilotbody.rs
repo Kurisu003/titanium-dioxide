@@ -12,7 +12,12 @@ use tf_sim::pilot::PilotMove;
 pub const PILOT_BODY_MODEL: &str = "models/humans/pilots/sp_medium_reaper_m.mdl";
 
 const IDLE: &str = "CQB_Idle_MP";
-const RUN: [&str; 4] = ["Run_forward_mp", "Run_Backward_mp", "Run_mp_left", "Run_mp_right"];
+const RUN: [&str; 4] = [
+    "Run_forward_mp",
+    "Run_Backward_mp",
+    "Run_mp_left",
+    "Run_mp_right",
+];
 const CROUCH_RUN: &str = "CrouchRun_forward_mp";
 const SLIDE: &str = "MP_Pt_Slide_Float";
 const WALLRUN_LEFT: &str = "a_pt_wallrun_left";
@@ -46,12 +51,33 @@ pub fn spawn_pilot_body(
     *done = true;
     let mut sequences: Vec<&str> = BODY_SEQUENCES.to_vec();
     sequences.extend(crate::executions::PILOT_EXECUTIONS.iter().map(|e| e.0));
-    let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden)).id();
+    let anchor = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden))
+        .id();
     commands.entity(root.0).add_child(anchor);
-    let spec = ActorSpec { path: PILOT_BODY_MODEL, sequences: &sequences, grids: &[], body: &[] };
-    match spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+    let spec = ActorSpec {
+        path: PILOT_BODY_MODEL,
+        sequences: &sequences,
+        grids: &[],
+        body: &[],
+    };
+    match spawn_actor(
+        &mut commands,
+        anchor,
+        &gd,
+        &spec,
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+        &mut bindposes,
+    ) {
         Ok(a) => {
-            commands.insert_resource(PilotBody { anchor, actor: a.entity, cycle: 0.0 });
+            commands.insert_resource(PilotBody {
+                anchor,
+                actor: a.entity,
+                cycle: 0.0,
+            });
         }
         Err(e) => log::warn!("pilot body: {e:#}"),
     }
@@ -79,14 +105,20 @@ pub fn update_pilot_body(
     let s = &pilot.state;
     let pos = Vec3::from(s.pos.to_array());
     if let Ok((mut tf, mut vis)) = tfs.get_mut(body.anchor) {
-        vis.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
+        vis.set_if_neq(if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
         tf.translation = pos;
         tf.rotation = Quat::from_rotation_z(s.yaw);
     }
     if !show {
         return;
     }
-    let Ok(mut a) = actors.get_mut(body.actor) else { return };
+    let Ok(mut a) = actors.get_mut(body.actor) else {
+        return;
+    };
     a.autoplay = false;
     a.aim = None;
     let v = Vec2::new(s.vel.x, s.vel.y);
@@ -94,7 +126,9 @@ pub fn update_pilot_body(
     let mv = match s.mode {
         PilotMove::Slide => BodyMove::Slide,
         // The wall on the Pilot's left has its normal pointing to the right.
-        PilotMove::WallRun { normal, .. } => BodyMove::WallRun { wall_left: Vec2::new(normal.x, normal.y).dot(left) < 0.0 },
+        PilotMove::WallRun { normal, .. } => BodyMove::WallRun {
+            wall_left: Vec2::new(normal.x, normal.y).dot(left) < 0.0,
+        },
         PilotMove::WallHang { .. } => BodyMove::WallHang,
         PilotMove::Air | PilotMove::Mantle { .. } => BodyMove::Air,
         PilotMove::Ground if v.length() < 20.0 => BodyMove::Idle,
@@ -122,12 +156,31 @@ pub enum BodyMove {
 }
 
 /// The sequences a third-person Pilot body needs for `body_layers`.
-pub const BODY_SEQUENCES: [&str; 11] = [IDLE, CROUCH_RUN, SLIDE, WALLRUN_LEFT, WALLRUN_RIGHT, AIR, WALL_HANG, RUN[0], RUN[1], RUN[2], RUN[3]];
+pub const BODY_SEQUENCES: [&str; 11] = [
+    IDLE,
+    CROUCH_RUN,
+    SLIDE,
+    WALLRUN_LEFT,
+    WALLRUN_RIGHT,
+    AIR,
+    WALL_HANG,
+    RUN[0],
+    RUN[1],
+    RUN[2],
+    RUN[3],
+];
 
 /// The locomotion layers for `mv` at ground velocity `v` facing `yaw`, advancing `cycle`: the
 /// four run directions blended by the movement direction and played at the speed their root
 /// motion covers; the other states loop their one clip.
-pub fn body_layers(a: &Actor, mv: BodyMove, v: Vec2, yaw: f32, dt: f32, cycle: &mut f32) -> Vec<Layer> {
+pub fn body_layers(
+    a: &Actor,
+    mv: BodyMove,
+    v: Vec2,
+    yaw: f32,
+    dt: f32,
+    cycle: &mut f32,
+) -> Vec<Layer> {
     let speed = v.length();
     let fwd = Vec2::new(yaw.cos(), yaw.sin());
     let left = Vec2::new(-yaw.sin(), yaw.cos());
@@ -135,7 +188,11 @@ pub fn body_layers(a: &Actor, mv: BodyMove, v: Vec2, yaw: f32, dt: f32, cycle: &
         a.clip(n)
             .map(|c| {
                 *cycle = (*cycle + dt / a.clips[c].duration.max(1e-3)).rem_euclid(1.0);
-                vec![Layer { clip: c, cycle: *cycle, weight: 1.0 }]
+                vec![Layer {
+                    clip: c,
+                    cycle: *cycle,
+                    weight: 1.0,
+                }]
             })
             .unwrap_or_default()
     };
@@ -145,19 +202,38 @@ pub fn body_layers(a: &Actor, mv: BodyMove, v: Vec2, yaw: f32, dt: f32, cycle: &
         BodyMove::Slide => looped(SLIDE),
         // The clips are named for the lean: a_pt_wallrun_right has the feet to the left of the
         // head (the engine's decoy plays it when the wall normal points right).
-        BodyMove::WallRun { wall_left } => looped(if wall_left { WALLRUN_RIGHT } else { WALLRUN_LEFT }),
+        BodyMove::WallRun { wall_left } => looped(if wall_left {
+            WALLRUN_RIGHT
+        } else {
+            WALLRUN_LEFT
+        }),
         BodyMove::WallHang => looped(WALL_HANG),
         BodyMove::Air => looped(AIR),
         BodyMove::Run => {
-            let d = if speed > 1e-3 { Vec2::new(v.dot(fwd), v.dot(left)) / speed } else { Vec2::X };
+            let d = if speed > 1e-3 {
+                Vec2::new(v.dot(fwd), v.dot(left)) / speed
+            } else {
+                Vec2::X
+            };
             let w = [d.x.max(0.0), (-d.x).max(0.0), d.y.max(0.0), (-d.y).max(0.0)];
             let ids: Vec<Option<usize>> = RUN.iter().map(|n| a.clip(n)).collect();
             let lead = ids[0].or(ids.iter().flatten().next().copied());
-            let rate = lead.map(|c| speed / a.clips[c].ground_speed.max(1.0)).unwrap_or(1.0);
+            let rate = lead
+                .map(|c| speed / a.clips[c].ground_speed.max(1.0))
+                .unwrap_or(1.0);
             if let Some(c) = lead {
                 *cycle = (*cycle + dt * rate / a.clips[c].duration.max(1e-3)).rem_euclid(1.0);
             }
-            ids.iter().zip(w).filter_map(|(c, w)| c.filter(|_| w > 0.01).map(|c| Layer { clip: c, cycle: *cycle, weight: w })).collect()
+            ids.iter()
+                .zip(w)
+                .filter_map(|(c, w)| {
+                    c.filter(|_| w > 0.01).map(|c| Layer {
+                        clip: c,
+                        cycle: *cycle,
+                        weight: w,
+                    })
+                })
+                .collect()
         }
     }
 }

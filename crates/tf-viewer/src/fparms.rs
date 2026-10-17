@@ -53,9 +53,23 @@ pub struct FpSeq {
 }
 
 impl FpSeq {
-    pub fn start(&mut self, clip: &str, frame: (Vec3, Quat), from: Option<(Vec3, Quat)>, eye_anchored: bool) {
+    pub fn start(
+        &mut self,
+        clip: &str,
+        frame: (Vec3, Quat),
+        from: Option<(Vec3, Quat)>,
+        eye_anchored: bool,
+    ) {
         log::info!("first-person sequence: {clip}");
-        self.active = Some(FpActive { clip: clip.into(), t: 0.0, frame, eye_anchored, from, blend: if from.is_some() { 0.35 } else { 0.0 }, len: 1.0 });
+        self.active = Some(FpActive {
+            clip: clip.into(),
+            t: 0.0,
+            frame,
+            eye_anchored,
+            from,
+            blend: if from.is_some() { 0.35 } else { 0.0 },
+            len: 1.0,
+        });
     }
     pub fn stop(&mut self) {
         self.active = None;
@@ -72,13 +86,26 @@ impl FpSeq {
 }
 
 /// The mantle clips, by how far the eye is above the ledge: below, level, above, high above.
-pub const MANTLE_CLIPS: [&str; 4] = ["ptpov_WallMantle_Below", "ptpov_WallMantle_Level", "ptpov_WallMantle_Above", "ptpov_WallMantle_HighAbove"];
+pub const MANTLE_CLIPS: [&str; 4] = [
+    "ptpov_WallMantle_Below",
+    "ptpov_WallMantle_Level",
+    "ptpov_WallMantle_Above",
+    "ptpov_WallMantle_HighAbove",
+];
 
 /// Every clip the arms may play.
 fn sequences() -> Vec<String> {
     let mut v = Vec::new();
     for c in ["atlas", "ogre", "stryder"] {
-        for d in ["front", "back", "left", "right", "front_lower", "back_lower", "back_mid"] {
+        for d in [
+            "front",
+            "back",
+            "left",
+            "right",
+            "front_lower",
+            "back_lower",
+            "back_mid",
+        ] {
             v.push(format!("ptpov_rodeo_move_{c}_{d}_entrance"));
         }
     }
@@ -132,11 +159,35 @@ pub fn spawn_arms(
     *done = true;
     let seqs = sequences();
     let refs: Vec<&str> = seqs.iter().map(String::as_str).collect();
-    let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, crate::vmcam::Viewmodel)).id();
+    let anchor = commands
+        .spawn((
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            crate::vmcam::Viewmodel,
+        ))
+        .id();
     commands.entity(root.0).add_child(anchor);
-    let spec = ActorSpec { path: arms_model(), sequences: &refs, grids: &[], body: &[] };
-    match spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
-        Ok(a) => commands.insert_resource(FpArms { anchor, actor: a.entity }),
+    let spec = ActorSpec {
+        path: arms_model(),
+        sequences: &refs,
+        grids: &[],
+        body: &[],
+    };
+    match spawn_actor(
+        &mut commands,
+        anchor,
+        &gd,
+        &spec,
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+        &mut bindposes,
+    ) {
+        Ok(a) => commands.insert_resource(FpArms {
+            anchor,
+            actor: a.entity,
+        }),
         Err(err) => log::warn!("first-person arms: {err:#}"),
     }
 }
@@ -156,7 +207,11 @@ pub fn fp_seq_update(
         // rodeo.rs drives the arms.
         return;
     }
-    if seq.active.is_none() && pilots.single().is_ok_and(|p| matches!(p.state.mode, tf_sim::pilot::PilotMove::Mantle { .. })) {
+    if seq.active.is_none()
+        && pilots
+            .single()
+            .is_ok_and(|p| matches!(p.state.mode, tf_sim::pilot::PilotMove::Mantle { .. }))
+    {
         // pilotweapon.rs plays the mantle on the arms.
         seq.cam = None;
         return;
@@ -170,7 +225,9 @@ pub fn fp_seq_update(
         }
         return;
     };
-    let Ok(mut actor) = actors.get_mut(arms.actor) else { return };
+    let Ok(mut actor) = actors.get_mut(arms.actor) else {
+        return;
+    };
     let Some(clip) = actor.clip(&a.clip) else {
         log::warn!("first-person sequence {} not on the arms", a.clip);
         seq.stop();
@@ -184,12 +241,27 @@ pub fn fp_seq_update(
     actor.aim = None;
     let (frame_pos, frame_rot) = a.frame;
     let (root_pos, root_rot) = if a.eye_anchored {
-        actor.layers = vec![Layer { clip, cycle: 0.0, weight: 1.0 }];
-        let cam0 = actor.bone_model_transform("jx_c_camera").map(|c| c.translation).unwrap_or(Vec3::ZERO);
-        actor.layers = vec![Layer { clip, cycle, weight: 1.0 }];
+        actor.layers = vec![Layer {
+            clip,
+            cycle: 0.0,
+            weight: 1.0,
+        }];
+        let cam0 = actor
+            .bone_model_transform("jx_c_camera")
+            .map(|c| c.translation)
+            .unwrap_or(Vec3::ZERO);
+        actor.layers = vec![Layer {
+            clip,
+            cycle,
+            weight: 1.0,
+        }];
         (frame_pos - frame_rot * cam0, frame_rot)
     } else {
-        actor.layers = vec![Layer { clip, cycle, weight: 1.0 }];
+        actor.layers = vec![Layer {
+            clip,
+            cycle,
+            weight: 1.0,
+        }];
         // The clip's `jx_c_start` bone marks the sequence's reference point (the hijack
         // frame) in the clip's root space: it walks back as the dismount carries the Pilot
         // off the hatch, and starts where the Pilot stood for a mount. Place the arms so it
@@ -200,7 +272,8 @@ pub fn fp_seq_update(
         match (Some(s0), actor.bone_model_transform("jx_c_start")) {
             (Some(s0), Some(st)) => {
                 let frame = Transform::from_translation(frame_pos).with_rotation(frame_rot);
-                let root = frame.compute_affine() * s0.compute_affine() * st.compute_affine().inverse();
+                let root =
+                    frame.compute_affine() * s0.compute_affine() * st.compute_affine().inverse();
                 let (_, r, t) = root.to_scale_rotation_translation();
                 (t, r)
             }
@@ -209,7 +282,10 @@ pub fn fp_seq_update(
     };
     let mut view = (frame_pos, frame_rot);
     if let Some(c) = actor.bone_model_transform("jx_c_camera") {
-        view = (root_pos + root_rot * c.translation, root_rot * c.rotation * attach_frame());
+        view = (
+            root_pos + root_rot * c.translation,
+            root_rot * c.rotation * attach_frame(),
+        );
     }
     if let Ok((mut tf, mut vis)) = tfs.get_mut(arms.anchor) {
         tf.translation = root_pos;
@@ -231,6 +307,9 @@ pub fn fp_seq_update(
 pub fn fp_seq_camera(seq: Res<FpSeq>, mut cams: Query<&mut Transform, With<MainCamera>>) {
     let Some((eye, rot)) = seq.cam else { return };
     if let Ok(mut cam) = cams.single_mut() {
-        *cam = Transform::from_translation(to_bevy(eye)).looking_to(to_bevy(rot * Vec3::X).normalize(), to_bevy(rot * Vec3::Z).normalize());
+        *cam = Transform::from_translation(to_bevy(eye)).looking_to(
+            to_bevy(rot * Vec3::X).normalize(),
+            to_bevy(rot * Vec3::Z).normalize(),
+        );
     }
 }

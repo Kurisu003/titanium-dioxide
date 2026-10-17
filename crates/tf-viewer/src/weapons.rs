@@ -3,10 +3,10 @@
 //! the gun in BT's hand, tracers and impact flashes.
 
 use crate::actor::{Actor, Layer};
-use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
-use crate::particles;
-use crate::targets::Enemy;
 use crate::audio::{self, Cue};
+use crate::particles;
+use crate::player::{to_bevy, CameraMode, Collision, PlayerInput, PlayerTitan, TitanSettings};
+use crate::targets::Enemy;
 use bevy::prelude::*;
 use tf_assets::settings::PlayerSettings;
 use tf_sim::glam::Vec3 as SVec3;
@@ -302,10 +302,19 @@ impl WeaponDef {
         let mut body = vec![0; model.bodyparts.len()];
         // TF_BODY="part=set,part=set" overrides bodygroups (debugging).
         let extra: Vec<(String, usize)> = std::env::var("TF_BODY")
-            .map(|v| v.split(',').filter_map(|kv| kv.split_once('=')).filter_map(|(k, n)| Some((k.trim().to_string(), n.trim().parse().ok()?))).collect())
+            .map(|v| {
+                v.split(',')
+                    .filter_map(|kv| kv.split_once('='))
+                    .filter_map(|(k, n)| Some((k.trim().to_string(), n.trim().parse().ok()?)))
+                    .collect()
+            })
             .unwrap_or_default();
         for (name, set) in self.bodygroups.iter().chain(&self.ads_scope).chain(&extra) {
-            match model.bodyparts.iter().position(|b| b.name.eq_ignore_ascii_case(name)) {
+            match model
+                .bodyparts
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(name))
+            {
                 Some(i) => body[i] = (*set).min(model.bodyparts[i].num_models.saturating_sub(1)),
                 None => log::debug!("{}: no body part {name}", model.name),
             }
@@ -320,18 +329,34 @@ impl WeaponDef {
 
     /// Load a weapon script with mods from its `Mods` block applied (see
     /// `PlayerSettings::with_mods`); unknown mod names are ignored.
-    pub fn load_modded(name: &str, mods: &[&str], read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let base = PlayerSettings::load(&format!("scripts/weapons/{name}.txt"), true, read).unwrap_or_default();
+    pub fn load_modded(
+        name: &str,
+        mods: &[&str],
+        read: &mut dyn FnMut(&str) -> Option<String>,
+    ) -> Self {
+        let base = PlayerSettings::load(&format!("scripts/weapons/{name}.txt"), true, read)
+            .unwrap_or_default();
         let available_mods = base.mod_names();
-        let mods: Vec<&str> = mods.iter().copied().filter(|m| available_mods.iter().any(|a| a.eq_ignore_ascii_case(m))).collect();
+        let mods: Vec<&str> = mods
+            .iter()
+            .copied()
+            .filter(|m| available_mods.iter().any(|a| a.eq_ignore_ascii_case(m)))
+            .collect();
         let s = base.with_mods(&mods);
         let f = |k: &str, d: f32| -> f32 {
-            s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).and_then(|v| v.parse().ok()).unwrap_or(d)
+            s.get(&format!("sp_base.{k}"))
+                .or_else(|| s.get(&format!(".{k}")))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d)
         };
         Self {
             name: name.to_string(),
             fire_rate: f("fire_rate", 12.0),
-            clip: if f("ammo_clip_size", 30.0) > 0.0 { f("ammo_clip_size", 30.0) as u32 } else { f("ammo_default_total", 10.0) as u32 },
+            clip: if f("ammo_clip_size", 30.0) > 0.0 {
+                f("ammo_clip_size", 30.0) as u32
+            } else {
+                f("ammo_default_total", 10.0) as u32
+            },
             no_reload: f("ammo_clip_size", 30.0) <= 0.0,
             charge: ChargeDef {
                 time: f("charge_time", 0.0),
@@ -339,12 +364,18 @@ impl WeaponDef {
                 cooldown: f("charge_cooldown_time", 0.0),
                 by_ads: f("charge_is_triggered_by_ADS", 0.0) > 0.0,
                 require_input: f("charge_require_input", 1.0) > 0.0,
-                extra_per_level: f("damage_additional_bullets_titanarmor", f("damage_additional_bullets", 0.0)),
+                extra_per_level: f(
+                    "damage_additional_bullets_titanarmor",
+                    f("damage_additional_bullets", 0.0),
+                ),
             },
             reload_time: f("reload_time", 2.6),
             reload_empty_time: f("reloadempty_time", 2.6),
             // Titan armour damage; weapons without it hit Titans with their normal damage.
-            damage_near: f("damage_near_value_titanarmor", f("damage_near_value", 120.0)),
+            damage_near: f(
+                "damage_near_value_titanarmor",
+                f("damage_near_value", 120.0),
+            ),
             damage_far: f("damage_far_value_titanarmor", f("damage_far_value", 100.0)),
             near_dist: f("damage_near_distance", 1200.0),
             far_dist: f("damage_far_distance", 2000.0),
@@ -354,17 +385,40 @@ impl WeaponDef {
             damage_near_pilot: f("damage_near_value", 20.0),
             damage_far_pilot: f("damage_far_value", 15.0),
             explosion_damage: f("explosion_damage", 0.0),
-            npc_damage_near: f("npc_damage_near_value_titanarmor", f("damage_near_value_titanarmor", f("damage_near_value", 120.0))),
-            npc_damage_far: f("npc_damage_far_value_titanarmor", f("damage_far_value_titanarmor", f("damage_far_value", 100.0))),
+            npc_damage_near: f(
+                "npc_damage_near_value_titanarmor",
+                f(
+                    "damage_near_value_titanarmor",
+                    f("damage_near_value", 120.0),
+                ),
+            ),
+            npc_damage_far: f(
+                "npc_damage_far_value_titanarmor",
+                f("damage_far_value_titanarmor", f("damage_far_value", 100.0)),
+            ),
             npc_damage_near_pilot: f("npc_damage_near_value", f("damage_near_value", 20.0)),
             npc_damage_far_pilot: f("npc_damage_far_value", f("damage_far_value", 15.0)),
-            npc_explosion_damage_heavy: f("npc_explosion_damage_heavy_armor", f("explosion_damage_heavy_armor", 0.0)),
+            npc_explosion_damage_heavy: f(
+                "npc_explosion_damage_heavy_armor",
+                f("explosion_damage_heavy_armor", 0.0),
+            ),
             explosion_inner_radius: f("explosion_inner_radius", 0.0),
             explosion_radius: f("explosionradius", 0.0),
-            stops_regen: s.get(".damage_flags").is_some_and(|v| v.contains("DF_STOPS_TITAN_REGEN")),
-            impact_table: intern(s.get(".impact_effect_table").as_deref().filter(|t| !t.is_empty()).unwrap_or("default")),
+            stops_regen: s
+                .get(".damage_flags")
+                .is_some_and(|v| v.contains("DF_STOPS_TITAN_REGEN")),
+            impact_table: intern(
+                s.get(".impact_effect_table")
+                    .as_deref()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("default"),
+            ),
             playermodel: s.get(".playermodel").unwrap_or_default().to_string(),
-            activity_modifier: s.get(".activitymodifier").unwrap_or_default().trim().to_ascii_lowercase(),
+            activity_modifier: s
+                .get(".activitymodifier")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase(),
             npc_min_burst: f("npc_min_burst", 3.0) as u32,
             npc_max_burst: f("npc_max_burst", 6.0) as u32,
             npc_rest_min: f("npc_rest_time_between_bursts_min", 0.5),
@@ -372,33 +426,64 @@ impl WeaponDef {
             npc_max_range: f("npc_max_range", 5000.0),
             npc_min_engage_titan: f("npc_min_engage_range_heavy_armor", 0.0),
             proficiency: [
-                (f("proficiency_poor_spreadscale", 5.0), f("proficiency_poor_bias", 0.0)),
-                (f("proficiency_average_spreadscale", 3.5), f("proficiency_average_bias", 0.2)),
-                (f("proficiency_good_spreadscale", 3.0), f("proficiency_good_bias", 0.5)),
-                (f("proficiency_very_good_spreadscale", 2.0), f("proficiency_very_good_bias", 0.75)),
+                (
+                    f("proficiency_poor_spreadscale", 5.0),
+                    f("proficiency_poor_bias", 0.0),
+                ),
+                (
+                    f("proficiency_average_spreadscale", 3.5),
+                    f("proficiency_average_bias", 0.2),
+                ),
+                (
+                    f("proficiency_good_spreadscale", 3.0),
+                    f("proficiency_good_bias", 0.5),
+                ),
+                (
+                    f("proficiency_very_good_spreadscale", 2.0),
+                    f("proficiency_very_good_bias", 0.75),
+                ),
                 // Engine default when the script leaves it out.
-                (f("proficiency_perfect_spreadscale", 1.0), f("proficiency_perfect_bias", 1.0)),
+                (
+                    f("proficiency_perfect_spreadscale", 1.0),
+                    f("proficiency_perfect_bias", 1.0),
+                ),
             ],
             vortex_absorb: VortexRefire::parse(s.get(".vortex_refire_behavior")).absorbed(),
             vortex_refire: VortexRefire::parse(s.get(".vortex_refire_behavior")),
             vortex_fx: (
-                s.get(".vortex_absorb_effect").unwrap_or("wpn_vortex_projectile_rifle_FP").to_string(),
-                s.get(".vortex_absorb_effect_third_person").unwrap_or("wpn_vortex_projectile_rifle").to_string(),
+                s.get(".vortex_absorb_effect")
+                    .unwrap_or("wpn_vortex_projectile_rifle_FP")
+                    .to_string(),
+                s.get(".vortex_absorb_effect_third_person")
+                    .unwrap_or("wpn_vortex_projectile_rifle")
+                    .to_string(),
             ),
             viewmodel: s.get(".viewmodel").unwrap_or_default().to_string(),
-            automatic: s.get("sp_base.fire_mode").or_else(|| s.get(".fire_mode")).is_none_or(|m| m == "auto"),
+            automatic: s
+                .get("sp_base.fire_mode")
+                .or_else(|| s.get(".fire_mode"))
+                .is_none_or(|m| m == "auto"),
             burst_count: f("burst_fire_count", 0.0) as u32,
             burst_delay: f("burst_fire_delay", 0.0),
             projectile_speed: {
                 let p = f("projectile_launch_speed", 0.0).max(f("bolt_speed", 0.0));
                 (p > 0.0).then_some(p)
             },
-            gravity: if f("bolt_gravity_enabled", 0.0) > 0.0 { f("bolt_gravity_amount", 0.5) } else { f("projectile_gravity_scale", 0.0) },
-            shotgun: s.get(".damage_flags").is_some_and(|v| v.contains("DF_SHOTGUN")),
+            gravity: if f("bolt_gravity_enabled", 0.0) > 0.0 {
+                f("bolt_gravity_amount", 0.5)
+            } else {
+                f("projectile_gravity_scale", 0.0)
+            },
+            shotgun: s
+                .get(".damage_flags")
+                .is_some_and(|v| v.contains("DF_SHOTGUN")),
             bolt_spread: (f("bolt_spread_max", 0.05), f("bolt_spread_min", 0.025)),
             // The Smart Pistol leaves the head shot scale out; its smart_ammo_target_npc_lock_factor
             // is that scale ("smart pistol does head shots at 2x damage").
-            headshot_scale: f("damage_headshot_scale", f("smart_ammo_target_npc_lock_factor", 1.0)),
+            headshot_scale: f(
+                "damage_headshot_scale",
+                f("smart_ammo_target_npc_lock_factor", 1.0),
+            ),
             crit: f("critical_hit", 0.0) > 0.0,
             crit_scale: f("critical_hit_damage_scale", 1.0),
             titanarmor_crit_required: f("titanarmor_critical_hit_required", 0.0) > 0.0,
@@ -412,27 +497,65 @@ impl WeaponDef {
             holster_time: f("holster_time", 0.4),
             raise_time: f("raise_time", 0.3),
             sprint_cycle: f("sprintcycle_time", 0.0),
-            ads_fov_frac: (f("ads_fov_zoomfrac_start", 0.0), f("ads_fov_zoomfrac_end", 1.0)),
-            smart: crate::smartammo::SmartDef::from_settings(name, &mods.iter().map(|m| m.to_string()).collect::<Vec<_>>(), &s),
+            ads_fov_frac: (
+                f("ads_fov_zoomfrac_start", 0.0),
+                f("ads_fov_zoomfrac_end", 1.0),
+            ),
+            smart: crate::smartammo::SmartDef::from_settings(
+                name,
+                &mods.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+                &s,
+            ),
             attack_presses_ads: f("attack_button_presses_ads", 0.0) > 0.0,
             projectile_model: s.get(".projectilemodel").unwrap_or_default().to_string(),
-            trail: intern(s.get(".projectile_trail_effect_0").unwrap_or_default().trim()),
+            trail: intern(
+                s.get(".projectile_trail_effect_0")
+                    .unwrap_or_default()
+                    .trim(),
+            ),
             kick: crate::vmmotion::KickDef::from_settings(&s),
             motion: crate::vmmotion::MotionDef::from_settings(&s),
             spread: crate::spread::SpreadDef::from_settings(&s),
-            crosshair: s.get("rui_crosshairdata.ui").unwrap_or("").trim().to_string(),
+            crosshair: s
+                .get("rui_crosshairdata.ui")
+                .unwrap_or("")
+                .trim()
+                .to_string(),
             ads_move_scale: f("ads_move_speed_scale", 1.0),
-            reload_late: [f("reload_time_late1", 0.0), f("reload_time_late2", 0.0), f("reload_time_late3", 0.0)],
-            reloadempty_late: [f("reloadempty_time_late1", 0.0), f("reloadempty_time_late2", 0.0), f("reloadempty_time_late3", 0.0)],
+            reload_late: [
+                f("reload_time_late1", 0.0),
+                f("reload_time_late2", 0.0),
+                f("reload_time_late3", 0.0),
+            ],
+            reloadempty_late: [
+                f("reloadempty_time_late1", 0.0),
+                f("reloadempty_time_late2", 0.0),
+                f("reloadempty_time_late3", 0.0),
+            ],
             very_far_dist: f("damage_very_far_distance", f("damage_far_distance", 2000.0)),
-            damage_very_far: f("damage_very_far_value_titanarmor", f("damage_very_far_value", f("damage_far_value_titanarmor", f("damage_far_value", 100.0)))),
+            damage_very_far: f(
+                "damage_very_far_value_titanarmor",
+                f(
+                    "damage_very_far_value",
+                    f("damage_far_value_titanarmor", f("damage_far_value", 100.0)),
+                ),
+            ),
             damage_very_far_pilot: f("damage_very_far_value", f("damage_far_value", 100.0)),
             fire_rate_max: f("fire_rate_max", 0.0),
             fire_rate_speedup: f("fire_rate_max_time_speedup", 0.0),
             fire_rate_cooldown: f("fire_rate_max_time_cooldown", 0.0),
-            fire_rate_by_ads: s.get("sp_base.fire_rate_max_use_ads").or_else(|| s.get(".fire_rate_max_use_ads")).is_some_and(|v| matches!(v.trim(), "1" | "true")),
+            fire_rate_by_ads: s
+                .get("sp_base.fire_rate_max_use_ads")
+                .or_else(|| s.get(".fire_rate_max_use_ads"))
+                .is_some_and(|v| matches!(v.trim(), "1" | "true")),
             fx: {
-                let g = |k: &str| s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).map(|v| v.trim().to_string()).filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("none")).unwrap_or_default();
+                let g = |k: &str| {
+                    s.get(&format!("sp_base.{k}"))
+                        .or_else(|| s.get(&format!(".{k}")))
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("none"))
+                        .unwrap_or_default()
+                };
                 WeaponFx {
                     muzzle_view: g("fx_muzzle_flash_view"),
                     muzzle_world: g("fx_muzzle_flash_world"),
@@ -444,30 +567,65 @@ impl WeaponDef {
                 }
             },
             ads_scope: {
-                let get = |k: &str| s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).map(|v| v.trim().to_string());
-                get("bodygroup_ads_scope_name").zip(get("bodygroup_ads_scope_set").and_then(|v| v.parse().ok())).filter(|(_, n)| *n > 0)
+                let get = |k: &str| {
+                    s.get(&format!("sp_base.{k}"))
+                        .or_else(|| s.get(&format!(".{k}")))
+                        .map(|v| v.trim().to_string())
+                };
+                get("bodygroup_ads_scope_name")
+                    .zip(get("bodygroup_ads_scope_set").and_then(|v| v.parse().ok()))
+                    .filter(|(_, n)| *n > 0)
             },
-            scope_frac: (f("zoom_scope_frac_start", 0.2), f("zoom_scope_frac_end", 0.7)),
+            scope_frac: (
+                f("zoom_scope_frac_start", 0.2),
+                f("zoom_scope_frac_end", 0.7),
+            ),
             vm_offset: {
                 let v = |k: &str| {
-                    let t = s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).unwrap_or_default();
-                    let n: Vec<f32> = t.split_whitespace().filter_map(|x| x.parse().ok()).collect();
-                    if n.len() == 3 { Vec3::new(n[0], n[1], n[2]) } else { Vec3::ZERO }
+                    let t = s
+                        .get(&format!("sp_base.{k}"))
+                        .or_else(|| s.get(&format!(".{k}")))
+                        .unwrap_or_default();
+                    let n: Vec<f32> = t
+                        .split_whitespace()
+                        .filter_map(|x| x.parse().ok())
+                        .collect();
+                    if n.len() == 3 {
+                        Vec3::new(n[0], n[1], n[2])
+                    } else {
+                        Vec3::ZERO
+                    }
                 };
                 (v("viewmodel_offset_hip"), v("viewmodel_offset_ads"))
             },
             bodygroups: (1..=16)
                 .filter_map(|i| {
-                    let get = |k: &str| s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).map(|v| v.trim().to_string());
-                    Some((get(&format!("bodygroup{i}_name"))?, get(&format!("bodygroup{i}_set"))?.parse().ok()?))
+                    let get = |k: &str| {
+                        s.get(&format!("sp_base.{k}"))
+                            .or_else(|| s.get(&format!(".{k}")))
+                            .map(|v| v.trim().to_string())
+                    };
+                    Some((
+                        get(&format!("bodygroup{i}_name"))?,
+                        get(&format!("bodygroup{i}_set"))?.parse().ok()?,
+                    ))
                 })
                 .collect(),
             burn: None,
             rui: (1..=10)
                 .filter_map(|i| {
-                    let on = s.get(&format!(".ui{i}_enable")).or_else(|| s.get(&format!("sp_base.ui{i}_enable")))?.trim() == "1";
+                    let on = s
+                        .get(&format!(".ui{i}_enable"))
+                        .or_else(|| s.get(&format!("sp_base.ui{i}_enable")))?
+                        .trim()
+                        == "1";
                     on.then_some(())?;
-                    Some((s.get(&format!("uidata{i}.ui"))?.trim().to_ascii_lowercase(), s.get(&format!("uidata{i}.mesh"))?.trim().to_ascii_lowercase()))
+                    Some((
+                        s.get(&format!("uidata{i}.ui"))?.trim().to_ascii_lowercase(),
+                        s.get(&format!("uidata{i}.mesh"))?
+                            .trim()
+                            .to_ascii_lowercase(),
+                    ))
                 })
                 .collect(),
         }
@@ -478,7 +636,12 @@ impl WeaponDef {
         let mut def = Self::load_player_inner(name, read);
         // The amped version (its `burn_mod_*`), for rounds through an A-Wall.
         let want = env_mods(name);
-        if let Some(burn) = def.available_mods.iter().find(|m| m.starts_with("burn_mod")).cloned() {
+        if let Some(burn) = def
+            .available_mods
+            .iter()
+            .find(|m| m.starts_with("burn_mod"))
+            .cloned()
+        {
             let mut refs: Vec<&str> = want.iter().map(String::as_str).collect();
             refs.push(&burn);
             def.burn = Some(Box::new(Self::load_modded(name, &refs, read)));
@@ -495,7 +658,10 @@ impl WeaponDef {
         let def = Self::load_modded(name, &refs, read);
         for m in &want {
             if !def.mods.iter().any(|a| a.eq_ignore_ascii_case(m)) {
-                log::warn!("{name} has no mod {m:?}; its mods: {}", def.available_mods.join(", "));
+                log::warn!(
+                    "{name} has no mod {m:?}; its mods: {}",
+                    def.available_mods.join(", ")
+                );
             }
         }
         log::info!("{name} with mods {:?}", def.mods);
@@ -506,7 +672,9 @@ impl WeaponDef {
 /// Mods for a weapon from `TF_MODS`: `weapon:mod,mod;weapon:mod`, with `*` for every weapon,
 /// e.g. `TF_MODS="mp_weapon_r97:pas_fast_reload,extended_ammo;mp_weapon_smart_pistol:enhanced_targeting"`.
 pub fn env_mods(weapon: &str) -> Vec<String> {
-    let Ok(v) = std::env::var("TF_MODS") else { return Vec::new() };
+    let Ok(v) = std::env::var("TF_MODS") else {
+        return Vec::new();
+    };
     parse_mods(&v, weapon)
 }
 
@@ -534,17 +702,98 @@ pub struct TitanGun {
     pub pellets: Option<(&'static [[f32; 2]], f32)>,
 }
 
-const LEADWALL_BOLTS: [[f32; 2]; 8] = [[0.2, 0.8], [0.2, -0.8], [-0.2, 0.65], [-0.2, -0.65], [0.2, 0.2], [0.2, -0.2], [-0.2, 0.2], [-0.2, -0.2]];
+const LEADWALL_BOLTS: [[f32; 2]; 8] = [
+    [0.2, 0.8],
+    [0.2, -0.8],
+    [-0.2, 0.65],
+    [-0.2, -0.65],
+    [0.2, 0.2],
+    [0.2, -0.2],
+    [-0.2, 0.2],
+    [-0.2, -0.2],
+];
 
 pub const TITAN_ARSENAL: &[TitanGun] = &[
-    TitanGun { id: "mp_titanweapon_xo16_shorty", kit: "EXPEDITION", first: &["wpn_xo16_1p_wpnfire_firstshot_core"], shot: &["wpn_xo16_1p_wpnfire_secondshot_core"], tail: &["wpn_xo16_1p_wpnfire_tail_core"], projectile: None, gravity: 0.0, pellets: None },
-    TitanGun { id: "mp_titanweapon_meteor", kit: "SCORCH", first: &[], shot: &["wpn_meteor_1p_shot_lr"], tail: &[], projectile: Some(2200.0), gravity: 0.3, pellets: None },
-    TitanGun { id: "mp_titanweapon_particle_accelerator", kit: "ION", first: &[], shot: &["wpn_particleaccel_1p_firstshot_lr"], tail: &[], projectile: Some(8000.0), gravity: 0.0, pellets: None },
-    TitanGun { id: "mp_titanweapon_sniper", kit: "NORTHSTAR", first: &[], shot: &["wpn_titansniper_1p_wpnfire_level2_6ch"], tail: &["wpn_titansniper_1p_wpnfire_uber_tail"], projectile: Some(10000.0), gravity: 0.0, pellets: None },
-    TitanGun { id: "mp_titanweapon_leadwall", kit: "RONIN", first: &[], shot: &["wpn_leadwall_1p_shot_lr"], tail: &[], projectile: Some(4000.0), gravity: 0.0, pellets: Some((&LEADWALL_BOLTS, 0.05 * 1.45)) },
-    TitanGun { id: "mp_titanweapon_sticky_40mm", kit: "TONE", first: &[], shot: &["wpn_40mm_1p_wpnfire_reduced"], tail: &["wpn_40mm_1p_wpnfire_tail"], projectile: Some(6000.0), gravity: 0.1, pellets: None },
-    TitanGun { id: "mp_titanweapon_predator_cannon", kit: "LEGION", first: &["wpn_xo16_1p_wpnfire_firstshot_core"], shot: &["wpn_xo16_1p_wpnfire_secondshot_core"], tail: &["wpn_predator_1p_barrelspin_end"], projectile: None, gravity: 0.0, pellets: None },
-    TitanGun { id: "mp_titanweapon_rocketeer_rocketstream", kit: "BRUTE", first: &[], shot: &["wpn_trl_1p_fire_shot_lr"], tail: &["wpn_trl_1p_fire_rocket_tail"], projectile: Some(2500.0), gravity: 0.0, pellets: None },
+    TitanGun {
+        id: "mp_titanweapon_xo16_shorty",
+        kit: "EXPEDITION",
+        first: &["wpn_xo16_1p_wpnfire_firstshot_core"],
+        shot: &["wpn_xo16_1p_wpnfire_secondshot_core"],
+        tail: &["wpn_xo16_1p_wpnfire_tail_core"],
+        projectile: None,
+        gravity: 0.0,
+        pellets: None,
+    },
+    TitanGun {
+        id: "mp_titanweapon_meteor",
+        kit: "SCORCH",
+        first: &[],
+        shot: &["wpn_meteor_1p_shot_lr"],
+        tail: &[],
+        projectile: Some(2200.0),
+        gravity: 0.3,
+        pellets: None,
+    },
+    TitanGun {
+        id: "mp_titanweapon_particle_accelerator",
+        kit: "ION",
+        first: &[],
+        shot: &["wpn_particleaccel_1p_firstshot_lr"],
+        tail: &[],
+        projectile: Some(8000.0),
+        gravity: 0.0,
+        pellets: None,
+    },
+    TitanGun {
+        id: "mp_titanweapon_sniper",
+        kit: "NORTHSTAR",
+        first: &[],
+        shot: &["wpn_titansniper_1p_wpnfire_level2_6ch"],
+        tail: &["wpn_titansniper_1p_wpnfire_uber_tail"],
+        projectile: Some(10000.0),
+        gravity: 0.0,
+        pellets: None,
+    },
+    TitanGun {
+        id: "mp_titanweapon_leadwall",
+        kit: "RONIN",
+        first: &[],
+        shot: &["wpn_leadwall_1p_shot_lr"],
+        tail: &[],
+        projectile: Some(4000.0),
+        gravity: 0.0,
+        pellets: Some((&LEADWALL_BOLTS, 0.05 * 1.45)),
+    },
+    TitanGun {
+        id: "mp_titanweapon_sticky_40mm",
+        kit: "TONE",
+        first: &[],
+        shot: &["wpn_40mm_1p_wpnfire_reduced"],
+        tail: &["wpn_40mm_1p_wpnfire_tail"],
+        projectile: Some(6000.0),
+        gravity: 0.1,
+        pellets: None,
+    },
+    TitanGun {
+        id: "mp_titanweapon_predator_cannon",
+        kit: "LEGION",
+        first: &["wpn_xo16_1p_wpnfire_firstshot_core"],
+        shot: &["wpn_xo16_1p_wpnfire_secondshot_core"],
+        tail: &["wpn_predator_1p_barrelspin_end"],
+        projectile: None,
+        gravity: 0.0,
+        pellets: None,
+    },
+    TitanGun {
+        id: "mp_titanweapon_rocketeer_rocketstream",
+        kit: "BRUTE",
+        first: &[],
+        shot: &["wpn_trl_1p_fire_shot_lr"],
+        tail: &["wpn_trl_1p_fire_rocket_tail"],
+        projectile: Some(2500.0),
+        gravity: 0.0,
+        pellets: None,
+    },
 ];
 
 /// Smart Core's lock-on cone (half angle, degrees).
@@ -634,7 +883,11 @@ impl VmSeq {
     /// A reload's viewmodel sequence.
     fn reload_name(self) -> Option<&'static str> {
         const LATE: [&str; 3] = ["reload_late1_seq", "reload_late2_seq", "reload_late3_seq"];
-        const EMPTY_LATE: [&str; 3] = ["reload_empty_late1_seq", "reload_empty_late2_seq", "reload_empty_late3_seq"];
+        const EMPTY_LATE: [&str; 3] = [
+            "reload_empty_late1_seq",
+            "reload_empty_late2_seq",
+            "reload_empty_late3_seq",
+        ];
         match self {
             VmSeq::Reload => Some("reload_seq"),
             VmSeq::ReloadEmpty => Some("reload_empty_seq"),
@@ -668,14 +921,22 @@ struct ReloadTimes {
 
 impl ReloadTimes {
     fn of(def: &WeaponDef) -> Self {
-        Self { full: def.reload_time, empty: def.reload_empty_time, late: def.reload_late, empty_late: def.reloadempty_late }
+        Self {
+            full: def.reload_time,
+            empty: def.reload_empty_time,
+            late: def.reload_late,
+            empty_late: def.reloadempty_late,
+        }
     }
 }
 
 impl Weapon {
     /// The Predator Cannon is in its long-range mode (the `LongRangeAmmo` mod).
     pub fn long_range(&self) -> bool {
-        self.def.mods.iter().any(|m| m.eq_ignore_ascii_case("LongRangeAmmo"))
+        self.def
+            .mods
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("LongRangeAmmo"))
     }
     /// Play the viewmodel's draw again (the gun coming back after an empty-handed offhand).
     pub fn redeploy(&mut self) {
@@ -703,7 +964,11 @@ impl Weapon {
         self.vm_seq = VmSeq::AltFire;
         self.vm_time = 0.0;
     }
-    pub fn new(def: WeaponDef, viewmodel: Option<(Entity, Entity)>, world_gun: Option<Entity>) -> Self {
+    pub fn new(
+        def: WeaponDef,
+        viewmodel: Option<(Entity, Entity)>,
+        world_gun: Option<Entity>,
+    ) -> Self {
         Self {
             ammo: def.clip,
             def,
@@ -785,8 +1050,15 @@ pub struct FxAssets {
     pub heat_disc: (Handle<Mesh>, Handle<StandardMaterial>),
 }
 
-pub fn setup_fx(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>) {
-    let mesh = meshes.add(Circle::new(crate::combat::VORTEX_RADIUS * crate::player::UNIT));
+pub fn setup_fx(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let mesh = meshes.add(Circle::new(
+        crate::combat::VORTEX_RADIUS * crate::player::UNIT,
+    ));
     let tex = images.add(shield_texture(256));
     let disc = |materials: &mut Assets<StandardMaterial>, base: Color, emissive: LinearRgba| {
         materials.add(StandardMaterial {
@@ -801,9 +1073,20 @@ pub fn setup_fx(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
             ..default()
         })
     };
-    let vortex = disc(&mut materials, Color::srgb(0.35, 0.75, 1.0), LinearRgba::rgb(0.5, 1.3, 2.6));
-    let heat = disc(&mut materials, Color::srgb(1.0, 0.55, 0.2), LinearRgba::rgb(2.6, 0.9, 0.2));
-    commands.insert_resource(FxAssets { vortex_disc: (mesh.clone(), vortex), heat_disc: (mesh, heat) });
+    let vortex = disc(
+        &mut materials,
+        Color::srgb(0.35, 0.75, 1.0),
+        LinearRgba::rgb(0.5, 1.3, 2.6),
+    );
+    let heat = disc(
+        &mut materials,
+        Color::srgb(1.0, 0.55, 0.2),
+        LinearRgba::rgb(2.6, 0.9, 0.2),
+    );
+    commands.insert_resource(FxAssets {
+        vortex_disc: (mesh.clone(), vortex),
+        heat_disc: (mesh, heat),
+    });
 }
 
 /// The shield discs' look (a stand-in for the game's refracting dome): nearly clear in the
@@ -826,13 +1109,21 @@ fn shield_texture(n: u32) -> Image {
             let line = f(q.x).min(f(q.y)).min(f(q.x + q.y));
             let hex = (1.0 - (line / 0.07).min(1.0)) * 0.22 * (0.35 + 0.65 * r);
             let base = 0.05;
-            let a = if r > 1.0 { 0.0 } else { (edge + glow + hex + base).min(1.0) };
+            let a = if r > 1.0 {
+                0.0
+            } else {
+                (edge + glow + hex + base).min(1.0)
+            };
             let c = (a * 255.0) as u8;
             px.extend_from_slice(&[c, c, c, 255]);
         }
     }
     let mut img = Image::new(
-        bevy::render::render_resource::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+        bevy::render::render_resource::Extent3d {
+            width: n,
+            height: n,
+            depth_or_array_layers: 1,
+        },
         bevy::render::render_resource::TextureDimension::D2,
         px,
         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
@@ -857,19 +1148,40 @@ pub fn shimmer_shields(time: Res<Time>, mut q: Query<&mut Transform, With<Shield
 /// The script's muzzle flash (and first-person shell eject) for a shot: the `_FP` systems
 /// at the viewmodel's attachments in the cockpit, the world system at the gun in BT's hand
 /// otherwise. False when the game's systems can't play it (the caller falls back).
-fn titan_shot_fx(commands: &mut Commands, w: &Weapon, cockpit: bool, actors: &Query<&Actor>, globals: &Query<&GlobalTransform>) -> bool {
-    let Some(atts) = w.fx_atts.as_ref() else { return false };
-    let at = |actor: Option<Entity>, i: usize| actor.zip(atts[i].as_ref()).and_then(|(a, att)| crate::pilotweapon::vm_attachment(actors, globals, a, att));
+fn titan_shot_fx(
+    commands: &mut Commands,
+    w: &Weapon,
+    cockpit: bool,
+    actors: &Query<&Actor>,
+    globals: &Query<&GlobalTransform>,
+) -> bool {
+    let Some(atts) = w.fx_atts.as_ref() else {
+        return false;
+    };
+    let at = |actor: Option<Entity>, i: usize| {
+        actor
+            .zip(atts[i].as_ref())
+            .and_then(|(a, att)| crate::pilotweapon::vm_attachment(actors, globals, a, att))
+    };
     if cockpit {
         // On the viewmodel's joints, so the flash moves with the gun (see emit_on_vm_joint).
-        let joint = |i: usize| w.viewmodel.map(|v| v.1).zip(atts[i].as_ref()).and_then(|(a, att)| crate::pilotweapon::vm_joint(actors, a, att));
-        let Some((j, local)) = joint(0).filter(|_| !w.def.fx.muzzle_view.is_empty()) else { return false };
+        let joint = |i: usize| {
+            w.viewmodel
+                .map(|v| v.1)
+                .zip(atts[i].as_ref())
+                .and_then(|(a, att)| crate::pilotweapon::vm_joint(actors, a, att))
+        };
+        let Some((j, local)) = joint(0).filter(|_| !w.def.fx.muzzle_view.is_empty()) else {
+            return false;
+        };
         crate::pfx::emit_on_vm_joint(commands, &w.def.fx.muzzle_view, j, local);
         if let Some((j, local)) = joint(1).filter(|_| !w.def.fx.shell_view.is_empty()) {
             crate::pfx::emit_on_vm_joint(commands, &w.def.fx.shell_view, j, local);
         }
     } else {
-        let Some((p, r)) = at(w.world_gun, 2).filter(|_| !w.def.fx.muzzle_world.is_empty()) else { return false };
+        let Some((p, r)) = at(w.world_gun, 2).filter(|_| !w.def.fx.muzzle_world.is_empty()) else {
+            return false;
+        };
         crate::pfx::emit_named_frame(commands, &w.def.fx.muzzle_world, p, r);
     }
     true
@@ -891,9 +1203,16 @@ pub struct GunMuzzle {
     pub shield_fp: Option<Vec3>,
 }
 
-fn muzzle_world(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, actor: Option<Entity>) -> Option<Vec3> {
+fn muzzle_world(
+    actors: &Query<&Actor>,
+    globals: &Query<&GlobalTransform>,
+    actor: Option<Entity>,
+) -> Option<Vec3> {
     let a = actors.get(actor?).ok()?;
-    globals.get(a.joint("muzzle_flash")?).ok().map(|g| g.translation())
+    globals
+        .get(a.joint("muzzle_flash")?)
+        .ok()
+        .map(|g| g.translation())
 }
 
 /// Fire, reload and ADS. Runs after the movement simulation.
@@ -907,7 +1226,15 @@ pub fn weapon_fire(
     settings: Res<TitanSettings>,
     fx: Res<FxAssets>,
     mut punch_res: ResMut<ViewPunch>,
-    (auto, control, mut scratch, mut enemy_walls, springs, pfx, mut gun_muzzle): (Res<crate::autotitan::AutoTitan>, Res<crate::pilotctl::Control>, Local<ViewPunch>, ResMut<crate::titankit::EnemyWalls>, Res<crate::vmmotion::WeaponSprings>, Option<Res<crate::pfx::Pfx>>, ResMut<GunMuzzle>),
+    (auto, control, mut scratch, mut enemy_walls, springs, pfx, mut gun_muzzle): (
+        Res<crate::autotitan::AutoTitan>,
+        Res<crate::pilotctl::Control>,
+        Local<ViewPunch>,
+        ResMut<crate::titankit::EnemyWalls>,
+        Res<crate::vmmotion::WeaponSprings>,
+        Option<Res<crate::pfx::Pfx>>,
+        ResMut<GunMuzzle>,
+    ),
     mut titans: Query<(
         &PlayerTitan,
         &mut Weapon,
@@ -923,41 +1250,91 @@ pub fn weapon_fire(
     hitboxes: Option<Res<crate::hitbox::EnemyHitboxes>>,
 ) {
     let dt = time.delta_secs();
-    let game_fx = pfx.as_deref().is_some_and(|p| p.ready()) && std::env::var_os("TF_OLD_FX").is_none();
+    let game_fx =
+        pfx.as_deref().is_some_and(|p| p.ready()) && std::env::var_os("TF_OLD_FX").is_none();
     let no_boxes = crate::hitbox::EnemyHitboxes::default();
     let hitboxes = hitboxes.as_deref().unwrap_or(&no_boxes);
     // On foot BT shoots on his own (autotitan.rs) from his own aim; recoil only kicks the
     // view when you're in the cockpit.
     let piloted = *control == crate::pilotctl::Control::Titan;
     let auto_fire = *control == crate::pilotctl::Control::Pilot && auto.fire;
-    let punch: &mut ViewPunch = if piloted { &mut punch_res } else { &mut scratch };
+    let punch: &mut ViewPunch = if piloted {
+        &mut punch_res
+    } else {
+        &mut scratch
+    };
     // Recoil springs back.
     if let Ok((_, w, ..)) = titans.single() {
         punch.step(dt, Some(&w.def.kick), w.ads);
     }
-    let Ok((titan, mut w, mut core, vortex, melee, health, kit)) = titans.single_mut() else { return };
+    let Ok((titan, mut w, mut core, vortex, melee, health, kit)) = titans.single_mut() else {
+        return;
+    };
     gun_muzzle.cockpit = *mode == CameraMode::Cockpit && piloted;
-    let gun_actor = if gun_muzzle.cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun };
-    let joint_frame = |name: &str| gun_actor.and_then(|a| actors.get(a).ok()?.joint(name)).and_then(|j| globals.get(j).ok()).map(|g| (g.translation(), g.rotation()));
+    let gun_actor = if gun_muzzle.cockpit {
+        w.viewmodel.map(|v| v.1)
+    } else {
+        w.world_gun
+    };
+    let joint_frame = |name: &str| {
+        gun_actor
+            .and_then(|a| actors.get(a).ok()?.joint(name))
+            .and_then(|j| globals.get(j).ok())
+            .map(|g| (g.translation(), g.rotation()))
+    };
     gun_muzzle.frame = joint_frame("muzzle_flash");
     gun_muzzle.barrel = gun_actor.and_then(|a| actors.get(a).ok()?.joint("fx_barrel"));
-    gun_muzzle.shield_fp = w.viewmodel.and_then(|v| actors.get(v.1).ok()?.joint("def_c_base")).and_then(|j| globals.get(j).ok()).map(|g| g.transform_point(Vec3::new(0.0, 16.2, 119.4)));
+    gun_muzzle.shield_fp = w
+        .viewmodel
+        .and_then(|v| actors.get(v.1).ok()?.joint("def_c_base"))
+        .and_then(|j| globals.get(j).ok())
+        .map(|g| g.transform_point(Vec3::new(0.0, 16.2, 119.4)));
     // The left hand is busy during Vortex and punches, Sword Block holds the sword up; dead
     // Titans don't shoot.
-    let busy = vortex.is_some_and(|v| v.active) || melee.is_some_and(|m| m.t.is_some()) || health.is_some_and(|h| h.dead_for.is_some()) || kit.is_some_and(|k| k.blocking);
+    let busy = vortex.is_some_and(|v| v.active)
+        || melee.is_some_and(|m| m.t.is_some())
+        || health.is_some_and(|h| h.dead_for.is_some())
+        || kit.is_some_and(|k| k.blocking);
     let frozen = *mode == CameraMode::Free || busy;
     // Burst Core: faster fire, fixed damage, no ammo use.
-    let burst = core.as_ref().is_some_and(|c| c.active() && c.kind == crate::titankit::CoreKind::Burst);
+    let burst = core
+        .as_ref()
+        .is_some_and(|c| c.active() && c.kind == crate::titankit::CoreKind::Burst);
     // Smart Core: every shot locks onto the target nearest the crosshair.
-    let smart = core.as_ref().is_some_and(|c| c.active() && c.kind == crate::titankit::CoreKind::Smart);
+    let smart = core
+        .as_ref()
+        .is_some_and(|c| c.active() && c.kind == crate::titankit::CoreKind::Smart);
     let s = &titan.state;
     let fire = (input.fire && piloted) || auto_fire;
-    let (vyaw, vpitch) = if piloted { (input.yaw, input.pitch) } else { (s.yaw, s.pitch) };
+    let (vyaw, vpitch) = if piloted {
+        (input.yaw, input.pitch)
+    } else {
+        (s.yaw, s.pitch)
+    };
 
-    let ads_target = if (input.ads || w.alt_shot || w.forced_ads || (w.def.attack_presses_ads && fire)) && !s.sprinting && !w.reloading() && !frozen { 1.0 } else { 0.0 };
+    let ads_target =
+        if (input.ads || w.alt_shot || w.forced_ads || (w.def.attack_presses_ads && fire))
+            && !s.sprinting
+            && !w.reloading()
+            && !frozen
+        {
+            1.0
+        } else {
+            0.0
+        };
     // zoom_time_in going in, zoom_time_out coming back out.
-    let rate = dt / if ads_target >= w.ads { w.def.zoom_time } else { w.def.zoom_time_out }.max(0.05);
-    w.ads = if ads_target > w.ads { (w.ads + rate).min(ads_target) } else { (w.ads - rate).max(ads_target) };
+    let rate = dt
+        / if ads_target >= w.ads {
+            w.def.zoom_time
+        } else {
+            w.def.zoom_time_out
+        }
+        .max(0.05);
+    w.ads = if ads_target > w.ads {
+        (w.ads + rate).min(ads_target)
+    } else {
+        (w.ads - rate).max(ads_target)
+    };
 
     // Allow at most one frame of catch-up, so idle time doesn't bank shots.
     w.cooldown = (w.cooldown - dt).max(-dt);
@@ -968,7 +1345,11 @@ pub fn weapon_fire(
     // The looping fire sound ends with the weapon's tail (burst_or_looping_fire_sound_end).
     if w.firing_audio && w.since_fire > 1.6 / w.def.fire_rate.max(0.1) {
         w.firing_audio = false;
-        audio::cue(&mut commands, Cue::TitanGun(w.arsenal as u8, audio::GunPart::Tail), None);
+        audio::cue(
+            &mut commands,
+            Cue::TitanGun(w.arsenal as u8, audio::GunPart::Tail),
+            None,
+        );
     }
 
     if w.reload_left > 0.0 {
@@ -980,7 +1361,12 @@ pub fn weapon_fire(
         let passed = w.viewmodel.zip(seq).and_then(|((_, vm), name)| {
             let a = actors.get(vm).ok()?;
             let c = a.clip(name)?;
-            a.clips[c].milestones.iter().filter(|m| m.1 <= cycle).map(|m| m.0).max()
+            a.clips[c]
+                .milestones
+                .iter()
+                .filter(|m| m.1 <= cycle)
+                .map(|m| m.0)
+                .max()
         });
         w.reload_milestone = w.reload_milestone.max(passed.unwrap_or(0));
         if w.reload_left <= 0.0 {
@@ -1006,7 +1392,11 @@ pub fn weapon_fire(
         if empty != w.reload_empty {
             w.reload_milestone = 0;
         }
-        let lates = if empty { w.def.reloadempty_late } else { w.def.reload_late };
+        let lates = if empty {
+            w.def.reloadempty_late
+        } else {
+            w.def.reload_late
+        };
         let m = w.reload_milestone.min(3);
         w.vm_seq = match (m, empty) {
             (1..=3, false) if lates[m as usize - 1] > 0.0 => VmSeq::ReloadLate(m),
@@ -1028,14 +1418,29 @@ pub fn weapon_fire(
     if w.def.name == "mp_titanweapon_predator_cannon" {
         let spinning = ads_target > 0.0 && game_fx;
         let cockpit = *mode == CameraMode::Cockpit && piloted;
-        let actor = if cockpit { w.viewmodel.map(|v| v.1) } else { w.world_gun };
+        let actor = if cockpit {
+            w.viewmodel.map(|v| v.1)
+        } else {
+            w.world_gun
+        };
         let barrel = actor.and_then(|a| actors.get(a).ok()?.joint("fx_barrel"));
         match (spinning, w.spin_fx) {
             (true, None) => {
                 audio::event(&mut commands, "weapon_predator_windup_1p");
-                let e = commands.spawn((Transform::default(), crate::pfx::PfxTrail::oriented(if cockpit { "P_predator_barrel_blur_FP" } else { "P_predator_barrel_blur" }))).id();
+                let e = commands
+                    .spawn((
+                        Transform::default(),
+                        crate::pfx::PfxTrail::oriented(if cockpit {
+                            "P_predator_barrel_blur_FP"
+                        } else {
+                            "P_predator_barrel_blur"
+                        }),
+                    ))
+                    .id();
                 if cockpit {
-                    commands.entity(e).insert((crate::pfx::PfxVmSpace, crate::pfx::PfxOverlay));
+                    commands
+                        .entity(e)
+                        .insert((crate::pfx::PfxVmSpace, crate::pfx::PfxOverlay));
                 }
                 w.spin_fx = Some(e);
             }
@@ -1062,19 +1467,49 @@ pub fn weapon_fire(
     // over 5 levels, draining in charge_cooldown_time). Each level ticks.
     let cdef = w.def.charge.clone();
     if cdef.time > 0.0 {
-        let can = !frozen && !burst && !w.reloading() && w.ammo > 0 && !s.sprinting && w.cooldown <= 0.0 && w.vm_seq != VmSeq::Draw;
+        let can = !frozen
+            && !burst
+            && !w.reloading()
+            && w.ammo > 0
+            && !s.sprinting
+            && w.cooldown <= 0.0
+            && w.vm_seq != VmSeq::Draw;
         let charging = can && if cdef.by_ads { input.ads } else { fire };
         if charging && !w.charge.charging {
-            audio::cue_for(&mut commands, Cue::RailgunWindUp, None, (1.0 - w.charge.frac) * cdef.time + 0.3);
+            audio::cue_for(
+                &mut commands,
+                Cue::RailgunWindUp,
+                None,
+                (1.0 - w.charge.frac) * cdef.time + 0.3,
+            );
         } else if !charging && w.charge.charging && w.charge.frac > 0.05 {
-            audio::cue_for(&mut commands, Cue::RailgunWindDown, None, w.charge.frac * cdef.cooldown.max(0.3) + 0.2);
+            audio::cue_for(
+                &mut commands,
+                Cue::RailgunWindDown,
+                None,
+                w.charge.frac * cdef.cooldown.max(0.3) + 0.2,
+            );
         }
         w.charge.charging = charging;
         if let Some(level) = w.charge.update(&cdef, charging, dt) {
-            audio::cue(&mut commands, if level >= cdef.levels.max(1) { Cue::RailgunTickFinal } else { Cue::RailgunTick }, None);
+            audio::cue(
+                &mut commands,
+                if level >= cdef.levels.max(1) {
+                    Cue::RailgunTickFinal
+                } else {
+                    Cue::RailgunTick
+                },
+                None,
+            );
         }
     }
-    if !fire || frozen || (w.reloading() && !burst) || (w.ammo == 0 && !burst) || s.sprinting || w.vm_seq == VmSeq::Draw {
+    if !fire
+        || frozen
+        || (w.reloading() && !burst)
+        || (w.ammo == 0 && !burst)
+        || s.sprinting
+        || w.vm_seq == VmSeq::Draw
+    {
         return;
     }
     // attack_button_presses_ads (the Predator Cannon): the trigger zooms in, and the gun fires
@@ -1112,7 +1547,11 @@ pub fn weapon_fire(
         1.0
     };
     w.rate_ramp = w.def.ramp_step(w.rate_ramp, fire && w.ammo > 0, w.ads, dt);
-    let rate = if burst { crate::abilities::CORE_FIRE_RATE } else { w.def.rate_at(w.rate_ramp) };
+    let rate = if burst {
+        crate::abilities::CORE_FIRE_RATE
+    } else {
+        w.def.rate_at(w.rate_ramp)
+    };
     let interval = 1.0 / rate.max(0.1);
     while w.cooldown <= 0.0 && (w.ammo > 0 || burst) {
         w.cooldown += interval;
@@ -1130,10 +1569,25 @@ pub fn weapon_fire(
                 _ => 1,
             };
             audio::cue(&mut commands, Cue::RailgunFire(tier), None);
-            log::info!("{} charge level {charge_level}: {:.0} damage", w.def.name, shot_def.damage_near);
+            log::info!(
+                "{} charge level {charge_level}: {:.0} damage",
+                w.def.name,
+                shot_def.damage_near
+            );
             w.charge.frac = 0.0;
         } else {
-            audio::cue(&mut commands, Cue::TitanGun(arsenal, if w.firing_audio { audio::GunPart::Shot } else { audio::GunPart::First }), None);
+            audio::cue(
+                &mut commands,
+                Cue::TitanGun(
+                    arsenal,
+                    if w.firing_audio {
+                        audio::GunPart::Shot
+                    } else {
+                        audio::GunPart::First
+                    },
+                ),
+                None,
+            );
             w.firing_audio = true;
             if cdef.time > 0.0 {
                 w.charge.frac = 0.0;
@@ -1150,19 +1604,42 @@ pub fn weapon_fire(
         let (r1, r2) = (w.rand(), w.rand());
         let yaw = vyaw + punch.yaw.to_radians() + (r1 - 0.5) * 2.0 * cone;
         let pitch = vpitch + punch.pitch.to_radians() + (r2 - 0.5) * 2.0 * cone;
-        let mut dir = Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin());
+        let mut dir = Vec3::new(
+            pitch.cos() * yaw.cos(),
+            pitch.cos() * yaw.sin(),
+            -pitch.sin(),
+        );
         let eye = Vec3::from(s.eye(&settings.0).to_array());
         if smart {
-            let view = Vec3::new(vpitch.cos() * vyaw.cos(), vpitch.cos() * vyaw.sin(), -vpitch.sin());
+            let view = Vec3::new(
+                vpitch.cos() * vyaw.cos(),
+                vpitch.cos() * vyaw.sin(),
+                -vpitch.sin(),
+            );
             let lock = dummies
                 .iter()
                 .filter(|d| d.alive())
                 .map(|d| d.pos + Vec3::Z * d.height * 0.6 - eye)
-                .filter(|to| to.length() < 8000.0 && to.normalize().dot(view) > SMART_CORE_CONE.to_radians().cos())
-                .filter(|to| world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(to.normalize().to_array()), to.length() - 100.0).is_none())
+                .filter(|to| {
+                    to.length() < 8000.0
+                        && to.normalize().dot(view) > SMART_CORE_CONE.to_radians().cos()
+                })
+                .filter(|to| {
+                    world
+                        .0
+                        .raycast(
+                            SVec3::from(eye.to_array()),
+                            SVec3::from(to.normalize().to_array()),
+                            to.length() - 100.0,
+                        )
+                        .is_none()
+                })
                 .max_by(|a, b| a.normalize().dot(view).total_cmp(&b.normalize().dot(view)));
             if let Some(to) = lock {
-                log::debug!("smart core: shot steered {:.1} degrees onto a target", dir.angle_between(to).to_degrees());
+                log::debug!(
+                    "smart core: shot steered {:.1} degrees onto a target",
+                    dir.angle_between(to).to_degrees()
+                );
                 dir = to.normalize();
             }
         }
@@ -1173,20 +1650,46 @@ pub fn weapon_fire(
             let right = Vec3::new(yaw.sin(), -yaw.cos(), 0.0);
             let up = right.cross(fwd).normalize_or_zero();
             let dirs: Vec<Vec3> = match gun.pellets {
-                Some((table, scale)) => table.iter().map(|o| (fwd + up * o[0] * scale * (1.0 - 0.5 * ads) + right * o[1] * scale * (1.0 - 0.5 * ads)).normalize()).collect(),
+                Some((table, scale)) => table
+                    .iter()
+                    .map(|o| {
+                        (fwd + up * o[0] * scale * (1.0 - 0.5 * ads)
+                            + right * o[1] * scale * (1.0 - 0.5 * ads))
+                            .normalize()
+                    })
+                    .collect(),
                 // Splitter Rifle in ADS: ADS_SHOT_COUNT_NORMAL (3) bolts along the view's right
                 // vector at boltOffsets 0, 0.022, -0.022 (the shared-energy cost isn't modelled).
-                None if gun.id == "mp_titanweapon_particle_accelerator" && ads >= 0.99 => [0.0, 0.022, -0.022].iter().map(|o| (fwd + right * *o).normalize()).collect(),
+                None if gun.id == "mp_titanweapon_particle_accelerator" && ads >= 0.99 => {
+                    [0.0, 0.022, -0.022]
+                        .iter()
+                        .map(|o| (fwd + right * *o).normalize())
+                        .collect()
+                }
                 None => vec![fwd],
             };
             for d in dirs {
-                crate::pilotweapon::spawn_bolt(&mut commands, &fx, eye + d * 120.0, d * speed, gun.gravity, &shot_def, true);
+                crate::pilotweapon::spawn_bolt(
+                    &mut commands,
+                    &fx,
+                    eye + d * 120.0,
+                    d * speed,
+                    gun.gravity,
+                    &shot_def,
+                    true,
+                );
             }
             w.spread_kick = w.def.spread.kicked(w.spread_kick, stance, ads);
             let r = [w.rand(), w.rand(), w.rand(), w.rand()];
             punch.kick(&w.def.kick, &springs, ads, false, kick_scale, r);
             if game_fx {
-                titan_shot_fx(&mut commands, &w, *mode == CameraMode::Cockpit && piloted, &actors, &globals);
+                titan_shot_fx(
+                    &mut commands,
+                    &w,
+                    *mode == CameraMode::Cockpit && piloted,
+                    &actors,
+                    &globals,
+                );
             }
             continue;
         }
@@ -1195,7 +1698,11 @@ pub fn weapon_fire(
         let max = 16000.0;
         let mut hit_t = world
             .0
-            .raycast(SVec3::from(eye.to_array()), SVec3::from(dir.to_array()), max)
+            .raycast(
+                SVec3::from(eye.to_array()),
+                SVec3::from(dir.to_array()),
+                max,
+            )
             .map(|h| h.t)
             .unwrap_or(max);
         // An enemy Tone's Particle Wall stops the shot (and takes its damage).
@@ -1209,26 +1716,52 @@ pub fn weapon_fire(
             if !d.alive() {
                 continue;
             }
-            if let Some(h) = crate::hitbox::trace(eye, dir, hit_t, &d, hitboxes, &actors, &globals) {
+            if let Some(h) = crate::hitbox::trace(eye, dir, hit_t, &d, hitboxes, &actors, &globals)
+            {
                 hit_t = h.t;
                 hit_dummy = Some((i, h));
             }
         }
         if let (Some(we), None) = (wall, hit_dummy.as_ref()) {
-            enemy_walls.absorbed.push((we, if burst { crate::abilities::CORE_DAMAGE } else { shot_def.damage_near }));
-            particles::emit(&mut commands, particles::Effect::Hit { at: to_bevy(eye + dir * hit_t), normal: -to_bevy(dir).normalize_or(Vec3::Y), table: shot_def.impact_table, surface: particles::Surface::Shield, victim: false, scale: 1.0 });
+            enemy_walls.absorbed.push((
+                we,
+                if burst {
+                    crate::abilities::CORE_DAMAGE
+                } else {
+                    shot_def.damage_near
+                },
+            ));
+            particles::emit(
+                &mut commands,
+                particles::Effect::Hit {
+                    at: to_bevy(eye + dir * hit_t),
+                    normal: -to_bevy(dir).normalize_or(Vec3::Y),
+                    table: shot_def.impact_table,
+                    surface: particles::Surface::Shield,
+                    victim: false,
+                    scale: 1.0,
+                },
+            );
         }
         let end = eye + dir * hit_t;
         if let Some((i, h)) = hit_dummy {
             if let Some(mut d) = dummies.iter_mut().nth(i) {
-                let dmg = if burst { crate::abilities::CORE_DAMAGE } else { crate::hitbox::damage(&shot_def, &h, hit_t, d.infantry) };
+                let dmg = if burst {
+                    crate::abilities::CORE_DAMAGE
+                } else {
+                    crate::hitbox::damage(&shot_def, &h, hit_t, d.infantry)
+                };
                 let hit = d.damage(dmg, w.def.stops_regen);
                 if let Some(c) = core.as_mut() {
                     c.credit_inflicted(hit);
                 }
             }
             w.hits += 1;
-            log::debug!("hit dummy {i} at {hit_t:.0} units (group {} crit {})", h.group, h.crit);
+            log::debug!(
+                "hit dummy {i} at {hit_t:.0} units (group {} crit {})",
+                h.group,
+                h.crit
+            );
         }
 
         // Recoil and bloom.
@@ -1238,21 +1771,45 @@ pub fn weapon_fire(
 
         // Tracer from the visible muzzle to the hit point, plus an impact flash.
         let cockpit = *mode == CameraMode::Cockpit && piloted;
-        let muzzle = if cockpit { muzzle_world(&actors, &globals, w.viewmodel.map(|v| v.1)) } else { muzzle_world(&actors, &globals, w.world_gun) };
+        let muzzle = if cockpit {
+            muzzle_world(&actors, &globals, w.viewmodel.map(|v| v.1))
+        } else {
+            muzzle_world(&actors, &globals, w.world_gun)
+        };
         let start = muzzle.unwrap_or(to_bevy(eye));
         let stop = to_bevy(end);
         let seg = stop - start;
         let len = seg.length();
         let dir_b = to_bevy(dir).normalize_or(Vec3::NEG_Z);
         if !(game_fx && titan_shot_fx(&mut commands, &w, cockpit, &actors, &globals)) {
-            particles::emit(&mut commands, particles::Effect::Muzzle { at: start, dir: dir_b, scale: if cockpit { 2.0 } else { 3.0 }, energy: false });
+            particles::emit(
+                &mut commands,
+                particles::Effect::Muzzle {
+                    at: start,
+                    dir: dir_b,
+                    scale: if cockpit { 2.0 } else { 3.0 },
+                    energy: false,
+                },
+            );
         }
         if len > 0.5 {
-            let tracer = if cockpit && !w.def.fx.tracer_view.is_empty() { &w.def.fx.tracer_view } else { &w.def.fx.tracer_world };
+            let tracer = if cockpit && !w.def.fx.tracer_view.is_empty() {
+                &w.def.fx.tracer_view
+            } else {
+                &w.def.fx.tracer_world
+            };
             if game_fx && !tracer.is_empty() {
                 crate::pfx::emit_beam(&mut commands, tracer, start, stop);
             } else {
-                particles::emit(&mut commands, particles::Effect::Tracer { from: start, to: stop, width: 0.16, color: Vec3::new(4.0, 2.2, 0.8) });
+                particles::emit(
+                    &mut commands,
+                    particles::Effect::Tracer {
+                        from: start,
+                        to: stop,
+                        width: 0.16,
+                        color: Vec3::new(4.0, 2.2, 0.8),
+                    },
+                );
             }
         }
         let surface = match hit_dummy.as_ref().and_then(|(i, _)| dummies.iter().nth(*i)) {
@@ -1260,11 +1817,31 @@ pub fn weapon_fire(
             Some(_) => particles::Surface::Titan,
             None => particles::Surface::World,
         };
-        particles::emit(&mut commands, particles::Effect::Hit { at: stop, normal: -dir_b, table: shot_def.impact_table, surface, victim: false, scale: if hit_dummy.is_some() { 2.2 } else { 1.6 } });
+        particles::emit(
+            &mut commands,
+            particles::Effect::Hit {
+                at: stop,
+                normal: -dir_b,
+                table: shot_def.impact_table,
+                surface,
+                victim: false,
+                scale: if hit_dummy.is_some() { 2.2 } else { 1.6 },
+            },
+        );
         commands.spawn((
-            PointLight { color: Color::srgb(1.0, 0.7, 0.4), intensity: 400_000.0, range: 12.0, ..default() },
+            PointLight {
+                color: Color::srgb(1.0, 0.7, 0.4),
+                intensity: 400_000.0,
+                range: 12.0,
+                ..default()
+            },
             Transform::from_translation(start),
-            Fx { life: 0.05, max: 0.05, base: Vec3::ONE, keep_z: false },
+            Fx {
+                life: 0.05,
+                max: 0.05,
+                base: Vec3::ONE,
+                keep_z: false,
+            },
         ));
     }
 }
@@ -1284,12 +1861,22 @@ pub fn ray_cylinder(o: Vec3, d: Vec3, base: Vec3, r: f32, h: f32) -> Option<f32>
     }
     let t = (-b - disc.sqrt()) / (2.0 * a);
     // Starting inside the cylinder counts as a hit at the start (a bolt spawned next to a Titan).
-    let t = if c < 0.0 { 0.0 } else if t < 0.0 { return None } else { t };
+    let t = if c < 0.0 {
+        0.0
+    } else if t < 0.0 {
+        return None;
+    } else {
+        t
+    };
     let z = o.z + d.z * t - base.z;
     (0.0..=h).contains(&z).then_some(t)
 }
 
-pub fn update_fx(mut commands: Commands, time: Res<Time>, mut fx: Query<(Entity, &mut Fx, &mut Transform, Option<&mut PointLight>)>) {
+pub fn update_fx(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut fx: Query<(Entity, &mut Fx, &mut Transform, Option<&mut PointLight>)>,
+) {
     for (e, mut f, mut tf, light) in &mut fx {
         f.life -= time.delta_secs();
         if f.life <= 0.0 {
@@ -1301,7 +1888,11 @@ pub fn update_fx(mut commands: Commands, time: Res<Time>, mut fx: Query<(Entity,
             l.intensity = 400_000.0 * f.base.x * k;
         } else {
             let s = f.base * (0.4 + 0.6 * k);
-            tf.scale = if f.keep_z { Vec3::new(s.x, s.y, f.base.z) } else { s };
+            tf.scale = if f.keep_z {
+                Vec3::new(s.x, s.y, f.base.z)
+            } else {
+                s
+            };
         }
     }
 }
@@ -1313,15 +1904,30 @@ fn weapon_model_info(gd: &crate::gamedata::GameData, w: &mut Weapon) {
         return;
     }
     w.pivots = Some(crate::pilotweapon::sway_pivots(gd, &w.def));
-    let model = |p: &str| gd.read_file(p).ok().and_then(|b| tf_assets::mdl::Model::parse(b).ok());
+    let model = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .and_then(|b| tf_assets::mdl::Model::parse(b).ok())
+    };
     let (vmm, gun) = (model(&w.def.viewmodel), model(&w.def.playermodel));
-    let att = |m: &Option<tf_assets::mdl::Model>, name: &str, dflt: &str| m.as_ref().and_then(|m| crate::pilotweapon::model_attachment(m, if name.is_empty() { dflt } else { name }));
+    let att = |m: &Option<tf_assets::mdl::Model>, name: &str, dflt: &str| {
+        m.as_ref().and_then(|m| {
+            crate::pilotweapon::model_attachment(m, if name.is_empty() { dflt } else { name })
+        })
+    };
     let fx = w.def.fx.clone();
-    w.fx_atts = Some([att(&vmm, &fx.muzzle_attach, "muzzle_flash"), att(&vmm, &fx.shell_attach, "shell"), att(&gun, &fx.muzzle_attach, "muzzle_flash")]);
+    w.fx_atts = Some([
+        att(&vmm, &fx.muzzle_attach, "muzzle_flash"),
+        att(&vmm, &fx.shell_attach, "shell"),
+        att(&gun, &fx.muzzle_attach, "muzzle_flash"),
+    ]);
 }
 
 /// Read the Titan gun's model info under the loading screen (and after a kit change).
-pub fn prepare_weapon_models(gd: Res<crate::gamedata::GameData>, mut weapons: Query<&mut Weapon, With<PlayerTitan>>) {
+pub fn prepare_weapon_models(
+    gd: Res<crate::gamedata::GameData>,
+    mut weapons: Query<&mut Weapon, With<PlayerTitan>>,
+) {
     for mut w in &mut weapons {
         if w.pivots.is_none() {
             weapon_model_info(&gd, &mut w);
@@ -1340,24 +1946,39 @@ pub fn weapon_viewmodel(
     mut titans: Query<(&PlayerTitan, &mut Weapon, Option<&crate::combat::Melee>)>,
     mut actors: Query<&mut Actor>,
     mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
-    (feel, view): (Option<Res<crate::player::TitanFeel>>, Option<Res<crate::player::TitanView>>),
+    (feel, view): (
+        Option<Res<crate::player::TitanFeel>>,
+        Option<Res<crate::player::TitanView>>,
+    ),
 ) {
-    let Ok((titan, mut w, melee)) = titans.single_mut() else { return };
-    let Some((anchor, vm)) = w.viewmodel else { return };
+    let Ok((titan, mut w, melee)) = titans.single_mut() else {
+        return;
+    };
+    let Some((anchor, vm)) = w.viewmodel else {
+        return;
+    };
     weapon_model_info(&gd, &mut w);
     let in_titan = *control == crate::pilotctl::Control::Titan;
-    if melee.is_some_and(|m| m.t.is_some()) && !matches!(w.vm_seq, VmSeq::Melee | VmSeq::MeleeDash) {
-        w.vm_seq = if titan.state.dash_time > 0.0 { VmSeq::MeleeDash } else { VmSeq::Melee };
+    if melee.is_some_and(|m| m.t.is_some()) && !matches!(w.vm_seq, VmSeq::Melee | VmSeq::MeleeDash)
+    {
+        w.vm_seq = if titan.state.dash_time > 0.0 {
+            VmSeq::MeleeDash
+        } else {
+            VmSeq::Melee
+        };
         w.vm_time = 0.0;
     }
-    let Ok(mut actor) = actors.get_mut(vm) else { return };
+    let Ok(mut actor) = actors.get_mut(vm) else {
+        return;
+    };
     actor.autoplay = false;
     let dt = time.delta_secs();
     w.vm_time += dt;
     let s = &titan.state;
 
     let clip = |a: &Actor, name: &str| a.clip(name);
-    let grid_clip = |a: &Actor, name: &str, i: usize| a.grids.get(name).and_then(|g| g.clips.get(i).copied());
+    let grid_clip =
+        |a: &Actor, name: &str, i: usize| a.grids.get(name).and_then(|g| g.clips.get(i).copied());
     let dur = |a: &Actor, c: Option<usize>| c.map(|c| a.clips[c].duration).unwrap_or(0.5);
 
     // One-shot sequences fall back to idle (or sprint) when they finish.
@@ -1365,9 +1986,14 @@ pub fn weapon_viewmodel(
     let done = |a: &Actor, seq: VmSeq, t: f32| match seq {
         VmSeq::Draw => t >= deploy_time.max(0.05),
         VmSeq::Fire => t >= dur(a, grid_clip(a, "attack_seq", 0)),
-        VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => t >= seq.reload_time_of(reload_times).max(0.05),
+        VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => {
+            t >= seq.reload_time_of(reload_times).max(0.05)
+        }
         VmSeq::Melee => t >= dur(a, clip(a, "melee_seq")).min(crate::combat::MELEE_ANIM + 0.2),
-        VmSeq::MeleeDash => t >= dur(a, clip(a, "melee_dash_seq").or(clip(a, "melee_seq"))).min(crate::combat::MELEE_ANIM + 0.2),
+        VmSeq::MeleeDash => {
+            t >= dur(a, clip(a, "melee_dash_seq").or(clip(a, "melee_seq")))
+                .min(crate::combat::MELEE_ANIM + 0.2)
+        }
         VmSeq::SprintRaise => t >= dur(a, clip(a, "sprintraise_seq")) || s.sprinting,
         VmSeq::AmmoSwap => t >= dur(a, clip(a, "ammo_swap_seq")),
         // Held until titankit fires the shot.
@@ -1381,7 +2007,11 @@ pub fn weapon_viewmodel(
         w.vm_time = 0.0;
     }
     if done(&actor, w.vm_seq, w.vm_time) {
-        let next = if s.sprinting { VmSeq::Sprint } else { VmSeq::Idle };
+        let next = if s.sprinting {
+            VmSeq::Sprint
+        } else {
+            VmSeq::Idle
+        };
         if next != w.vm_seq {
             w.vm_seq = next;
             w.vm_time = 0.0;
@@ -1400,7 +2030,11 @@ pub fn weapon_viewmodel(
             let firing = w.vm_seq == VmSeq::Fire;
             for (name, weight) in [("draw_seq", 1.0 - ads), ("ads_in_seq", ads)] {
                 if let Some(c) = clip(&actor, name) {
-                    layers.push(Layer { clip: c, cycle: 0.999, weight: weight.max(1e-3) });
+                    layers.push(Layer {
+                        clip: c,
+                        cycle: 0.999,
+                        weight: weight.max(1e-3),
+                    });
                 }
             }
             for (i, weight) in [(0, 1.0 - ads), (1, ads)] {
@@ -1417,7 +2051,10 @@ pub fn weapon_viewmodel(
         seq => {
             let name = match seq {
                 VmSeq::Draw => "draw_seq",
-                VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => seq.reload_name().unwrap_or("reload_seq"),
+                VmSeq::Reload
+                | VmSeq::ReloadEmpty
+                | VmSeq::ReloadLate(_)
+                | VmSeq::ReloadEmptyLate(_) => seq.reload_name().unwrap_or("reload_seq"),
                 VmSeq::Melee => "melee_seq",
                 VmSeq::MeleeDash if clip(&actor, "melee_dash_seq").is_some() => "melee_dash_seq",
                 VmSeq::MeleeDash => "melee_seq",
@@ -1431,7 +2068,10 @@ pub fn weapon_viewmodel(
                 // Draw and reload play over the script's deploy/reload time, as the engine scales them.
                 let script_len = match seq {
                     VmSeq::Draw => Some(deploy_time),
-                    VmSeq::Reload | VmSeq::ReloadEmpty | VmSeq::ReloadLate(_) | VmSeq::ReloadEmptyLate(_) => Some(seq.reload_time_of(reload_times)),
+                    VmSeq::Reload
+                    | VmSeq::ReloadEmpty
+                    | VmSeq::ReloadLate(_)
+                    | VmSeq::ReloadEmptyLate(_) => Some(seq.reload_time_of(reload_times)),
                     _ => None,
                 };
                 let cycle = match script_len {
@@ -1439,7 +2079,11 @@ pub fn weapon_viewmodel(
                     Some(l) => (w.vm_time / l.max(0.05)).min(0.999),
                     None => once(&actor, c, w.vm_time),
                 };
-                layers.push(Layer { clip: c, cycle, weight: 1.0 });
+                layers.push(Layer {
+                    clip: c,
+                    cycle,
+                    weight: 1.0,
+                });
             }
         }
     }
@@ -1448,30 +2092,59 @@ pub fn weapon_viewmodel(
     actor.additive = fire_additive;
 
     // Place the viewmodel so its camera bone is on the eye, like the cockpit.
-    let offset = actor.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+    let offset = actor
+        .bone_model_transform("jx_c_camera")
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
     // Sway and bob about the script's sway pivot; the gun's share of the recoil about the eye
     // (see pilotweapon.rs).
     let pivots = w.pivots.clone().unwrap_or_default();
-    let pivot_of = |(bone, off): &(String, Vec3)| actor.bone_model_transform(bone).map(|t| t.transform_point(*off));
+    let pivot_of = |(bone, off): &(String, Vec3)| {
+        actor
+            .bone_model_transform(bone)
+            .map(|t| t.transform_point(*off))
+    };
     let hp = pivot_of(&pivots[0]).unwrap_or(offset);
     let pivot = hp.lerp(pivot_of(&pivots[1]).unwrap_or(hp), ads);
     let (cy, sy) = (s.yaw.cos(), s.yaw.sin());
-    let vel = Vec3::new(s.vel.x * cy + s.vel.y * sy, -s.vel.x * sy + s.vel.y * cy, s.vel.z);
-    let inp = crate::vmmotion::MotionInput { yaw: s.yaw, pitch: s.pitch, vel, on_ground: s.on_ground, bob: !s.sprinting, ads };
+    let vel = Vec3::new(
+        s.vel.x * cy + s.vel.y * sy,
+        -s.vel.x * sy + s.vel.y * cy,
+        s.vel.z,
+    );
+    let inp = crate::vmmotion::MotionInput {
+        yaw: s.yaw,
+        pitch: s.pitch,
+        vel,
+        on_ground: s.on_ground,
+        bob: !s.sprinting,
+        ads,
+    };
     let def = w.def.motion.clone();
     let off = w.motion.step(&def, &inp, dt);
     let rs = crate::vmmotion::angles_quat(off.rot);
     let rp = crate::vmmotion::angles_quat(punch.vm);
     if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
-        vis.set_if_neq(if *mode == CameraMode::Cockpit && in_titan { Visibility::Inherited } else { Visibility::Hidden });
+        vis.set_if_neq(if *mode == CameraMode::Cockpit && in_titan {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
         let yaw = s.yaw + punch.yaw.to_radians();
         let pitch = s.pitch + punch.pitch.to_radians();
-        let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(punch.roll.to_radians());
+        let rot = Quat::from_rotation_z(yaw)
+            * Quat::from_rotation_y(pitch)
+            * Quat::from_rotation_x(punch.roll.to_radians());
         tf.rotation = rot * rp * rs;
         // The viewmodel rides on the view like the cockpit: the sprint view offset (last frame's,
         // from the camera), the look-down slide (pitchOffsetScale) and viewmodelDuckOffset.
-        let view_off = feel.as_deref().map_or(Vec3::ZERO, |f| f.pitch_ahead(s) + Vec3::Z * (view.as_deref().map_or(0.0, |v| v.sprint_lower) + f.duck_offset(s)));
-        tf.translation = Vec3::from(s.eye(&settings.0).to_array()) + view_off + rot * (off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot));
+        let view_off = feel.as_deref().map_or(Vec3::ZERO, |f| {
+            f.pitch_ahead(s)
+                + Vec3::Z * (view.as_deref().map_or(0.0, |v| v.sprint_lower) + f.duck_offset(s))
+        });
+        tf.translation = Vec3::from(s.eye(&settings.0).to_array())
+            + view_off
+            + rot * (off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot));
     }
 }
 
@@ -1501,12 +2174,18 @@ pub fn switch_titan_weapon(
         }
     }
     let want = kit.0.min(TITAN_ARSENAL.len() - 1);
-    let Ok(mut w) = titans.single_mut() else { return };
+    let Ok(mut w) = titans.single_mut() else {
+        return;
+    };
     if w.arsenal == want {
         return;
     }
     let t = std::time::Instant::now();
-    let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+    let mut read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
     let def = WeaponDef::load_player(TITAN_ARSENAL[want].id, &mut read);
     if let Some((anchor, _)) = w.viewmodel {
         commands.entity(anchor).despawn();
@@ -1514,20 +2193,75 @@ pub fn switch_titan_weapon(
     if let Some(g) = w.world_gun {
         commands.entity(g).despawn();
     }
-    let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, crate::vmcam::Viewmodel)).id();
+    let anchor = commands
+        .spawn((
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            crate::vmcam::Viewmodel,
+        ))
+        .id();
     commands.entity(root.0).add_child(anchor);
-    let body_of = |path: &str| gd.read_file(path).ok().and_then(|b| tf_assets::mdl::Model::parse(b).ok()).map(|m| def.body_for(&m)).unwrap_or_default();
+    let body_of = |path: &str| {
+        gd.read_file(path)
+            .ok()
+            .and_then(|b| tf_assets::mdl::Model::parse(b).ok())
+            .map(|m| def.body_for(&m))
+            .unwrap_or_default()
+    };
     let vm_body = body_of(&def.viewmodel);
     let spec = ActorSpec {
         path: &def.viewmodel,
-        sequences: &["draw_seq", "ads_in_seq", "reload_seq", "reload_empty_seq", "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq", "sprint_seq", "?sprintraise_seq", "melee_seq", "?melee_dash_seq", "?ammo_swap_seq", "?charge_seq", "?power_shot_fire_seq"],
+        sequences: &[
+            "draw_seq",
+            "ads_in_seq",
+            "reload_seq",
+            "reload_empty_seq",
+            "?reload_late1_seq",
+            "?reload_late2_seq",
+            "?reload_late3_seq",
+            "?reload_empty_late1_seq",
+            "?reload_empty_late2_seq",
+            "?reload_empty_late3_seq",
+            "sprint_seq",
+            "?sprintraise_seq",
+            "melee_seq",
+            "?melee_dash_seq",
+            "?ammo_swap_seq",
+            "?charge_seq",
+            "?power_shot_fire_seq",
+        ],
         grids: &["idle_seq", "attack_seq"],
         body: &vm_body,
     };
-    let viewmodel = match spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+    let viewmodel = match spawn_actor(
+        &mut commands,
+        anchor,
+        &gd,
+        &spec,
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+        &mut bindposes,
+    ) {
         Ok(vm) => {
-            let arms = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
-            if let Ok(a) = spawn_actor(&mut commands, anchor, &gd, &arms, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+            let arms = ActorSpec {
+                path: "models/weapons/arms/buddypov.mdl",
+                sequences: &[],
+                grids: &[],
+                body: &[],
+            };
+            if let Ok(a) = spawn_actor(
+                &mut commands,
+                anchor,
+                &gd,
+                &arms,
+                &mut cache,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+                &mut bindposes,
+            ) {
                 commands.entity(a.entity).insert(BoneMergeTo(vm.entity));
             }
             Some((anchor, vm.entity))
@@ -1539,10 +2273,32 @@ pub fn switch_titan_weapon(
     };
     let world_gun = hand.and_then(|h| {
         let gun_body = body_of(&def.playermodel);
-        let spec = ActorSpec { path: &def.playermodel, sequences: &[], grids: &[], body: &gun_body };
-        spawn_actor(&mut commands, h.0, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes).ok().map(|g| g.entity)
+        let spec = ActorSpec {
+            path: &def.playermodel,
+            sequences: &[],
+            grids: &[],
+            body: &gun_body,
+        };
+        spawn_actor(
+            &mut commands,
+            h.0,
+            &gd,
+            &spec,
+            &mut cache,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+            &mut bindposes,
+        )
+        .ok()
+        .map(|g| g.entity)
     });
-    log::info!("BT loadout: {} ({}) in {:?}", TITAN_ARSENAL[want].kit, def.name, t.elapsed());
+    log::info!(
+        "BT loadout: {} ({}) in {:?}",
+        TITAN_ARSENAL[want].kit,
+        def.name,
+        t.elapsed()
+    );
     let mut fresh = Weapon::new(def, viewmodel, world_gun);
     fresh.arsenal = want;
     *w = fresh;
@@ -1555,7 +2311,10 @@ mod tests {
     #[test]
     fn mods_from_env_spec() {
         let spec = "mp_weapon_r97:pas_fast_reload, extended_ammo;mp_weapon_wingman:pas_fast_ads;*:pas_fast_swap";
-        assert_eq!(parse_mods(spec, "mp_weapon_r97"), vec!["pas_fast_reload", "extended_ammo", "pas_fast_swap"]);
+        assert_eq!(
+            parse_mods(spec, "mp_weapon_r97"),
+            vec!["pas_fast_reload", "extended_ammo", "pas_fast_swap"]
+        );
         assert_eq!(parse_mods(spec, "mp_weapon_hemlok"), vec!["pas_fast_swap"]);
         assert!(parse_mods("", "mp_weapon_r97").is_empty());
     }

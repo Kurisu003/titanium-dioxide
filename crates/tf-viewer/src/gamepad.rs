@@ -83,7 +83,10 @@ pub struct Curve {
 
 impl Curve {
     pub fn linear() -> Self {
-        Curve { points: vec![(1.0, 1.0)], power: 1 }
+        Curve {
+            points: vec![(1.0, 1.0)],
+            power: 1,
+        }
     }
 
     /// Parse `LINEAR x y` lines and a `TRANSFORM: squared|cubed|linear` line.
@@ -122,7 +125,11 @@ impl Curve {
         let mut prev = (0.0f32, 0.0f32);
         for &(px, py) in &self.points {
             if x <= px {
-                let k = if px > prev.0 { (x - prev.0) / (px - prev.0) } else { 1.0 };
+                let k = if px > prev.0 {
+                    (x - prev.0) / (px - prev.0)
+                } else {
+                    1.0
+                };
                 return prev.1 + (py - prev.1) * k;
             }
             prev = (px, py);
@@ -190,7 +197,14 @@ pub fn parse_look(text: &str) -> Vec<LookRow> {
         // number yaw pitch "curve" accel_yaw accel_pitch delay time cutoff
         if w.len() >= 8 && w[0].parse::<u32>().is_ok() {
             let f = |i: usize| w.get(i).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
-            rows.push(LookRow { yaw_speed: f(1), pitch_speed: f(2), accel_yaw: f(4), accel_pitch: f(5), accel_delay: f(6), accel_time: f(7) });
+            rows.push(LookRow {
+                yaw_speed: f(1),
+                pitch_speed: f(2),
+                accel_yaw: f(4),
+                accel_pitch: f(5),
+                accel_delay: f(6),
+                accel_time: f(7),
+            });
         }
     }
     rows
@@ -198,25 +212,65 @@ pub fn parse_look(text: &str) -> Vec<LookRow> {
 
 /// Read the controller data once the game files are open (and again if the layout setting
 /// changes).
-pub fn load_pad_config(gd: Option<Res<GameData>>, settings: Res<crate::settings::Settings>, mut cfg: ResMut<PadConfig>) {
+pub fn load_pad_config(
+    gd: Option<Res<GameData>>,
+    settings: Res<crate::settings::Settings>,
+    mut cfg: ResMut<PadConfig>,
+) {
     let Some(gd) = gd else { return };
     if !cfg.look.is_empty() && cfg.layout == settings.gamepad_layout {
         return;
     }
-    let read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+    let read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
     cfg.layout = settings.gamepad_layout.clone();
-    cfg.buttons = read(&format!("cfg/gamepad_button_layout_{}.cfg", cfg.layout)).map(|t| parse_layout(&t)).unwrap_or_default();
-    cfg.look = read("cfg/aimassist/looksensitivity.txt").map(|t| parse_look(&t)).unwrap_or_default();
-    cfg.look_zoomed = read("cfg/aimassist/looksensitivity_zoomed.txt").map(|t| parse_look(&t)).unwrap_or_default();
-    cfg.look_titan = read("cfg/aimassist/looksensitivity_titan.txt").map(|t| parse_look(&t)).unwrap_or_default();
-    cfg.look_titan_zoomed = read("cfg/aimassist/looksensitivity_titan_zoomed.txt").map(|t| parse_look(&t)).unwrap_or_default();
-    cfg.curves = (0..5).map(|i| read(&format!("cfg/aimassist/aimcurve_look_{i}.txt")).map(|t| Curve::parse(&t)).unwrap_or_else(Curve::linear)).collect();
+    cfg.buttons = read(&format!("cfg/gamepad_button_layout_{}.cfg", cfg.layout))
+        .map(|t| parse_layout(&t))
+        .unwrap_or_default();
+    cfg.look = read("cfg/aimassist/looksensitivity.txt")
+        .map(|t| parse_look(&t))
+        .unwrap_or_default();
+    cfg.look_zoomed = read("cfg/aimassist/looksensitivity_zoomed.txt")
+        .map(|t| parse_look(&t))
+        .unwrap_or_default();
+    cfg.look_titan = read("cfg/aimassist/looksensitivity_titan.txt")
+        .map(|t| parse_look(&t))
+        .unwrap_or_default();
+    cfg.look_titan_zoomed = read("cfg/aimassist/looksensitivity_titan_zoomed.txt")
+        .map(|t| parse_look(&t))
+        .unwrap_or_default();
+    cfg.curves = (0..5)
+        .map(|i| {
+            read(&format!("cfg/aimassist/aimcurve_look_{i}.txt"))
+                .map(|t| Curve::parse(&t))
+                .unwrap_or_else(Curve::linear)
+        })
+        .collect();
     cfg.accel = read("cfg/aimassist/accelcurve.txt").map(|t| Curve::parse(&t));
     if cfg.look.is_empty() {
         // Keep the controller usable without the files.
-        cfg.look = vec![LookRow { yaw_speed: 160.0, pitch_speed: 120.0, accel_yaw: 220.0, accel_pitch: 0.0, accel_delay: 0.0, accel_time: 0.33 }; 8];
+        cfg.look = vec![
+            LookRow {
+                yaw_speed: 160.0,
+                pitch_speed: 120.0,
+                accel_yaw: 220.0,
+                accel_pitch: 0.0,
+                accel_delay: 0.0,
+                accel_time: 0.33
+            };
+            8
+        ];
     }
-    log::info!("controller: layout {} ({} buttons), {} look settings, {} curves", cfg.layout, cfg.buttons.len(), cfg.look.len(), cfg.curves.len());
+    log::info!(
+        "controller: layout {} ({} buttons), {} look settings, {} curves",
+        cfg.layout,
+        cfg.buttons.len(),
+        cfg.look.len(),
+        cfg.curves.len()
+    );
 }
 
 /// Per-frame controller state carried between frames.
@@ -244,7 +298,13 @@ pub fn deadzone(v: Vec2, inner: f32) -> Vec2 {
 /// Look speed in degrees per second for a deflected right stick: the curve shapes the
 /// magnitude, the table row gives the full-deflection speeds, and holding the stick at the
 /// edge ramps in the acceleration speed.
-pub fn look_rate(stick: Vec2, row: &LookRow, curve: &Curve, accel: Option<&Curve>, edge_time: f32) -> Vec2 {
+pub fn look_rate(
+    stick: Vec2,
+    row: &LookRow,
+    curve: &Curve,
+    accel: Option<&Curve>,
+    edge_time: f32,
+) -> Vec2 {
     let m = stick.length();
     if m <= 0.0 {
         return Vec2::ZERO;
@@ -268,7 +328,14 @@ mod tests {
     fn layout_and_tables_parse() {
         let layout = "bind \"A_BUTTON\"\t\t\"+ability 3\"\nbind \"R_TRIGGER\"\t\"+attack\"\n// x\nbind \"START\" \"ingamemenu_activate\"";
         let b = parse_layout(layout);
-        assert_eq!(b, vec![(GamepadButton::South, PadCommand::Jump), (GamepadButton::RightTrigger2, PadCommand::Attack), (GamepadButton::Start, PadCommand::Pause)]);
+        assert_eq!(
+            b,
+            vec![
+                (GamepadButton::South, PadCommand::Jump),
+                (GamepadButton::RightTrigger2, PadCommand::Attack),
+                (GamepadButton::Start, PadCommand::Pause)
+            ]
+        );
         let look = "//\tnumber\tyaw\n\t2\t\t160\t\t\t120\t\t\t\t\"cfg/aimassist/accelcurve.txt\"\t220\t\t\t\t\t\t0\t\t\t\t\t\t0.0\t\t\t\t\t0.33\t\t\t\t50";
         let rows = parse_look(look);
         assert_eq!(rows.len(), 1);
@@ -281,7 +348,8 @@ mod tests {
     fn curves() {
         let squared = Curve::parse("// Classic\nLINEAR\t1.0\t\t1.0\nTRANSFORM: squared");
         assert!((squared.eval(0.5) - 0.25).abs() < 1e-6);
-        let accel = Curve::parse("LINEAR 0.3 0.15\nLINEAR 0.6 0.4\nLINEAR 1.0 1.0\nTRANSFORM: linear");
+        let accel =
+            Curve::parse("LINEAR 0.3 0.15\nLINEAR 0.6 0.4\nLINEAR 1.0 1.0\nTRANSFORM: linear");
         assert!((accel.eval(0.3) - 0.15).abs() < 1e-6);
         assert!((accel.eval(0.8) - 0.7).abs() < 1e-6);
         assert_eq!(accel.eval(1.0), 1.0);
@@ -289,7 +357,14 @@ mod tests {
 
     #[test]
     fn look_rate_accelerates_at_the_edge() {
-        let row = LookRow { yaw_speed: 160.0, pitch_speed: 120.0, accel_yaw: 220.0, accel_pitch: 0.0, accel_delay: 0.0, accel_time: 0.33 };
+        let row = LookRow {
+            yaw_speed: 160.0,
+            pitch_speed: 120.0,
+            accel_yaw: 220.0,
+            accel_pitch: 0.0,
+            accel_delay: 0.0,
+            accel_time: 0.33,
+        };
         let lin = Curve::linear();
         let base = look_rate(Vec2::X, &row, &lin, None, 0.0);
         assert!((base.x - 160.0).abs() < 1e-3);

@@ -64,15 +64,19 @@ impl Prepared {
 
     /// The prepared result for `key`, or `decode()` when there is none.
     fn take_or(&self, key: PrepKey, decode: impl FnOnce() -> Option<Image>) -> Option<Image> {
-        let ready = self.0.lock().ok().and_then(|mut map| match map.remove(&key) {
-            Some(PrepSlot::Ready(img)) => Some(img),
-            Some(PrepSlot::Decoding) => {
-                // Still in a worker's hands (not expected: the workers are joined first).
-                map.insert(key, PrepSlot::Decoding);
-                None
-            }
-            None => None,
-        });
+        let ready = self
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut map| match map.remove(&key) {
+                Some(PrepSlot::Ready(img)) => Some(img),
+                Some(PrepSlot::Decoding) => {
+                    // Still in a worker's hands (not expected: the workers are joined first).
+                    map.insert(key, PrepSlot::Decoding);
+                    None
+                }
+                None => None,
+            });
         match ready {
             Some(img) => img,
             None => decode(),
@@ -132,13 +136,29 @@ pub static SPEC_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// Time spent building new materials (textures included).
 pub static MAT_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-pub fn image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>, pak_hint: usize, guid: u64) -> Option<Handle<Image>> {
+pub fn image(
+    gd: &GameData,
+    cache: &mut Cache,
+    images: &mut Assets<Image>,
+    pak_hint: usize,
+    guid: u64,
+) -> Option<Handle<Image>> {
     if let Some(h) = cache.images.get(&guid) {
         return h.clone();
     }
     let t0 = std::time::Instant::now();
-    let _timer = scopeguard(move || { TEX_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); });
-    let result = cache.prepared.take_or(PrepKey::Tex(pak_hint, guid), || decode_image(gd, pak_hint, guid)).map(|img| images.add(img));
+    let _timer = scopeguard(move || {
+        TEX_US.fetch_add(
+            t0.elapsed().as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    });
+    let result = cache
+        .prepared
+        .take_or(PrepKey::Tex(pak_hint, guid), || {
+            decode_image(gd, pak_hint, guid)
+        })
+        .map(|img| images.add(img));
     cache.images.insert(guid, result.clone());
     result
 }
@@ -157,7 +177,11 @@ fn decode_image(gd: &GameData, pak_hint: usize, guid: u64) -> Option<Image> {
         }
         let mut img = Image::default();
         img.data = Some(tex.data);
-        img.texture_descriptor.size = Extent3d { width: tex.width, height: tex.height, depth_or_array_layers: 1 };
+        img.texture_descriptor.size = Extent3d {
+            width: tex.width,
+            height: tex.height,
+            depth_or_array_layers: 1,
+        };
         img.texture_descriptor.mip_level_count = tex.mips;
         img.texture_descriptor.format = format;
         img.texture_descriptor.dimension = TextureDimension::D2;
@@ -174,29 +198,51 @@ const SPEC_GLOSS_KEY: u64 = 0x2000_6E55_0000_0002;
 const COLOR_OPA_KEY: u64 = 0x2000_6E55_0000_0003;
 
 /// Decode the top level of a gloss (BC4) or spec (BC1) map at most 256 texels across.
-fn small_texture(gd: &GameData, pak_hint: usize, guid: u64) -> Option<(usize, usize, Vec<[u8; 3]>)> {
+fn small_texture(
+    gd: &GameData,
+    pak_hint: usize,
+    guid: u64,
+) -> Option<(usize, usize, Vec<[u8; 3]>)> {
     let (pi, ai) = gd.find_texture(pak_hint, guid)?;
     let pak = &gd.paks[pi];
     let tex = texture::load_max(pak, &pak.assets[ai], 256).ok()?;
     let (w, h) = (tex.width as usize, tex.height as usize);
     let px = match tex.info.format {
-        TexFormat::Bc4 => texture::decode_bc4(&tex.data, w, h).into_iter().map(|g| [g; 3]).collect(),
+        TexFormat::Bc4 => texture::decode_bc4(&tex.data, w, h)
+            .into_iter()
+            .map(|g| [g; 3])
+            .collect(),
         TexFormat::Bc1 | TexFormat::Bc1Srgb => texture::decode_bc1(&tex.data, w, h),
         // (BC7: the Kodai cloud cards' colour; without it their opacity mask was dropped and
         // they drew solid.)
-        f => texture::decode_rgba(f, &tex.data, w, h)?.into_iter().map(|p| [p[0], p[1], p[2]]).collect(),
+        f => texture::decode_rgba(f, &tex.data, w, h)?
+            .into_iter()
+            .map(|p| [p[0], p[1], p[2]])
+            .collect(),
     };
     Some((w, h, px))
 }
 
 /// A colour map with an opacity mask (`_opa`, Bc4) in its alpha, at most 256 texels across,
 /// with box-filtered mips (sRGB).
-fn color_opacity_image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>, pak_hint: usize, col: u64, opa: u64) -> Option<Handle<Image>> {
+fn color_opacity_image(
+    gd: &GameData,
+    cache: &mut Cache,
+    images: &mut Assets<Image>,
+    pak_hint: usize,
+    col: u64,
+    opa: u64,
+) -> Option<Handle<Image>> {
     let key = col.rotate_left(29) ^ opa ^ COLOR_OPA_KEY;
     if let Some(h) = cache.images.get(&key) {
         return h.clone();
     }
-    let result = cache.prepared.take_or(PrepKey::ColorOpacity(pak_hint, col, opa), || decode_color_opacity(gd, pak_hint, col, opa)).map(|img| images.add(img));
+    let result = cache
+        .prepared
+        .take_or(PrepKey::ColorOpacity(pak_hint, col, opa), || {
+            decode_color_opacity(gd, pak_hint, col, opa)
+        })
+        .map(|img| images.add(img));
     cache.images.insert(key, result.clone());
     result
 }
@@ -206,7 +252,9 @@ fn decode_color_opacity(gd: &GameData, pak_hint: usize, col: u64, opa: u64) -> O
         let c = small_texture(gd, pak_hint, col)?;
         let o = small_texture(gd, pak_hint, opa)?;
         let (w, h) = (c.0, c.1);
-        let at = |t: &(usize, usize, Vec<[u8; 3]>), x: usize, y: usize| t.2[(y * t.1 / h).min(t.1 - 1) * t.0 + (x * t.0 / w).min(t.0 - 1)];
+        let at = |t: &(usize, usize, Vec<[u8; 3]>), x: usize, y: usize| {
+            t.2[(y * t.1 / h).min(t.1 - 1) * t.0 + (x * t.0 / w).min(t.0 - 1)]
+        };
         let mut level: Vec<[u8; 4]> = (0..w * h)
             .map(|i| {
                 let (x, y) = (i % w, i / w);
@@ -229,14 +277,20 @@ fn decode_color_opacity(gd: &GameData, pak_hint: usize, col: u64, opa: u64) -> O
                 .map(|i| {
                     let (x, y) = (i % nw * 2, i / nw * 2);
                     let q = [px(x, y), px(x + 1, y), px(x, y + 1), px(x + 1, y + 1)];
-                    std::array::from_fn(|ch| ((q.iter().map(|p| p[ch] as u32).sum::<u32>() + 2) / 4) as u8)
+                    std::array::from_fn(|ch| {
+                        ((q.iter().map(|p| p[ch] as u32).sum::<u32>() + 2) / 4) as u8
+                    })
                 })
                 .collect();
             (lw, lh) = (nw, nh);
         }
         let mut img = Image::default();
         img.data = Some(data);
-        img.texture_descriptor.size = Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 };
+        img.texture_descriptor.size = Extent3d {
+            width: w as u32,
+            height: h as u32,
+            depth_or_array_layers: 1,
+        };
         img.texture_descriptor.mip_level_count = mips;
         img.texture_descriptor.format = TextureFormat::Rgba8UnormSrgb;
         img.texture_descriptor.dimension = TextureDimension::D2;
@@ -252,19 +306,41 @@ fn decode_color_opacity(gd: &GameData, pak_hint: usize, col: u64, opa: u64) -> O
 /// F0 = 0.16 * (5 * a * 0.5)^2 = a^2, about the linear specular colour's luminance. One texture
 /// instead of two keeps the bindless material slabs small. At most 256 texels across, with
 /// box-filtered mips.
-fn spec_gloss_image(gd: &GameData, cache: &mut Cache, images: &mut Assets<Image>, pak_hint: usize, gloss: Option<u64>, spec: Option<u64>) -> Option<Handle<Image>> {
+fn spec_gloss_image(
+    gd: &GameData,
+    cache: &mut Cache,
+    images: &mut Assets<Image>,
+    pak_hint: usize,
+    gloss: Option<u64>,
+    spec: Option<u64>,
+) -> Option<Handle<Image>> {
     let key = gloss.unwrap_or(0).rotate_left(17) ^ spec.unwrap_or(0) ^ SPEC_GLOSS_KEY;
     if let Some(h) = cache.images.get(&key) {
         return h.clone();
     }
     let t0 = std::time::Instant::now();
-    let _timer = scopeguard(move || { SPEC_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); });
-    let result = cache.prepared.take_or(PrepKey::SpecGloss(pak_hint, gloss, spec), || decode_spec_gloss(gd, pak_hint, gloss, spec)).map(|img| images.add(img));
+    let _timer = scopeguard(move || {
+        SPEC_US.fetch_add(
+            t0.elapsed().as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    });
+    let result = cache
+        .prepared
+        .take_or(PrepKey::SpecGloss(pak_hint, gloss, spec), || {
+            decode_spec_gloss(gd, pak_hint, gloss, spec)
+        })
+        .map(|img| images.add(img));
     cache.images.insert(key, result.clone());
     result
 }
 
-fn decode_spec_gloss(gd: &GameData, pak_hint: usize, gloss: Option<u64>, spec: Option<u64>) -> Option<Image> {
+fn decode_spec_gloss(
+    gd: &GameData,
+    pak_hint: usize,
+    gloss: Option<u64>,
+    spec: Option<u64>,
+) -> Option<Image> {
     {
         let g = gloss.and_then(|g| small_texture(gd, pak_hint, g));
         let s = spec.and_then(|s| small_texture(gd, pak_hint, s));
@@ -273,13 +349,18 @@ fn decode_spec_gloss(gd: &GameData, pak_hint: usize, gloss: Option<u64>, spec: O
         }
         let (w, h) = g.as_ref().or(s.as_ref()).map(|t| (t.0, t.1))?;
         // Sample either map at the chosen size (nearest).
-        let at = |t: &Option<(usize, usize, Vec<[u8; 3]>)>, x: usize, y: usize| t.as_ref().map(|(tw, th, px)| px[(y * th / h).min(th - 1) * tw + (x * tw / w).min(tw - 1)]);
+        let at = |t: &Option<(usize, usize, Vec<[u8; 3]>)>, x: usize, y: usize| {
+            t.as_ref()
+                .map(|(tw, th, px)| px[(y * th / h).min(th - 1) * tw + (x * tw / w).min(tw - 1)])
+        };
         let mut level: Vec<[u8; 4]> = (0..w * h)
             .map(|i| {
                 let (x, y) = (i % w, i / w);
                 let rough = at(&g, x, y).map(|v| 255 - v[0]).unwrap_or(153);
                 // A dielectric's 0.04 F0 when there's no spec map.
-                let a = at(&s, x, y).map(|v| ((v[0] as u32 * 54 + v[1] as u32 * 183 + v[2] as u32 * 19) >> 8) as u8).unwrap_or(51);
+                let a = at(&s, x, y)
+                    .map(|v| ((v[0] as u32 * 54 + v[1] as u32 * 183 + v[2] as u32 * 19) >> 8) as u8)
+                    .unwrap_or(51);
                 [0, rough, 0, a]
             })
             .collect();
@@ -298,14 +379,20 @@ fn decode_spec_gloss(gd: &GameData, pak_hint: usize, gloss: Option<u64>, spec: O
                 .map(|i| {
                     let (x, y) = (i % nw * 2, i / nw * 2);
                     let q = [px(x, y), px(x + 1, y), px(x, y + 1), px(x + 1, y + 1)];
-                    std::array::from_fn(|c| ((q.iter().map(|p| p[c] as u32).sum::<u32>() + 2) / 4) as u8)
+                    std::array::from_fn(|c| {
+                        ((q.iter().map(|p| p[c] as u32).sum::<u32>() + 2) / 4) as u8
+                    })
                 })
                 .collect();
             (lw, lh) = (nw, nh);
         }
         let mut img = Image::default();
         img.data = Some(data);
-        img.texture_descriptor.size = Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 };
+        img.texture_descriptor.size = Extent3d {
+            width: w as u32,
+            height: h as u32,
+            depth_or_array_layers: 1,
+        };
         img.texture_descriptor.mip_level_count = mips;
         img.texture_descriptor.format = TextureFormat::Rgba8Unorm;
         img.texture_descriptor.dimension = TextureDimension::D2;
@@ -336,7 +423,10 @@ fn slot_kind(gd: &GameData, pi: usize, slot: usize, guid: u64) -> &'static str {
         "ao" => "ao",
         "cav" => "cav",
         "opa" => "opa",
-        _ => ["col", "nml", "gls", "spc"].get(slot).copied().unwrap_or(""),
+        _ => ["col", "nml", "gls", "spc"]
+            .get(slot)
+            .copied()
+            .unwrap_or(""),
     }
 }
 
@@ -344,12 +434,18 @@ fn slot_kind(gd: &GameData, pi: usize, slot: usize, guid: u64) -> &'static str {
 /// material) will ask for into `cache.prepared`, from a worker thread. Only the first texture
 /// of each kind is prepared; `material` decodes any other itself, as before.
 pub fn prefetch_material(gd: &GameData, cache: &Cache, name: &str, blend: bool) {
-    if cache.materials.contains_key(&format!("{}|{}", crate::gamedata::normalize_name(name), blend)) {
+    if cache.materials.contains_key(&format!(
+        "{}|{}",
+        crate::gamedata::normalize_name(name),
+        blend
+    )) {
         return;
     }
     let tex = |pi: usize, guid: u64| {
         if !cache.images.contains_key(&guid) {
-            cache.prepared.prepare(PrepKey::Tex(pi, guid), || decode_image(gd, pi, guid));
+            cache
+                .prepared
+                .prepare(PrepKey::Tex(pi, guid), || decode_image(gd, pi, guid));
         }
     };
     let Some((pi, m)) = gd.material(name) else {
@@ -394,18 +490,30 @@ pub fn prefetch_material(gd: &GameData, cache: &Cache, name: &str, blend: bool) 
     if std::env::var_os("TF_NO_SPEC").is_none() && (gloss.is_some() || spec.is_some()) {
         let key = gloss.unwrap_or(0).rotate_left(17) ^ spec.unwrap_or(0) ^ SPEC_GLOSS_KEY;
         if !cache.images.contains_key(&key) {
-            cache.prepared.prepare(PrepKey::SpecGloss(pi, gloss, spec), || decode_spec_gloss(gd, pi, gloss, spec));
+            cache
+                .prepared
+                .prepare(PrepKey::SpecGloss(pi, gloss, spec), || {
+                    decode_spec_gloss(gd, pi, gloss, spec)
+                });
         }
     }
     if let (Some(c), Some(o)) = (col, opa) {
-        let masked = blend || m.blended() || tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set).is_some_and(|n| n.contains("Opam"));
+        let masked = blend
+            || m.blended()
+            || tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set)
+                .is_some_and(|n| n.contains("Opam"));
         let key = c.rotate_left(29) ^ o ^ COLOR_OPA_KEY;
         if masked && !cache.images.contains_key(&key) {
-            cache.prepared.prepare(PrepKey::ColorOpacity(pi, c, o), || decode_color_opacity(gd, pi, c, o));
+            cache.prepared.prepare(PrepKey::ColorOpacity(pi, c, o), || {
+                decode_color_opacity(gd, pi, c, o)
+            });
         }
     }
     // A two-layer material's layer B colour and blend mask (`blend_material`).
-    if let (Some(&mask), Some(&col_b)) = (m.textures.get(22).filter(|&&g| g != 0), m.textures.get(23).filter(|&&g| g != 0)) {
+    if let (Some(&mask), Some(&col_b)) = (
+        m.textures.get(22).filter(|&&g| g != 0),
+        m.textures.get(23).filter(|&&g| g != 0),
+    ) {
         if !blend && name.to_ascii_lowercase().ends_with("_bm") {
             tex(pi, col_b);
             tex(pi, mask);
@@ -430,7 +538,12 @@ pub fn material(
         return h.clone();
     }
     let t0 = std::time::Instant::now();
-    let _timer = scopeguard(move || { MAT_US.fetch_add(t0.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); });
+    let _timer = scopeguard(move || {
+        MAT_US.fetch_add(
+            t0.elapsed().as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    });
     let mut mat = StandardMaterial {
         perceptual_roughness: 0.6,
         reflectance: 0.3,
@@ -453,8 +566,13 @@ pub fn material(
                         col = Some(guid);
                     }
                     "opa" if opa.is_none() => opa = Some(guid),
-                    "nml" if mat.normal_map_texture.is_none() => mat.normal_map_texture = image(gd, cache, images, pi, guid),
-                    "ilm" if mat.emissive_texture.is_none() && std::env::var_os("TF_NO_ILM").is_none() => {
+                    "nml" if mat.normal_map_texture.is_none() => {
+                        mat.normal_map_texture = image(gd, cache, images, pi, guid)
+                    }
+                    "ilm"
+                        if mat.emissive_texture.is_none()
+                            && std::env::var_os("TF_NO_ILM").is_none() =>
+                    {
                         mat.emissive_texture = image(gd, cache, images, pi, guid);
                         if mat.emissive_texture.is_some() {
                             // Full self-illumination at twice a sunlit white surface, through the
@@ -465,7 +583,9 @@ pub fn material(
                             mat.emissive_exposure_weight = 1.0;
                         }
                     }
-                    "ao" if mat.occlusion_texture.is_none() => mat.occlusion_texture = image(gd, cache, images, pi, guid),
+                    "ao" if mat.occlusion_texture.is_none() => {
+                        mat.occlusion_texture = image(gd, cache, images, pi, guid)
+                    }
                     "gls" | "exp" if gloss.is_none() => gloss = Some(guid),
                     "spc" if spec.is_none() => spec = Some(guid),
                     _ => {}
@@ -480,10 +600,16 @@ pub fn material(
                     mat.reflectance = 5.0;
                 }
             }
-            let alpha_tested = gd.material_by_guid(m.depth_prepass).is_some_and(|d| d.textures.iter().any(|&t| t != 0));
+            let alpha_tested = gd
+                .material_by_guid(m.depth_prepass)
+                .is_some_and(|d| d.textures.iter().any(|&t| t != 0));
             // An opacity mask (`Opam` shaders: glass panes, sight lenses) goes into the base
             // colour's alpha, which the blend reads.
-            let opacity_masked = opa.is_some() && (blend || m.blended() || tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set).is_some_and(|n| n.contains("Opam")));
+            let opacity_masked = opa.is_some()
+                && (blend
+                    || m.blended()
+                    || tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set)
+                        .is_some_and(|n| n.contains("Opam")));
             if opacity_masked {
                 if let (Some(c), Some(o)) = (col, opa) {
                     if let Some(img) = color_opacity_image(gd, cache, images, pi, c, o) {
@@ -492,7 +618,8 @@ pub fn material(
                 }
             }
             // Unlit translucent shaders (scope reticles, sight glows): blended, unlit, both sides.
-            let shader = tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set).unwrap_or_default();
+            let shader = tf_assets::material::shader_set_name(&gd.paks[pi], m.shader_set)
+                .unwrap_or_default();
             let unlit_trans = shader.contains("Unlit") && shader.contains("Trans");
             if unlit_trans {
                 mat.unlit = true;
@@ -582,13 +709,19 @@ pub fn build_mesh(
     for tri in indices.chunks_exact_mut(3) {
         tri.swap(1, 2);
     }
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(indices));
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices));
     if let Some((joints, weights)) = skin {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_INDEX, VertexAttributeValues::Uint16x4(joints));
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_JOINT_INDEX,
+            VertexAttributeValues::Uint16x4(joints),
+        );
         mesh.insert_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, weights);
     }
     if let Err(e) = mesh.generate_tangents() {
@@ -634,7 +767,13 @@ pub fn blend_material(
     let col_b = *m.textures.get(23).filter(|&&g| g != 0)?;
     let base = material(gd, cache, images, materials, name, false);
     let base = materials.get(&base)?.clone();
-    Some(blends.add(BlendMaterial { base, extension: BlendLayer { layer_b: image(gd, cache, images, pi, col_b), mask: image(gd, cache, images, pi, mask) } }))
+    Some(blends.add(BlendMaterial {
+        base,
+        extension: BlendLayer {
+            layer_b: image(gd, cache, images, pi, col_b),
+            mask: image(gd, cache, images, pi, mask),
+        },
+    }))
 }
 
 /// Where a translucent mesh goes in the transparent phase: added to its sort distance (view
@@ -658,13 +797,22 @@ impl bevy::render::extract_component::ExtractComponent for TransparentOrder {
     type QueryData = &'static TransparentOrder;
     type QueryFilter = ();
     type Out = TransparentOrder;
-    fn extract_component(o: bevy::ecs::query::QueryItem<'_, '_, Self::QueryData>) -> Option<Self::Out> {
+    fn extract_component(
+        o: bevy::ecs::query::QueryItem<'_, '_, Self::QueryData>,
+    ) -> Option<Self::Out> {
         Some(*o)
     }
 }
 
 /// Render world: apply each mesh's `TransparentOrder` before the phase is sorted.
-fn apply_transparent_order(mut phases: ResMut<bevy::render::render_phase::ViewSortedRenderPhases<bevy::core_pipeline::core_3d::Transparent3d>>, order: Query<&TransparentOrder>) {
+fn apply_transparent_order(
+    mut phases: ResMut<
+        bevy::render::render_phase::ViewSortedRenderPhases<
+            bevy::core_pipeline::core_3d::Transparent3d,
+        >,
+    >,
+    order: Query<&TransparentOrder>,
+) {
     for phase in phases.values_mut() {
         for item in &mut phase.items {
             if let Ok(o) = order.get(item.entity.0) {
@@ -679,9 +827,14 @@ pub struct TransparentOrderPlugin;
 impl Plugin for TransparentOrderPlugin {
     fn build(&self, app: &mut App) {
         use bevy::render::{Render, RenderApp, RenderSystems};
-        app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<TransparentOrder>::default());
+        app.add_plugins(bevy::render::extract_component::ExtractComponentPlugin::<
+            TransparentOrder,
+        >::default());
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(Render, apply_transparent_order.in_set(RenderSystems::QueueSweep));
+            render_app.add_systems(
+                Render,
+                apply_transparent_order.in_set(RenderSystems::QueueSweep),
+            );
         }
     }
 }

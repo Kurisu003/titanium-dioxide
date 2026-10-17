@@ -12,7 +12,11 @@ fn main() -> anyhow::Result<()> {
         let pt = t.elapsed() - r;
         let t2 = std::time::Instant::now();
         let meshes = m.meshes(&[])?;
-        println!("{p}: {n} bytes, read {r:?}, parse {pt:?}, meshes {:?} ({} meshes)", t2.elapsed(), meshes.len());
+        println!(
+            "{p}: {n} bytes, read {r:?}, parse {pt:?}, meshes {:?} ({} meshes)",
+            t2.elapsed(),
+            meshes.len()
+        );
     }
     Ok(())
 }

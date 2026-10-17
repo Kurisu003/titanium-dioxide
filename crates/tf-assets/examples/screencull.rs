@@ -5,18 +5,34 @@ fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let vpk = Vpk::open(&a[1])?;
     let m = Model::parse(vpk.read(&a[2])?)?;
-    let seq = m.sequences.iter().find(|s| s.label.eq_ignore_ascii_case(&a[3])).ok_or_else(|| anyhow::anyhow!("no sequence"))?;
+    let seq = m
+        .sequences
+        .iter()
+        .find(|s| s.label.eq_ignore_ascii_case(&a[3]))
+        .ok_or_else(|| anyhow::anyhow!("no sequence"))?;
     let pose = tf_assets::mdl::screen_cull::pose(&m, seq.anims[0])?;
-    let cam = m.bone_index("jx_c_camera").ok_or_else(|| anyhow::anyhow!("no camera bone"))?;
+    let cam = m
+        .bone_index("jx_c_camera")
+        .ok_or_else(|| anyhow::anyhow!("no camera bone"))?;
     println!("camera at {:?}", pose[cam].1);
     let meshes = m.meshes(&[0; 16])?;
     let mats: Vec<String> = meshes
         .iter()
-        .map(|md| m.skin_families.first().and_then(|f| f.get(md.material)).map(|&t| m.textures.get(t as usize).cloned().unwrap_or_default()).unwrap_or_default())
+        .map(|md| {
+            m.skin_families
+                .first()
+                .and_then(|f| f.get(md.material))
+                .map(|&t| m.textures.get(t as usize).cloned().unwrap_or_default())
+                .unwrap_or_default()
+        })
         .collect();
     let hidden = tf_assets::mdl::screen_cull::hidden_triangles(&m, &meshes, &mats, &pose, cam);
     for (md, (mat, h)) in meshes.iter().zip(mats.iter().zip(&hidden)) {
-        println!("{mat}: {} of {} triangles behind the screen", h.iter().filter(|&&x| x).count(), md.indices.len() / 3);
+        println!(
+            "{mat}: {} of {} triangles behind the screen",
+            h.iter().filter(|&&x| x).count(),
+            md.indices.len() / 3
+        );
     }
     // Bounds in the camera's view: forward distance and the angles right/up of forward (X).
     let e = pose[cam].1;
@@ -26,7 +42,11 @@ fn main() -> anyhow::Result<()> {
         for i in 0..md.positions.len() {
             let p = tf_assets::mdl::screen_cull::skin(&m, &pose, md, i);
             let d = [p[0] - e[0], p[1] - e[1], p[2] - e[2]];
-            let v = [d[0], (d[1] / d[0]).atan().to_degrees(), (d[2] / d[0]).atan().to_degrees()];
+            let v = [
+                d[0],
+                (d[1] / d[0]).atan().to_degrees(),
+                (d[2] / d[0]).atan().to_degrees(),
+            ];
             for k in 0..3 {
                 lo[k] = lo[k].min(v[k]);
                 hi[k] = hi[k].max(v[k]);
@@ -43,7 +63,10 @@ fn main() -> anyhow::Result<()> {
     for (md, mat) in meshes.iter().zip(&mats) {
         if mat.contains("_int_screen") {
             for t in md.indices.chunks_exact(3) {
-                screen.push([0, 1, 2].map(|k| tf_assets::mdl::screen_cull::skin(&m, &pose, md, t[k] as usize)));
+                screen.push(
+                    [0, 1, 2]
+                        .map(|k| tf_assets::mdl::screen_cull::skin(&m, &pose, md, t[k] as usize)),
+                );
             }
         }
     }

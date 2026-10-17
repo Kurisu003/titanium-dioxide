@@ -4,11 +4,23 @@ use tf_assets::{mdl::Model, vpk::Vpk};
 type Q = [f32; 4];
 type V = [f32; 3];
 fn qmul(a: Q, b: Q) -> Q {
-    [a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1], a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0], a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3], a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2]]
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
 }
-fn conj(q: Q) -> Q { [-q[0], -q[1], -q[2], q[3]] }
-fn qrot(q: Q, v: V) -> V { let p = qmul(qmul(q, [v[0], v[1], v[2], 0.0]), conj(q)); [p[0], p[1], p[2]] }
-fn sub(a: V, b: V) -> V { [a[0]-b[0], a[1]-b[1], a[2]-b[2]] }
+fn conj(q: Q) -> Q {
+    [-q[0], -q[1], -q[2], q[3]]
+}
+fn qrot(q: Q, v: V) -> V {
+    let p = qmul(qmul(q, [v[0], v[1], v[2], 0.0]), conj(q));
+    [p[0], p[1], p[2]]
+}
+fn sub(a: V, b: V) -> V {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
 fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let m = Model::parse(Vpk::open(&a[1])?.read(&a[2])?)?;
@@ -27,16 +39,34 @@ fn main() -> anyhow::Result<()> {
                 let (dp, dq) = df[bi];
                 match conv {
                     "none" => {}
-                    "post b*d" => { q = qmul(q, dq); p = [p[0]+dp[0], p[1]+dp[1], p[2]+dp[2]]; }
-                    "pre d*b" => { q = qmul(dq, q); p = [p[0]+dp[0], p[1]+dp[1], p[2]+dp[2]]; }
-                    _ => { q = qmul(q, conj(dq)); p = [p[0]+dp[0], p[1]+dp[1], p[2]+dp[2]]; }
+                    "post b*d" => {
+                        q = qmul(q, dq);
+                        p = [p[0] + dp[0], p[1] + dp[1], p[2] + dp[2]];
+                    }
+                    "pre d*b" => {
+                        q = qmul(dq, q);
+                        p = [p[0] + dp[0], p[1] + dp[1], p[2] + dp[2]];
+                    }
+                    _ => {
+                        q = qmul(q, conj(dq));
+                        p = [p[0] + dp[0], p[1] + dp[1], p[2] + dp[2]];
+                    }
                 }
-                let w = if b.parent >= 0 { let (pp, pq) = g[b.parent as usize]; let r = qrot(pq, p); ([pp[0]+r[0], pp[1]+r[1], pp[2]+r[2]], qmul(pq, q)) } else { (p, q) };
+                let w = if b.parent >= 0 {
+                    let (pp, pq) = g[b.parent as usize];
+                    let r = qrot(pq, p);
+                    ([pp[0] + r[0], pp[1] + r[1], pp[2] + r[2]], qmul(pq, q))
+                } else {
+                    (p, q)
+                };
                 g.push(w);
             }
             // View frame: the CAMERA attachment (x forward = bone z, y left = bone x, z up = bone y).
             let (cp, cq) = g[cam];
-            let to_view = |v: V| { let l = qrot(conj(cq), v); [l[2], l[0], l[1]] };
+            let to_view = |v: V| {
+                let l = qrot(conj(cq), v);
+                [l[2], l[0], l[1]]
+            };
             let mz = to_view(sub(g[muz].0, cp));
             let w = to_view(sub(g[wb].0, cp));
             let bar = sub(mz, w);

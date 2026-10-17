@@ -22,7 +22,14 @@ fn main() -> anyhow::Result<()> {
         t.elapsed()
     );
     for (i, p) in m.polys.iter().enumerate().take(5) {
-        println!("  poly {i}: centre {:?} verts {} links {:?} flags {:#x} area {}", p.center, p.verts.len(), p.links, p.flags, p.area);
+        println!(
+            "  poly {i}: centre {:?} verts {} links {:?} flags {:#x} area {}",
+            p.center,
+            p.verts.len(),
+            p.links,
+            p.flags,
+            p.area
+        );
     }
     Ok(())
 }

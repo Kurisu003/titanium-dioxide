@@ -128,7 +128,11 @@ impl MilesBank {
                 patch: u16_at(&bank, e + 0x52),
             });
         }
-        let by_name: std::collections::BTreeMap<String, usize> = sources.iter().enumerate().map(|(i, s)| (s.name.to_ascii_lowercase(), i)).collect();
+        let by_name: std::collections::BTreeMap<String, usize> = sources
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.to_ascii_lowercase(), i))
+            .collect();
         let events = parse_events(&bank, names, &by_name);
         let mut streams = HashMap::new();
         for entry in std::fs::read_dir(dir)? {
@@ -143,19 +147,36 @@ impl MilesBank {
             }
             let language = u16_at(&h, 6) as i16;
             let patch = u16_at(&h, 12);
-            streams.insert((language, patch), StreamBank { path, data_offset: u32_at(&h, 8) as u64 });
+            streams.insert(
+                (language, patch),
+                StreamBank {
+                    path,
+                    data_offset: u32_at(&h, 8) as u64,
+                },
+            );
         }
-        Ok(Self { version, sources, by_name, events, streams })
+        Ok(Self {
+            version,
+            sources,
+            by_name,
+            events,
+            streams,
+        })
     }
 
     /// The sources a named sound event (from animation events or scripts) plays.
     pub fn event(&self, name: &str) -> Option<&[usize]> {
-        self.events.get(&name.to_ascii_lowercase()).map(|v| v.sources.as_slice()).filter(|v| !v.is_empty())
+        self.events
+            .get(&name.to_ascii_lowercase())
+            .map(|v| v.sources.as_slice())
+            .filter(|v| !v.is_empty())
     }
 
     /// An event's playback data (volume, 2D/3D, looping, distances).
     pub fn event_info(&self, name: &str) -> Option<&EventInfo> {
-        self.events.get(&name.to_ascii_lowercase()).filter(|v| !v.sources.is_empty())
+        self.events
+            .get(&name.to_ascii_lowercase())
+            .filter(|v| !v.sources.is_empty())
     }
 
     /// Number of sound events in the bank.
@@ -173,7 +194,11 @@ impl MilesBank {
     /// Sources whose names start with `prefix` (lowercase).
     pub fn with_prefix(&self, prefix: &str) -> Vec<usize> {
         let p = prefix.to_ascii_lowercase();
-        let mut names: Vec<(&String, &usize)> = self.by_name.range(p.clone()..).take_while(|(n, _)| n.starts_with(&p)).collect();
+        let mut names: Vec<(&String, &usize)> = self
+            .by_name
+            .range(p.clone()..)
+            .take_while(|(n, _)| n.starts_with(&p))
+            .collect();
         names.sort();
         names.into_iter().map(|(_, &i)| i).collect()
     }
@@ -203,12 +228,19 @@ impl MilesBank {
 
     /// The source named `name` (any case).
     pub fn find(&self, name: &str) -> Option<&Source> {
-        self.by_name.get(&name.to_ascii_lowercase()).map(|&i| &self.sources[i])
+        self.by_name
+            .get(&name.to_ascii_lowercase())
+            .map(|&i| &self.sources[i])
     }
 
     /// The complete Bink Audio ("1FCB") file for a source.
     pub fn read_binka(&self, s: &Source) -> Result<Vec<u8>> {
-        let bank = self.streams.get(&(s.language, s.patch)).with_context(|| format!("no stream bank for language {} patch {}", s.language, s.patch))?;
+        let bank = self.streams.get(&(s.language, s.patch)).with_context(|| {
+            format!(
+                "no stream bank for language {} patch {}",
+                s.language, s.patch
+            )
+        })?;
         let mut f = File::open(&bank.path)?;
         let mut out = vec![0u8; s.header_size as usize];
         f.seek(SeekFrom::Start(s.header_offset))?;
@@ -239,19 +271,37 @@ fn plausible(v: f32, max: f32) -> Option<f32> {
     (v.is_finite() && v > 1e-3 && v < max).then_some(v)
 }
 
-fn parse_events(bank: &[u8], names: usize, by_name: &std::collections::BTreeMap<String, usize>) -> HashMap<String, EventInfo> {
+fn parse_events(
+    bank: &[u8],
+    names: usize,
+    by_name: &std::collections::BTreeMap<String, usize>,
+) -> HashMap<String, EventInfo> {
     let mut out = HashMap::new();
     if bank.len() < 0xB0 {
         return out;
     }
-    let (table, records, nodes) = (u64_at(bank, 0x60) as usize, u64_at(bank, 0x68) as usize, u64_at(bank, 0x80) as usize);
+    let (table, records, nodes) = (
+        u64_at(bank, 0x60) as usize,
+        u64_at(bank, 0x68) as usize,
+        u64_at(bank, 0x80) as usize,
+    );
     let count = u32_at(bank, 0xA8) as usize;
-    fn walk(bank: &[u8], names: usize, by_name: &std::collections::BTreeMap<String, usize>, root: usize, at: usize, depth: u32, out: &mut Vec<usize>) {
+    fn walk(
+        bank: &[u8],
+        names: usize,
+        by_name: &std::collections::BTreeMap<String, usize>,
+        root: usize,
+        at: usize,
+        depth: u32,
+        out: &mut Vec<usize>,
+    ) {
         if depth > 6 || at + 0x28 > bank.len() {
             return;
         }
         if bank[at] == 1 {
-            if let Some(i) = cstr_at(bank, names + u32_at(bank, at + 0x20) as usize).and_then(|n| by_name.get(&n).copied()) {
+            if let Some(i) = cstr_at(bank, names + u32_at(bank, at + 0x20) as usize)
+                .and_then(|n| by_name.get(&n).copied())
+            {
                 out.push(i);
             }
         } else if bank[at] == 0 && bank[at + 2] != 0 {
@@ -268,7 +318,9 @@ fn parse_events(bank: &[u8], names: usize, by_name: &std::collections::BTreeMap<
         if e + 8 > records.min(bank.len()) {
             break;
         }
-        let Some(name) = cstr_at(bank, names + u32_at(bank, e) as usize) else { continue };
+        let Some(name) = cstr_at(bank, names + u32_at(bank, e) as usize) else {
+            continue;
+        };
         let mut r = records + u32_at(bank, e + 4) as usize;
         if r + 0xBC > bank.len() {
             continue;

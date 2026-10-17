@@ -7,7 +7,11 @@ fn main() -> anyhow::Result<()> {
     for m in &model.rui_meshes {
         println!("{} ({} faces)", m.name, m.faces.len());
         for f in &m.faces {
-            let bone = model.bones.get(f.bone).map(|b| b.name.as_str()).unwrap_or("?");
+            let bone = model
+                .bones
+                .get(f.bone)
+                .map(|b| b.name.as_str())
+                .unwrap_or("?");
             println!("  {bone}: corners {:?} uvs {:?}", f.corners, f.uvs);
         }
     }

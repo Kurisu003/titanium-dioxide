@@ -27,7 +27,12 @@ impl R<'_> {
         [self.f32(o), self.f32(o + 4), self.f32(o + 8)]
     }
     fn v4(&self, o: usize) -> [f32; 4] {
-        [self.f32(o), self.f32(o + 4), self.f32(o + 8), self.f32(o + 12)]
+        [
+            self.f32(o),
+            self.f32(o + 4),
+            self.f32(o + 8),
+            self.f32(o + 12),
+        ]
     }
     fn cstr(&self, o: usize) -> String {
         if o >= self.0.len() {
@@ -253,7 +258,10 @@ const VERTEX_SIZE: usize = 48;
 
 impl Model {
     fn rui_meshes(r: &R, raw_len: usize) -> Vec<RuiMesh> {
-        let (n, table) = (r.i32(0x128).clamp(0, 64) as usize, r.i32(0x12C).max(0) as usize);
+        let (n, table) = (
+            r.i32(0x128).clamp(0, 64) as usize,
+            r.i32(0x12C).max(0) as usize,
+        );
         let mut out = Vec::new();
         for k in 0..n {
             let e = table + k * 8;
@@ -265,11 +273,25 @@ impl Model {
                 continue;
             }
             let field = |i: usize| r.i32(m + i * 4).max(0) as usize;
-            let (np, nv, nf, pi, vi, mi, fi) = (field(0).min(64), field(1).min(4096), field(2).min(4096), field(3), field(4), field(5), field(6));
-            if m + pi + np * 2 > raw_len || m + vi + nv * 16 > raw_len || m + mi + nf * 6 > raw_len || m + fi + nf * 32 > raw_len {
+            let (np, nv, nf, pi, vi, mi, fi) = (
+                field(0).min(64),
+                field(1).min(4096),
+                field(2).min(4096),
+                field(3),
+                field(4),
+                field(5),
+                field(6),
+            );
+            if m + pi + np * 2 > raw_len
+                || m + vi + nv * 16 > raw_len
+                || m + mi + nf * 6 > raw_len
+                || m + fi + nf * 32 > raw_len
+            {
                 continue;
             }
-            let parents: Vec<usize> = (0..np).map(|p| r.i16(m + pi + p * 2).max(0) as usize).collect();
+            let parents: Vec<usize> = (0..np)
+                .map(|p| r.i16(m + pi + p * 2).max(0) as usize)
+                .collect();
             let vert = |v: usize| {
                 let o = m + vi + v.min(nv.saturating_sub(1)) * 16;
                 (r.i32(o).max(0) as usize, r.v3(o + 4))
@@ -278,13 +300,24 @@ impl Model {
                 .map(|f| {
                     let c = |i: usize| vert(r.u16(m + mi + f * 6 + i * 2) as usize);
                     let ((p0, a), (_, b), (_, c2)) = (c(0), c(1), c(2));
-                    let d = [a[0] + c2[0] - b[0], a[1] + c2[1] - b[1], a[2] + c2[2] - b[2]];
+                    let d = [
+                        a[0] + c2[0] - b[0],
+                        a[1] + c2[1] - b[1],
+                        a[2] + c2[2] - b[2],
+                    ];
                     let o = m + fi + f * 32;
                     let uv = |i: usize| [r.f32(o + i * 4), r.f32(o + 16 + i * 4)];
-                    RuiFace { bone: parents.get(p0).copied().unwrap_or(0), corners: [a, b, c2, d], uvs: [uv(0), uv(1), uv(2), uv(3)] }
+                    RuiFace {
+                        bone: parents.get(p0).copied().unwrap_or(0),
+                        corners: [a, b, c2, d],
+                        uvs: [uv(0), uv(1), uv(2), uv(3)],
+                    }
                 })
                 .collect();
-            out.push(RuiMesh { name: r.cstr(m + 32), faces });
+            out.push(RuiMesh {
+                name: r.cstr(m + 32),
+                faces,
+            });
         }
         out
     }
@@ -331,18 +364,31 @@ impl Model {
             })
             .collect();
         let (num_cd, cd_index) = (r.i32(0xD8) as usize, r.i32(0xDC) as usize);
-        let cd_textures = (0..num_cd).map(|i| r.cstr(r.i32(cd_index + i * 4) as usize)).collect();
+        let cd_textures = (0..num_cd)
+            .map(|i| r.cstr(r.i32(cd_index + i * 4) as usize))
+            .collect();
 
-        let (num_skinref, num_families, skin_index) = (r.i32(0xE0) as usize, r.i32(0xE4) as usize, r.i32(0xE8) as usize);
+        let (num_skinref, num_families, skin_index) = (
+            r.i32(0xE0) as usize,
+            r.i32(0xE4) as usize,
+            r.i32(0xE8) as usize,
+        );
         let skin_families = (0..num_families)
-            .map(|f| (0..num_skinref).map(|s| r.u16(skin_index + (f * num_skinref + s) * 2)).collect())
+            .map(|f| {
+                (0..num_skinref)
+                    .map(|s| r.u16(skin_index + (f * num_skinref + s) * 2))
+                    .collect()
+            })
             .collect();
 
         let (num_bp, bp_index) = (r.i32(0xEC) as usize, r.i32(0xF0) as usize);
         let bodyparts = (0..num_bp)
             .map(|i| {
                 let o = bp_index + i * 16;
-                BodyPart { name: r.cstr(o + r.i32(o) as usize), num_models: r.i32(o + 4) as usize }
+                BodyPart {
+                    name: r.cstr(o + r.i32(o) as usize),
+                    num_models: r.i32(o + 4) as usize,
+                }
             })
             .collect();
 
@@ -372,15 +418,32 @@ impl Model {
                 param_end: [r.f32(o + 0x5C), r.f32(o + 0x60)],
                 fade_in: r.f32(o + 0x68),
                 modifiers: {
-                    let (mi, nm) = (r.i32(o + 0xB8) as usize, r.i32(o + 0xBC).clamp(0, 32) as usize);
-                    (0..nm).map(|k| { let m = o + mi + k * 8; format!("{}{}", if r.i32(m + 4) & 0xFF != 0 { "!" } else { "" }, r.cstr(m + r.i32(m) as usize)) }).collect()
+                    let (mi, nm) = (
+                        r.i32(o + 0xB8) as usize,
+                        r.i32(o + 0xBC).clamp(0, 32) as usize,
+                    );
+                    (0..nm)
+                        .map(|k| {
+                            let m = o + mi + k * 8;
+                            format!(
+                                "{}{}",
+                                if r.i32(m + 4) & 0xFF != 0 { "!" } else { "" },
+                                r.cstr(m + r.i32(m) as usize)
+                            )
+                        })
+                        .collect()
                 },
                 bone_weights: {
                     let wi = r.i32(o + 0x9C) as usize;
-                    (0..num_bones).map(|b| if wi == 0 { 1.0 } else { r.f32(o + wi + b * 4) }).collect()
+                    (0..num_bones)
+                        .map(|b| if wi == 0 { 1.0 } else { r.f32(o + wi + b * 4) })
+                        .collect()
                 },
                 events: {
-                    let (ne, ei) = (r.i32(o + 0x18).clamp(0, 256) as usize, r.i32(o + 0x1C) as usize);
+                    let (ne, ei) = (
+                        r.i32(o + 0x18).clamp(0, 256) as usize,
+                        r.i32(o + 0x1C) as usize,
+                    );
                     (0..ne)
                         .map(|k| {
                             let e = o + ei + k * 0x50;
@@ -401,11 +464,20 @@ impl Model {
             if num_sets == 0 || set_index + 12 > raw_len {
                 Vec::new()
             } else {
-                let (n, hi) = (r.i32(set_index + 4).clamp(0, 512) as usize, r.i32(set_index + 8) as usize);
+                let (n, hi) = (
+                    r.i32(set_index + 4).clamp(0, 512) as usize,
+                    r.i32(set_index + 8) as usize,
+                );
                 (0..n)
                     .filter_map(|k| {
                         let b = set_index + hi + k * 0x44;
-                        (b + 0x44 <= raw_len).then(|| Hitbox { bone: r.i32(b).max(0) as usize, group: r.i32(b + 4), min: r.v3(b + 8), max: r.v3(b + 20), crit: r.i32(b + 0x24) != 0 })
+                        (b + 0x44 <= raw_len).then(|| Hitbox {
+                            bone: r.i32(b).max(0) as usize,
+                            group: r.i32(b + 4),
+                            min: r.v3(b + 8),
+                            max: r.v3(b + 20),
+                            crit: r.i32(b + 0x24) != 0,
+                        })
                     })
                     .collect()
             }
@@ -436,7 +508,11 @@ impl Model {
                         Attachment {
                             name: r.cstr(o + r.i32(o) as usize),
                             bone: r.i32(o + 8) as usize,
-                            local: [[m(0), m(1), m(2), m(3)], [m(4), m(5), m(6), m(7)], [m(8), m(9), m(10), m(11)]],
+                            local: [
+                                [m(0), m(1), m(2), m(3)],
+                                [m(4), m(5), m(6), m(7)],
+                                [m(8), m(9), m(10), m(11)],
+                            ],
                         }
                     })
                     .collect()
@@ -447,7 +523,12 @@ impl Model {
                 (0..np)
                     .map(|k| {
                         let o = pi + k * 20;
-                        PoseParam { name: r.cstr(o + r.i32(o) as usize), start: r.f32(o + 8), end: r.f32(o + 12), looping: r.f32(o + 16) }
+                        PoseParam {
+                            name: r.cstr(o + r.i32(o) as usize),
+                            start: r.f32(o + 8),
+                            end: r.f32(o + 12),
+                            looping: r.f32(o + 16),
+                        }
                     })
                     .collect()
             },
@@ -457,7 +538,9 @@ impl Model {
 
     /// The index of the bone named `name` (ignoring ASCII case).
     pub fn bone_index(&self, name: &str) -> Option<usize> {
-        self.bones.iter().position(|b| b.name.eq_ignore_ascii_case(name))
+        self.bones
+            .iter()
+            .position(|b| b.name.eq_ignore_ascii_case(name))
     }
 
     /// Build LOD 0 geometry. `body` selects the model index within each body part
@@ -482,7 +565,11 @@ impl Model {
     pub fn collision_tris(&self) -> Vec<([[f32; 3]; 3], u16)> {
         let r = R(&self.raw);
         let off = r.i32(0x198);
-        let (interior, leaves, verts) = (r.i32(0x19C).max(0) as usize, r.i32(0x1A0).max(0) as usize, r.i32(0x1A4).max(0) as usize);
+        let (interior, leaves, verts) = (
+            r.i32(0x19C).max(0) as usize,
+            r.i32(0x1A0).max(0) as usize,
+            r.i32(0x1A4).max(0) as usize,
+        );
         if off <= 0 || leaves == 0 {
             return Vec::new();
         }
@@ -495,18 +582,27 @@ impl Model {
         }
         let (min, max) = (r.v3(off + 4), r.v3(off + 0x10));
         let scale = [0, 1, 2].map(|k| (max[k] - min[k]) * (1.0 / 65535.0));
-        let vert = |i: usize| (i < verts).then(|| [0, 1, 2].map(|k| min[k] + r.u16(vert0 + i * 6 + k * 2) as f32 * scale[k]));
+        let vert = |i: usize| {
+            (i < verts)
+                .then(|| [0, 1, 2].map(|k| min[k] + r.u16(vert0 + i * 6 + k * 2) as f32 * scale[k]))
+        };
         let mut out = Vec::new();
         for l in 0..leaves {
             let o = leaf0 + l * 0x70;
             let first = r.i32(o + 0xC).max(0) as usize;
             for t in 0..12 {
                 let to = o + 0x10 + t * 8;
-                let (a, b, c) = (r.u16(to) as usize, r.u16(to + 2) as usize, r.u16(to + 4) as usize);
+                let (a, b, c) = (
+                    r.u16(to) as usize,
+                    r.u16(to + 2) as usize,
+                    r.u16(to + 4) as usize,
+                );
                 if a == b {
                     break;
                 }
-                if let (Some(pa), Some(pb), Some(pc)) = (vert(first + a), vert(first + b), vert(first + c)) {
+                if let (Some(pa), Some(pb), Some(pc)) =
+                    (vert(first + a), vert(first + b), vert(first + c))
+                {
                     out.push(([pa, pb, pc], r.u16(to + 6)));
                 }
             }
@@ -551,7 +647,11 @@ impl Model {
             if faces == 0 || p0 + faces * 16 > self.raw.len() {
                 continue;
             }
-            out.push((0..faces).map(|k| (r.v3(p0 + k * 16), r.f32(p0 + k * 16 + 12))).collect());
+            out.push(
+                (0..faces)
+                    .map(|k| (r.v3(p0 + k * 16), r.f32(p0 + k * 16 + 12)))
+                    .collect(),
+            );
         }
         out
     }
@@ -564,7 +664,9 @@ impl Model {
             // A rough pass finds the hull's centre and size; the faces are then clipped about
             // the centre (small numbers keep the clip precise), as `Bsp::collision_shapes` does
             // for brushes.
-            let rough: Vec<[f32; 3]> = (0..planes.len()).flat_map(|i| crate::bsp::brush_face(&planes, i, 16384.0)).collect();
+            let rough: Vec<[f32; 3]> = (0..planes.len())
+                .flat_map(|i| crate::bsp::brush_face(&planes, i, 16384.0))
+                .collect();
             if rough.is_empty() {
                 continue;
             }
@@ -576,22 +678,38 @@ impl Model {
                 }
             }
             let c = [0, 1, 2].map(|k| (lo[k] + hi[k]) * 0.5);
-            let size = [0, 1, 2].map(|k| hi[k] - c[k]).iter().map(|e| e * e).sum::<f32>().sqrt() + 1.0;
-            let local: Vec<([f32; 3], f32)> = planes.iter().map(|&(n, d)| (n, d - dot(n, c))).collect();
+            let size = [0, 1, 2]
+                .map(|k| hi[k] - c[k])
+                .iter()
+                .map(|e| e * e)
+                .sum::<f32>()
+                .sqrt()
+                + 1.0;
+            let local: Vec<([f32; 3], f32)> =
+                planes.iter().map(|&(n, d)| (n, d - dot(n, c))).collect();
             let at = |p: [f32; 3]| [p[0] + c[0], p[1] + c[1], p[2] + c[2]];
             for i in 0..local.len() {
                 // Corners where several planes meet come out more than once: drop the repeats
                 // (their slivers would carry made-up normals).
                 let mut face = crate::bsp::brush_face(&local, i, size);
-                let near = |a: [f32; 3], b: [f32; 3]| (0..3).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum::<f32>() < 1e-4;
+                let near = |a: [f32; 3], b: [f32; 3]| {
+                    (0..3).map(|k| (a[k] - b[k]) * (a[k] - b[k])).sum::<f32>() < 1e-4
+                };
                 face.dedup_by(|b, a| near(*a, *b));
                 while face.len() > 1 && near(face[0], face[face.len() - 1]) {
                     face.pop();
                 }
                 for k in 1..face.len().saturating_sub(1) {
                     let (p, q, s) = (at(face[0]), at(face[k]), at(face[k + 1]));
-                    let (u, v) = ([q[0] - p[0], q[1] - p[1], q[2] - p[2]], [s[0] - p[0], s[1] - p[1], s[2] - p[2]]);
-                    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                    let (u, v) = (
+                        [q[0] - p[0], q[1] - p[1], q[2] - p[2]],
+                        [s[0] - p[0], s[1] - p[1], s[2] - p[2]],
+                    );
+                    let n = [
+                        u[1] * v[2] - u[2] * v[1],
+                        u[2] * v[0] - u[0] * v[2],
+                        u[0] * v[1] - u[1] * v[0],
+                    ];
                     if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-2 {
                         out.push([p, q, s]);
                     }
@@ -666,7 +784,11 @@ impl Model {
             if bpi >= vtx_bp_count {
                 break;
             }
-            let model_idx = body.get(bpi).copied().unwrap_or(0).min(bp.num_models.saturating_sub(1));
+            let model_idx = body
+                .get(bpi)
+                .copied()
+                .unwrap_or(0)
+                .min(bp.num_models.saturating_sub(1));
             let mdl_bp = bp_index + bpi * 16;
             let mdl_model = mdl_bp + r.i32(mdl_bp + 12) as usize + model_idx * 0x94;
             let model_vertex_base = r.i32(mdl_model + 0x54) as usize / VERTEX_SIZE;
@@ -694,7 +816,11 @@ impl Model {
                 let vmesh = vmesh_base + mi * 9;
                 let num_sg = r.i32(vmesh) as usize;
                 let sg_base = vmesh + r.i32(vmesh + 4) as usize;
-                let mut md = MeshData { material, bodypart: bpi, ..Default::default() };
+                let mut md = MeshData {
+                    material,
+                    bodypart: bpi,
+                    ..Default::default()
+                };
                 // Output vertex of each of the mesh's VVD vertices (by its u16 index from
                 // `mesh_vertex_base`), u32::MAX until first used.
                 let mut remap: Vec<u32> = Vec::new();
@@ -721,7 +847,8 @@ impl Model {
                             }
                             if remap[orig] == u32::MAX {
                                 remap[orig] = md.positions.len() as u32;
-                                let v = &vertices[(mesh_vertex_base + orig).min(vertices.len() - 1)];
+                                let v =
+                                    &vertices[(mesh_vertex_base + orig).min(vertices.len() - 1)];
                                 md.positions.push(v.pos);
                                 md.normals.push(v.normal);
                                 md.uvs.push(v.uv);
@@ -758,7 +885,8 @@ impl Model {
         // an RGBA8 colour per VVD vertex, in the same order. The effect models' alpha lives
         // here (the Vortex dome fades to 0 at its rim through it).
         let vvc = r.i32(0x1B4) as usize;
-        let colors = (r.i32(0x1C4) > 0 && self.raw.get(vvc..vvc + 4) == Some(b"IDCV")).then(|| vvc + r.i32(vvc + 48) as usize);
+        let colors = (r.i32(0x1C4) > 0 && self.raw.get(vvc..vvc + 4) == Some(b"IDCV"))
+            .then(|| vvc + r.i32(vvc + 48) as usize);
         let read = |i: usize| {
             let o = vertex_start + i * VERTEX_SIZE;
             let n = (self.raw[o + 15] as usize).clamp(1, 3);
@@ -774,8 +902,17 @@ impl Model {
             } else {
                 weights = [1.0, 0.0, 0.0, 0.0];
             }
-            let color = colors.and_then(|c| self.raw.get(c + i * 4..c + i * 4 + 4)).map(|b| [b[0], b[1], b[2], b[3]]);
-            Vert { pos: r.v3(o + 16), normal: r.v3(o + 28), uv: [r.f32(o + 40), r.f32(o + 44)], joints, weights, color }
+            let color = colors
+                .and_then(|c| self.raw.get(c + i * 4..c + i * 4 + 4))
+                .map(|b| [b[0], b[1], b[2], b[3]]);
+            Vert {
+                pos: r.v3(o + 16),
+                normal: r.v3(o + 28),
+                uv: [r.f32(o + 40), r.f32(o + 44)],
+                joints,
+                weights,
+                color,
+            }
         };
         let mut out = Vec::with_capacity(num_lod0);
         if num_fixups == 0 {
@@ -836,7 +973,17 @@ impl Model {
         let mut frames = Vec::with_capacity(num_frames);
         let mut animated = vec![false; self.bones.len()];
         // Bones without a track in a frame keep this pose (identity for delta animations).
-        let rest: Vec<([f32; 3], [f32; 4])> = self.bones.iter().map(|b| if delta { ([0.0; 3], [0.0, 0.0, 0.0, 1.0]) } else { (b.pos, b.quat) }).collect();
+        let rest: Vec<([f32; 3], [f32; 4])> = self
+            .bones
+            .iter()
+            .map(|b| {
+                if delta {
+                    ([0.0; 3], [0.0, 0.0, 0.0, 1.0])
+                } else {
+                    (b.pos, b.quat)
+                }
+            })
+            .collect();
         // Per bone, the last Euler angles (as bits) decoded and their quaternion: tracks often
         // hold a value for many frames, and the same angles give the same quaternion.
         let mut last_rot: Vec<Option<([u32; 3], [f32; 4])>> = vec![None; self.bones.len()];
@@ -865,7 +1012,8 @@ impl Model {
                     let bone = self.raw[p + 4] as usize;
                     let bflags = self.raw[p + 5];
                     if bone < self.bones.len() {
-                        pose[bone] = self.decode_bone(p, bone, bflags, local, delta, &mut last_rot[bone]);
+                        pose[bone] =
+                            self.decode_bone(p, bone, bflags, local, delta, &mut last_rot[bone]);
                         animated[bone] = true;
                     }
                     let next = r.i32(p + 28);
@@ -877,12 +1025,28 @@ impl Model {
             }
             frames.push(pose);
         }
-        Ok(Animation { name, fps, flags, num_frames, frames, animated, movement })
+        Ok(Animation {
+            name,
+            fps,
+            flags,
+            num_frames,
+            frames,
+            animated,
+            movement,
+        })
     }
 
     /// One bone's local transform at `frame`. `last_rot` caches the bone's previous Euler ->
     /// quaternion conversion (within one animation, so `delta` is the same).
-    fn decode_bone(&self, p: usize, bone: usize, flags: u8, frame: usize, delta: bool, last_rot: &mut Option<([u32; 3], [f32; 4])>) -> ([f32; 3], [f32; 4]) {
+    fn decode_bone(
+        &self,
+        p: usize,
+        bone: usize,
+        flags: u8,
+        frame: usize,
+        delta: bool,
+        last_rot: &mut Option<([u32; 3], [f32; 4])>,
+    ) -> ([f32; 3], [f32; 4]) {
         const RAWPOS: u8 = 0x02;
         const RAWROT: u8 = 0x04;
         const NOROT: u8 = 0x10;
@@ -891,9 +1055,15 @@ impl Model {
         let posscale = r.f32(p);
 
         let q = if flags & RAWROT != 0 {
-            quat64(u64::from_le_bytes(self.raw[p + 8..p + 16].try_into().unwrap()))
+            quat64(u64::from_le_bytes(
+                self.raw[p + 8..p + 16].try_into().unwrap(),
+            ))
         } else if flags & NOROT != 0 {
-            if delta { [0.0, 0.0, 0.0, 1.0] } else { b.quat }
+            if delta {
+                [0.0, 0.0, 0.0, 1.0]
+            } else {
+                b.quat
+            }
         } else {
             let mut e = [0f32; 3];
             for (k, ek) in e.iter_mut().enumerate() {
@@ -920,7 +1090,11 @@ impl Model {
         };
 
         let pos = if flags & RAWPOS != 0 {
-            [half(r.u16(p + 16)), half(r.u16(p + 18)), half(r.u16(p + 20))]
+            [
+                half(r.u16(p + 16)),
+                half(r.u16(p + 18)),
+                half(r.u16(p + 20)),
+            ]
         } else {
             let mut v = [0f32; 3];
             for (k, vk) in v.iter_mut().enumerate() {
@@ -1051,7 +1225,10 @@ pub mod screen_cull {
         ]
     }
     fn qrot(q: Q, v: V3) -> V3 {
-        let r = qmul(qmul(q, [v[0], v[1], v[2], 0.0]), [-q[0], -q[1], -q[2], q[3]]);
+        let r = qmul(
+            qmul(q, [v[0], v[1], v[2], 0.0]),
+            [-q[0], -q[1], -q[2], q[3]],
+        );
         [r[0], r[1], r[2]]
     }
     fn add(a: V3, b: V3) -> V3 {
@@ -1061,7 +1238,11 @@ pub mod screen_cull {
         [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
     }
     fn cross(a: V3, b: V3) -> V3 {
-        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
     }
     fn dot(a: V3, b: V3) -> f32 {
         a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
@@ -1095,7 +1276,9 @@ pub mod screen_cull {
         let (j, w) = (md.joints[i], md.weights[i]);
         let k = (0..4).max_by(|&x, &y| w[x].total_cmp(&w[y])).unwrap_or(0);
         let bone = j[k] as usize;
-        let (Some(b), Some(&(q, p))) = (m.bones.get(bone), pose.get(bone)) else { return md.positions[i] };
+        let (Some(b), Some(&(q, p))) = (m.bones.get(bone), pose.get(bone)) else {
+            return md.positions[i];
+        };
         let v = md.positions[i];
         let t = &b.pose_to_bone;
         let local = [0, 1, 2].map(|r| t[r][0] * v[0] + t[r][1] * v[1] + t[r][2] * v[2] + t[r][3]);
@@ -1152,7 +1335,10 @@ pub mod screen_cull {
         }
         for t in md.indices.chunks_exact(3) {
             for k in 1..3 {
-                let (a, b) = (find(&mut parent, t[0] as usize), find(&mut parent, t[k] as usize));
+                let (a, b) = (
+                    find(&mut parent, t[0] as usize),
+                    find(&mut parent, t[k] as usize),
+                );
                 parent[a] = b;
             }
         }
@@ -1161,7 +1347,13 @@ pub mod screen_cull {
 
     /// Per mesh, per triangle: whether it belongs to a piece of the mesh lying mostly behind
     /// (or on) an `_int_screen` mesh seen from bone `eye` (screen meshes are never marked).
-    pub fn hidden_triangles(m: &Model, meshes: &[MeshData], mats: &[String], pose: &[(Q, V3)], eye: usize) -> Vec<Vec<bool>> {
+    pub fn hidden_triangles(
+        m: &Model,
+        meshes: &[MeshData],
+        mats: &[String],
+        pose: &[(Q, V3)],
+        eye: usize,
+    ) -> Vec<Vec<bool>> {
         let is_screen = |mat: &String| mat.to_ascii_lowercase().contains("_int_screen");
         let eye = pose[eye].1;
         let mut screen: Vec<[V3; 3]> = Vec::new();
@@ -1180,17 +1372,27 @@ pub mod screen_cull {
                 if is_screen(mat) || screen.is_empty() {
                     return vec![false; md.indices.len() / 3];
                 }
-                let hid: Vec<bool> = (0..md.positions.len()).map(|i| behind(skin(m, pose, md, i))).collect();
+                let hid: Vec<bool> = (0..md.positions.len())
+                    .map(|i| behind(skin(m, pose, md, i)))
+                    .collect();
                 // Whole connected pieces go when most of their vertices are hidden: the cables
                 // cross the screen surface back and forth.
                 let comp = components(md);
-                let mut count: std::collections::HashMap<usize, (usize, usize)> = Default::default();
+                let mut count: std::collections::HashMap<usize, (usize, usize)> =
+                    Default::default();
                 for (i, &c) in comp.iter().enumerate() {
                     let e = count.entry(c).or_default();
                     e.0 += hid[i] as usize;
                     e.1 += 1;
                 }
-                md.indices.chunks_exact(3).map(|t| count.get(&comp[t[0] as usize]).is_some_and(|&(h, n)| h * 2 > n)).collect()
+                md.indices
+                    .chunks_exact(3)
+                    .map(|t| {
+                        count
+                            .get(&comp[t[0] as usize])
+                            .is_some_and(|&(h, n)| h * 2 > n)
+                    })
+                    .collect()
             })
             .collect()
     }
@@ -1261,21 +1463,35 @@ mod collision_tests {
         }
         let m = model(raw);
         assert_eq!(m.collision_hulls().len(), 1);
-        assert_eq!(m.collision_hulls()[0].len(), 6, "bevel planes are not faces");
+        assert_eq!(
+            m.collision_hulls()[0].len(),
+            6,
+            "bevel planes are not faces"
+        );
         let tris = m.collision_hull_tris();
         assert_eq!(tris.len(), 12);
         let area: f32 = tris
             .iter()
             .map(|t| {
-                let (u, v) = ([t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]], [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]]);
-                let c = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                let (u, v) = (
+                    [t[1][0] - t[0][0], t[1][1] - t[0][1], t[1][2] - t[0][2]],
+                    [t[2][0] - t[0][0], t[2][1] - t[0][1], t[2][2] - t[0][2]],
+                );
+                let c = [
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
+                ];
                 (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt() * 0.5
             })
             .sum();
         let want = 2.0 * (20.0 * 10.0 + 20.0 * 40.0 + 10.0 * 40.0);
         assert!((area - want).abs() < 0.5, "surface {area} vs {want}");
         for p in tris.iter().flatten() {
-            assert!(p[0] > 9.99 && p[0] < 30.01 && p[1].abs() < 5.01 && p[2] > -0.01 && p[2] < 40.01, "{p:?}");
+            assert!(
+                p[0] > 9.99 && p[0] < 30.01 && p[1].abs() < 5.01 && p[2] > -0.01 && p[2] < 40.01,
+                "{p:?}"
+            );
         }
     }
 
@@ -1327,7 +1543,10 @@ mod collision_tests {
             put_u16(&mut raw, leaf + 0x10 + k * 2, *v);
         }
         let verts = leaf + 0x70;
-        for (i, q) in [[0u16, 0, 0], [65535, 0, 0], [0, 65535, 32768]].iter().enumerate() {
+        for (i, q) in [[0u16, 0, 0], [65535, 0, 0], [0, 65535, 32768]]
+            .iter()
+            .enumerate()
+        {
             for (k, &qk) in q.iter().enumerate() {
                 put_u16(&mut raw, verts + i * 6 + k * 2, qk);
             }
@@ -1338,6 +1557,10 @@ mod collision_tests {
         assert_eq!(surf, 7);
         assert_eq!(t[0], [-10.0, -10.0, -10.0]);
         assert_eq!(t[1], [10.0, -10.0, -10.0]);
-        assert!((t[2][1] - 10.0).abs() < 1e-4 && t[2][2].abs() < 1e-3, "{:?}", t[2]);
+        assert!(
+            (t[2][1] - 10.0).abs() < 1e-4 && t[2][2].abs() < 1e-3,
+            "{:?}",
+            t[2]
+        );
     }
 }

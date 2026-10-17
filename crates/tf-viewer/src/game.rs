@@ -36,7 +36,15 @@ pub struct Game {
 
 impl Default for Game {
     fn default() -> Self {
-        Self { state: GameState::Title, wave: 0, kills: 0, timer: 0.0, best_wave: 0, wave_size: 0, cash: 0 }
+        Self {
+            state: GameState::Title,
+            wave: 0,
+            kills: 0,
+            timer: 0.0,
+            best_wave: 0,
+            wave_size: 0,
+            cash: 0,
+        }
     }
 }
 
@@ -61,7 +69,14 @@ pub fn gate_input(game: Res<Game>, mut input: ResMut<PlayerInput>) {
     }
     let (start, pause, menu_nav) = (input.start, input.pause, input.menu_nav);
     let (yaw, pitch) = (input.yaw, input.pitch);
-    *input = PlayerInput { start, pause, yaw, pitch, menu_nav, ..default() };
+    *input = PlayerInput {
+        start,
+        pause,
+        yaw,
+        pitch,
+        menu_nav,
+        ..default()
+    };
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -78,17 +93,41 @@ pub fn director(
     arena: Res<Arena>,
     kits: Res<EnemyKits>,
     world: Res<crate::player::Collision>,
-    mut titans: Query<(&mut PlayerTitan, &mut TitanHealth, &mut Titanfall, &mut Weapon, &mut Ordnance, &mut TitanCore, &mut Vortex, &mut Melee)>,
+    mut titans: Query<(
+        &mut PlayerTitan,
+        &mut TitanHealth,
+        &mut Titanfall,
+        &mut Weapon,
+        &mut Ordnance,
+        &mut TitanCore,
+        &mut Vortex,
+        &mut Melee,
+    )>,
     mut pilots: Query<(&PlayerPilot, &mut PilotHealth)>,
     mut enemies: Query<&mut Enemy>,
-    (mut pilot_status, ability_defs): (ResMut<crate::pilotability::PilotStatus>, Option<Res<crate::pilotability::PilotAbilityDefs>>),
-    (mut feed, loadouts): (ResMut<crate::feed::Feed>, Query<&crate::pilotweapon::PilotLoadout>),
+    (mut pilot_status, ability_defs): (
+        ResMut<crate::pilotability::PilotStatus>,
+        Option<Res<crate::pilotability::PilotAbilityDefs>>,
+    ),
+    (mut feed, loadouts): (
+        ResMut<crate::feed::Feed>,
+        Query<&crate::pilotweapon::PilotLoadout>,
+    ),
 ) {
     let dt = time.delta_secs();
     // The gun in hand, for the kill feed rows.
     let weapon_name: String = match *control {
-        Control::Pilot => loadouts.single().ok().and_then(|l| l.active()).map(|w| w.def.name.clone()).unwrap_or_default(),
-        _ => titans.iter().next().map(|t| t.3.def.name.clone()).unwrap_or_default(),
+        Control::Pilot => loadouts
+            .single()
+            .ok()
+            .and_then(|l| l.active())
+            .map(|w| w.def.name.clone())
+            .unwrap_or_default(),
+        _ => titans
+            .iter()
+            .next()
+            .map(|t| t.3.def.name.clone())
+            .unwrap_or_default(),
     };
     let kits = Some(&*kits);
     let start = std::mem::take(&mut input.start);
@@ -97,7 +136,10 @@ pub fn director(
             if start {
                 // Fresh run: BT at the spawn, full health and kit, no enemies.
                 for (mut t, mut h, mut tf, mut w, mut o, mut c, mut v, mut m) in &mut titans {
-                    t.state = tf_sim::titan::TitanState::new(SVec3::from(arena.player_spawn.to_array()), arena.player_yaw);
+                    t.state = tf_sim::titan::TitanState::new(
+                        SVec3::from(arena.player_spawn.to_array()),
+                        arena.player_yaw,
+                    );
                     t.override_anim = None;
                     h.reset();
                     *tf = Titanfall::default();
@@ -121,7 +163,11 @@ pub fn director(
                 input.pitch = 0.0;
                 *control = Control::Titan;
                 // TF_WAVE=N starts at wave N (debugging bigger fights).
-                game.wave = std::env::var("TF_WAVE").ok().and_then(|w| w.parse::<u32>().ok()).unwrap_or(1).saturating_sub(1);
+                game.wave = std::env::var("TF_WAVE")
+                    .ok()
+                    .and_then(|w| w.parse::<u32>().ok())
+                    .unwrap_or(1)
+                    .saturating_sub(1);
                 game.kills = 0;
                 game.cash = 0;
                 feed.kills.clear();
@@ -133,7 +179,12 @@ pub fn director(
         }
         GameState::Playing | GameState::Intermission => {
             if std::mem::take(&mut input.kill_nearest) {
-                let from = titans.iter().next().map(|t| t.0.state.pos).map(|p| Vec3::from(p.to_array())).unwrap_or_default();
+                let from = titans
+                    .iter()
+                    .next()
+                    .map(|t| t.0.state.pos)
+                    .map(|p| Vec3::from(p.to_array()))
+                    .unwrap_or_default();
                 let mut best: Option<(f32, Mut<Enemy>)> = None;
                 for e in &mut enemies {
                     if e.alive() {
@@ -154,9 +205,20 @@ pub fn director(
                     // The kill feed row and the Frontier Defense cash popup at the kill.
                     let worth = if e.infantry { 45 } else { 100 };
                     game.cash += worth;
-                    let victim = kits.and_then(|k| k.0.get(e.kit)).map(|k| titlecase(&k.name)).unwrap_or_else(|| "Titan".into());
-                    feed.kills.push(crate::feed::Kill { victim, weapon: weapon_name.clone(), at: time.elapsed_secs() });
-                    feed.popups.push(crate::feed::Popup { pos: e.pos + Vec3::Z * e.height * 0.6, worth, at: time.elapsed_secs() });
+                    let victim = kits
+                        .and_then(|k| k.0.get(e.kit))
+                        .map(|k| titlecase(&k.name))
+                        .unwrap_or_else(|| "Titan".into());
+                    feed.kills.push(crate::feed::Kill {
+                        victim,
+                        weapon: weapon_name.clone(),
+                        at: time.elapsed_secs(),
+                    });
+                    feed.popups.push(crate::feed::Popup {
+                        pos: e.pos + Vec3::Z * e.height * 0.6,
+                        worth,
+                        at: time.elapsed_secs(),
+                    });
                 }
             }
             if pilots.iter().any(|(_, h)| h.dead()) {
@@ -179,7 +241,16 @@ pub fn director(
                 }
                 if game.timer <= 0.0 {
                     game.wave += 1;
-                    spawn_wave(&mut game, &arena, kits.unwrap(), &world, &titans, &pilots, *control, &mut enemies);
+                    spawn_wave(
+                        &mut game,
+                        &arena,
+                        kits.unwrap(),
+                        &world,
+                        &titans,
+                        &pilots,
+                        *control,
+                        &mut enemies,
+                    );
                     game.state = GameState::Playing;
                 }
             }
@@ -193,21 +264,40 @@ fn spawn_wave(
     arena: &Arena,
     kits: &EnemyKits,
     world: &crate::player::Collision,
-    titans: &Query<(&mut PlayerTitan, &mut TitanHealth, &mut Titanfall, &mut Weapon, &mut Ordnance, &mut TitanCore, &mut Vortex, &mut Melee)>,
+    titans: &Query<(
+        &mut PlayerTitan,
+        &mut TitanHealth,
+        &mut Titanfall,
+        &mut Weapon,
+        &mut Ordnance,
+        &mut TitanCore,
+        &mut Vortex,
+        &mut Melee,
+    )>,
     pilots: &Query<(&PlayerPilot, &mut PilotHealth)>,
     control: Control,
     enemies: &mut Query<&mut Enemy>,
 ) {
     let player = match control {
-        Control::Pilot => pilots.iter().next().map(|(p, _)| Vec3::from(p.state.pos.to_array())),
-        _ => titans.iter().next().map(|t| Vec3::from(t.0.state.pos.to_array())),
+        Control::Pilot => pilots
+            .iter()
+            .next()
+            .map(|(p, _)| Vec3::from(p.state.pos.to_array())),
+        _ => titans
+            .iter()
+            .next()
+            .map(|t| Vec3::from(t.0.state.pos.to_array())),
     }
     .unwrap_or(arena.player_spawn);
     // TF_STATIC_TITAN: one enemy Titan and no grunts, standing still about 1200 out (a test
     // target: it turns and shoots but never walks, and refills its health; targets.rs).
     let static_titan = std::env::var_os("TF_STATIC_TITAN").is_some();
     // One more Titan every other wave: 1, 2, 2, 3, 3, 4...
-    let count = if static_titan { 1 } else { (1 + game.wave as usize / 2).clamp(1, MAX_ENEMIES_PER_WAVE) };
+    let count = if static_titan {
+        1
+    } else {
+        (1 + game.wave as usize / 2).clamp(1, MAX_ENEMIES_PER_WAVE)
+    };
     game.wave_size = count as u32;
     let range = if static_titan { 1200.0 } else { 2400.0 };
     // Prefer spots that can see the player, at a fair distance.
@@ -215,10 +305,18 @@ fn spawn_wave(
         let from = *p + Vec3::Z * 200.0;
         let to = player + Vec3::Z * 120.0;
         let d = to - from;
-        world.0.raycast(SVec3::from(from.to_array()), SVec3::from(d.normalize().to_array()), d.length() - 50.0).is_none()
+        world
+            .0
+            .raycast(
+                SVec3::from(from.to_array()),
+                SVec3::from(d.normalize().to_array()),
+                d.length() - 50.0,
+            )
+            .is_none()
     };
     let mut spots: Vec<Vec3> = arena.enemy_spots.clone();
-    spots.sort_by_key(|p| (!sees(p) as i64) * 100_000 + ((p.distance(player) - range).abs()) as i64);
+    spots
+        .sort_by_key(|p| (!sees(p) as i64) * 100_000 + ((p.distance(player) - range).abs()) as i64);
     // Mix the classes: walk the pool starting at a class that rotates with the wave, so each
     // wave brings a different line-up and no class repeats until all have appeared.
     let (titans, grunts): (Vec<_>, Vec<_>) = enemies.iter_mut().partition(|e| !e.infantry);
@@ -242,8 +340,16 @@ fn spawn_wave(
         names.push(kit.name.clone());
     }
     // A squad of grunts with every wave, two more each wave, spread around the far spots.
-    let squad = if static_titan { 0 } else { (2 + game.wave as usize * 2).min(grunts.len()) };
-    for (i, mut e) in grunts.into_iter().take(if spots.is_empty() { 0 } else { squad }).enumerate() {
+    let squad = if static_titan {
+        0
+    } else {
+        (2 + game.wave as usize * 2).min(grunts.len())
+    };
+    for (i, mut e) in grunts
+        .into_iter()
+        .take(if spots.is_empty() { 0 } else { squad })
+        .enumerate()
+    {
         // Fire teams of three around the best spots, clear of the Titans standing on them.
         let mut spot = spots[(i / 3) % spots.len()];
         // TF_GRUNTS_NEAR: put the squad in front of the player (debugging their animation).

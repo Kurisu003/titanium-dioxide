@@ -79,7 +79,9 @@ pub fn shader_set_name(pak: &Rpak, guid: u64) -> Option<String> {
     if &a.kind != b"shds" || a.head? + 0x10 > pak.data.len() {
         return None;
     }
-    pak.ptr(a.head? + 0x8).filter(|&p| p < pak.data.len()).map(|p| pak.cstr(p))
+    pak.ptr(a.head? + 0x8)
+        .filter(|&p| p < pak.data.len())
+        .map(|p| pak.cstr(p))
 }
 
 /// The UV transform each texture slot samples with, from the `UV<n><slot digits>` part of a
@@ -87,8 +89,17 @@ pub fn shader_set_name(pak: &Rpak, guid: u64) -> Option<String> {
 /// `UV2000001`: textures 0-4 untransformed, texture 5 through transform 1). 0 means the plain
 /// mesh UVs.
 pub fn uv_slots(shader: &str) -> Vec<u8> {
-    let Some(i) = shader.find("UV").filter(|&i| shader[i + 2..].starts_with(|c: char| c.is_ascii_digit())) else { return Vec::new() };
-    let digits: Vec<u8> = shader[i + 2..].chars().take_while(|c| c.is_ascii_digit()).map(|c| c as u8 - b'0').collect();
+    let Some(i) = shader
+        .find("UV")
+        .filter(|&i| shader[i + 2..].starts_with(|c: char| c.is_ascii_digit()))
+    else {
+        return Vec::new();
+    };
+    let digits: Vec<u8> = shader[i + 2..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .map(|c| c as u8 - b'0')
+        .collect();
     digits.get(1..).map(|d| d.to_vec()).unwrap_or_default()
 }
 
@@ -151,7 +162,8 @@ pub fn load(pak: &Rpak, a: &Asset) -> Result<Material> {
                 return None;
             }
             let p = pak.ptr(c)?;
-            (pak.u32(c + 8) >= 0xB0 && p + 0xB0 <= pak.data.len()).then(|| ShaderParams::parse(|i| f32::from_bits(pak.u32(p + i * 4))))
+            (pak.u32(c + 8) >= 0xB0 && p + 0xB0 <= pak.data.len())
+                .then(|| ShaderParams::parse(|i| f32::from_bits(pak.u32(p + i * 4))))
         }),
     })
 }

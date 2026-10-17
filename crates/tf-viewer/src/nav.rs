@@ -20,7 +20,12 @@ impl Nav {
     }
 
     /// Build a grid from the collision mesh around `center`.
-    pub fn probe(world: &tf_sim::collision::CollisionWorld, center: Vec3, radius: f32, agent: Agent) -> Self {
+    pub fn probe(
+        world: &tf_sim::collision::CollisionWorld,
+        center: Vec3,
+        radius: f32,
+        agent: Agent,
+    ) -> Self {
         Nav::Grid(GridNav::build(world, center, radius, agent))
     }
 
@@ -149,10 +154,16 @@ impl MeshNav {
         let c = cell(p.x, p.y);
         for cx in c.0 - 1..=c.0 + 1 {
             for cy in c.1 - 1..=c.1 + 1 {
-                let Some(list) = self.grid.get(&(cx, cy)) else { continue };
+                let Some(list) = self.grid.get(&(cx, cy)) else {
+                    continue;
+                };
                 for &i in list {
                     let (lo, hi) = self.bounds[i as usize];
-                    let inside = p.x >= lo[0] - 1.0 && p.x <= hi[0] + 1.0 && p.y >= lo[1] - 1.0 && p.y <= hi[1] + 1.0 && self.contains_2d(i, p.x, p.y);
+                    let inside = p.x >= lo[0] - 1.0
+                        && p.x <= hi[0] + 1.0
+                        && p.y >= lo[1] - 1.0
+                        && p.y <= hi[1] + 1.0
+                        && self.contains_2d(i, p.x, p.y);
                     let dz = (p.z - self.poly_z(i)).abs();
                     let score = if inside {
                         if dz > Z_SLACK {
@@ -179,7 +190,18 @@ impl MeshNav {
     /// Midpoint of the edge two polys share (verts in both), or the second's centre.
     fn portal(&self, a: u32, b: u32) -> Vec3 {
         let (pa, pb) = (&self.mesh.polys[a as usize], &self.mesh.polys[b as usize]);
-        let shared: Vec<Vec3> = pa.verts.iter().filter(|v| pb.verts.iter().any(|w| (v[0] - w[0]).abs() < 1.0 && (v[1] - w[1]).abs() < 1.0 && (v[2] - w[2]).abs() < 40.0)).map(|v| Vec3::from(*v)).collect();
+        let shared: Vec<Vec3> = pa
+            .verts
+            .iter()
+            .filter(|v| {
+                pb.verts.iter().any(|w| {
+                    (v[0] - w[0]).abs() < 1.0
+                        && (v[1] - w[1]).abs() < 1.0
+                        && (v[2] - w[2]).abs() < 40.0
+                })
+            })
+            .map(|v| Vec3::from(*v))
+            .collect();
         match shared.len() {
             2 => (shared[0] + shared[1]) * 0.5,
             _ => Vec3::from(pb.center),
@@ -223,7 +245,10 @@ impl MeshNav {
                 if cost.get(&n).is_none_or(|&old| c < old) {
                     cost.insert(n, c);
                     came.insert(n, poly);
-                    open.push(Open { f: c + h(n), poly: n });
+                    open.push(Open {
+                        f: c + h(n),
+                        poly: n,
+                    });
                 }
             }
         }
@@ -265,9 +290,21 @@ pub struct Agent {
 
 impl Agent {
     /// Enemy Titans: 80 is the Titan step height; they will drop a storey like the game's do.
-    pub const TITAN: Agent = Agent { cell: 128.0, step_up: 80.0, drop: 420.0, height: 230.0, radius: 65.0 };
+    pub const TITAN: Agent = Agent {
+        cell: 128.0,
+        step_up: 80.0,
+        drop: 420.0,
+        height: 230.0,
+        radius: 65.0,
+    };
     /// Grunts: 18 units of step, 60 of hull height, 16 of half-width.
-    pub const GRUNT: Agent = Agent { cell: 64.0, step_up: 50.0, drop: 200.0, height: 60.0, radius: 20.0 };
+    pub const GRUNT: Agent = Agent {
+        cell: 64.0,
+        step_up: 50.0,
+        drop: 200.0,
+        height: 60.0,
+        radius: 20.0,
+    };
 }
 
 /// Walkable surfaces found by casting down through each cell: a cell can hold several (a
@@ -288,7 +325,16 @@ pub struct GridNav {
 }
 
 /// Neighbour offsets, in bit order.
-const DIRS: [(i32, i32); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
+const DIRS: [(i32, i32); 8] = [
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+];
 
 /// Islands smaller than this many cells are ignored by `locate`.
 const MIN_COMPONENT: usize = 12;
@@ -299,53 +345,96 @@ const MAX_SLOPE_NORMAL_Z: f32 = 0.7;
 const GRID_MAX_EXPANSIONS: usize = 40_000;
 
 impl GridNav {
-    pub fn build(world: &tf_sim::collision::CollisionWorld, center: Vec3, radius: f32, agent: Agent) -> Self {
+    pub fn build(
+        world: &tf_sim::collision::CollisionWorld,
+        center: Vec3,
+        radius: f32,
+        agent: Agent,
+    ) -> Self {
         let t = std::time::Instant::now();
         let n = ((radius * 2.0) / agent.cell).ceil() as i32;
         let origin = Vec2::new(center.x - radius, center.y - radius);
         let top = center.z + 1500.0;
-        let dirs: Vec<SVec3> = (0..8).map(|k| {
-            let a = k as f32 / 8.0 * std::f32::consts::TAU;
-            SVec3::new(a.cos(), a.sin(), 0.0)
-        }).collect();
+        let dirs: Vec<SVec3> = (0..8)
+            .map(|k| {
+                let a = k as f32 / 8.0 * std::f32::consts::TAU;
+                SVec3::new(a.cos(), a.sin(), 0.0)
+            })
+            .collect();
         // Every cell's probes are independent: one row of cells per job, on every core.
         let rows: Vec<i32> = (0..n).collect();
         let probed = crate::world::parallel_map(&rows, |&cy| {
-            (0..n).map(|cx| {
-                let x = origin.x + (cx as f32 + 0.5) * agent.cell;
-                let y = origin.y + (cy as f32 + 0.5) * agent.cell;
-                let mut from = SVec3::new(x, y, top);
-                let mut remaining = top - (center.z - 3000.0);
-                let mut list = Vec::new();
-                while remaining > 0.0 {
-                    let Some(h) = world.raycast(from, -SVec3::Z, remaining) else { break };
-                    let z = h.point.z;
-                    // Standing room above, and nothing within the hull's half-width at chest
-                    // height or just above step height (railings, kerbs too tall to step).
-                    let ok = h.normal.z >= MAX_SLOPE_NORMAL_Z
-                        && world.raycast(SVec3::new(x, y, z + MIN_HEADROOM), SVec3::Z, agent.height).is_none()
-                        && dirs.iter().all(|d| {
-                            world.raycast(SVec3::new(x, y, z + agent.height * 0.5), *d, agent.radius).is_none()
-                                && world.raycast(SVec3::new(x, y, z + agent.step_up + 10.0), *d, agent.radius).is_none()
-                        });
-                    if ok {
-                        list.push(z);
+            (0..n)
+                .map(|cx| {
+                    let x = origin.x + (cx as f32 + 0.5) * agent.cell;
+                    let y = origin.y + (cy as f32 + 0.5) * agent.cell;
+                    let mut from = SVec3::new(x, y, top);
+                    let mut remaining = top - (center.z - 3000.0);
+                    let mut list = Vec::new();
+                    while remaining > 0.0 {
+                        let Some(h) = world.raycast(from, -SVec3::Z, remaining) else {
+                            break;
+                        };
+                        let z = h.point.z;
+                        // Standing room above, and nothing within the hull's half-width at chest
+                        // height or just above step height (railings, kerbs too tall to step).
+                        let ok = h.normal.z >= MAX_SLOPE_NORMAL_Z
+                            && world
+                                .raycast(SVec3::new(x, y, z + MIN_HEADROOM), SVec3::Z, agent.height)
+                                .is_none()
+                            && dirs.iter().all(|d| {
+                                world
+                                    .raycast(
+                                        SVec3::new(x, y, z + agent.height * 0.5),
+                                        *d,
+                                        agent.radius,
+                                    )
+                                    .is_none()
+                                    && world
+                                        .raycast(
+                                            SVec3::new(x, y, z + agent.step_up + 10.0),
+                                            *d,
+                                            agent.radius,
+                                        )
+                                        .is_none()
+                            });
+                        if ok {
+                            list.push(z);
+                        }
+                        remaining -= h.t + 2.0;
+                        from = SVec3::new(x, y, z - 2.0);
                     }
-                    remaining -= h.t + 2.0;
-                    from = SVec3::new(x, y, z - 2.0);
-                }
-                list
-            }).collect::<Vec<Vec<f32>>>()
+                    list
+                })
+                .collect::<Vec<Vec<f32>>>()
         });
-        let layers: Vec<Vec<f32>> = probed.into_iter().flat_map(|row| row.expect("nav grid worker")).collect();
+        let layers: Vec<Vec<f32>> = probed
+            .into_iter()
+            .flat_map(|row| row.expect("nav grid worker"))
+            .collect();
         let walkable: usize = layers.iter().map(Vec::len).sum();
-        log::info!("nav grid: {n}x{n} cells of {} around {:.0}, {walkable} walkable surfaces in {:?}", agent.cell, center, t.elapsed());
-        let mut grid = Self { origin, n, agent, layers, connected: HashMap::new(), blocked: HashMap::new() };
+        log::info!(
+            "nav grid: {n}x{n} cells of {} around {:.0}, {walkable} walkable surfaces in {:?}",
+            agent.cell,
+            center,
+            t.elapsed()
+        );
+        let mut grid = Self {
+            origin,
+            n,
+            agent,
+            layers,
+            connected: HashMap::new(),
+            blocked: HashMap::new(),
+        };
         let t = std::time::Instant::now();
         grid.probe_edges(world);
         let t_edges = t.elapsed();
         grid.label_components();
-        log::info!("nav grid: edges probed in {t_edges:?}, components in {:?}", t.elapsed() - t_edges);
+        log::info!(
+            "nav grid: edges probed in {t_edges:?}, components in {:?}",
+            t.elapsed() - t_edges
+        );
         // TF_NAV_DUMP=<dir>: a PGM per grid (brightness = surfaces per cell, 0 = none).
         if let Ok(dir) = std::env::var("TF_NAV_DUMP") {
             let mut out = format!("P2\n{n} {n}\n255\n");
@@ -383,9 +472,15 @@ impl GridNav {
                         let d = d / d.length();
                         // Three rays abreast, as wide as the hull, at two heights.
                         let side = SVec3::new(-d.y, d.x, 0.0) * this.agent.radius * 0.8;
-                        let hit = [this.agent.step_up + 10.0, this.agent.height * 0.5].iter().any(|&h| {
-                            [-1.0, 0.0, 1.0].iter().any(|&k| world.raycast(SVec3::new(c.x, c.y, c.z + h) + side * k, d, len).is_some())
-                        });
+                        let hit = [this.agent.step_up + 10.0, this.agent.height * 0.5]
+                            .iter()
+                            .any(|&h| {
+                                [-1.0, 0.0, 1.0].iter().any(|&k| {
+                                    world
+                                        .raycast(SVec3::new(c.x, c.y, c.z + h) + side * k, d, len)
+                                        .is_some()
+                                })
+                            });
                         if hit {
                             mask |= 1 << k;
                         }
@@ -399,7 +494,10 @@ impl GridNav {
         });
         let mut blocked = HashMap::new();
         let mut edges = 0usize;
-        for (id, mask) in probed.into_iter().flat_map(|row| row.expect("nav edge worker")) {
+        for (id, mask) in probed
+            .into_iter()
+            .flat_map(|row| row.expect("nav edge worker"))
+        {
             edges += mask.count_ones() as usize;
             blocked.insert(id, mask);
         }
@@ -474,7 +572,11 @@ impl GridNav {
 
     fn center(&self, id: u32) -> Vec3 {
         let (cx, cy, l) = self.unpack(id);
-        Vec3::new(self.origin.x + (cx as f32 + 0.5) * self.agent.cell, self.origin.y + (cy as f32 + 0.5) * self.agent.cell, self.layers[(cy * self.n + cx) as usize][l])
+        Vec3::new(
+            self.origin.x + (cx as f32 + 0.5) * self.agent.cell,
+            self.origin.y + (cy as f32 + 0.5) * self.agent.cell,
+            self.layers[(cy * self.n + cx) as usize][l],
+        )
     }
 
     /// The node under `p`: the surface nearest its height in its cell, else in the ring of
@@ -492,9 +594,19 @@ impl GridNav {
                     if x < 0 || y < 0 || x >= self.n || y >= self.n {
                         continue;
                     }
-                    for (l, &z) in self.layers[(y * self.n + x) as usize].iter().enumerate().take(16) {
+                    for (l, &z) in self.layers[(y * self.n + x) as usize]
+                        .iter()
+                        .enumerate()
+                        .take(16)
+                    {
                         let dz = (z - p.z).abs();
-                        if dz > self.agent.drop || !self.connected.get(&self.node(x, y, l)).copied().unwrap_or(false) {
+                        if dz > self.agent.drop
+                            || !self
+                                .connected
+                                .get(&self.node(x, y, l))
+                                .copied()
+                                .unwrap_or(false)
+                        {
                             continue;
                         }
                         let cost = dz + r as f32 * self.agent.cell;
@@ -533,7 +645,11 @@ impl GridNav {
 
     pub fn path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         let (Some(s), Some(g)) = (self.locate(from), self.locate(to)) else {
-            log::debug!("grid: no node under {:?} / {:?}", self.locate(from).is_none().then_some(from), self.locate(to).is_none().then_some(to));
+            log::debug!(
+                "grid: no node under {:?} / {:?}",
+                self.locate(from).is_none().then_some(from),
+                self.locate(to).is_none().then_some(to)
+            );
             return None;
         };
         if s == g {
@@ -564,17 +680,31 @@ impl GridNav {
             let z = self.center(id).z;
             for &(dx, dy) in &DIRS {
                 // No cutting corners: a diagonal needs both orthogonal neighbours open.
-                if dx != 0 && dy != 0 && (self.neighbour(id, dx, 0).is_none() || self.neighbour(id, 0, dy).is_none()) {
+                if dx != 0
+                    && dy != 0
+                    && (self.neighbour(id, dx, 0).is_none() || self.neighbour(id, 0, dy).is_none())
+                {
                     continue;
                 }
-                let Some(nb) = self.neighbour(id, dx, dy) else { continue };
+                let Some(nb) = self.neighbour(id, dx, dy) else {
+                    continue;
+                };
                 let nz = self.center(nb).z;
-                let step = self.agent.cell * if dx != 0 && dy != 0 { std::f32::consts::SQRT_2 } else { 1.0 } + (nz - z).abs() * 0.5;
+                let step = self.agent.cell
+                    * if dx != 0 && dy != 0 {
+                        std::f32::consts::SQRT_2
+                    } else {
+                        1.0
+                    }
+                    + (nz - z).abs() * 0.5;
                 let c = here + step;
                 if cost.get(&nb).is_none_or(|&old| c < old) {
                     cost.insert(nb, c);
                     came.insert(nb, id);
-                    open.push(Open { f: c + h(nb), poly: nb });
+                    open.push(Open {
+                        f: c + h(nb),
+                        poly: nb,
+                    });
                 }
             }
         }

@@ -16,7 +16,9 @@ use bevy::ecs::query::QueryItem;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::diagnostic::RecordDiagnostics;
-use bevy::render::render_graph::{NodeRunError, RenderGraph, RenderGraphContext, ViewNode, ViewNodeRunner};
+use bevy::render::render_graph::{
+    NodeRunError, RenderGraph, RenderGraphContext, ViewNode, ViewNodeRunner,
+};
 use bevy::render::render_phase::{TrackedRenderPass, ViewSortedRenderPhases};
 use bevy::render::render_resource::{CommandEncoderDescriptor, RenderPassDescriptor, StoreOp};
 use bevy::render::renderer::RenderContext;
@@ -32,14 +34,19 @@ impl Plugin for ParallelTransparentPlugin {
         if std::env::var_os("TF_SERIAL_TRANSPARENT").is_some() {
             return;
         }
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
         let runner = ViewNodeRunner::new(ParallelTransparentPass3dNode, render_app.world_mut());
         let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
-        let Some(core3d) = graph.get_sub_graph_mut(Core3d) else { return };
+        let Some(core3d) = graph.get_sub_graph_mut(Core3d) else {
+            return;
+        };
         match core3d.get_node_state_mut(Node3d::MainTransparentPass) {
             Ok(state) => {
                 state.node = Box::new(runner);
-                state.type_name = std::any::type_name::<ViewNodeRunner<ParallelTransparentPass3dNode>>();
+                state.type_name =
+                    std::any::type_name::<ViewNodeRunner<ParallelTransparentPass3dNode>>();
             }
             Err(e) => log::warn!("transparent pass stays serial: {e:?}"),
         }
@@ -51,7 +58,13 @@ impl Plugin for ParallelTransparentPlugin {
 pub struct ParallelTransparentPass3dNode;
 
 impl ViewNode for ParallelTransparentPass3dNode {
-    type ViewQuery = (&'static ExtractedCamera, &'static ExtractedView, &'static ViewTarget, &'static ViewDepthTexture, Option<&'static MainPassResolutionOverride>);
+    type ViewQuery = (
+        &'static ExtractedCamera,
+        &'static ExtractedView,
+        &'static ViewTarget,
+        &'static ViewDepthTexture,
+        Option<&'static MainPassResolutionOverride>,
+    );
 
     fn run<'w>(
         &self,
@@ -61,7 +74,9 @@ impl ViewNode for ParallelTransparentPass3dNode {
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let view_entity = graph.view_entity();
-        let Some(transparent_phases) = world.get_resource::<ViewSortedRenderPhases<Transparent3d>>() else {
+        let Some(transparent_phases) =
+            world.get_resource::<ViewSortedRenderPhases<Transparent3d>>()
+        else {
             return Ok(());
         };
         let Some(transparent_phase) = transparent_phases.get(&view.retained_view_entity) else {
@@ -76,12 +91,16 @@ impl ViewNode for ParallelTransparentPass3dNode {
         let color_attachments = [Some(target.get_color_attachment())];
         // NOTE (Bevy): depth is stored, not just loaded, as a workaround for bevy#3776.
         let depth_stencil_attachment = Some(depth.get_attachment(StoreOp::Store));
-        let viewport = Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override);
+        let viewport =
+            Viewport::from_viewport_and_override(camera.viewport.as_ref(), resolution_override);
 
         render_context.add_command_buffer_generation_task(move |render_device| {
             #[cfg(feature = "profile")]
             let _span = bevy::log::info_span!("main_transparent_pass_3d").entered();
-            let mut command_encoder = render_device.create_command_encoder(&CommandEncoderDescriptor { label: Some("main_transparent_pass_3d_command_encoder") });
+            let mut command_encoder =
+                render_device.create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("main_transparent_pass_3d_command_encoder"),
+                });
             let render_pass = command_encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("main_transparent_pass_3d"),
                 color_attachments: &color_attachments,

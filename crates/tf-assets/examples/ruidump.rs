@@ -16,7 +16,13 @@ fn main() -> anyhow::Result<()> {
                     if s.len() > 2 && s.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
                         print!(" +{o:#x}=\"{s}\"");
                     } else {
-                        print!(" +{o:#x}=ptr[{}]", (0..4).map(|k| format!("{:08x}", pak.u32(p + k * 4))).collect::<Vec<_>>().join(" "));
+                        print!(
+                            " +{o:#x}=ptr[{}]",
+                            (0..4)
+                                .map(|k| format!("{:08x}", pak.u32(p + k * 4)))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
                     }
                 }
                 None => print!(" +{o:#x}=({:#x},{:#x})", v as u32, v >> 32),

@@ -11,7 +11,11 @@ pub struct PlayerSettings {
 
 impl PlayerSettings {
     /// Parse `name` and its `#base` chain. `read` returns a file's text by path.
-    pub fn load(path: &str, sp: bool, read: &mut dyn FnMut(&str) -> Option<String>) -> Option<Self> {
+    pub fn load(
+        path: &str,
+        sp: bool,
+        read: &mut dyn FnMut(&str) -> Option<String>,
+    ) -> Option<Self> {
         let text = read(path)?;
         let mut out = Self::default();
         // Base files first, so the derived file overrides them.
@@ -59,16 +63,29 @@ impl PlayerSettings {
                     }
                     // Skip the outer class block name and anything inside ClassMods or PoseMods
                     // (pilot_mp.set's per-mod stance overrides, e.g. coliseum's speeds).
-                    if !ok || stack.iter().any(|s| s.eq_ignore_ascii_case("ClassMods") || s.eq_ignore_ascii_case("PoseMods")) {
+                    if !ok
+                        || stack.iter().any(|s| {
+                            s.eq_ignore_ascii_case("ClassMods")
+                                || s.eq_ignore_ascii_case("PoseMods")
+                        })
+                    {
                         continue;
                     }
-                    let section = if stack.len() >= 2 { stack[1].as_str() } else { "" };
+                    let section = if stack.len() >= 2 {
+                        stack[1].as_str()
+                    } else {
+                        ""
+                    };
                     value = value.trim().to_string();
                     // Weapon mods: `Mods { <mod> { key value } }` also keep their mod name.
                     if stack.len() >= 3 && stack[1].eq_ignore_ascii_case("Mods") {
-                        self.values.insert(format!("mods.{}.{key}", stack[2]).to_ascii_lowercase(), value.clone());
+                        self.values.insert(
+                            format!("mods.{}.{key}", stack[2]).to_ascii_lowercase(),
+                            value.clone(),
+                        );
                     }
-                    self.values.insert(format!("{section}.{key}").to_ascii_lowercase(), value);
+                    self.values
+                        .insert(format!("{section}.{key}").to_ascii_lowercase(), value);
                 }
             }
         }
@@ -76,7 +93,15 @@ impl PlayerSettings {
 
     /// Names of the weapon mods defined in a `Mods` block.
     pub fn mod_names(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.values.keys().filter_map(|k| k.strip_prefix("mods.")?.split_once('.').map(|(m, _)| m.to_string())).collect();
+        let mut v: Vec<String> = self
+            .values
+            .keys()
+            .filter_map(|k| {
+                k.strip_prefix("mods.")?
+                    .split_once('.')
+                    .map(|(m, _)| m.to_string())
+            })
+            .collect();
         v.sort();
         v.dedup();
         v
@@ -90,7 +115,11 @@ impl PlayerSettings {
         let mut out = self.clone();
         for m in mods {
             let prefix = format!("mods.{}.", m.to_ascii_lowercase());
-            let entries: Vec<(String, String)> = self.values.iter().filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_string(), v.clone()))).collect();
+            let entries: Vec<(String, String)> = self
+                .values
+                .iter()
+                .filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_string(), v.clone())))
+                .collect();
             for (key, v) in entries {
                 for section in ["", "sp_base", "mp_base"] {
                     let full = format!("{section}.{key}");
@@ -109,17 +138,25 @@ impl PlayerSettings {
 
     /// The value of `section.key` (any case; top-level keys are `.key`).
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.values.get(&key.to_ascii_lowercase()).map(String::as_str)
+        self.values
+            .get(&key.to_ascii_lowercase())
+            .map(String::as_str)
     }
 
     /// [`PlayerSettings::get`] as a number, or `default`.
     pub fn f32(&self, key: &str, default: f32) -> f32 {
-        self.get(key).and_then(|v| v.parse().ok()).unwrap_or(default)
+        self.get(key)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
 
     /// [`PlayerSettings::get`] as three space-separated numbers.
     pub fn vec3(&self, key: &str) -> Option<[f32; 3]> {
-        let v: Vec<f32> = self.get(key)?.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        let v: Vec<f32> = self
+            .get(key)?
+            .split_whitespace()
+            .filter_map(|x| x.parse().ok())
+            .collect();
         (v.len() == 3).then(|| [v[0], v[1], v[2]])
     }
 }
@@ -176,7 +213,10 @@ fn apply_mod(base: Option<&str>, v: &str) -> Option<String> {
     } else if let Some(r) = v.strip_prefix('*') {
         op(r, |a, x| a * x)
     } else if let Some(r) = v.strip_prefix('/') {
-        op(r.trim_start_matches('/'), |a, x| if x != 0.0 { a / x } else { a })
+        op(
+            r.trim_start_matches('/'),
+            |a, x| if x != 0.0 { a / x } else { a },
+        )
     } else {
         Some(v.to_string())
     }
@@ -213,7 +253,10 @@ mod tests {
 }"#;
         let mut read = |_: &str| Some(text.to_string());
         let s = PlayerSettings::load("w.txt", true, &mut read).unwrap();
-        assert_eq!(s.mod_names(), vec!["bump", "extended_ammo", "pas_fast_reload"]);
+        assert_eq!(
+            s.mod_names(),
+            vec!["bump", "extended_ammo", "pas_fast_reload"]
+        );
         let m = s.with_mods(&["pas_fast_reload", "extended_ammo", "bump"]);
         assert!((m.f32(".reload_time", 0.0) - 1.4).abs() < 1e-5);
         assert_eq!(m.get(".ammo_clip_size"), Some("30"));

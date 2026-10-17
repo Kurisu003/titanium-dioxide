@@ -27,7 +27,9 @@ pub fn spawn_world(
     let sorts = bsp.material_sorts();
     let texdata = bsp.texture_data();
     let indices = bsp.mesh_indices();
-    let Some(world) = bsp.models().first().copied() else { return };
+    let Some(world) = bsp.models().first().copied() else {
+        return;
+    };
 
     struct Batch {
         pos: Vec<[f32; 3]>,
@@ -55,7 +57,11 @@ pub fn spawn_world(
                 px[3] = 255;
             }
             let mut img = Image::new(
-                bevy::render::render_resource::Extent3d { width: p.width, height: p.height, depth_or_array_layers: 1 },
+                bevy::render::render_resource::Extent3d {
+                    width: p.width,
+                    height: p.height,
+                    depth_or_array_layers: 1,
+                },
                 bevy::render::render_resource::TextureDimension::D2,
                 data,
                 bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
@@ -70,7 +76,8 @@ pub fn spawn_world(
     let skip = mesh_flags::SKY | mesh_flags::SKY_2D | mesh_flags::SKIP | mesh_flags::TRIGGER;
     let mut tris = 0usize;
     let mut sky_names = std::collections::BTreeSet::new();
-    for m in &bsp_meshes[world.first_mesh as usize..(world.first_mesh + world.num_meshes) as usize] {
+    for m in &bsp_meshes[world.first_mesh as usize..(world.first_mesh + world.num_meshes) as usize]
+    {
         if m.flags & skip != 0 {
             if m.flags & (mesh_flags::SKY | mesh_flags::SKY_2D) != 0 {
                 let sort = sorts[m.material_sort as usize];
@@ -82,24 +89,34 @@ pub fn spawn_world(
         let td = &texdata[sort.texture_data as usize];
         let lname = td.name.to_ascii_lowercase();
         // Tool brushes are not drawn. (Fog and godray cards are, with their own shader: uber.rs.)
-        if lname.starts_with("tools") || (lname.starts_with("world\\atmosphere") && !crate::uber::enabled()) {
+        if lname.starts_with("tools")
+            || (lname.starts_with("world\\atmosphere") && !crate::uber::enabled())
+        {
             continue;
         }
         // TF_HIDE=substr: debug toggle that leaves out world materials whose name contains it.
-        if std::env::var("TF_HIDE").is_ok_and(|h| !h.is_empty() && lname.contains(&h.to_ascii_lowercase())) {
+        if std::env::var("TF_HIDE")
+            .is_ok_and(|h| !h.is_empty() && lname.contains(&h.to_ascii_lowercase()))
+        {
             continue;
         }
         let blend = m.flags & mesh_flags::TRANSLUCENT != 0;
-        let page = if (sort.lightmap as usize) < pages.len() && sort.lightmap >= 0 { sort.lightmap } else { -1 };
-        let b = batches.entry((sort.texture_data, blend, page)).or_insert_with(|| Batch {
-            pos: Vec::new(),
-            nrm: Vec::new(),
-            uv: Vec::new(),
-            lm: Vec::new(),
-            col: Vec::new(),
-            idx: Vec::new(),
-            blend,
-        });
+        let page = if (sort.lightmap as usize) < pages.len() && sort.lightmap >= 0 {
+            sort.lightmap
+        } else {
+            -1
+        };
+        let b = batches
+            .entry((sort.texture_data, blend, page))
+            .or_insert_with(|| Batch {
+                pos: Vec::new(),
+                nrm: Vec::new(),
+                uv: Vec::new(),
+                lm: Vec::new(),
+                col: Vec::new(),
+                idx: Vec::new(),
+                blend,
+            });
         let start = m.first_index as usize;
         let mut remap: HashMap<usize, u32> = HashMap::new();
         for &i in &indices[start..start + m.num_triangles as usize * 3] {
@@ -129,7 +146,13 @@ pub fn spawn_world(
     let batches: Vec<((i16, bool, i16), std::sync::Mutex<Option<Batch>>)> = batches
         .into_iter()
         .map(|(k, b)| {
-            log::debug!("batch {:?} flags {:#x} blend {} tris {}", texdata[k.0 as usize].name, texdata[k.0 as usize].flags, b.blend, b.idx.len() / 3);
+            log::debug!(
+                "batch {:?} flags {:#x} blend {} tris {}",
+                texdata[k.0 as usize].name,
+                texdata[k.0 as usize].flags,
+                b.blend,
+                b.idx.len() / 3
+            );
             if !b.blend {
                 for tri in b.idx.chunks_exact(3) {
                     let v = |i: u32| SVec3::from(b.pos[i as usize]);
@@ -141,7 +164,9 @@ pub fn spawn_world(
         .collect();
     let two_layer_names = |td: i16, blend: bool| {
         let name = &texdata[td as usize].name;
-        !blend && name.to_ascii_lowercase().ends_with("_bm") && std::env::var_os("TF_NO_BM").is_none()
+        !blend
+            && name.to_ascii_lowercase().ends_with("_bm")
+            && std::env::var_os("TF_NO_BM").is_none()
     };
     let prep: &Cache = cache;
     let built = parallel_map(&batches, |((td, _, page), b)| {
@@ -153,7 +178,8 @@ pub fn spawn_world(
         if *page >= 0 {
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, b.lm);
         }
-        let effect_vcol = crate::uber::info(gd, &texdata[*td as usize].name).is_some_and(|i| i.flags & (crate::uber::VCOLT | crate::uber::VCOLA) != 0);
+        let effect_vcol = crate::uber::info(gd, &texdata[*td as usize].name)
+            .is_some_and(|i| i.flags & (crate::uber::VCOLT | crate::uber::VCOLA) != 0);
         if two_layer_names(*td, blend) || effect_vcol {
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, b.col);
         }
@@ -161,20 +187,34 @@ pub fn spawn_world(
     });
     for (((td, _, page), _), r) in batches.iter().zip(built) {
         let (td, page) = (*td, *page);
-        let Some(Some((mesh, blend))) = r else { continue };
+        let Some(Some((mesh, blend))) = r else {
+            continue;
+        };
         let name = &texdata[td as usize].name;
         // Two-layer materials blend by vertex alpha in their own shader.
-        let two_layer = if two_layer_names(td, blend) { convert::blend_material(gd, cache, images, materials, blends, name) } else { None };
+        let two_layer = if two_layer_names(td, blend) {
+            convert::blend_material(gd, cache, images, materials, blends, name)
+        } else {
+            None
+        };
         let mesh = meshes.add(mesh);
         let e = match two_layer {
-            Some(m) => commands.spawn((Mesh3d(mesh), MeshMaterial3d(m), Transform::IDENTITY)).id(),
+            Some(m) => commands
+                .spawn((Mesh3d(mesh), MeshMaterial3d(m), Transform::IDENTITY))
+                .id(),
             None => {
                 let mat = convert::material(gd, cache, images, materials, name, blend);
-                commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY)).id()
+                commands
+                    .spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY))
+                    .id()
             }
         };
         if page >= 0 {
-            commands.entity(e).insert(bevy::pbr::Lightmap { image: pages[page as usize].clone(), uv_rect: Rect::new(0.0, 0.0, 1.0, 1.0), bicubic_sampling: false });
+            commands.entity(e).insert(bevy::pbr::Lightmap {
+                image: pages[page as usize].clone(),
+                uv_rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                bicubic_sampling: false,
+            });
         }
         if blend {
             // Translucent world surfaces (dirt and grime overlays on the ground, decals, glass)
@@ -184,7 +224,10 @@ pub fn spawn_world(
         commands.entity(root).add_child(e);
     }
     log::info!("sky materials: {sky_names:?}");
-    log::info!("world: {tris} triangles in {n} batches, built in {:?}", t.elapsed());
+    log::info!(
+        "world: {tris} triangles in {n} batches, built in {:?}",
+        t.elapsed()
+    );
 }
 
 /// Build an unanimated model as (mesh, material) pairs in model space, plus its triangles.
@@ -199,7 +242,12 @@ fn static_model_data(gd: &GameData, path: &str) -> anyhow::Result<PropModel> {
     // lighter, at most MAX_PROP_LODS.
     let switches = model.lod_switch_points();
     let mut last_tris = usize::MAX;
-    for (l, &switch) in switches.iter().enumerate().take(MAX_PROP_LODS).chain((switches.is_empty()).then_some((0, &0.0))) {
+    for (l, &switch) in switches
+        .iter()
+        .enumerate()
+        .take(MAX_PROP_LODS)
+        .chain((switches.is_empty()).then_some((0, &0.0)))
+    {
         let mds = model.meshes_lod(&[], l)?;
         let n: usize = mds.iter().map(|m| m.indices.len() / 3).sum();
         if l > 0 && n * 10 >= last_tris * 9 {
@@ -208,19 +256,32 @@ fn static_model_data(gd: &GameData, path: &str) -> anyhow::Result<PropModel> {
         last_tris = n;
         let mut parts = Vec::new();
         for md in mds {
-            let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+            let tex = model
+                .skin_families
+                .first()
+                .and_then(|f| f.get(md.material))
+                .copied()
+                .unwrap_or(0) as usize;
             let mat_name = model.textures.get(tex).cloned().unwrap_or_default();
             if l == 0 {
                 for &i in &md.indices {
                     radius = radius.max(Vec3::from(md.positions[i as usize]).length());
                 }
             }
-            parts.push((mat_name, convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, None)));
+            parts.push((
+                mat_name,
+                convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, None),
+            ));
         }
         lods.push((if l == 0 { 0.0 } else { switch }, parts));
     }
     tris.extend(model.collision_tris().into_iter().flat_map(|(t, _)| t));
-    Ok(PropModel { lods, tris, hull: model.collision_hull_tris(), radius })
+    Ok(PropModel {
+        lods,
+        tris,
+        hull: model.collision_hull_tris(),
+        radius,
+    })
 }
 
 /// At most this many LODs per prop model are built.
@@ -254,7 +315,10 @@ impl PropOptions {
             lod: !off("TF_PROP_LOD"),
             cull: !off("TF_PROP_CULL"),
             small_no_shadow: std::env::var("TF_PROP_SHADOWS").map_or(true, |v| v != "all"),
-            draw_radii: std::env::var("TF_PROP_RADII").ok().and_then(|v| v.parse().ok()).unwrap_or(PROP_DRAW_RADII),
+            draw_radii: std::env::var("TF_PROP_RADII")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(PROP_DRAW_RADII),
         }
     }
 }
@@ -273,7 +337,10 @@ struct PropModel {
 
 /// Map `f` over `items` on every core, keeping the order (None where a worker panicked).
 pub fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<Option<R>> {
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(items.len().max(1));
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(items.len().max(1));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut out: Vec<(usize, R)> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
@@ -289,7 +356,10 @@ pub fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -
                 })
             })
             .collect();
-        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap_or_default())
+            .collect()
     });
     let mut res: Vec<Option<R>> = (0..items.len()).map(|_| None).collect();
     for (i, r) in out.drain(..) {
@@ -310,13 +380,24 @@ pub fn build_static_model(
     let mut out = Vec::new();
     let mut tris = Vec::new();
     for md in model.meshes(&[])? {
-        let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+        let tex = model
+            .skin_families
+            .first()
+            .and_then(|f| f.get(md.material))
+            .copied()
+            .unwrap_or(0) as usize;
         let mat_name = model.textures.get(tex).cloned().unwrap_or_default();
         let mat = convert::material(gd, cache, images, materials, &mat_name, false);
         for &i in &md.indices {
             tris.push(md.positions[i as usize]);
         }
-        let mesh = meshes.add(convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, None));
+        let mesh = meshes.add(convert::build_mesh(
+            md.positions,
+            md.normals,
+            md.uvs,
+            md.indices,
+            None,
+        ));
         out.push((mesh, mat));
     }
     Ok((out, tris))
@@ -337,7 +418,12 @@ pub fn build_posed_model(
     let pose = tf_assets::mdl::screen_cull::pose(&model, 0).ok();
     let mut out = Vec::new();
     for md in model.meshes(&[])? {
-        let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+        let tex = model
+            .skin_families
+            .first()
+            .and_then(|f| f.get(md.material))
+            .copied()
+            .unwrap_or(0) as usize;
         let mat_name = model.textures.get(tex).cloned().unwrap_or_default();
         let mat = convert::material(gd, cache, images, materials, &mat_name, false);
         // Bone pose x pose_to_bone, as screen_cull::skin places a vertex.
@@ -352,11 +438,20 @@ pub fn build_posed_model(
                     Vec4::new(t[0][2], t[1][2], t[2][2], 0.0),
                     Vec4::new(t[0][3], t[1][3], t[2][3], 1.0),
                 );
-                Transform::from_matrix(Mat4::from_rotation_translation(Quat::from_xyzw(qx, qy, qz, qw), Vec3::from(p)) * inv)
+                Transform::from_matrix(
+                    Mat4::from_rotation_translation(Quat::from_xyzw(qx, qy, qz, qw), Vec3::from(p))
+                        * inv,
+                )
             }
             _ => Transform::IDENTITY,
         };
-        let mesh = meshes.add(convert::build_mesh(md.positions, md.normals, md.uvs, md.indices, None));
+        let mesh = meshes.add(convert::build_mesh(
+            md.positions,
+            md.normals,
+            md.uvs,
+            md.indices,
+            None,
+        ));
         out.push((mesh, mat, place));
     }
     Ok(out)
@@ -376,7 +471,10 @@ pub fn spawn_static_props(
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     materials: &mut Assets<StandardMaterial>,
-    (batch_materials, buffers): (&mut Assets<crate::propbatch::PropBatchMaterial>, &mut Assets<bevy::render::storage::ShaderStorageBuffer>),
+    (batch_materials, buffers): (
+        &mut Assets<crate::propbatch::PropBatchMaterial>,
+        &mut Assets<bevy::render::storage::ShaderStorageBuffer>,
+    ),
     collision: &mut CollisionWorld,
 ) {
     let t = std::time::Instant::now();
@@ -405,7 +503,9 @@ pub fn spawn_static_props(
         if name.starts_with("models/vistas/") {
             anyhow::bail!("vista (built by sky.rs)");
         }
-        if std::env::var("TF_HIDE").is_ok_and(|h| !h.is_empty() && name.to_ascii_lowercase().contains(&h.to_ascii_lowercase())) {
+        if std::env::var("TF_HIDE").is_ok_and(|h| {
+            !h.is_empty() && name.to_ascii_lowercase().contains(&h.to_ascii_lowercase())
+        }) {
             anyhow::bail!("hidden (TF_HIDE)");
         }
         // Godray models are soft additive light-shaft volumes; uber.rs draws them with their
@@ -435,8 +535,17 @@ pub fn spawn_static_props(
                         let parts = parts
                             .into_iter()
                             .map(|(mat_name, mesh)| {
-                                let mat = convert::material(gd, cache, images, materials, &mat_name, false);
-                                let keep = batching && materials.get(&mat).is_some_and(|m| crate::propbatch::batchable(&mesh, m, cache.uber.contains_key(&mat.id())));
+                                let mat = convert::material(
+                                    gd, cache, images, materials, &mat_name, false,
+                                );
+                                let keep = batching
+                                    && materials.get(&mat).is_some_and(|m| {
+                                        crate::propbatch::batchable(
+                                            &mesh,
+                                            m,
+                                            cache.uber.contains_key(&mat.id()),
+                                        )
+                                    });
                                 let data = keep.then(|| mesh.clone());
                                 (meshes.add(mesh), mat, data)
                             })
@@ -448,7 +557,10 @@ pub fn spawn_static_props(
             }
             Err(e) => {
                 let n = sp.model_names[mi].to_ascii_lowercase();
-                if !n.starts_with("models/vistas/") && !n.contains("godray") && std::env::var_os("TF_HIDE").is_none() {
+                if !n.starts_with("models/vistas/")
+                    && !n.contains("godray")
+                    && std::env::var_os("TF_HIDE").is_none()
+                {
                     failed += 1;
                 }
                 log::debug!("prop {}: {e}", sp.model_names[mi]);
@@ -465,11 +577,18 @@ pub fn spawn_static_props(
         if sp.model_names[p.model as usize].starts_with("models/vistas/") {
             continue;
         }
-        let Some(Some((lods, radius))) = built.get(p.model as usize) else { continue };
+        let Some(Some((lods, radius))) = built.get(p.model as usize) else {
+            continue;
+        };
         let [pitch, yaw, roll] = p.angles.map(f32::to_radians);
         // Source angles: yaw about Z, then pitch about Y, then roll about X.
-        let rot = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(roll);
-        let tf = Transform { translation: Vec3::from(p.origin), rotation: rot, scale: Vec3::splat(p.scale.max(0.0001)) };
+        let rot =
+            Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch) * Quat::from_rotation_x(roll);
+        let tf = Transform {
+            translation: Vec3::from(p.origin),
+            rotation: rot,
+            scale: Vec3::splat(p.scale.max(0.0001)),
+        };
         // Collision as engine.dll traces static props (0x1801b7cf0): only the props in the
         // map's CM_PRIMITIVES, each by its contents there. Movement (the player's mask, detail
         // level 0) hits the model's convex hulls; shots (TRACEDETAILLEVEL_HIGH) hit the
@@ -499,18 +618,35 @@ pub fn spawn_static_props(
         // One entity per mesh part and LOD, straight under the root (no per-prop parent), each
         // with the distance range it's drawn in (world units, i.e. after the root's scale).
         let r = radius * tf.scale.x;
-        let draw_to = if !opts.cull || r >= PROP_ALWAYS_DRAWN { f32::INFINITY } else { (r * opts.draw_radii).max(600.0) };
+        let draw_to = if !opts.cull || r >= PROP_ALWAYS_DRAWN {
+            f32::INFINITY
+        } else {
+            (r * opts.draw_radii).max(600.0)
+        };
         let lod_count = if opts.lod { lods.len() } else { 1 };
         for (l, (switch, parts)) in lods.iter().enumerate().take(lod_count) {
-            let start = if l == 0 { 0.0 } else { switch * LOD_METRIC_TO_UNITS };
-            let end = lods.get(l + 1).filter(|_| l + 1 < lod_count).map(|n| n.0 * LOD_METRIC_TO_UNITS).unwrap_or(f32::INFINITY).min(draw_to);
+            let start = if l == 0 {
+                0.0
+            } else {
+                switch * LOD_METRIC_TO_UNITS
+            };
+            let end = lods
+                .get(l + 1)
+                .filter(|_| l + 1 < lod_count)
+                .map(|n| n.0 * LOD_METRIC_TO_UNITS)
+                .unwrap_or(f32::INFINITY)
+                .min(draw_to);
             if start >= end {
                 continue;
             }
             let range = (start != 0.0 || end.is_finite()).then(|| {
                 let (s, e) = (start * crate::player::UNIT, end * crate::player::UNIT);
                 // Crossfade (dithered) over the last 10% before each switch.
-                bevy::camera::visibility::VisibilityRange { start_margin: s * 0.9..s, end_margin: e * 0.9..e, use_aabb: false }
+                bevy::camera::visibility::VisibilityRange {
+                    start_margin: s * 0.9..s,
+                    end_margin: e * 0.9..e,
+                    use_aabb: false,
+                }
             });
             let small = opts.small_no_shadow && r < PROP_SHADOW_MIN_RADIUS;
             for (part, (mesh, mat, data)) in parts.iter().enumerate() {
@@ -555,13 +691,24 @@ pub fn add_game_collision(bsp: &Bsp, collision: &mut CollisionWorld) {
     // Texture data whose world meshes `spawn_world` already turned into collision.
     let sorts = bsp.material_sorts();
     let texdata = bsp.texture_data();
-    let skip = mesh_flags::SKY | mesh_flags::SKY_2D | mesh_flags::SKIP | mesh_flags::TRIGGER | mesh_flags::TRANSLUCENT;
+    let skip = mesh_flags::SKY
+        | mesh_flags::SKY_2D
+        | mesh_flags::SKIP
+        | mesh_flags::TRIGGER
+        | mesh_flags::TRANSLUCENT;
     let mut rendered = std::collections::HashSet::new();
     let meshes = bsp.meshes();
     if let Some(world) = bsp.models().first() {
-        for m in meshes.iter().skip(world.first_mesh as usize).take(world.num_meshes as usize) {
+        for m in meshes
+            .iter()
+            .skip(world.first_mesh as usize)
+            .take(world.num_meshes as usize)
+        {
             let td = sorts[m.material_sort as usize].texture_data;
-            let name = texdata.get(td as usize).map(|t| t.name.to_ascii_lowercase()).unwrap_or_default();
+            let name = texdata
+                .get(td as usize)
+                .map(|t| t.name.to_ascii_lowercase())
+                .unwrap_or_default();
             if m.flags & skip == 0 && !name.starts_with("tools") {
                 rendered.insert(td);
             }
@@ -573,7 +720,11 @@ pub fn add_game_collision(bsp: &Bsp, collision: &mut CollisionWorld) {
         if shape.texture_data >= 0 && rendered.contains(&shape.texture_data) {
             continue;
         }
-        let sky = texdata.get(shape.texture_data.max(0) as usize).is_some_and(|t| shape.texture_data >= 0 && t.name.to_ascii_lowercase().contains("toolsskybox"));
+        let sky = texdata
+            .get(shape.texture_data.max(0) as usize)
+            .is_some_and(|t| {
+                shape.texture_data >= 0 && t.name.to_ascii_lowercase().contains("toolsskybox")
+            });
         let c = shape.contents;
         for t in &shape.tris {
             // The sky's box holds players in but isn't something to shoot or hook.
@@ -601,7 +752,11 @@ pub fn add_game_collision(bsp: &Bsp, collision: &mut CollisionWorld) {
 /// nothing below in `world` at all.
 pub fn collision_sweep(world: &CollisionWorld, extra: &CollisionWorld) {
     let (mut lo, mut hi) = (SVec3::splat(f32::MAX), SVec3::splat(f32::MIN));
-    for t in extra.tris.iter().chain(extra.clips.iter().flatten().flat_map(|c| c.tris.iter())) {
+    for t in extra
+        .tris
+        .iter()
+        .chain(extra.clips.iter().flatten().flat_map(|c| c.tris.iter()))
+    {
         lo = lo.min(t.a.min(t.b).min(t.c));
         hi = hi.max(t.a.max(t.b).max(t.c));
     }
@@ -622,7 +777,10 @@ pub fn collision_sweep(world: &CollisionWorld, extra: &CollisionWorld) {
             let top = SVec3::new(x, y, hi.z.min(10000.0));
             let down = -SVec3::Z;
             let len = hi.z - lo.z + 20000.0;
-            if let Some(e) = extra.raycast_moving(top, down, len, tf_sim::collision::CLIP_PILOT).filter(|h| h.normal.z > 0.7) {
+            if let Some(e) = extra
+                .raycast_moving(top, down, len, tf_sim::collision::CLIP_PILOT)
+                .filter(|h| h.normal.z > 0.7)
+            {
                 let w = world.raycast(top, down, len);
                 let missed = match w {
                     None => {
@@ -646,7 +804,9 @@ pub fn collision_sweep(world: &CollisionWorld, extra: &CollisionWorld) {
     // Group the catches into 512-unit cells (one line each, highest catch first).
     let mut cells: HashMap<(i32, i32), (usize, SVec3, f32)> = HashMap::new();
     for (p, below) in &spots {
-        let e = cells.entry(((p.x / 512.0).floor() as i32, (p.y / 512.0).floor() as i32)).or_insert((0, *p, below.unwrap_or(0.0)));
+        let e = cells
+            .entry(((p.x / 512.0).floor() as i32, (p.y / 512.0).floor() as i32))
+            .or_insert((0, *p, below.unwrap_or(0.0)));
         e.0 += 1;
         if p.z > e.1.z {
             e.1 = *p;
@@ -656,6 +816,11 @@ pub fn collision_sweep(world: &CollisionWorld, extra: &CollisionWorld) {
     let mut cells: Vec<_> = cells.into_values().collect();
     cells.sort_by(|a, b| b.0.cmp(&a.0));
     for (n, p, below) in cells.iter().take(60) {
-        log::info!("  {n} catches near {:.0} {:.0} {:.0} (render collision {below:.0})", p.x, p.y, p.z);
+        log::info!(
+            "  {n} catches near {:.0} {:.0} {:.0} (render collision {below:.0})",
+            p.x,
+            p.y,
+            p.z
+        );
     }
 }

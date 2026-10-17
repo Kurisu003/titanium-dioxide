@@ -12,8 +12,13 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>> {
         bail!("not a VFONT1 file");
     }
     let salt_len = data[data.len() - MAGIC.len() - 1] as usize;
-    let out_len = data.len().checked_sub(MAGIC.len() + salt_len).filter(|&n| n > 0);
-    let Some(out_len) = out_len else { bail!("bad vfont salt") };
+    let out_len = data
+        .len()
+        .checked_sub(MAGIC.len() + salt_len)
+        .filter(|&n| n > 0);
+    let Some(out_len) = out_len else {
+        bail!("bad vfont salt")
+    };
     // The salt (all but its length byte) seeds the key.
     let salt_start = data.len() - MAGIC.len() - 1 - (salt_len - 1);
     let mut key = TRICK;

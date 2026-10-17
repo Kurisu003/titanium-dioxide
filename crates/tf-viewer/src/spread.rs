@@ -7,7 +7,9 @@
 use tf_assets::settings::PlayerSettings;
 
 fn val(s: &PlayerSettings, k: &str) -> Option<f32> {
-    s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).and_then(|v| v.trim().parse().ok())
+    s.get(&format!("sp_base.{k}"))
+        .or_else(|| s.get(&format!(".{k}")))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,31 +55,74 @@ pub struct SpreadDef {
 impl SpreadDef {
     pub fn from_settings(s: &PlayerSettings) -> Self {
         let f = |k: &str, d: f32| val(s, k).unwrap_or(d);
-        let stand = Pair { hip: f("spread_stand_hip", 1.2), ads: f("spread_stand_ads", 0.4) };
-        let crouch = Pair { hip: f("spread_crouch_hip", stand.hip), ads: f("spread_crouch_ads", stand.ads) };
-        let air = Pair { hip: f("spread_air_hip", stand.hip), ads: f("spread_air_ads", stand.ads) };
+        let stand = Pair {
+            hip: f("spread_stand_hip", 1.2),
+            ads: f("spread_stand_ads", 0.4),
+        };
+        let crouch = Pair {
+            hip: f("spread_crouch_hip", stand.hip),
+            ads: f("spread_crouch_ads", stand.ads),
+        };
+        let air = Pair {
+            hip: f("spread_air_hip", stand.hip),
+            ads: f("spread_air_ads", stand.ads),
+        };
         let run_hip = f("spread_stand_hip_run", stand.hip);
-        let kick_stand = Pair { hip: f("spread_kick_on_fire_stand_hip", 0.4), ads: f("spread_kick_on_fire_stand_ads", 0.3) };
-        let max_stand = Pair { hip: f("spread_max_kick_stand_hip", 8.0), ads: f("spread_max_kick_stand_ads", 2.0) };
+        let kick_stand = Pair {
+            hip: f("spread_kick_on_fire_stand_hip", 0.4),
+            ads: f("spread_kick_on_fire_stand_ads", 0.3),
+        };
+        let max_stand = Pair {
+            hip: f("spread_max_kick_stand_hip", 8.0),
+            ads: f("spread_max_kick_stand_ads", 2.0),
+        };
         Self {
             stand,
             // Moving and sprinting only have hip values; ADS uses the standing one.
-            run: Pair { hip: run_hip, ads: stand.ads },
-            sprint: Pair { hip: f("spread_stand_hip_sprint", run_hip), ads: stand.ads },
+            run: Pair {
+                hip: run_hip,
+                ads: stand.ads,
+            },
+            sprint: Pair {
+                hip: f("spread_stand_hip_sprint", run_hip),
+                ads: stand.ads,
+            },
             crouch,
             air,
             // Wall-running and hanging have one value each; the air values when missing.
-            wallrun: val(s, "spread_wallrunning").map(|v| Pair { hip: v, ads: v.min(air.ads) }).unwrap_or(air),
-            wallhang: val(s, "spread_wallhanging").map(|v| Pair { hip: v, ads: v.min(stand.ads) }).unwrap_or(stand),
+            wallrun: val(s, "spread_wallrunning")
+                .map(|v| Pair {
+                    hip: v,
+                    ads: v.min(air.ads),
+                })
+                .unwrap_or(air),
+            wallhang: val(s, "spread_wallhanging")
+                .map(|v| Pair {
+                    hip: v,
+                    ads: v.min(stand.ads),
+                })
+                .unwrap_or(stand),
             kick: [
                 kick_stand,
-                Pair { hip: f("spread_kick_on_fire_crouch_hip", kick_stand.hip), ads: f("spread_kick_on_fire_crouch_ads", kick_stand.ads) },
-                Pair { hip: f("spread_kick_on_fire_air_hip", kick_stand.hip), ads: f("spread_kick_on_fire_air_ads", kick_stand.ads) },
+                Pair {
+                    hip: f("spread_kick_on_fire_crouch_hip", kick_stand.hip),
+                    ads: f("spread_kick_on_fire_crouch_ads", kick_stand.ads),
+                },
+                Pair {
+                    hip: f("spread_kick_on_fire_air_hip", kick_stand.hip),
+                    ads: f("spread_kick_on_fire_air_ads", kick_stand.ads),
+                },
             ],
             max_kick: [
                 max_stand,
-                Pair { hip: f("spread_max_kick_crouch_hip", max_stand.hip), ads: f("spread_max_kick_crouch_ads", max_stand.ads) },
-                Pair { hip: f("spread_max_kick_air_hip", max_stand.hip), ads: f("spread_max_kick_air_ads", max_stand.ads) },
+                Pair {
+                    hip: f("spread_max_kick_crouch_hip", max_stand.hip),
+                    ads: f("spread_max_kick_crouch_ads", max_stand.ads),
+                },
+                Pair {
+                    hip: f("spread_max_kick_air_hip", max_stand.hip),
+                    ads: f("spread_max_kick_air_ads", max_stand.ads),
+                },
             ],
             decay_rate: f("spread_decay_rate", 6.5),
             decay_delay: f("spread_decay_delay", 0.15),

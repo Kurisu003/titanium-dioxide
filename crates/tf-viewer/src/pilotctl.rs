@@ -2,7 +2,9 @@
 //! back in, and calling BT down with a Titanfall.
 
 use crate::actor::Actor;
-use crate::player::{to_bevy, CameraMode, Collision, MainCamera, PlayerInput, PlayerTitan, TitanSettings};
+use crate::player::{
+    to_bevy, CameraMode, Collision, MainCamera, PlayerInput, PlayerTitan, TitanSettings,
+};
 use crate::targets::Enemy;
 use crate::weapons::FxAssets;
 use bevy::prelude::*;
@@ -79,14 +81,21 @@ pub struct PlayerPilot {
 
 impl PlayerPilot {
     pub fn new() -> Self {
-        Self { state: PilotState::new(SVec3::ZERO, 0.0), embark_from: None, embark_anim: EMBARK_FRONT, disembark_anim: DISEMBARK_ANIM }
+        Self {
+            state: PilotState::new(SVec3::ZERO, 0.0),
+            embark_from: None,
+            embark_anim: EMBARK_FRONT,
+            disembark_anim: DISEMBARK_ANIM,
+        }
     }
 }
 
 /// The mount sequence for a pilot at `to_pilot` from a Titan facing `yaw` (game space), and
 /// its first-person twin on the arms.
 fn embark_anim_for(yaw: f32, to_pilot: SVec3, kneel: bool) -> (&'static str, &'static str) {
-    let rel = (to_pilot.y.atan2(to_pilot.x) - yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    let rel = (to_pilot.y.atan2(to_pilot.x) - yaw + std::f32::consts::PI)
+        .rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
     let q = std::f32::consts::FRAC_PI_4;
     let side = if rel.abs() <= q {
         0
@@ -117,11 +126,20 @@ fn embark_anim_for(yaw: f32, to_pilot: SVec3, kneel: bool) -> (&'static str, &'s
 }
 
 /// Put the pilot above BT's cockpit and launch them (TitanEjectPlayer).
-fn eject_pilot(commands: &mut Commands, pilot: &mut PlayerPilot, input: &mut PlayerInput, titan: &PlayerTitan, gravity_scale: f32) {
+fn eject_pilot(
+    commands: &mut Commands,
+    pilot: &mut PlayerPilot,
+    input: &mut PlayerInput,
+    titan: &PlayerTitan,
+    gravity_scale: f32,
+) {
     let yaw = titan.state.yaw;
     let mut s = PilotState::new(titan.state.pos + SVec3::Z * 260.0, yaw);
     // RandomFloatRange(1500, 1700): a cheap hash of where BT stands.
-    let roll = (titan.state.pos.x * 12.9898 + titan.state.pos.y * 78.233).sin().abs().fract();
+    let roll = (titan.state.pos.x * 12.9898 + titan.state.pos.y * 78.233)
+        .sin()
+        .abs()
+        .fract();
     s.vel = eject_launch(yaw, gravity_scale, roll);
     // player_look_angles.x = 80: looking down at the Titan.
     s.pitch = 80f32.to_radians();
@@ -169,7 +187,10 @@ impl Titanfall {
 }
 
 fn playing_now(game: &crate::game::Game) -> bool {
-    matches!(game.state, crate::game::GameState::Playing | crate::game::GameState::Intermission)
+    matches!(
+        game.state,
+        crate::game::GameState::Playing | crate::game::GameState::Intermission
+    )
 }
 
 /// Pilot health (pilot_solo.set: 100) with the campaign's rules: PilotHealthRegenThinkSP
@@ -185,7 +206,12 @@ pub struct PilotHealth {
 
 impl Default for PilotHealth {
     fn default() -> Self {
-        Self { health: PILOT_HEALTH, since_hit: 99.0, hurt: 0.0, recent: Vec::new() }
+        Self {
+            health: PILOT_HEALTH,
+            since_hit: 99.0,
+            hurt: 0.0,
+            recent: Vec::new(),
+        }
     }
 }
 
@@ -204,7 +230,12 @@ impl PilotHealth {
     /// maxDamagePerHit: at most that much (less what was taken in the last 0.25 s, at least 5)
     /// gets through, so a Pilot can't be deleted by a Titan in one burst.
     pub fn damage_capped(&mut self, amount: f32, max_per_hit: f32) {
-        let recent: f32 = self.recent.iter().filter(|r| r.0 <= 0.25).map(|r| r.1).sum();
+        let recent: f32 = self
+            .recent
+            .iter()
+            .filter(|r| r.0 <= 0.25)
+            .map(|r| r.1)
+            .sum();
         let allowed = (max_per_hit - recent).max(5.0);
         self.damage(amount.min(allowed));
     }
@@ -261,38 +292,84 @@ pub fn control_transitions(
     world: Res<Collision>,
     pilot_settings: Res<PilotSettings>,
     _fx: Res<FxAssets>,
-    mut titans: Query<(&mut PlayerTitan, &mut Titanfall, &mut crate::combat::TitanHealth)>,
+    mut titans: Query<(
+        &mut PlayerTitan,
+        &mut Titanfall,
+        &mut crate::combat::TitanHealth,
+    )>,
     mut pilots: Query<(&mut PlayerPilot, &mut PilotHealth)>,
     mut dummies: Query<&mut Enemy>,
     actors: Query<&crate::actor::Actor>,
     mut doom_test: Local<(bool, f32)>,
     game: Res<crate::game::Game>,
-    (mut rodeo, mut cores): (ResMut<crate::rodeo::Rodeo>, Query<&mut crate::abilities::TitanCore>),
-    (mut fpseq, globals, titan_settings, mut auto): (ResMut<crate::fparms::FpSeq>, Query<&GlobalTransform>, Res<TitanSettings>, ResMut<crate::autotitan::AutoTitan>),
+    (mut rodeo, mut cores): (
+        ResMut<crate::rodeo::Rodeo>,
+        Query<&mut crate::abilities::TitanCore>,
+    ),
+    (mut fpseq, globals, titan_settings, mut auto): (
+        ResMut<crate::fparms::FpSeq>,
+        Query<&GlobalTransform>,
+        Res<TitanSettings>,
+        ResMut<crate::autotitan::AutoTitan>,
+    ),
 ) {
     let dt = time.delta_secs();
-    let (Ok((mut titan, mut tf, mut bt_health)), Ok((mut pilot, mut pilot_health))) = (titans.single_mut(), pilots.single_mut()) else { return };
+    let (Ok((mut titan, mut tf, mut bt_health)), Ok((mut pilot, mut pilot_health))) =
+        (titans.single_mut(), pilots.single_mut())
+    else {
+        return;
+    };
     let actor = titan.actor;
     // BT's HIJACK attachment (def_c_spineC, facing his way): the frame the first-person
     // mount/dismount clips play in (FirstPersonSequence attachment "hijack").
     // BT's HIJACK attachment (def_c_spineC; forward = bone Z, left = bone X, up = bone Y)
     // with its full orientation, so the mount/dismount follow his chest as he kneels and leans.
     let hijack_frame = |titan: &PlayerTitan| -> (Vec3, Quat) {
-        let spine = actors.get(titan.actor).ok().and_then(|a| a.joint("def_c_spineC")).and_then(|j| globals.get(j).ok());
-        let Some(g) = spine else { return (Vec3::from(titan.state.pos.to_array()) + Vec3::Z * 150.0, Quat::from_rotation_z(titan.state.yaw)) };
+        let spine = actors
+            .get(titan.actor)
+            .ok()
+            .and_then(|a| a.joint("def_c_spineC"))
+            .and_then(|j| globals.get(j).ok());
+        let Some(g) = spine else {
+            return (
+                Vec3::from(titan.state.pos.to_array()) + Vec3::Z * 150.0,
+                Quat::from_rotation_z(titan.state.yaw),
+            );
+        };
         let conv = |v: Vec3| Vec3::new(v.x, -v.z, v.y).normalize();
         let r = g.rotation();
-        let rot = Quat::from_mat3(&Mat3::from_cols(conv(r * Vec3::Z), conv(r * Vec3::X), conv(r * Vec3::Y))).normalize();
+        let rot = Quat::from_mat3(&Mat3::from_cols(
+            conv(r * Vec3::Z),
+            conv(r * Vec3::X),
+            conv(r * Vec3::Y),
+        ))
+        .normalize();
         (from_bevy(g.translation()), rot)
     };
-    let clip_of = |name: &str| actors.get(actor).ok().and_then(|a| a.clip(name).map(|c| (a.clips.clone(), c)));
-    let secs = |name: &str, fallback: f32| clip_of(name).map(|(clips, c)| clips[c].duration).unwrap_or(fallback);
-    let (disembark_secs, embark_secs) = (secs(pilot.disembark_anim, DISEMBARK_SECS), secs(pilot.embark_anim, EMBARK_SECS));
+    let clip_of = |name: &str| {
+        actors
+            .get(actor)
+            .ok()
+            .and_then(|a| a.clip(name).map(|c| (a.clips.clone(), c)))
+    };
+    let secs = |name: &str, fallback: f32| {
+        clip_of(name)
+            .map(|(clips, c)| clips[c].duration)
+            .unwrap_or(fallback)
+    };
+    let (disembark_secs, embark_secs) = (
+        secs(pilot.disembark_anim, DISEMBARK_SECS),
+        secs(pilot.embark_anim, EMBARK_SECS),
+    );
     let gravity_scale = pilot_settings.0.gravity / 750.0;
     // Pilot health regenerates after a short delay.
     pilot_health.tick(dt);
     // TF_HURT_PILOT: 15 damage every 1.5 s on foot, for testing the damage screen effects.
-    if playing_now(&game) && *control == Control::Pilot && std::env::var_os("TF_HURT_PILOT").is_some() && pilot_health.health > 30.0 {
+    if playing_now(&game)
+        && *control == Control::Pilot
+        && std::env::var_os("TF_HURT_PILOT").is_some()
+        && pilot_health.health > 30.0
+    {
         let t = time.elapsed_secs();
         if (t / 1.5).floor() != ((t - dt) / 1.5).floor() {
             pilot_health.damage(15.0);
@@ -300,7 +377,12 @@ pub fn control_transitions(
     }
     // TF_HURT_BT: 1500 damage every 2 s in BT (shield first), for testing the hull damage
     // feedback; stops short of doomed.
-    if playing_now(&game) && *control == Control::Titan && std::env::var_os("TF_HURT_BT").is_some() && bt_health.v.health > 3000.0 && bt_health.dead_for.is_none() {
+    if playing_now(&game)
+        && *control == Control::Titan
+        && std::env::var_os("TF_HURT_BT").is_some()
+        && bt_health.v.health > 3000.0
+        && bt_health.dead_for.is_none()
+    {
         let t = time.elapsed_secs();
         if (t / 2.0).floor() != ((t - dt) / 2.0).floor() {
             bt_health.damage(1500.0, false);
@@ -308,12 +390,22 @@ pub fn control_transitions(
     }
     // TF_DOOM_BT: doom BT once, for testing the eject; a number delays it to that many seconds
     // of play.
-    let playing = matches!(game.state, crate::game::GameState::Playing | crate::game::GameState::Intermission);
+    let playing = matches!(
+        game.state,
+        crate::game::GameState::Playing | crate::game::GameState::Intermission
+    );
     if playing {
         doom_test.1 += dt;
     }
-    let doom_at = std::env::var("TF_DOOM_BT").ok().map(|v| v.parse::<f32>().unwrap_or(0.0));
-    if !doom_test.0 && playing && *control == Control::Titan && doom_at.is_some_and(|d| doom_test.1 >= d) && bt_health.dead_for.is_none() {
+    let doom_at = std::env::var("TF_DOOM_BT")
+        .ok()
+        .map(|v| v.parse::<f32>().unwrap_or(0.0));
+    if !doom_test.0
+        && playing
+        && *control == Control::Titan
+        && doom_at.is_some_and(|d| doom_test.1 >= d)
+        && bt_health.dead_for.is_none()
+    {
         doom_test.0 = true;
         let (h, sh) = (bt_health.v.health, bt_health.v.shield);
         bt_health.damage(h + sh, false);
@@ -324,7 +416,10 @@ pub fn control_transitions(
         tf.cooldown = TITAN_REBUILD_SECS;
         tf.eject = None;
         tf.self_destruct = false;
-        if matches!(*control, Control::Titan | Control::Embark(_) | Control::Disembark(_)) {
+        if matches!(
+            *control,
+            Control::Titan | Control::Embark(_) | Control::Disembark(_)
+        ) {
             // Auto-eject: no time for the sequence.
             fpseq.stop();
             eject_pilot(&mut commands, &mut pilot, &mut input, &titan, gravity_scale);
@@ -359,26 +454,47 @@ pub fn control_transitions(
                     tf.eject_presses += 1;
                     tf.since_eject_press = 0.0;
                     crate::audio::event(&mut commands, "titan_eject_xbutton");
-                    crate::audio::event(&mut commands, "hud_boost_card_radar_jammer_redtextbeep_1p");
+                    crate::audio::event(
+                        &mut commands,
+                        "hud_boost_card_radar_jammer_redtextbeep_1p",
+                    );
                     log::info!("eject press {}/{EJECT_PRESSES}", tf.eject_presses);
                     if tf.eject_presses >= EJECT_PRESSES {
                         tf.eject = Some(0.0);
                         tf.eject_presses = 0;
-                        crate::audio::event_at(&mut commands, "Titan_Eject_Servos_3P", Vec3::from(titan.state.pos.to_array()));
+                        crate::audio::event_at(
+                            &mut commands,
+                            "Titan_Eject_Servos_3P",
+                            Vec3::from(titan.state.pos.to_array()),
+                        );
                         log::info!("ejecting");
                         // The cockpit's eject clip, from the eye.
                         let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
-                        fpseq.start("atpov_cockpit_eject", (eye, view_quat(titan.state.yaw, 0.0)), None, true);
+                        fpseq.start(
+                            "atpov_cockpit_eject",
+                            (eye, view_quat(titan.state.yaw, 0.0)),
+                            None,
+                            true,
+                        );
                     }
                 } else {
                     *control = Control::Disembark(0.0);
                     // GetDisembarkSequenceForPlayer/Titan: crouch held = the crouch dismount
                     // (the _fast set needs PAS_FAST_EMBARK, an MP passive).
-                    let (anim, clip) = if input.crouch { (DISEMBARK_CROUCH_ANIM, "ptpov_dismount_buddy_crouch") } else { (DISEMBARK_ANIM, "ptpov_dismount_buddy_stand") };
+                    let (anim, clip) = if input.crouch {
+                        (DISEMBARK_CROUCH_ANIM, "ptpov_dismount_buddy_crouch")
+                    } else {
+                        (DISEMBARK_ANIM, "ptpov_dismount_buddy_stand")
+                    };
                     pilot.disembark_anim = anim;
                     log::info!("disembarking ({anim}, {clip})");
                     let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
-                    fpseq.start(clip, hijack_frame(&titan), Some((eye, view_quat(titan.state.yaw, titan.state.pitch))), false);
+                    fpseq.start(
+                        clip,
+                        hijack_frame(&titan),
+                        Some((eye, view_quat(titan.state.yaw, titan.state.pitch))),
+                        false,
+                    );
                 }
             }
         }
@@ -412,7 +528,15 @@ pub fn control_transitions(
                     s.pitch = (-f.z).clamp(-1.0, 1.0).asin();
                 }
                 // TF_PILOT_TP="x y z yaw_degrees": land at a test spot instead (testing).
-                if let Some(v) = std::env::var("TF_PILOT_TP").ok().map(|v| v.split_whitespace().filter_map(|x| x.parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() == 4) {
+                if let Some(v) = std::env::var("TF_PILOT_TP")
+                    .ok()
+                    .map(|v| {
+                        v.split_whitespace()
+                            .filter_map(|x| x.parse::<f32>().ok())
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v| v.len() == 4)
+                {
                     s = PilotState::new(SVec3::new(v[0], v[1], v[2]), v[3].to_radians());
                     s.pitch = 0.0;
                 }
@@ -432,11 +556,23 @@ pub fn control_transitions(
         Control::Pilot => {
             let to_bt = titan.state.pos - pilot.state.pos;
             if std::env::var_os("TF_TRACE_POS").is_some() {
-                log::info!("trace pilot {:?} vel {:?} yaw {:.2} bt {:?} mode {:?}", pilot.state.pos, pilot.state.vel, pilot.state.yaw, titan.state.pos, pilot.state.mode);
+                log::info!(
+                    "trace pilot {:?} vel {:?} yaw {:.2} bt {:?} mode {:?}",
+                    pilot.state.pos,
+                    pilot.state.vel,
+                    pilot.state.yaw,
+                    titan.state.pos,
+                    pilot.state.mode
+                );
             }
             let near = to_bt.truncate().length() < EMBARK_RANGE && to_bt.z.abs() < 300.0;
             if interact && !(near && !tf.busy() && bt_health.dead_for.is_none()) {
-                log::info!("embark refused: BT {:.0} away ({:.0} up), busy {}", to_bt.truncate().length(), to_bt.z, tf.busy());
+                log::info!(
+                    "embark refused: BT {:.0} away ({:.0} up), busy {}",
+                    to_bt.truncate().length(),
+                    to_bt.z,
+                    tf.busy()
+                );
             }
             if interact && near && !tf.busy() && bt_health.dead_for.is_none() {
                 let eye = Vec3::from(pilot.state.eye(&pilot_settings.0).to_array());
@@ -444,7 +580,11 @@ pub fn control_transitions(
                 // BT reaches for the pilot on whichever side they are; out of combat he
                 // kneels for them (ShouldDoRegularEmbark: BT's NPC state combat/alert).
                 let bt_pos = Vec3::from(titan.state.pos.to_array());
-                let nearest = dummies.iter().filter(|e| e.active && e.alive() && !e.arriving()).map(|e| e.pos.distance(bt_pos)).fold(f32::INFINITY, f32::min);
+                let nearest = dummies
+                    .iter()
+                    .filter(|e| e.active && e.alive() && !e.arriving())
+                    .map(|e| e.pos.distance(bt_pos))
+                    .fold(f32::INFINITY, f32::min);
                 let combat = nearest < EMBARK_COMBAT_RANGE;
                 let (anim, clip) = embark_anim_for(titan.state.yaw, -to_bt, !combat);
                 pilot.embark_anim = anim;
@@ -452,29 +592,61 @@ pub fn control_transitions(
                 // BT stands still for the embark (its animation drives him, not his movement).
                 titan.state.vel = SVec3::ZERO;
                 *control = Control::Embark(0.0);
-                log::info!("embarking ({}, {clip}; nearest enemy {nearest:.0})", pilot.embark_anim);
-                fpseq.start(clip, hijack_frame(&titan), Some((eye, view_quat(pilot.state.yaw, pilot.state.pitch))), false);
+                log::info!(
+                    "embarking ({}, {clip}; nearest enemy {nearest:.0})",
+                    pilot.embark_anim
+                );
+                fpseq.start(
+                    clip,
+                    hijack_frame(&titan),
+                    Some((eye, view_quat(pilot.state.yaw, pilot.state.pitch))),
+                    false,
+                );
             }
             if call && bt_health.dead_for.is_none() && !tf.busy() {
                 // The Titan command: BT guards the spot you're looking at, or follows again.
                 let p = &pilot.state;
                 let eye = p.eye(&pilot_settings.0);
-                let dir = SVec3::new(p.pitch.cos() * p.yaw.cos(), p.pitch.cos() * p.yaw.sin(), -p.pitch.sin());
-                let spot = world.0.raycast(eye, dir, 9999.0).map(|h| h.point).unwrap_or(eye + dir * 9999.0);
+                let dir = SVec3::new(
+                    p.pitch.cos() * p.yaw.cos(),
+                    p.pitch.cos() * p.yaw.sin(),
+                    -p.pitch.sin(),
+                );
+                let spot = world
+                    .0
+                    .raycast(eye, dir, 9999.0)
+                    .map(|h| h.point)
+                    .unwrap_or(eye + dir * 9999.0);
                 auto.toggle(&mut commands, Vec3::from(spot.to_array()));
             } else if call && !tf.busy() && tf.cooldown <= 0.0 {
                 // Drop BT at the crosshair (or a little ahead), onto the ground.
                 let p = &pilot.state;
                 let eye = p.eye(&pilot_settings.0);
-                let dir = SVec3::new(p.pitch.cos() * p.yaw.cos(), p.pitch.cos() * p.yaw.sin(), -p.pitch.sin());
-                let mut aim = world.0.raycast(eye, dir, 3000.0).map(|h| h.point - dir * 150.0).unwrap_or(eye + dir * 1200.0);
+                let dir = SVec3::new(
+                    p.pitch.cos() * p.yaw.cos(),
+                    p.pitch.cos() * p.yaw.sin(),
+                    -p.pitch.sin(),
+                );
+                let mut aim = world
+                    .0
+                    .raycast(eye, dir, 3000.0)
+                    .map(|h| h.point - dir * 150.0)
+                    .unwrap_or(eye + dir * 1200.0);
                 // Never drop BT on the pilot's head.
                 let flat = SVec3::new(aim.x - eye.x, aim.y - eye.y, 0.0);
                 if flat.length() < 600.0 {
-                    let d = if flat.length() > 1.0 { flat.normalize() } else { SVec3::new(p.yaw.cos(), p.yaw.sin(), 0.0) };
+                    let d = if flat.length() > 1.0 {
+                        flat.normalize()
+                    } else {
+                        SVec3::new(p.yaw.cos(), p.yaw.sin(), 0.0)
+                    };
                     aim = SVec3::new(eye.x, eye.y, aim.z) + d * 600.0;
                 }
-                let ground = world.0.raycast(aim + SVec3::Z * 600.0, -SVec3::Z, 4000.0).map(|h| h.point).unwrap_or(aim);
+                let ground = world
+                    .0
+                    .raycast(aim + SVec3::Z * 600.0, -SVec3::Z, 4000.0)
+                    .map(|h| h.point)
+                    .unwrap_or(aim);
                 titan.state = tf_sim::titan::TitanState::new(ground, p.yaw);
                 tf.drop = Some(0.0);
                 tf.impacted = false;
@@ -503,7 +675,9 @@ pub fn control_transitions(
                     // Rodeo_YouEmbarkedWithABattery: ApplyBatteryToTitan.
                     rodeo.battery = false;
                     let v = &mut bt_health.v;
-                    v.health = (v.health + crate::rodeo::BT_SEGMENT_HEALTH * crate::rodeo::BATTERY_HEALTH_FRAC).min(v.max_health);
+                    v.health = (v.health
+                        + crate::rodeo::BT_SEGMENT_HEALTH * crate::rodeo::BATTERY_HEALTH_FRAC)
+                        .min(v.max_health);
                     v.shield = v.max_shield;
                     if let Ok(mut core) = cores.single_mut() {
                         if core.state == crate::abilities::CoreState::Building {
@@ -511,7 +685,11 @@ pub fn control_transitions(
                         }
                     }
                     crate::audio::event(&mut commands, "UI_TitanBattery_Titan_PickUp");
-                    log::info!("battery applied to BT: health {:.0}, shield {:.0}", v.health, v.shield);
+                    log::info!(
+                        "battery applied to BT: health {:.0}, shield {:.0}",
+                        v.health,
+                        v.shield
+                    );
                 }
             } else {
                 *control = Control::Embark(t);
@@ -526,7 +704,11 @@ pub fn control_transitions(
         if t >= EJECT_SECS {
             fpseq.stop();
             eject_pilot(&mut commands, &mut pilot, &mut input, &titan, gravity_scale);
-            crate::audio::event_at(&mut commands, "Titan_Eject_PilotLaunch_3P", Vec3::from(titan.state.pos.to_array()));
+            crate::audio::event_at(
+                &mut commands,
+                "Titan_Eject_PilotLaunch_3P",
+                Vec3::from(titan.state.pos.to_array()),
+            );
             tf.eject = None;
             tf.self_destruct = true;
             titan.override_anim = None;
@@ -541,14 +723,20 @@ pub fn control_transitions(
     // embarking or a new Titanfall).
     if let Some(t) = tf.recover {
         let t = t + dt;
-        let duration = clip_of(DISEMBARK_RECOVER_ANIM).map(|(clips, c)| clips[c].duration).unwrap_or(0.0);
+        let duration = clip_of(DISEMBARK_RECOVER_ANIM)
+            .map(|(clips, c)| clips[c].duration)
+            .unwrap_or(0.0);
         if *control != Control::Pilot || tf.drop.is_some() || t >= duration {
             tf.recover = None;
             if *control == Control::Pilot && tf.drop.is_none() {
                 titan.override_anim = None;
             }
         } else {
-            titan.override_anim = Some(if t < 0.0 { (pilot.disembark_anim.into(), disembark_secs + t) } else { (DISEMBARK_RECOVER_ANIM.into(), t) });
+            titan.override_anim = Some(if t < 0.0 {
+                (pilot.disembark_anim.into(), disembark_secs + t)
+            } else {
+                (DISEMBARK_RECOVER_ANIM.into(), t)
+            });
             tf.recover = Some(t);
         }
     }
@@ -564,9 +752,17 @@ pub fn control_transitions(
                 let now = clip.movement_at(t).unwrap_or(total);
                 // Impact: the first frame that reaches the bottom of the fall.
                 let n = clip.movement.len().max(2);
-                let hit = clip.movement.iter().position(|m| m[2] <= total[2] + 2.0).unwrap_or(n - 1);
+                let hit = clip
+                    .movement
+                    .iter()
+                    .position(|m| m[2] <= total[2] + 2.0)
+                    .unwrap_or(n - 1);
                 let rot = Quat::from_rotation_z(titan.state.yaw);
-                (rot * Vec3::new(now[0] - total[0], now[1] - total[1], now[2] - total[2]), clip.duration, hit as f32 / (n - 1) as f32 * clip.duration)
+                (
+                    rot * Vec3::new(now[0] - total[0], now[1] - total[1], now[2] - total[2]),
+                    clip.duration,
+                    hit as f32 / (n - 1) as f32 * clip.duration,
+                )
             }
             None => (Vec3::ZERO, 0.0, 0.0),
         };
@@ -574,25 +770,46 @@ pub fn control_transitions(
         if !tf.impacted && t >= impact {
             tf.impacted = true;
             shake.0 = 1.0;
-            crate::audio::cue(&mut commands, crate::audio::Cue::TitanLand, Some(Vec3::from(titan.state.pos.to_array())));
+            crate::audio::cue(
+                &mut commands,
+                crate::audio::Cue::TitanLand,
+                Some(Vec3::from(titan.state.pos.to_array())),
+            );
             let at = Vec3::from(titan.state.pos.to_array());
             for mut d in &mut dummies {
                 if !d.alive() {
                     continue;
                 }
                 let dist = ((d.pos - at).truncate().length() - d.radius).max(0.0);
-                let fall = |inner: f32, outer: f32| 1.0 - ((dist - inner) / (outer - inner)).clamp(0.0, 1.0);
+                let fall = |inner: f32, outer: f32| {
+                    1.0 - ((dist - inner) / (outer - inner)).clamp(0.0, 1.0)
+                };
                 if dist < TITANFALL_OUTER_RADIUS {
-                    d.damage_bypass(TITANFALL_DAMAGE_HEAVY * fall(TITANFALL_INNER_RADIUS, TITANFALL_OUTER_RADIUS));
+                    d.damage_bypass(
+                        TITANFALL_DAMAGE_HEAVY
+                            * fall(TITANFALL_INNER_RADIUS, TITANFALL_OUTER_RADIUS),
+                    );
                     log::info!("titanfall crushed an enemy titan");
                 }
                 if dist < HOTDROP_RADIUS {
-                    d.damage(HOTDROP_DAMAGE * fall(HOTDROP_INNER_RADIUS, HOTDROP_RADIUS), false);
+                    d.damage(
+                        HOTDROP_DAMAGE * fall(HOTDROP_INNER_RADIUS, HOTDROP_RADIUS),
+                        false,
+                    );
                 }
             }
             let b = to_bevy(at);
-            crate::particles::emit(&mut commands, crate::particles::Effect::Explosion { at: b, scale: 0.9 });
-            crate::particles::emit(&mut commands, crate::particles::Effect::DustRing { at: b, radius: 220.0 * crate::player::UNIT });
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Explosion { at: b, scale: 0.9 },
+            );
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::DustRing {
+                    at: b,
+                    radius: 220.0 * crate::player::UNIT,
+                },
+            );
             log::info!("titanfall impact at {t:.2}s");
         }
         if t >= duration {
@@ -606,7 +823,9 @@ pub fn control_transitions(
     if let Some(t) = tf.landing {
         let t = t + dt;
         titan.override_anim = Some((STAND_ANIM.into(), t));
-        let duration = clip_of(STAND_ANIM).map(|(clips, c)| clips[c].duration).unwrap_or(0.0);
+        let duration = clip_of(STAND_ANIM)
+            .map(|(clips, c)| clips[c].duration)
+            .unwrap_or(0.0);
         if t >= duration {
             tf.landing = None;
             titan.override_anim = None;
@@ -618,13 +837,20 @@ pub fn control_transitions(
 
 /// Play the sound events (AE_CL_PLAYSOUND) of BT's scripted sequences (embark, disembark,
 /// eject, Titanfall) as they pass, at BT's position.
-pub fn bt_sequence_sounds(mut commands: Commands, titans: Query<&PlayerTitan>, actors: Query<&Actor>, mut last: Local<Option<(String, f32)>>) {
+pub fn bt_sequence_sounds(
+    mut commands: Commands,
+    titans: Query<&PlayerTitan>,
+    actors: Query<&Actor>,
+    mut last: Local<Option<(String, f32)>>,
+) {
     let Ok(titan) = titans.single() else { return };
     let Some((name, t)) = titan.override_anim.clone() else {
         *last = None;
         return;
     };
-    let Ok(actor) = actors.get(titan.actor) else { return };
+    let Ok(actor) = actors.get(titan.actor) else {
+        return;
+    };
     let Some(c) = actor.clip(&name) else { return };
     let clip = &actor.clips[c];
     let cycle = t / clip.duration.max(1e-3);
@@ -656,7 +882,9 @@ pub fn simulate_pilot(
     rodeo: Res<crate::rodeo::Rodeo>,
     loadouts: Query<&crate::pilotweapon::PilotLoadout>,
 ) {
-    let Ok(mut pilot) = pilots.single_mut() else { return };
+    let Ok(mut pilot) = pilots.single_mut() else {
+        return;
+    };
     // Stim speeds the Pilot up.
     let mut params = settings.0.clone();
     let k = status.speed_scale();
@@ -686,7 +914,9 @@ pub fn simulate_pilot(
         pitch: input.pitch,
         sprint: input.sprint && !frozen,
         crouch: input.crouch && !frozen,
-        crouch_toggle: input.crouch_toggle_mode.then_some(input.crouch_toggle_key && !frozen),
+        crouch_toggle: input
+            .crouch_toggle_mode
+            .then_some(input.crouch_toggle_key && !frozen),
         jump: false,
         ads: input.pilot_ads && !frozen,
     };
@@ -702,7 +932,13 @@ pub fn simulate_pilot(
         let jumps = pilot.state.jumps;
         let fall = pilot.state.vel.z;
         let was_crouched = pilot.state.crouched;
-        pilot::step(&mut pilot.state, &step_input, &params, &world.0, dt / n as f32);
+        pilot::step(
+            &mut pilot.state,
+            &step_input,
+            &params,
+            &world.0,
+            dt / n as f32,
+        );
         if input.crouch_toggle_mode && pilot::engine_enabled() {
             // The engine port owns the toggle; the viewer's copy follows it.
             input.crouch_toggled = pilot.state.crouch_toggled;
@@ -711,33 +947,75 @@ pub fn simulate_pilot(
         // sound_crouchToStand, pilot_solo.set; Duck plays them, client.dll 0x1801f56fc /
         // 0x1801f594d). A slide starts with the crouch sound too.
         let grounded_now = matches!(pilot.state.mode, PilotMove::Ground | PilotMove::Slide);
-        if grounded_now && matches!(before, PilotMove::Ground | PilotMove::Slide) && pilot.state.crouched != was_crouched {
-            crate::audio::event(&mut commands, if pilot.state.crouched { "Pilot_CrouchDown_SP_1P" } else { "Pilot_CrouchStand_SP_1P" });
+        if grounded_now
+            && matches!(before, PilotMove::Ground | PilotMove::Slide)
+            && pilot.state.crouched != was_crouched
+        {
+            crate::audio::event(
+                &mut commands,
+                if pilot.state.crouched {
+                    "Pilot_CrouchDown_SP_1P"
+                } else {
+                    "Pilot_CrouchStand_SP_1P"
+                },
+            );
         }
         // Movement sounds.
         use crate::audio::{cue, Cue};
         let now = pilot.state.mode;
         if pilot.state.jumps != jumps {
             let double = matches!(before, PilotMove::Air);
-            cue(&mut commands, if double { Cue::PilotDoubleJump } else { Cue::PilotJump }, None);
+            cue(
+                &mut commands,
+                if double {
+                    Cue::PilotDoubleJump
+                } else {
+                    Cue::PilotJump
+                },
+                None,
+            );
             // The jets' body (sound_jumpjet_jump/jet_body_1p, pilot_base.set) runs on until the
             // jump ends.
-            crate::audio::keyed(&mut commands, "jumpjet", if double { "Jumpjet_Jet_Body_1P" } else { "Jumpjet_Jump_Body_1P" });
+            crate::audio::keyed(
+                &mut commands,
+                "jumpjet",
+                if double {
+                    "Jumpjet_Jet_Body_1P"
+                } else {
+                    "Jumpjet_Jump_Body_1P"
+                },
+            );
         }
-        if matches!(now, PilotMove::WallRun { .. }) && !matches!(before, PilotMove::WallRun { .. }) {
+        if matches!(now, PilotMove::WallRun { .. }) && !matches!(before, PilotMove::WallRun { .. })
+        {
             crate::audio::keyed(&mut commands, "jumpjet", "Jumpjet_Wallrun_Body_1P");
         }
-        if (matches!(before, PilotMove::Air | PilotMove::WallRun { .. }) && matches!(now, PilotMove::Ground | PilotMove::Slide)) || (matches!(before, PilotMove::WallRun { .. }) && !matches!(now, PilotMove::WallRun { .. }) && pilot.state.jumps == jumps) {
+        if (matches!(before, PilotMove::Air | PilotMove::WallRun { .. })
+            && matches!(now, PilotMove::Ground | PilotMove::Slide))
+            || (matches!(before, PilotMove::WallRun { .. })
+                && !matches!(now, PilotMove::WallRun { .. })
+                && pilot.state.jumps == jumps)
+        {
             crate::audio::loop_stop(&mut commands, "jumpjet", None);
         }
         match (before, now) {
-            (PilotMove::Air, PilotMove::Ground | PilotMove::Slide) if fall < -150.0 => cue(&mut commands, Cue::PilotLand, None),
-            (b, PilotMove::WallRun { .. }) if !matches!(b, PilotMove::WallRun { .. }) => cue(&mut commands, Cue::PilotWallrunStart, None),
+            (PilotMove::Air, PilotMove::Ground | PilotMove::Slide) if fall < -150.0 => {
+                cue(&mut commands, Cue::PilotLand, None)
+            }
+            (b, PilotMove::WallRun { .. }) if !matches!(b, PilotMove::WallRun { .. }) => {
+                cue(&mut commands, Cue::PilotWallrunStart, None)
+            }
             (PilotMove::Ground, PilotMove::Slide) => cue(&mut commands, Cue::PilotSlide, None),
-            (b, PilotMove::Mantle { .. }) if !matches!(b, PilotMove::Mantle { .. }) => cue(&mut commands, Cue::PilotMantle, None),
+            (b, PilotMove::Mantle { .. }) if !matches!(b, PilotMove::Mantle { .. }) => {
+                cue(&mut commands, Cue::PilotMantle, None)
+            }
             // sound_wallHangStart / sound_wallHangFall (pilot_base.set).
-            (b, PilotMove::WallHang { .. }) if !matches!(b, PilotMove::WallHang { .. }) => crate::audio::event(&mut commands, "Default.WallCling_Attach"),
-            (PilotMove::WallHang { .. }, n) if !matches!(n, PilotMove::WallHang { .. }) => crate::audio::event(&mut commands, "Default.WallCling_Detach"),
+            (b, PilotMove::WallHang { .. }) if !matches!(b, PilotMove::WallHang { .. }) => {
+                crate::audio::event(&mut commands, "Default.WallCling_Attach")
+            }
+            (PilotMove::WallHang { .. }, n) if !matches!(n, PilotMove::WallHang { .. }) => {
+                crate::audio::event(&mut commands, "Default.WallCling_Detach")
+            }
             _ => {}
         }
         // (Landings kick the view in `pilot_camera`, as client.dll 0x1801f10c0 does; the game
@@ -769,13 +1047,25 @@ pub fn simulate_pilot(
     );
     // Footsteps every stride on the ground or the wall.
     let speed = pilot.state.horizontal_speed();
-    let stepping = matches!(pilot.state.mode, PilotMove::Ground | PilotMove::WallRun { .. }) && speed > 60.0;
+    let stepping = matches!(
+        pilot.state.mode,
+        PilotMove::Ground | PilotMove::WallRun { .. }
+    ) && speed > 60.0;
     if stepping {
         *stride += speed * dt;
-        let interval = if pilot.state.sprinting || matches!(pilot.state.mode, PilotMove::WallRun { .. }) { 96.0 } else { 72.0 };
+        let interval =
+            if pilot.state.sprinting || matches!(pilot.state.mode, PilotMove::WallRun { .. }) {
+                96.0
+            } else {
+                72.0
+            };
         if *stride > interval {
             *stride = 0.0;
-            let c = if matches!(pilot.state.mode, PilotMove::WallRun { .. }) { crate::audio::Cue::PilotWallrunStep } else { crate::audio::Cue::PilotStep };
+            let c = if matches!(pilot.state.mode, PilotMove::WallRun { .. }) {
+                crate::audio::Cue::PilotWallrunStep
+            } else {
+                crate::audio::Cue::PilotStep
+            };
             crate::audio::cue(&mut commands, c, None);
         }
     }
@@ -818,9 +1108,16 @@ pub fn pilot_camera(
     if *control == Control::Titan || *mode == CameraMode::Free {
         return;
     }
-    let (Ok((titan, bt_health)), Ok(pilot), Ok((mut cam, mut projection))) = (titans.single(), pilots.single(), cameras.single_mut()) else { return };
+    let (Ok((titan, bt_health)), Ok(pilot), Ok((mut cam, mut projection))) =
+        (titans.single(), pilots.single(), cameras.single_mut())
+    else {
+        return;
+    };
     // Pilot ADS zoom (R-201 zoom_fov against the pilot's 70 degree hip FOV).
-    if let (Some(w), Projection::Perspective(pp)) = (weapons.single().ok().and_then(|l| l.active()), projection.as_mut()) {
+    if let (Some(w), Projection::Perspective(pp)) = (
+        weapons.single().ok().and_then(|l| l.active()),
+        projection.as_mut(),
+    ) {
         let base = 60f32.to_radians();
         let ratio = (w.def.zoom_fov.to_radians() * 0.5).tan() / (70f32.to_radians() * 0.5).tan();
         let zoomed = 2.0 * ((base * 0.5).tan() * ratio).atan();
@@ -829,7 +1126,11 @@ pub fn pilot_camera(
     }
     // BT is visible from outside, unless destroyed.
     if let Ok(mut v) = vis.get_mut(titan.actor) {
-        v.set_if_neq(if bt_health.dead_for.is_some_and(|t| t > 1.0) { Visibility::Hidden } else { Visibility::Inherited });
+        v.set_if_neq(if bt_health.dead_for.is_some_and(|t| t > 1.0) {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
     }
     if let Some((c, _)) = titan.cockpit {
         if let Ok(mut v) = vis.get_mut(c) {
@@ -848,7 +1149,13 @@ pub fn pilot_camera(
         .and_then(|j| globals.get(j).ok())
         .map(|g| from_bevy(g.translation()));
 
-    let clip_secs = |name: &str, fallback: f32| actors.get(titan.actor).ok().and_then(|a| a.clip(name).map(|c| a.clips[c].duration)).unwrap_or(fallback);
+    let clip_secs = |name: &str, fallback: f32| {
+        actors
+            .get(titan.actor)
+            .ok()
+            .and_then(|a| a.clip(name).map(|c| a.clips[c].duration))
+            .unwrap_or(fallback)
+    };
     let (pos, rot) = match *control {
         Control::Pilot => {
             let dt = time.delta_secs().min(0.05);
@@ -867,7 +1174,10 @@ pub fn pilot_camera(
                 }
                 let p = &pilot_settings.0;
                 let g24 = p.gravity * 2.0 * 12.0;
-                let (vmin, vmax) = ((g24 * p.viewkick_fall_min).sqrt(), (g24 * p.viewkick_fall_max).sqrt());
+                let (vmin, vmax) = (
+                    (g24 * p.viewkick_fall_min).sqrt(),
+                    (g24 * p.viewkick_fall_max).sqrt(),
+                );
                 let scale = if v < vmin && vmin > 0.0 {
                     v / vmin
                 } else if v <= vmax && vmax != vmin {
@@ -888,7 +1198,11 @@ pub fn pilot_camera(
             f.was_grounded = grounded;
             f.prev_vz = s.vel.z;
             // The punch spring (hip axes of punch_pilot; the ADS ones are the same).
-            let (k, c) = springs.0.get("punch_pilot").map(|(hip, _)| (hip.k, hip.c)).unwrap_or((Vec3::splat(65.0), Vec3::splat(9.0)));
+            let (k, c) = springs
+                .0
+                .get("punch_pilot")
+                .map(|(hip, _)| (hip.k, hip.c))
+                .unwrap_or((Vec3::splat(65.0), Vec3::splat(9.0)));
             let n = ((dt * 500.0).ceil() as usize).clamp(1, 50);
             let h = dt / n as f32;
             for _ in 0..n {
@@ -900,7 +1214,9 @@ pub fn pilot_camera(
             let eye_off = s.eye_offset(&pilot_settings.0);
             let target_z = pilot_eye.z - eye_off;
             let feet_z = match f.eye_z {
-                Some(z) if grounded && (target_z - z).abs() < 40.0 => z + (target_z - z) * (1.0 - (-dt * 18.0).exp()),
+                Some(z) if grounded && (target_z - z).abs() < 40.0 => {
+                    z + (target_z - z) * (1.0 - (-dt * 18.0).exp())
+                }
                 _ => target_z,
             };
             f.eye_z = Some(feet_z);
@@ -909,16 +1225,21 @@ pub fn pilot_camera(
             // The sim times the offset (sprintStartDelay / StartDuration / StartFastDuration /
             // EndDuration); the smoothstep curve over those times is a guess.
             let sprinting = s.sprinting && grounded;
-            let blend = |cur: f32, want: f32, rate: f32| cur + (want - cur) * (1.0 - (-dt * rate).exp());
+            let blend =
+                |cur: f32, want: f32, rate: f32| cur + (want - cur) * (1.0 - (-dt * rate).exp());
             let k = s.sprint_frac.clamp(0.0, 1.0);
             f.sprint = k * k * (3.0 - 2.0 * k);
-            let turn = ((s.yaw - f.prev_yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI) / dt.max(1e-3);
+            let turn = ((s.yaw - f.prev_yaw + std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI)
+                / dt.max(1e-3);
             f.prev_yaw = s.yaw;
             // Sprint lean (client.dll m_sprintTiltFrac/Vel): the turn rate over sprinttilt_turnrange
             // (120 deg/s) is the target fraction, reached at up to sprinttilt_maxvel (2/s) with
             // sprinttilt_accel (35/s^2); the roll is that times sprinttiltMaxRoll (pilot_base.set 2).
             // How the engine steers the velocity is a guess.
-            let target = (-turn.to_degrees() / 120.0).clamp(-1.0, 1.0) * if sprinting { 1.0 } else { 0.0 };
+            let target =
+                (-turn.to_degrees() / 120.0).clamp(-1.0, 1.0) * if sprinting { 1.0 } else { 0.0 };
             let want_vel = ((target - f.tilt_frac) * 12.0).clamp(-2.0, 2.0);
             f.tilt_vel += (want_vel - f.tilt_vel).clamp(-35.0 * dt, 35.0 * dt);
             f.tilt_frac = (f.tilt_frac + f.tilt_vel * dt).clamp(-1.0, 1.0);
@@ -930,13 +1251,24 @@ pub fn pilot_camera(
             // wallrun_viewTiltSpeed 6, and wallrun_viewTiltPredictTime 0.25 s - the tilt starts
             // that long before reaching a wall (a ray along the horizontal velocity here).
             let wall_normal = match s.mode {
-                PilotMove::WallRun { normal, .. } | PilotMove::WallHang { normal, .. } => Some(normal),
+                PilotMove::WallRun { normal, .. } | PilotMove::WallHang { normal, .. } => {
+                    Some(normal)
+                }
                 PilotMove::Air if s.horizontal_speed() > 100.0 => {
                     let h = SVec3::new(s.vel.x, s.vel.y, 0.0);
                     let mid = s.pos + SVec3::Z * 36.0;
-                    world.0.raycast(mid, h.normalize(), h.length() * WALL_TILT_PREDICT + 22.0).map(|hit| hit.normal).filter(|n| {
-                        n.z.abs() < 0.35 && 1.0 - h.normalize().dot(SVec3::new(n.x, n.y, 0.0).normalize_or_zero()).abs() > 0.3
-                    })
+                    world
+                        .0
+                        .raycast(mid, h.normalize(), h.length() * WALL_TILT_PREDICT + 22.0)
+                        .map(|hit| hit.normal)
+                        .filter(|n| {
+                            n.z.abs() < 0.35
+                                && 1.0
+                                    - h.normalize()
+                                        .dot(SVec3::new(n.x, n.y, 0.0).normalize_or_zero())
+                                        .abs()
+                                    > 0.3
+                        })
                 }
                 _ => None,
             };
@@ -955,31 +1287,66 @@ pub fn pilot_camera(
             let target = if s.mode == PilotMove::Slide {
                 let v = tf_sim::glam::Vec2::new(s.vel.x, s.vel.y);
                 let sp = v.length();
-                let k = ((sp - pilot_settings.0.slide_stop_speed) / (400.0 - pilot_settings.0.slide_stop_speed)).clamp(0.0, 1.0);
-                if sp > 0.0 { tf_sim::glam::Vec2::new(-v.y, v.x) / sp * k } else { tf_sim::glam::Vec2::ZERO }
+                let k = ((sp - pilot_settings.0.slide_stop_speed)
+                    / (400.0 - pilot_settings.0.slide_stop_speed))
+                    .clamp(0.0, 1.0);
+                if sp > 0.0 {
+                    tf_sim::glam::Vec2::new(-v.y, v.x) / sp * k
+                } else {
+                    tf_sim::glam::Vec2::ZERO
+                }
             } else {
                 tf_sim::glam::Vec2::ZERO
             };
-            let step = if target.length_squared() > f.slide_tilt.length_squared() { 5.0 } else { 2.5 } * dt;
+            let step = if target.length_squared() > f.slide_tilt.length_squared() {
+                5.0
+            } else {
+                2.5
+            } * dt;
             let d = target - f.slide_tilt;
-            f.slide_tilt = if d.length() > step { f.slide_tilt + d.normalize() * step } else { target };
-            let fwd_dot = s.pitch.cos() * (s.yaw.cos() * f.slide_tilt.x + s.yaw.sin() * f.slide_tilt.y);
+            f.slide_tilt = if d.length() > step {
+                f.slide_tilt + d.normalize() * step
+            } else {
+                target
+            };
+            let fwd_dot =
+                s.pitch.cos() * (s.yaw.cos() * f.slide_tilt.x + s.yaw.sin() * f.slide_tilt.y);
             f.slide_roll = -15f32.to_radians() * fwd_dot;
             f.roll = f.wall_roll + tilt + f.slide_roll;
             // Slides widen the view (slideFOVScale 1.1, lerped in over slideFOVLerpInTime and out
             // over slideFOVLerpOutTime, 0.25 s each; a linear lerp is a reading of the keys' text).
             let want = if s.mode == PilotMove::Slide { 1.0 } else { 0.0 };
-            f.slide_fov = if want > f.slide_fov { (f.slide_fov + dt / 0.25).min(want) } else { (f.slide_fov - dt / 0.25).max(want) };
+            f.slide_fov = if want > f.slide_fov {
+                (f.slide_fov + dt / 0.25).min(want)
+            } else {
+                (f.slide_fov - dt / 0.25).max(want)
+            };
             if let Projection::Perspective(pp) = projection.as_mut() {
                 pp.fov *= 1.0 + 0.1 * f.slide_fov;
             }
             // Looking down slides the view forward (pitchOffsetScale; the sin(pitch) curve is a
             // guess, matching BT's).
-            let ahead = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0) * pilot_settings.0.pitch_offset_scale * s.pitch.max(0.0).sin();
-            let eye = Vec3::new(pilot_eye.x, pilot_eye.y, eye_z + pilot_settings.0.sprint_view_offset * f.sprint) + ahead;
-            *vm_eye = VmEye { offset: eye - pilot_eye, roll: f.roll };
-            let (py, pp) = (punch.yaw.to_radians(), (punch.pitch + f.land_ang.x).to_radians());
-            (eye, view_quat(s.yaw + py, s.pitch + pp) * Quat::from_rotation_x(f.roll + (punch.roll + f.land_ang.z).to_radians()))
+            let ahead = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0)
+                * pilot_settings.0.pitch_offset_scale
+                * s.pitch.max(0.0).sin();
+            let eye = Vec3::new(
+                pilot_eye.x,
+                pilot_eye.y,
+                eye_z + pilot_settings.0.sprint_view_offset * f.sprint,
+            ) + ahead;
+            *vm_eye = VmEye {
+                offset: eye - pilot_eye,
+                roll: f.roll,
+            };
+            let (py, pp) = (
+                punch.yaw.to_radians(),
+                (punch.pitch + f.land_ang.x).to_radians(),
+            );
+            (
+                eye,
+                view_quat(s.yaw + py, s.pitch + pp)
+                    * Quat::from_rotation_x(f.roll + (punch.roll + f.land_ang.z).to_radians()),
+            )
         }
         Control::Disembark(t) => {
             // Rise out of the cockpit and over the hatch.
@@ -990,8 +1357,12 @@ pub fn pilot_camera(
         }
         Control::Embark(t) => {
             // Walk the camera up to BT's chest as he kneels, then settle into the cockpit.
-            let (from_p, from_r) = pilot.embark_from.unwrap_or((pilot_eye, view_quat(s.yaw, s.pitch)));
-            let into = chest.map(|c| c + bt_rot * Vec3::new(30.0, 0.0, 40.0)).unwrap_or(bt_eye);
+            let (from_p, from_r) = pilot
+                .embark_from
+                .unwrap_or((pilot_eye, view_quat(s.yaw, s.pitch)));
+            let into = chest
+                .map(|c| c + bt_rot * Vec3::new(30.0, 0.0, 40.0))
+                .unwrap_or(bt_eye);
             let secs = clip_secs(pilot.embark_anim, EMBARK_SECS);
             let a = smooth(t / (secs * 0.6));
             let b = smooth((t - secs * 0.6) / (secs * 0.4));
@@ -1011,13 +1382,13 @@ pub fn pilot_camera(
     vm_eye.offset += shake_off;
     let dir = rot * Vec3::X;
     let up = rot * Vec3::Z;
-    *cam = Transform::from_translation(to_bevy(pos + shake_off)).looking_to(to_bevy(dir).normalize(), to_bevy(up).normalize());
+    *cam = Transform::from_translation(to_bevy(pos + shake_off))
+        .looking_to(to_bevy(dir).normalize(), to_bevy(up).normalize());
 }
 
 fn from_bevy(v: Vec3) -> Vec3 {
     Vec3::new(v.x, -v.z, v.y) / crate::player::UNIT
 }
-
 
 /// How far the Pilot's view sits from the simulated eye (sprint lowering, landing
 /// dip, step smoothing, shake) and its roll, so first-person models ride with the view as the
@@ -1033,7 +1404,10 @@ impl VmEye {
     /// The view origin and rotation (no recoil punch) for first-person models.
     pub fn frame(&self, s: &tf_sim::pilot::PilotState, settings: &PilotParams) -> (Vec3, Quat) {
         let eye = Vec3::from(s.eye(settings).to_array()) + self.offset;
-        (eye, view_quat(s.yaw, s.pitch) * Quat::from_rotation_x(self.roll))
+        (
+            eye,
+            view_quat(s.yaw, s.pitch) * Quat::from_rotation_x(self.roll),
+        )
     }
 }
 
@@ -1080,7 +1454,11 @@ pub fn cockpit_boot(
     *was_embarking = embarking;
     let Some(t) = boot.as_mut() else { return };
     *t += time.delta_secs();
-    let stops = if *t < 0.1 { 6.0 } else { 6.0 * (-(*t - 0.1) / 0.3).exp() };
+    let stops = if *t < 0.1 {
+        6.0
+    } else {
+        6.0 * (-(*t - 0.1) / 0.3).exp()
+    };
     let done = *t > 1.6 || *control != Control::Titan;
     for (e, mut ex) in &mut cams {
         let b = *base.entry(e).or_insert(ex.ev100);

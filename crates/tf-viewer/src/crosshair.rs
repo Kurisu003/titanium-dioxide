@@ -46,15 +46,36 @@ struct Part {
 }
 
 const fn on_ring(path: &'static str, px: (f32, f32), angle: f32, rot: f32) -> Part {
-    Part { path, px, angle: Some(angle), rot, ring: false, offset: (0.0, 0.0) }
+    Part {
+        path,
+        px,
+        angle: Some(angle),
+        rot,
+        ring: false,
+        offset: (0.0, 0.0),
+    }
 }
 const fn centred(path: &'static str, px: (f32, f32), offset: (f32, f32)) -> Part {
-    Part { path, px, angle: None, rot: 0.0, ring: false, offset }
+    Part {
+        path,
+        px,
+        angle: None,
+        rot: 0.0,
+        ring: false,
+        offset,
+    }
 }
 /// A piece at a fixed offset (vh) and rotation, drawn at full atlas size (1 px = 1 screen px
 /// at 1080 lines) rather than the half size the other recipes use.
 const fn full(path: &'static str, px: (f32, f32), offset: (f32, f32), rot: f32) -> Part {
-    Part { path, px: (px.0 * FULL, px.1 * FULL), angle: None, rot, ring: false, offset }
+    Part {
+        path,
+        px: (px.0 * FULL, px.1 * FULL),
+        angle: None,
+        rot,
+        ring: false,
+        offset,
+    }
 }
 const FULL: f32 = 0.0926 / VH_PER_PX;
 
@@ -71,30 +92,106 @@ fn recipe(name: &str) -> Vec<Part> {
     let tri = |a: f32| on_ring("rui/hud/crosshairs/crosshair_triangle", TRI, a, a + 180.0);
     let rect = |a: f32| on_ring("rui/hud/crosshairs/crosshair_rect", RECT, a, a - 90.0);
     let dash = |a: f32| on_ring("rui/hud/crosshairs/crosshair_dash", DASH, a, a);
-    let bracket = |a: f32| on_ring("rui/hud/crosshairs/crosshair_bracket", BRACKET, a, if a < 180.0 { 180.0 } else { 0.0 });
-    let small = |a: f32| on_ring("rui/hud/crosshairs/crosshair_small_rect", SMALL_RECT, a, 0.0);
-    let circle = Part { path: "rui/hud/crosshairs/crosshair_circle", px: (47.0, 47.0), angle: None, rot: 0.0, ring: true, offset: (0.0, 0.0) };
+    let bracket = |a: f32| {
+        on_ring(
+            "rui/hud/crosshairs/crosshair_bracket",
+            BRACKET,
+            a,
+            if a < 180.0 { 180.0 } else { 0.0 },
+        )
+    };
+    let small = |a: f32| {
+        on_ring(
+            "rui/hud/crosshairs/crosshair_small_rect",
+            SMALL_RECT,
+            a,
+            0.0,
+        )
+    };
+    let circle = Part {
+        path: "rui/hud/crosshairs/crosshair_circle",
+        px: (47.0, 47.0),
+        angle: None,
+        rot: 0.0,
+        ring: true,
+        offset: (0.0, 0.0),
+    };
     match n {
         "tri" | "ion" | "scorch" => vec![DOT, tri(0.0), tri(120.0), tri(240.0)],
-        "sniper_amped" | "titan_sniper" => vec![DOT, dash(0.0), dash(90.0), dash(180.0), dash(270.0)],
-        "shotgun" | "mastiff" | "mozambique" | "leadwall" | "circle2" | "circle2_small" => vec![DOT, circle],
-        "wingman" | "wingman_n" | "charge_rifle" | "smart_pistol" => vec![DOT, bracket(90.0), bracket(270.0)],
+        "sniper_amped" | "titan_sniper" => {
+            vec![DOT, dash(0.0), dash(90.0), dash(180.0), dash(270.0)]
+        }
+        "shotgun" | "mastiff" | "mozambique" | "leadwall" | "circle2" | "circle2_small" => {
+            vec![DOT, circle]
+        }
+        "wingman" | "wingman_n" | "charge_rifle" | "smart_pistol" => {
+            vec![DOT, bracket(90.0), bracket(270.0)]
+        }
         "alternator" | "smr" | "lstar" => vec![DOT, small(90.0), small(270.0)],
         // The 40mm sight (a 1080p cockpit shot): the two rulers, four arcs 2.3 vh out on the
         // diagonals and a dash 3 vh above and below.
         "40mm" | "40mm_burst" | "tracker_rockets" => vec![
-            full("rui/hud/crosshairs/crosshair_cross_sides2", (246.0, 73.0), (0.0, 0.0), 0.0),
-            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (-2.2, 2.3), 0.0),
-            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (-2.2, -2.3), 90.0),
-            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (2.2, -2.3), 180.0),
-            full("rui/hud/crosshairs/crosshair_arc", (27.0, 27.0), (2.2, 2.3), 270.0),
-            full("rui/hud/crosshairs/crosshair_dash", (7.0, 23.0), (0.0, -3.0), 0.0),
-            full("rui/hud/crosshairs/crosshair_dash", (7.0, 23.0), (0.0, 3.0), 0.0),
+            full(
+                "rui/hud/crosshairs/crosshair_cross_sides2",
+                (246.0, 73.0),
+                (0.0, 0.0),
+                0.0,
+            ),
+            full(
+                "rui/hud/crosshairs/crosshair_arc",
+                (27.0, 27.0),
+                (-2.2, 2.3),
+                0.0,
+            ),
+            full(
+                "rui/hud/crosshairs/crosshair_arc",
+                (27.0, 27.0),
+                (-2.2, -2.3),
+                90.0,
+            ),
+            full(
+                "rui/hud/crosshairs/crosshair_arc",
+                (27.0, 27.0),
+                (2.2, -2.3),
+                180.0,
+            ),
+            full(
+                "rui/hud/crosshairs/crosshair_arc",
+                (27.0, 27.0),
+                (2.2, 2.3),
+                270.0,
+            ),
+            full(
+                "rui/hud/crosshairs/crosshair_dash",
+                (7.0, 23.0),
+                (0.0, -3.0),
+                0.0,
+            ),
+            full(
+                "rui/hud/crosshairs/crosshair_dash",
+                (7.0, 23.0),
+                (0.0, 3.0),
+                0.0,
+            ),
         ],
         "grenade_launcher" | "grenade_launcher2" => {
-            vec![DOT, centred("rui/hud/crosshairs/crosshair_launcher", (15.0, 67.0), (0.0, 2.2))]
+            vec![
+                DOT,
+                centred(
+                    "rui/hud/crosshairs/crosshair_launcher",
+                    (15.0, 67.0),
+                    (0.0, 2.2),
+                ),
+            ]
         }
-        n if n.starts_with("titan_predator") => vec![centred("rui/hud/crosshairs/crosshair_cross_sides", (159.0, 49.0), (0.0, 0.0)), DOT],
+        n if n.starts_with("titan_predator") => vec![
+            centred(
+                "rui/hud/crosshairs/crosshair_cross_sides",
+                (159.0, 49.0),
+                (0.0, 0.0),
+            ),
+            DOT,
+        ],
         // crosshair_plus and anything not rebuilt yet.
         _ => vec![DOT, rect(0.0), rect(90.0), rect(180.0), rect(270.0)],
     }
@@ -102,7 +199,17 @@ fn recipe(name: &str) -> Vec<Part> {
 
 pub fn spawn(commands: &mut Commands, root: Entity) {
     let c = commands
-        .spawn((Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), top: Val::Percent(50.0), width: Val::Px(0.0), height: Val::Px(0.0), ..default() }, CrosshairRoot))
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(0.0),
+                height: Val::Px(0.0),
+                ..default()
+            },
+            CrosshairRoot,
+        ))
         .id();
     commands.entity(root).add_child(c);
 }
@@ -121,7 +228,9 @@ pub fn update(
     mut pieces: Query<(&Piece, &mut Node, &mut UiTransform, &mut ImageNode)>,
 ) {
     use crate::pilotctl::Control;
-    let Ok((root, children)) = roots.single() else { return };
+    let Ok((root, children)) = roots.single() else {
+        return;
+    };
     // How far the crosshair fades: a Pilot's gun hands over to its sight while aiming down
     // sights; a Titan's guns have none (ADS only zooms), so theirs stays up.
     let (name, spread, ads) = match *control {
@@ -140,13 +249,26 @@ pub fn update(
         }
         for p in recipe(&name) {
             let size = Vec2::new(p.px.0, p.px.1) * VH_PER_PX;
-            let Some(img) = ui.image(p.path) else { continue };
+            let Some(img) = ui.image(p.path) else {
+                continue;
+            };
             let e = commands
                 .spawn((
                     img,
-                    Node { position_type: PositionType::Absolute, width: Val::Vh(size.x), height: Val::Vh(size.y), ..default() },
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Vh(size.x),
+                        height: Val::Vh(size.y),
+                        ..default()
+                    },
                     UiTransform::IDENTITY,
-                    Piece { angle: p.angle, rot: p.rot, size, ring: p.ring, offset: Vec2::new(p.offset.0, p.offset.1) },
+                    Piece {
+                        angle: p.angle,
+                        rot: p.rot,
+                        size,
+                        ring: p.ring,
+                        offset: Vec2::new(p.offset.0, p.offset.1),
+                    },
                 ))
                 .id();
             commands.entity(root).add_child(e);
@@ -156,7 +278,17 @@ pub fn update(
         return;
     }
     // The spread cone's radius on screen, through the current (zoomed) lens.
-    let fov = cams.single().ok().and_then(|p| if let Projection::Perspective(pp) = p { Some(pp.fov) } else { None }).unwrap_or(1.0);
+    let fov = cams
+        .single()
+        .ok()
+        .and_then(|p| {
+            if let Projection::Perspective(pp) = p {
+                Some(pp.fov)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(1.0);
     let radius = ((spread.to_radians() * 0.5).tan() / (fov * 0.5).tan() * 50.0).max(MIN_RADIUS);
     let alpha = (1.0 - ads * 1.5).clamp(0.0, 1.0);
     for (p, mut node, mut tf, mut img) in &mut pieces {

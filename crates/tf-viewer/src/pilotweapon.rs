@@ -46,37 +46,211 @@ macro_rules! gun {
 
 /// The pilot weapons of Titanfall 2, with their fire sounds.
 pub const ARSENAL: &[ArsenalEntry] = &[
-    gun!("mp_weapon_rspn101", Primary, ["wpn_r101_1p_wpnfire_firstshot_core"], ["wpn_r101_1p_wpnfire_loop_core2"], ["wpn_r101_1p_wpnfire_tail_core"]),
-    gun!("mp_weapon_rspn101_og", Primary, ["wpn_cbr101_1p_wpnfire_firstshot_core"], ["wpn_cbr101_1p_wpnfire_loop_core"], ["wpn_cbr101_1p_wpnfire_tail_core"]),
-    gun!("mp_weapon_hemlok", Primary, ["wpn_hemlok_1p_wpnfire_core_3shotburst"], [], []),
-    gun!("mp_weapon_g2", Primary, [], ["wpn_g2a4_1p_wpnfire_shot"], ["wpn_g2a4_1p_wpnfire_tail"]),
-    gun!("mp_weapon_vinson", Primary, ["wpn_r101_1p_wpnfire_firstshot_core"], ["wpn_r101_1p_wpnfire_loop_core2"], ["wpn_r101_1p_wpnfire_tail_core"]),
-    gun!("mp_weapon_car", Primary, ["wpn_r97_1p_wpnfire_firstshot_core"], ["wpn_r97_1p_wpnfire_loop_core"], []),
-    gun!("mp_weapon_r97", Primary, ["wpn_r97_1p_wpnfire_firstshot_core"], ["wpn_r97_1p_wpnfire_loop_core"], []),
-    gun!("mp_weapon_alternator_smg", Primary, [], ["wpn_alternator_3p_wpnfire_close"], []),
-    gun!("mp_weapon_hemlok_smg", Primary, ["wpn_r97_1p_wpnfire_firstshot_core"], ["wpn_r97_1p_wpnfire_loop_core"], []),
-    gun!("mp_weapon_lmg", Primary, ["wpn_lmg_1p_wpnfire_firstshot_core"], ["wpn_lmg_1p_wpnfire_loop_core"], ["wpn_lmg_1p_wpnfire_tail_core"]),
-    gun!("mp_weapon_lstar", Primary, ["wpn_lstar_1p_wpnfire_firstshot_6ch"], ["wpn_lstar_1p_wpnfire_loop_corec"], ["wpn_lstar_1p_wpnfire_warbletail"]),
-    gun!("mp_weapon_esaw", Primary, ["wpn_lmg_1p_wpnfire_firstshot_core"], ["wpn_lmg_1p_wpnfire_loop_core"], ["wpn_lmg_1p_wpnfire_tail_core"]),
-    gun!("mp_weapon_sniper", Primary, [], ["wpn_krabersniper_1p_wpnfire_midshot"], ["wpn_krabersniper_1p_wpnfire_lsrstail_2ch"]),
-    gun!("mp_weapon_doubletake", Primary, [], ["wpn_doubletake_1p_wpnfire_harshmetal"], ["wpn_doubletake_1p_wpnfire_tail_mid"]),
-    gun!("mp_weapon_dmr", Primary, [], ["wpn_dmr_1p_wpnfire_reduced"], ["wpn_dmr_1p_wpnfire_taillr"]),
-    gun!("mp_weapon_shotgun", Primary, [], ["wpn_shotgun_1p_wpnfire_reduced"], []),
-    gun!("mp_weapon_mastiff", Primary, [], ["wpn_mastiff_1p_wpnfire_fire"], ["wpn_mastiff_1p_wpnfire_tail_6ch"]),
+    gun!(
+        "mp_weapon_rspn101",
+        Primary,
+        ["wpn_r101_1p_wpnfire_firstshot_core"],
+        ["wpn_r101_1p_wpnfire_loop_core2"],
+        ["wpn_r101_1p_wpnfire_tail_core"]
+    ),
+    gun!(
+        "mp_weapon_rspn101_og",
+        Primary,
+        ["wpn_cbr101_1p_wpnfire_firstshot_core"],
+        ["wpn_cbr101_1p_wpnfire_loop_core"],
+        ["wpn_cbr101_1p_wpnfire_tail_core"]
+    ),
+    gun!(
+        "mp_weapon_hemlok",
+        Primary,
+        ["wpn_hemlok_1p_wpnfire_core_3shotburst"],
+        [],
+        []
+    ),
+    gun!(
+        "mp_weapon_g2",
+        Primary,
+        [],
+        ["wpn_g2a4_1p_wpnfire_shot"],
+        ["wpn_g2a4_1p_wpnfire_tail"]
+    ),
+    gun!(
+        "mp_weapon_vinson",
+        Primary,
+        ["wpn_r101_1p_wpnfire_firstshot_core"],
+        ["wpn_r101_1p_wpnfire_loop_core2"],
+        ["wpn_r101_1p_wpnfire_tail_core"]
+    ),
+    gun!(
+        "mp_weapon_car",
+        Primary,
+        ["wpn_r97_1p_wpnfire_firstshot_core"],
+        ["wpn_r97_1p_wpnfire_loop_core"],
+        []
+    ),
+    gun!(
+        "mp_weapon_r97",
+        Primary,
+        ["wpn_r97_1p_wpnfire_firstshot_core"],
+        ["wpn_r97_1p_wpnfire_loop_core"],
+        []
+    ),
+    gun!(
+        "mp_weapon_alternator_smg",
+        Primary,
+        [],
+        ["wpn_alternator_3p_wpnfire_close"],
+        []
+    ),
+    gun!(
+        "mp_weapon_hemlok_smg",
+        Primary,
+        ["wpn_r97_1p_wpnfire_firstshot_core"],
+        ["wpn_r97_1p_wpnfire_loop_core"],
+        []
+    ),
+    gun!(
+        "mp_weapon_lmg",
+        Primary,
+        ["wpn_lmg_1p_wpnfire_firstshot_core"],
+        ["wpn_lmg_1p_wpnfire_loop_core"],
+        ["wpn_lmg_1p_wpnfire_tail_core"]
+    ),
+    gun!(
+        "mp_weapon_lstar",
+        Primary,
+        ["wpn_lstar_1p_wpnfire_firstshot_6ch"],
+        ["wpn_lstar_1p_wpnfire_loop_corec"],
+        ["wpn_lstar_1p_wpnfire_warbletail"]
+    ),
+    gun!(
+        "mp_weapon_esaw",
+        Primary,
+        ["wpn_lmg_1p_wpnfire_firstshot_core"],
+        ["wpn_lmg_1p_wpnfire_loop_core"],
+        ["wpn_lmg_1p_wpnfire_tail_core"]
+    ),
+    gun!(
+        "mp_weapon_sniper",
+        Primary,
+        [],
+        ["wpn_krabersniper_1p_wpnfire_midshot"],
+        ["wpn_krabersniper_1p_wpnfire_lsrstail_2ch"]
+    ),
+    gun!(
+        "mp_weapon_doubletake",
+        Primary,
+        [],
+        ["wpn_doubletake_1p_wpnfire_harshmetal"],
+        ["wpn_doubletake_1p_wpnfire_tail_mid"]
+    ),
+    gun!(
+        "mp_weapon_dmr",
+        Primary,
+        [],
+        ["wpn_dmr_1p_wpnfire_reduced"],
+        ["wpn_dmr_1p_wpnfire_taillr"]
+    ),
+    gun!(
+        "mp_weapon_shotgun",
+        Primary,
+        [],
+        ["wpn_shotgun_1p_wpnfire_reduced"],
+        []
+    ),
+    gun!(
+        "mp_weapon_mastiff",
+        Primary,
+        [],
+        ["wpn_mastiff_1p_wpnfire_fire"],
+        ["wpn_mastiff_1p_wpnfire_tail_6ch"]
+    ),
     gun!("mp_weapon_epg", Primary, [], ["wpn_epg_3p_shot_close"], []),
-    gun!("mp_weapon_softball", Primary, [], ["wpn_softball_1p_wpnfire_shot"], []),
+    gun!(
+        "mp_weapon_softball",
+        Primary,
+        [],
+        ["wpn_softball_1p_wpnfire_shot"],
+        []
+    ),
     gun!("mp_weapon_smr", Primary, [], ["wpn_epg_3p_shot_close"], []),
-    gun!("mp_weapon_pulse_lmg", Primary, [], ["wpn_coldwar_1p_fire_burst_servopunch"], []),
-    gun!("mp_weapon_smart_pistol", Primary, [], ["wpn_smartpistol_1p_wpnfire_core"], []),
-    gun!("mp_weapon_semipistol", Sidearm, [], ["wpn_2011pistol_1p_wpnfire_shot"], ["wpn_2011pistol_1p_wpnfire_tail"]),
-    gun!("mp_weapon_autopistol", Sidearm, [], ["wpn_re45_3p_wpnfire_firstshot_mid"], []),
-    gun!("mp_weapon_wingman", Sidearm, [], ["wpn_wingman_1p_wpnfire_shot"], []),
-    gun!("mp_weapon_wingman_n", Sidearm, [], ["wpn_wingman_1p_wpnfire_shot"], []),
-    gun!("mp_weapon_shotgun_pistol", Sidearm, [], ["wpn_shotgun_1p_wpnfire_reduced"], []),
-    gun!("mp_weapon_defender", AntiTitan, [], ["wpn_chargerifle_1p_fire_beam"], []),
-    gun!("mp_weapon_mgl", AntiTitan, [], ["wpn_mglv2_1p_wpnfire_close"], []),
-    gun!("mp_weapon_arc_launcher", AntiTitan, [], ["wpn_softball_1p_wpnfire_shot"], []),
-    gun!("mp_weapon_rocket_launcher", AntiTitan, [], ["wpn_softball_1p_wpnfire_shot"], []),
+    gun!(
+        "mp_weapon_pulse_lmg",
+        Primary,
+        [],
+        ["wpn_coldwar_1p_fire_burst_servopunch"],
+        []
+    ),
+    gun!(
+        "mp_weapon_smart_pistol",
+        Primary,
+        [],
+        ["wpn_smartpistol_1p_wpnfire_core"],
+        []
+    ),
+    gun!(
+        "mp_weapon_semipistol",
+        Sidearm,
+        [],
+        ["wpn_2011pistol_1p_wpnfire_shot"],
+        ["wpn_2011pistol_1p_wpnfire_tail"]
+    ),
+    gun!(
+        "mp_weapon_autopistol",
+        Sidearm,
+        [],
+        ["wpn_re45_3p_wpnfire_firstshot_mid"],
+        []
+    ),
+    gun!(
+        "mp_weapon_wingman",
+        Sidearm,
+        [],
+        ["wpn_wingman_1p_wpnfire_shot"],
+        []
+    ),
+    gun!(
+        "mp_weapon_wingman_n",
+        Sidearm,
+        [],
+        ["wpn_wingman_1p_wpnfire_shot"],
+        []
+    ),
+    gun!(
+        "mp_weapon_shotgun_pistol",
+        Sidearm,
+        [],
+        ["wpn_shotgun_1p_wpnfire_reduced"],
+        []
+    ),
+    gun!(
+        "mp_weapon_defender",
+        AntiTitan,
+        [],
+        ["wpn_chargerifle_1p_fire_beam"],
+        []
+    ),
+    gun!(
+        "mp_weapon_mgl",
+        AntiTitan,
+        [],
+        ["wpn_mglv2_1p_wpnfire_close"],
+        []
+    ),
+    gun!(
+        "mp_weapon_arc_launcher",
+        AntiTitan,
+        [],
+        ["wpn_softball_1p_wpnfire_shot"],
+        []
+    ),
+    gun!(
+        "mp_weapon_rocket_launcher",
+        AntiTitan,
+        [],
+        ["wpn_softball_1p_wpnfire_shot"],
+        []
+    ),
 ];
 
 pub fn arsenal_index(id: &str) -> Option<usize> {
@@ -85,7 +259,16 @@ pub fn arsenal_index(id: &str) -> Option<usize> {
 
 /// Bolt patterns from the weapons' scripts: (up, right) offsets scaled by the spread fraction.
 fn bolt_pattern(id: &str) -> Option<&'static [[f32; 2]]> {
-    const MASTIFF: [[f32; 2]; 8] = [[0.0, 0.15], [0.0, 0.3], [0.0, 0.6], [0.0, 1.2], [0.0, -0.3], [0.0, -0.6], [0.0, -1.2], [0.0, -0.15]];
+    const MASTIFF: [[f32; 2]; 8] = [
+        [0.0, 0.15],
+        [0.0, 0.3],
+        [0.0, 0.6],
+        [0.0, 1.2],
+        [0.0, -0.3],
+        [0.0, -0.6],
+        [0.0, -1.2],
+        [0.0, -0.15],
+    ];
     const MOZAMBIQUE: [[f32; 2]; 3] = [[-0.2, -0.4], [-0.2, 0.4], [0.0, 0.0]];
     const DOUBLETAKE: [[f32; 2]; 3] = [[0.0, -0.25], [0.0, 0.25], [0.0, 0.0]];
     match id {
@@ -131,8 +314,16 @@ impl LoadoutChoice {
     }
     /// Step a slot through the weapons that fit it.
     pub fn cycle(&mut self, slot: Slot, step: i32) {
-        let options: Vec<usize> = ARSENAL.iter().enumerate().filter(|(_, e)| e.slot == slot).map(|(i, _)| i).collect();
-        let cur = options.iter().position(|&i| i == self.get(slot)).unwrap_or(0) as i32;
+        let options: Vec<usize> = ARSENAL
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.slot == slot)
+            .map(|(i, _)| i)
+            .collect();
+        let cur = options
+            .iter()
+            .position(|&i| i == self.get(slot))
+            .unwrap_or(0) as i32;
         let next = options[(cur + step).rem_euclid(options.len() as i32) as usize];
         match slot {
             Slot::Primary => self.primary = next,
@@ -149,7 +340,6 @@ pub struct WorldRoot(pub Entity);
 /// Display names (`#WPN_...` → "R-201 Carbine") from the game's localisation.
 #[derive(Resource, Default)]
 pub struct Strings(pub std::collections::HashMap<String, String>);
-
 
 /// The activity modifiers the engine sets for the Pilot that viewmodel sequences name (from
 /// client.dll's ACT_MODIFIER list: ads, crouch, ..., onehanded, ..., wallrun, wallhang,
@@ -204,8 +394,24 @@ struct VmSeq {
 
 /// The activities whose sequences are picked by modifier.
 const PICKED_ACTS: &[&str] = &[
-    "ACT_VM_IDLE", "ACT_VM_DRAW", "ACT_VM_DRAWFIRST", "ACT_VM_HOLSTER", "ACT_VM_RAISE", "ACT_VM_RAISE_FROM_MELEE", "ACT_VM_RAISE_FROM_SPRINT", "ACT_VM_SPRINT", "ACT_VM_ADS_IN", "ACT_VM_ADS_OUT",
-    "ACT_VM_RELOAD", "ACT_VM_RELOADEMPTY", "ACT_VM_RELOAD_LATE1", "ACT_VM_RELOAD_LATE2", "ACT_VM_RELOAD_LATE3", "ACT_VM_RELOADEMPTY_LATE1", "ACT_VM_RELOADEMPTY_LATE2", "ACT_VM_RELOADEMPTY_LATE3",
+    "ACT_VM_IDLE",
+    "ACT_VM_DRAW",
+    "ACT_VM_DRAWFIRST",
+    "ACT_VM_HOLSTER",
+    "ACT_VM_RAISE",
+    "ACT_VM_RAISE_FROM_MELEE",
+    "ACT_VM_RAISE_FROM_SPRINT",
+    "ACT_VM_SPRINT",
+    "ACT_VM_ADS_IN",
+    "ACT_VM_ADS_OUT",
+    "ACT_VM_RELOAD",
+    "ACT_VM_RELOADEMPTY",
+    "ACT_VM_RELOAD_LATE1",
+    "ACT_VM_RELOAD_LATE2",
+    "ACT_VM_RELOAD_LATE3",
+    "ACT_VM_RELOADEMPTY_LATE1",
+    "ACT_VM_RELOADEMPTY_LATE2",
+    "ACT_VM_RELOADEMPTY_LATE3",
 ];
 
 impl VmSeqs {
@@ -214,13 +420,23 @@ impl VmSeqs {
             m.sequences
                 .iter()
                 .filter(|s| PICKED_ACTS.contains(&s.activity.as_str()))
-                .map(|s| VmSeq { label: s.label.clone(), activity: s.activity.clone(), mods: s.modifiers.clone(), fade_in: s.fade_in, grid: s.group_size[0] * s.group_size[1] > 1 })
+                .map(|s| VmSeq {
+                    label: s.label.clone(),
+                    activity: s.activity.clone(),
+                    mods: s.modifiers.clone(),
+                    fade_in: s.fade_in,
+                    grid: s.group_size[0] * s.group_size[1] > 1,
+                })
                 .collect(),
         )
     }
     /// The single (non-grid) sequences that a modifier selects, to load besides the plain ones.
     pub fn variants(&self) -> Vec<String> {
-        self.0.iter().filter(|q| !q.grid && !q.mods.is_empty() && q.activity != "ACT_VM_IDLE").map(|q| q.label.clone()).collect()
+        self.0
+            .iter()
+            .filter(|q| !q.grid && !q.mods.is_empty() && q.activity != "ACT_VM_IDLE")
+            .map(|q| q.label.clone())
+            .collect()
     }
     /// The sequence for `activity` under `mods`, as Source picks among an activity's sequences
     /// (`SelectWeightedSequenceFromModifiers`, with Respawn's negated modifiers): every listed
@@ -337,7 +553,11 @@ impl PilotWeapon {
     /// Seconds the current draw takes before the gun can fire: `deployfirst_time` the first time
     /// it comes out, else `deploy_time`.
     pub fn deploy_secs(&self) -> f32 {
-        if self.first_draw && self.def.deploy_first_time > 0.0 { self.def.deploy_first_time } else { self.def.deploy_time }
+        if self.first_draw && self.def.deploy_first_time > 0.0 {
+            self.def.deploy_first_time
+        } else {
+            self.def.deploy_time
+        }
     }
     pub fn reloading(&self) -> bool {
         self.reload_left > 0.0
@@ -404,7 +624,27 @@ struct VmLayers {
 
 impl Default for PilotLoadout {
     fn default() -> Self {
-        Self { guns: Vec::new(), active: 0, switching: None, deploy_t: 9.0, choice: None, vm_cycle: 0.0, sprint_blend: 0.0, raise_t: 9.0, vm_layers: VmLayers { jump_t: 9.0, land_t: 9.0, sprint_end_t: 9.0, mantle_end_t: 9.0, ..Default::default() }, vm_motion: Default::default(), melee_vm: None, ord_vm: None, tac_vm: None }
+        Self {
+            guns: Vec::new(),
+            active: 0,
+            switching: None,
+            deploy_t: 9.0,
+            choice: None,
+            vm_cycle: 0.0,
+            sprint_blend: 0.0,
+            raise_t: 9.0,
+            vm_layers: VmLayers {
+                jump_t: 9.0,
+                land_t: 9.0,
+                sprint_end_t: 9.0,
+                mantle_end_t: 9.0,
+                ..Default::default()
+            },
+            vm_motion: Default::default(),
+            melee_vm: None,
+            ord_vm: None,
+            tac_vm: None,
+        }
     }
 }
 
@@ -414,7 +654,10 @@ impl PilotLoadout {
     }
     /// The gun is up (not mid-switch or still drawing).
     pub fn ready(&self) -> bool {
-        self.switching.is_none() && self.active().is_some_and(|g| self.deploy_t >= g.deploy_secs())
+        self.switching.is_none()
+            && self
+                .active()
+                .is_some_and(|g| self.deploy_t >= g.deploy_secs())
     }
 }
 
@@ -432,7 +675,9 @@ pub fn build_loadout(
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut pilots: Query<&mut PilotLoadout>,
 ) {
-    let Ok(mut loadout) = pilots.single_mut() else { return };
+    let Ok(mut loadout) = pilots.single_mut() else {
+        return;
+    };
     if loadout.choice == Some(*choice) {
         return;
     }
@@ -442,7 +687,11 @@ pub fn build_loadout(
             commands.entity(anchor).despawn();
         }
     }
-    let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
+    let mut read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
     let defs: Vec<(usize, WeaponDef)> = [Slot::Primary, Slot::Sidearm, Slot::AntiTitan]
         .into_iter()
         .map(|slot| {
@@ -457,19 +706,56 @@ pub fn build_loadout(
     paths.push(MELEE_VIEWMODEL.to_string());
     crate::actor::prefetch_models(&gd, &paths);
     for (index, def) in defs {
-        let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, crate::vmcam::Viewmodel)).id();
+        let anchor = commands
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                crate::vmcam::Viewmodel,
+            ))
+            .id();
         commands.entity(root.0).add_child(anchor);
         let vm_model = crate::actor::parsed_model(&gd, &def.viewmodel).ok();
-        let body = vm_model.as_ref().map(|m| def.body_for(m)).unwrap_or_default();
-        let ads_scope = vm_model.as_ref().zip(def.ads_scope.as_ref()).and_then(|(m, (name, _))| {
-            Some((m.bodyparts.iter().position(|b| b.name.eq_ignore_ascii_case(name))?, m.bone_index("def_c_scope_ads")?))
-        });
+        let body = vm_model
+            .as_ref()
+            .map(|m| def.body_for(m))
+            .unwrap_or_default();
+        let ads_scope = vm_model
+            .as_ref()
+            .zip(def.ads_scope.as_ref())
+            .and_then(|(m, (name, _))| {
+                Some((
+                    m.bodyparts
+                        .iter()
+                        .position(|b| b.name.eq_ignore_ascii_case(name))?,
+                    m.bone_index("def_c_scope_ads")?,
+                ))
+            });
         // The crouch / air variants the activity modifiers pick (`VmSeqs::pick`).
         let seqs = vm_model.as_ref().map(|m| VmSeqs::of(m)).unwrap_or_default();
-        let variants: Vec<String> = seqs.variants().into_iter().map(|l| format!("?{l}")).collect();
+        let variants: Vec<String> = seqs
+            .variants()
+            .into_iter()
+            .map(|l| format!("?{l}"))
+            .collect();
         let mut names = vec![
-            "draw_seq", "holster_seq", "reload_seq", "reload_empty_seq", "sprint_seq", "sprintraise_seq", "ads_in_seq", "?ads_out_seq", "?drawfirst_seq", "?rechamber_seq", "?raise_frommelee_seq", "?raise_seq",
-            "?reload_late1_seq", "?reload_late2_seq", "?reload_late3_seq", "?reload_empty_late1_seq", "?reload_empty_late2_seq", "?reload_empty_late3_seq",
+            "draw_seq",
+            "holster_seq",
+            "reload_seq",
+            "reload_empty_seq",
+            "sprint_seq",
+            "sprintraise_seq",
+            "ads_in_seq",
+            "?ads_out_seq",
+            "?drawfirst_seq",
+            "?rechamber_seq",
+            "?raise_frommelee_seq",
+            "?raise_seq",
+            "?reload_late1_seq",
+            "?reload_late2_seq",
+            "?reload_late3_seq",
+            "?reload_empty_late1_seq",
+            "?reload_empty_late2_seq",
+            "?reload_empty_late3_seq",
         ];
         names.extend(variants.iter().map(|l| l.as_str()));
         let spec = ActorSpec {
@@ -477,14 +763,48 @@ pub fn build_loadout(
             sequences: &names,
             // The engine's additive viewmodel layers (the snipers and the Charge Rifle name
             // their jump/land transitions without `_iron`).
-            grids: &["attack_seq", "?idle_seq_autoplay", "?walk_seq", "?run_layer_reload", "?switch_to_jump_iron", "?switch_to_land_iron", "?switch_to_jump", "?switch_to_land"],
+            grids: &[
+                "attack_seq",
+                "?idle_seq_autoplay",
+                "?walk_seq",
+                "?run_layer_reload",
+                "?switch_to_jump_iron",
+                "?switch_to_land_iron",
+                "?switch_to_jump",
+                "?switch_to_land",
+            ],
             body: &body,
         };
-        let vm = crate::actor::spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes);
+        let vm = crate::actor::spawn_actor(
+            &mut commands,
+            anchor,
+            &gd,
+            &spec,
+            &mut cache,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+            &mut bindposes,
+        );
         let viewmodel = match vm {
             Ok(vm) => {
-                let arms = ActorSpec { path: crate::fparms::arms_model(), sequences: &[], grids: &[], body: &[] };
-                match crate::actor::spawn_actor(&mut commands, anchor, &gd, &arms, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                let arms = ActorSpec {
+                    path: crate::fparms::arms_model(),
+                    sequences: &[],
+                    grids: &[],
+                    body: &[],
+                };
+                match crate::actor::spawn_actor(
+                    &mut commands,
+                    anchor,
+                    &gd,
+                    &arms,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                    &mut bindposes,
+                ) {
                     Ok(a) => {
                         commands.entity(a.entity).insert(BoneMergeTo(vm.entity));
                     }
@@ -500,7 +820,14 @@ pub fn build_loadout(
         // Smart launchers fire the script's projectile model.
         let mut projectile = Vec::new();
         if def.smart.as_ref().is_some_and(|s| s.missile) && !def.projectile_model.is_empty() {
-            match crate::world::build_posed_model(&gd, &def.projectile_model, &mut cache, &mut meshes, &mut images, &mut materials) {
+            match crate::world::build_posed_model(
+                &gd,
+                &def.projectile_model,
+                &mut cache,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+            ) {
                 Ok(parts) => projectile = parts,
                 Err(e) => log::warn!("projectile {}: {e:#}", def.projectile_model),
             }
@@ -512,24 +839,90 @@ pub fn build_loadout(
         gun.pivots = pivots;
         gun.ads_scope = ads_scope;
         gun.fx_atts = [
-            vm_model.as_ref().and_then(|m| model_attachment(m, if gun.def.fx.muzzle_attach.is_empty() { "muzzle_flash" } else { &gun.def.fx.muzzle_attach })),
-            vm_model.as_ref().and_then(|m| model_attachment(m, if gun.def.fx.shell_attach.is_empty() { "shell" } else { &gun.def.fx.shell_attach })),
+            vm_model.as_ref().and_then(|m| {
+                model_attachment(
+                    m,
+                    if gun.def.fx.muzzle_attach.is_empty() {
+                        "muzzle_flash"
+                    } else {
+                        &gun.def.fx.muzzle_attach
+                    },
+                )
+            }),
+            vm_model.as_ref().and_then(|m| {
+                model_attachment(
+                    m,
+                    if gun.def.fx.shell_attach.is_empty() {
+                        "shell"
+                    } else {
+                        &gun.def.fx.shell_attach
+                    },
+                )
+            }),
         ];
-        gun.screens = vm_model.as_ref().map(|m| crate::ruiscreen::screens_for(m, &gun.def.rui)).unwrap_or_default();
+        gun.screens = vm_model
+            .as_ref()
+            .map(|m| crate::ruiscreen::screens_for(m, &gun.def.rui))
+            .unwrap_or_default();
         if gun.def.smart.as_ref().is_some_and(|s| s.launcher_screen) {
-            gun.sight = vm_model.as_ref().and_then(|m| crate::launcherscreen::panel_for(m));
+            gun.sight = vm_model
+                .as_ref()
+                .and_then(|m| crate::launcherscreen::panel_for(m));
         }
-        log::debug!("{}: body {:?}, ads scope {:?} ({:?}), screens {:?}", gun.def.name, body, ads_scope, gun.def.ads_scope, gun.screens.iter().map(|s| &s.ui).collect::<Vec<_>>());
+        log::debug!(
+            "{}: body {:?}, ads scope {:?} ({:?}), screens {:?}",
+            gun.def.name,
+            body,
+            ads_scope,
+            gun.def.ads_scope,
+            gun.screens.iter().map(|s| &s.ui).collect::<Vec<_>>()
+        );
         loadout.guns.push(gun);
     }
     if loadout.melee_vm.is_none() {
-        let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, crate::vmcam::Viewmodel)).id();
+        let anchor = commands
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                crate::vmcam::Viewmodel,
+            ))
+            .id();
         commands.entity(root.0).add_child(anchor);
-        let spec = ActorSpec { path: MELEE_VIEWMODEL, sequences: MELEE_SEQS, grids: &[], body: &[] };
-        match crate::actor::spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+        let spec = ActorSpec {
+            path: MELEE_VIEWMODEL,
+            sequences: MELEE_SEQS,
+            grids: &[],
+            body: &[],
+        };
+        match crate::actor::spawn_actor(
+            &mut commands,
+            anchor,
+            &gd,
+            &spec,
+            &mut cache,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+            &mut bindposes,
+        ) {
             Ok(vm) => {
-                let arms = ActorSpec { path: crate::fparms::arms_model(), sequences: &[], grids: &[], body: &[] };
-                if let Ok(a) = crate::actor::spawn_actor(&mut commands, anchor, &gd, &arms, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                let arms = ActorSpec {
+                    path: crate::fparms::arms_model(),
+                    sequences: &[],
+                    grids: &[],
+                    body: &[],
+                };
+                if let Ok(a) = crate::actor::spawn_actor(
+                    &mut commands,
+                    anchor,
+                    &gd,
+                    &arms,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                    &mut bindposes,
+                ) {
                     commands.entity(a.entity).insert(BoneMergeTo(vm.entity));
                 }
                 loadout.melee_vm = Some((anchor, vm.entity));
@@ -541,19 +934,43 @@ pub fn build_loadout(
     loadout.switching = None;
     loadout.deploy_t = 0.0;
     loadout.choice = Some(*choice);
-    log::info!("loadout: {:?} in {:?}", loadout.guns.iter().map(|g| g.def.name.as_str()).collect::<Vec<_>>(), t.elapsed());
+    log::info!(
+        "loadout: {:?} in {:?}",
+        loadout
+            .guns
+            .iter()
+            .map(|g| g.def.name.as_str())
+            .collect::<Vec<_>>(),
+        t.elapsed()
+    );
 }
 
 /// A model attachment: its bone's name and its frame in that bone's space.
 pub fn model_attachment(m: &tf_assets::mdl::Model, name: &str) -> Option<(String, Transform)> {
-    let a = m.attachments.iter().find(|a| a.name.eq_ignore_ascii_case(name))?;
+    let a = m
+        .attachments
+        .iter()
+        .find(|a| a.name.eq_ignore_ascii_case(name))?;
     let l = a.local;
-    let rot = Mat3::from_cols(Vec3::new(l[0][0], l[1][0], l[2][0]), Vec3::new(l[0][1], l[1][1], l[2][1]), Vec3::new(l[0][2], l[1][2], l[2][2]));
-    Some((m.bones.get(a.bone)?.name.clone(), Transform::from_translation(Vec3::new(l[0][3], l[1][3], l[2][3])).with_rotation(Quat::from_mat3(&rot).normalize())))
+    let rot = Mat3::from_cols(
+        Vec3::new(l[0][0], l[1][0], l[2][0]),
+        Vec3::new(l[0][1], l[1][1], l[2][1]),
+        Vec3::new(l[0][2], l[1][2], l[2][2]),
+    );
+    Some((
+        m.bones.get(a.bone)?.name.clone(),
+        Transform::from_translation(Vec3::new(l[0][3], l[1][3], l[2][3]))
+            .with_rotation(Quat::from_mat3(&rot).normalize()),
+    ))
 }
 
 /// Where an attachment of a viewmodel actor is (Bevy space position and rotation).
-pub fn vm_attachment(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, vm: Entity, att: &(String, Transform)) -> Option<(Vec3, Quat)> {
+pub fn vm_attachment(
+    actors: &Query<&Actor>,
+    globals: &Query<&GlobalTransform>,
+    vm: Entity,
+    att: &(String, Transform),
+) -> Option<(Vec3, Quat)> {
     let j = actors.get(vm).ok()?.joint(&att.0)?;
     let g = globals.get(j).ok()?.mul_transform(att.1);
     let (_, r, t) = g.to_scale_rotation_translation();
@@ -561,7 +978,11 @@ pub fn vm_attachment(actors: &Query<&Actor>, globals: &Query<&GlobalTransform>, 
 }
 
 /// A viewmodel attachment's joint entity and its frame in that joint's space.
-pub fn vm_joint(actors: &Query<&Actor>, vm: Entity, att: &(String, Transform)) -> Option<(Entity, Transform)> {
+pub fn vm_joint(
+    actors: &Query<&Actor>,
+    vm: Entity,
+    att: &(String, Transform),
+) -> Option<(Entity, Transform)> {
     Some((actors.get(vm).ok()?.joint(&att.0)?, att.1))
 }
 
@@ -581,23 +1002,66 @@ pub fn ordnance_viewmodel(
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut pilots: Query<&mut PilotLoadout>,
 ) {
-    let (Some(defs), Ok(mut lo)) = (defs, pilots.single_mut()) else { return };
+    let (Some(defs), Ok(mut lo)) = (defs, pilots.single_mut()) else {
+        return;
+    };
     if lo.choice.is_none() {
         return;
     }
     let oi = status.ordnance.min(defs.ordnance.len().saturating_sub(1));
     let ti = status.tactical.min(defs.tactical.len().saturating_sub(1));
     let mut spawn = |path: &str, idx: usize, commands: &mut Commands| -> (usize, Entity, Entity) {
-        let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, crate::vmcam::Viewmodel)).id();
+        let anchor = commands
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                crate::vmcam::Viewmodel,
+            ))
+            .id();
         commands.entity(root.0).add_child(anchor);
         if path.is_empty() {
             return (idx, anchor, Entity::PLACEHOLDER);
         }
-        let spec = ActorSpec { path, sequences: &["toss_prep_pullout_seq", "?toss_hold_seq", "toss_seq", "?idle_seq"], grids: &[], body: &[] };
-        match crate::actor::spawn_actor(commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+        let spec = ActorSpec {
+            path,
+            sequences: &[
+                "toss_prep_pullout_seq",
+                "?toss_hold_seq",
+                "toss_seq",
+                "?idle_seq",
+            ],
+            grids: &[],
+            body: &[],
+        };
+        match crate::actor::spawn_actor(
+            commands,
+            anchor,
+            &gd,
+            &spec,
+            &mut cache,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+            &mut bindposes,
+        ) {
             Ok(vm) => {
-                let arms = ActorSpec { path: crate::fparms::arms_model(), sequences: &[], grids: &[], body: &[] };
-                if let Ok(a) = crate::actor::spawn_actor(commands, anchor, &gd, &arms, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                let arms = ActorSpec {
+                    path: crate::fparms::arms_model(),
+                    sequences: &[],
+                    grids: &[],
+                    body: &[],
+                };
+                if let Ok(a) = crate::actor::spawn_actor(
+                    commands,
+                    anchor,
+                    &gd,
+                    &arms,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                    &mut bindposes,
+                ) {
                     commands.entity(a.entity).insert(BoneMergeTo(vm.entity));
                 }
                 (idx, anchor, vm.entity)
@@ -627,20 +1091,43 @@ pub fn ordnance_viewmodel(
 /// `melee_pilot_emptyhanded.txt`'s viewmodel and its ACT_VM_MELEE_ATTACK1 sequences (the
 /// engine picks one per swing).
 const MELEE_VIEWMODEL: &str = "models/weapons/empty_handed/ptpov_emptyhand.mdl";
-const MELEE_SEQS: &[&str] = &["melee_02_seq", "melee_03_seq", "melee_04_seq", "melee_05_seq", "melee_06_seq", "melee_07_seq", "melee_09_seq"];
+const MELEE_SEQS: &[&str] = &[
+    "melee_02_seq",
+    "melee_03_seq",
+    "melee_04_seq",
+    "melee_05_seq",
+    "melee_06_seq",
+    "melee_07_seq",
+    "melee_09_seq",
+];
 
 /// The viewmodel attachments the sway rotates about (hip and zoomed): bone name and offset.
 pub fn sway_pivots(gd: &crate::gamedata::GameData, def: &WeaponDef) -> [(String, Vec3); 2] {
-    let model = gd.read_file(&def.viewmodel).ok().and_then(|b| tf_assets::mdl::Model::parse(b).ok());
+    let model = gd
+        .read_file(&def.viewmodel)
+        .ok()
+        .and_then(|b| tf_assets::mdl::Model::parse(b).ok());
     let find = |name: &str| -> (String, Vec3) {
-        let Some(m) = model.as_ref() else { return Default::default() };
+        let Some(m) = model.as_ref() else {
+            return Default::default();
+        };
         m.attachments
             .iter()
             .find(|a| a.name.eq_ignore_ascii_case(name))
-            .and_then(|a| m.bones.get(a.bone).map(|b| (b.name.clone(), Vec3::new(a.local[0][3], a.local[1][3], a.local[2][3]))))
+            .and_then(|a| {
+                m.bones.get(a.bone).map(|b| {
+                    (
+                        b.name.clone(),
+                        Vec3::new(a.local[0][3], a.local[1][3], a.local[2][3]),
+                    )
+                })
+            })
             .unwrap_or_default()
     };
-    [find(&def.motion.hip.attach), find(&def.motion.zoomed.attach)]
+    [
+        find(&def.motion.hip.attach),
+        find(&def.motion.zoomed.attach),
+    ]
 }
 
 /// A projectile from a pilot weapon (game units).
@@ -677,7 +1164,11 @@ impl PilotBolt {
             gravity,
             travelled: 0.0,
             damage: (def.damage_near, def.damage_far, def.near_dist, def.far_dist),
-            explosion: (def.explosion_damage, def.explosion_inner_radius, def.explosion_radius),
+            explosion: (
+                def.explosion_damage,
+                def.explosion_inner_radius,
+                def.explosion_radius,
+            ),
             stops_regen: def.stops_regen,
             life: 6.0,
             from_titan,
@@ -685,27 +1176,58 @@ impl PilotBolt {
             crit: if def.crit { def.crit_scale } else { 1.0 },
             homing: None,
             impact_table: def.impact_table,
-            burn: def.burn.as_deref().filter(|_| !from_titan).map(|b| ((b.damage_near, b.damage_far), (b.explosion_damage, b.explosion_inner_radius, b.explosion_radius))),
+            burn: def.burn.as_deref().filter(|_| !from_titan).map(|b| {
+                (
+                    (b.damage_near, b.damage_far),
+                    (
+                        b.explosion_damage,
+                        b.explosion_inner_radius,
+                        b.explosion_radius,
+                    ),
+                )
+            }),
             thermite: from_titan && def.name == "mp_titanweapon_meteor",
         }
     }
 }
 
 /// Fire a projectile with a weapon's damage and explosion values (game units).
-pub fn spawn_bolt(commands: &mut Commands, fx: &FxAssets, pos: Vec3, vel: Vec3, gravity: f32, def: &WeaponDef, from_titan: bool) {
+pub fn spawn_bolt(
+    commands: &mut Commands,
+    fx: &FxAssets,
+    pos: Vec3,
+    vel: Vec3,
+    gravity: f32,
+    def: &WeaponDef,
+    from_titan: bool,
+) {
     let _ = fx;
     let size = if from_titan { 0.35 } else { 0.12 };
-    let energy = ["particle_accelerator", "sniper", "arc", "lstar", "plasma"].iter().any(|k| def.name.contains(k));
-    let color = if energy { Vec3::new(1.0, 2.5, 6.0) } else if def.name.contains("meteor") { Vec3::new(6.0, 2.0, 0.5) } else { Vec3::new(5.0, 2.6, 1.0) };
+    let energy = ["particle_accelerator", "sniper", "arc", "lstar", "plasma"]
+        .iter()
+        .any(|k| def.name.contains(k));
+    let color = if energy {
+        Vec3::new(1.0, 2.5, 6.0)
+    } else if def.name.contains("meteor") {
+        Vec3::new(6.0, 2.0, 0.5)
+    } else {
+        Vec3::new(5.0, 2.6, 1.0)
+    };
     let smoke = !energy && def.explosion_radius > 0.0;
     let facing = Quat::from_rotation_arc(Vec3::Y, to_bevy(vel).normalize_or(Vec3::Y));
-    let mut e = commands.spawn((Transform::from_translation(to_bevy(pos)).with_rotation(facing), Visibility::default(), PilotBolt::new(pos, vel, gravity, def, from_titan)));
+    let mut e = commands.spawn((
+        Transform::from_translation(to_bevy(pos)).with_rotation(facing),
+        Visibility::default(),
+        PilotBolt::new(pos, vel, gravity, def, from_titan),
+    ));
     // The script's look: its trail system (`projectile_trail_effect_0`) and `projectilemodel`.
     // Weapons without a trail keep the hand-built glow.
     if !def.trail.is_empty() && std::env::var_os("TF_OLD_FX").is_none() {
         e.insert(crate::pfx::PfxTrail::new(def.trail));
         if !def.projectile_model.is_empty() && !def.projectile_model.contains("empty_model") {
-            e.insert(ProjectileModel(crate::weapons::intern(&def.projectile_model)));
+            e.insert(ProjectileModel(crate::weapons::intern(
+                &def.projectile_model,
+            )));
         }
     } else {
         e.insert(crate::particles::Glow::new(color, size, smoke));
@@ -720,7 +1242,11 @@ pub struct ProjectileModel(pub &'static str);
 /// the part's model-space placement, model space (game axes, nose along +X as Source models
 /// point) turned into Bevy's Y-up metre space, and its +X onto the bolt's +Y.
 fn projectile_local(place: Transform) -> Transform {
-    let to_bolt = Transform::from_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
+    let to_bolt = Transform::from_rotation(
+        Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+            * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+    )
+    .with_scale(Vec3::splat(crate::player::UNIT));
     to_bolt.mul_transform(place)
 }
 
@@ -733,19 +1259,37 @@ pub fn attach_projectile_models(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut built: Local<std::collections::HashMap<&'static str, Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>>>,
+    mut built: Local<
+        std::collections::HashMap<
+            &'static str,
+            Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>,
+        >,
+    >,
     new: Query<(Entity, &ProjectileModel), Added<ProjectileModel>>,
 ) {
     for (id, m) in &new {
-        let parts = built.entry(m.0).or_insert_with(|| match crate::world::build_posed_model(&gd, m.0, &mut cache, &mut meshes, &mut images, &mut materials) {
-            Ok(parts) => parts,
-            Err(e) => {
-                log::warn!("projectile {}: {e:#}", m.0);
-                Vec::new()
+        let parts = built.entry(m.0).or_insert_with(|| {
+            match crate::world::build_posed_model(
+                &gd,
+                m.0,
+                &mut cache,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+            ) {
+                Ok(parts) => parts,
+                Err(e) => {
+                    log::warn!("projectile {}: {e:#}", m.0);
+                    Vec::new()
+                }
             }
         });
         for (mesh, mat, place) in parts.iter() {
-            commands.entity(id).with_child((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), projectile_local(*place)));
+            commands.entity(id).with_child((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat.clone()),
+                projectile_local(*place),
+            ));
         }
     }
 }
@@ -753,26 +1297,47 @@ pub fn attach_projectile_models(
 /// Launch a smart missile (the Archer's rocket): the script's projectile model with a smoke
 /// trail, homing on `target` when it has one (`SmartAmmo_FireWeapon_HomingMissile`; missiles
 /// live 10 s).
-fn spawn_smart_missile(commands: &mut Commands, pos: Vec3, vel: Vec3, def: &WeaponDef, target: Option<Entity>, homing: f32, model: &[(Handle<Mesh>, Handle<StandardMaterial>, Transform)]) {
+fn spawn_smart_missile(
+    commands: &mut Commands,
+    pos: Vec3,
+    vel: Vec3,
+    def: &WeaponDef,
+    target: Option<Entity>,
+    homing: f32,
+    model: &[(Handle<Mesh>, Handle<StandardMaterial>, Transform)],
+) {
     let mut bolt = PilotBolt::new(pos, vel, 0.0, def, false);
     bolt.life = 10.0;
     bolt.homing = target.map(|t| (t, homing));
     let id = commands
         .spawn((
-            Transform::from_translation(to_bevy(pos)).with_rotation(Quat::from_rotation_arc(Vec3::Y, to_bevy(vel).normalize_or(Vec3::Y))),
+            Transform::from_translation(to_bevy(pos)).with_rotation(Quat::from_rotation_arc(
+                Vec3::Y,
+                to_bevy(vel).normalize_or(Vec3::Y),
+            )),
             Visibility::default(),
             crate::particles::Glow::new(Vec3::new(5.0, 2.6, 1.0), 0.1, true),
             bolt,
         ))
         .id();
     for (mesh, mat, place) in model {
-        let part = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), projectile_local(*place))).id();
+        let part = commands
+            .spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat.clone()),
+                projectile_local(*place),
+            ))
+            .id();
         commands.entity(id).add_child(part);
     }
 }
 
 fn view_dir(yaw: f32, pitch: f32) -> Vec3 {
-    Vec3::new(pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), -pitch.sin())
+    Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        -pitch.sin(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -791,7 +1356,10 @@ pub fn pilot_weapon_fire(
     mut enemies: Query<(Entity, &mut Enemy)>,
     actors: Query<&Actor>,
     globals: Query<&GlobalTransform>,
-    (hitboxes, shields): (Option<Res<crate::hitbox::EnemyHitboxes>>, Res<crate::pilotability::Shields>),
+    (hitboxes, shields): (
+        Option<Res<crate::hitbox::EnemyHitboxes>>,
+        Res<crate::pilotability::Shields>,
+    ),
     (mut hit_feedback, mut enemy_walls, springs, pfx, melee_state, throw_state, lenses): (
         ResMut<crate::hitbox::RecentHits>,
         ResMut<crate::titankit::EnemyWalls>,
@@ -799,7 +1367,17 @@ pub fn pilot_weapon_fire(
         Option<Res<crate::pfx::Pfx>>,
         Res<crate::executions::PilotMelee>,
         Res<crate::pilotability::OrdnanceThrow>,
-        Query<(&GlobalTransform, &Projection, Has<crate::vmcam::ViewmodelCamera>), Or<(With<crate::player::MainCamera>, With<crate::vmcam::ViewmodelCamera>)>>,
+        Query<
+            (
+                &GlobalTransform,
+                &Projection,
+                Has<crate::vmcam::ViewmodelCamera>,
+            ),
+            Or<(
+                With<crate::player::MainCamera>,
+                With<crate::vmcam::ViewmodelCamera>,
+            )>,
+        >,
     ),
 ) {
     let pfx_ready = pfx.as_deref().is_some_and(|p| p.ready());
@@ -807,7 +1385,9 @@ pub fn pilot_weapon_fire(
     let dt = time.delta_secs();
     let no_boxes = crate::hitbox::EnemyHitboxes::default();
     let hitboxes = hitboxes.as_deref().unwrap_or(&no_boxes);
-    let Ok((pilot, mut lo)) = pilots.single_mut() else { return };
+    let Ok((pilot, mut lo)) = pilots.single_mut() else {
+        return;
+    };
     let lo = &mut *lo;
     let prev_deploy = lo.deploy_t;
     lo.deploy_t += dt;
@@ -825,7 +1405,11 @@ pub fn pilot_weapon_fire(
         let g = lo.guns.get(lo.active);
         punch.step(dt, g.map(|g| &g.def.kick), g.map_or(0.0, |g| g.ads));
     }
-    if *control != Control::Pilot || *mode == CameraMode::Free || lo.guns.is_empty() || rodeo.riding() {
+    if *control != Control::Pilot
+        || *mode == CameraMode::Free
+        || lo.guns.is_empty()
+        || rodeo.riding()
+    {
         for g in &mut lo.guns {
             g.ads = 0.0;
             g.smart.clear();
@@ -844,8 +1428,18 @@ pub fn pilot_weapon_fire(
                 // An interrupted reload resumes from the furthest stage it reached (the
                 // `_late` times: once the remaining time is within one, that stage is done).
                 if g.reload_left > 0.0 {
-                    let lates = if g.reload_empty { g.def.reloadempty_late } else { g.def.reload_late };
-                    let stage = (1..=3u8).filter(|&n| lates[n as usize - 1] > 0.0 && g.reload_left <= lates[n as usize - 1]).max().unwrap_or(0).max(g.reload_stage);
+                    let lates = if g.reload_empty {
+                        g.def.reloadempty_late
+                    } else {
+                        g.def.reload_late
+                    };
+                    let stage = (1..=3u8)
+                        .filter(|&n| {
+                            lates[n as usize - 1] > 0.0 && g.reload_left <= lates[n as usize - 1]
+                        })
+                        .max()
+                        .unwrap_or(0)
+                        .max(g.reload_stage);
                     g.reload_resume = (stage > 0).then_some((g.reload_empty, stage));
                 }
                 g.reload_left = 0.0;
@@ -887,10 +1481,22 @@ pub fn pilot_weapon_fire(
 
     // attack_button_presses_ads: the trigger aims too (Archer, Thunderbolt).
     let aim = input.pilot_ads || (w.def.attack_presses_ads && input.pilot_fire);
-    let ads_target = if aim && !running && !w.reloading() && ready { 1.0 } else { 0.0 };
-    let zoom = if ads_target >= w.ads { w.def.zoom_time } else { w.def.zoom_time_out };
+    let ads_target = if aim && !running && !w.reloading() && ready {
+        1.0
+    } else {
+        0.0
+    };
+    let zoom = if ads_target >= w.ads {
+        w.def.zoom_time
+    } else {
+        w.def.zoom_time_out
+    };
     let rate = dt / zoom.max(0.05);
-    w.ads = if ads_target > w.ads { (w.ads + rate).min(ads_target) } else { (w.ads - rate).max(ads_target) };
+    w.ads = if ads_target > w.ads {
+        (w.ads + rate).min(ads_target)
+    } else {
+        (w.ads - rate).max(ads_target)
+    };
     let eye = Vec3::from(s.eye(&settings.0).to_array());
 
     w.cooldown = (w.cooldown - dt).max(-dt);
@@ -912,26 +1518,62 @@ pub fn pilot_weapon_fire(
         }
     }
     // Stockpile-only weapons (the Charge Rifle's ammo_clip_size 0) never reload.
-    let want_reload = !w.def.no_reload && (std::mem::take(&mut input.pilot_reload) && w.ammo < w.def.clip || (w.ammo == 0 && input.pilot_fire));
+    let want_reload = !w.def.no_reload
+        && (std::mem::take(&mut input.pilot_reload) && w.ammo < w.def.clip
+            || (w.ammo == 0 && input.pilot_fire));
     if want_reload && !w.reloading() && ready {
         let empty = w.ammo == 0;
-        let resume = w.reload_resume.filter(|&(e, _)| e == empty).map(|(_, s)| s).unwrap_or(0);
-        let lates = if empty { w.def.reloadempty_late } else { w.def.reload_late };
+        let resume = w
+            .reload_resume
+            .filter(|&(e, _)| e == empty)
+            .map(|(_, s)| s)
+            .unwrap_or(0);
+        let lates = if empty {
+            w.def.reloadempty_late
+        } else {
+            w.def.reload_late
+        };
         w.reload_left = match resume {
-            0 => if empty { w.def.reload_empty_time } else { w.def.reload_time },
+            0 => {
+                if empty {
+                    w.def.reload_empty_time
+                } else {
+                    w.def.reload_time
+                }
+            }
             s => lates[s as usize - 1],
         };
         w.reload_stage = resume;
         w.reload_empty = empty;
         w.reload_t = 0.0;
-        log::debug!("{} reload ({}) from stage {resume}: {:.2}s", w.def.name, if empty { "empty" } else { "tactical" }, w.reload_left);
+        log::debug!(
+            "{} reload ({}) from stage {resume}: {:.2}s",
+            w.def.name,
+            if empty { "empty" } else { "tactical" },
+            w.reload_left
+        );
         w.burst_left = 0;
     }
     // Smart ammo: search for and paint locks (hip fire and/or ADS, as the script allows).
     if let Some(sd) = w.def.smart.clone() {
         let zoomed = w.ads >= 0.99;
-        let searching = ready && !w.reloading() && !lowered && (w.ammo > 0 || !w.smart.queue.is_empty()) && if zoomed { sd.ads_lock } else { sd.hip_lock };
-        crate::smartammo::search(&mut commands, &sd, &w.def, &mut w.smart, searching, eye, view_dir(input.yaw, input.pitch), dt, &world, &enemies);
+        let searching = ready
+            && !w.reloading()
+            && !lowered
+            && (w.ammo > 0 || !w.smart.queue.is_empty())
+            && if zoomed { sd.ads_lock } else { sd.hip_lock };
+        crate::smartammo::search(
+            &mut commands,
+            &sd,
+            &w.def,
+            &mut w.smart,
+            searching,
+            eye,
+            view_dir(input.yaw, input.pitch),
+            dt,
+            &world,
+            &enemies,
+        );
     }
     // Charge weapons: holding the trigger charges (Charge Rifle 1.3 s, Cold War 0.5 s); a full
     // charge fires (OnWeaponPrimaryAttack_weapon_defender refuses anything less), and letting go
@@ -939,8 +1581,18 @@ pub fn pilot_weapon_fire(
     let cdef = w.def.charge.clone();
     let charged = cdef.time > 0.0;
     if charged {
-        let can = ready && !w.reloading() && w.ammo > 0 && !lowered && raised && w.cooldown <= 0.0 && w.burst_left == 0;
-        let held = if cdef.by_ads { input.pilot_ads } else { input.pilot_fire };
+        let can = ready
+            && !w.reloading()
+            && w.ammo > 0
+            && !lowered
+            && raised
+            && w.cooldown <= 0.0
+            && w.burst_left == 0;
+        let held = if cdef.by_ads {
+            input.pilot_ads
+        } else {
+            input.pilot_fire
+        };
         if held && can && !cdef.require_input {
             w.charge.latched = true;
         }
@@ -950,9 +1602,19 @@ pub fn pilot_weapon_fire(
         let charging = can && (held || w.charge.latched);
         if charging && !w.charge.charging {
             audio::cue(&mut commands, Cue::ChargeRifleTrigger, None);
-            audio::cue_for(&mut commands, Cue::ChargeRifleWindUp, None, (1.0 - w.charge.frac) * cdef.time + 0.1);
+            audio::cue_for(
+                &mut commands,
+                Cue::ChargeRifleWindUp,
+                None,
+                (1.0 - w.charge.frac) * cdef.time + 0.1,
+            );
         } else if !charging && w.charge.charging && w.charge.frac > 0.05 {
-            audio::cue_for(&mut commands, Cue::ChargeRifleWindDown, None, w.charge.frac * cdef.cooldown.max(0.3) + 0.2);
+            audio::cue_for(
+                &mut commands,
+                Cue::ChargeRifleWindDown,
+                None,
+                w.charge.frac * cdef.cooldown.max(0.3) + 0.2,
+            );
         }
         w.charge.charging = charging;
         w.charge.update(&cdef, charging, dt);
@@ -989,16 +1651,34 @@ pub fn pilot_weapon_fire(
         // attack_button_presses_ads weapons only fire fully zoomed.
         if !start || w.cooldown > 0.0 || (w.def.attack_presses_ads && w.ads < 0.999) {
             if pulled {
-                log::debug!("{}: trigger refused (start {start}, cooldown {:.2}, ads {:.2})", w.def.name, w.cooldown, w.ads);
+                log::debug!(
+                    "{}: trigger refused (start {start}, cooldown {:.2}, ads {:.2})",
+                    w.def.name,
+                    w.cooldown,
+                    w.ads
+                );
             }
             return;
         }
         // SmartAmmo_FireWeapon: one round per full lock, or the weapon's own burst unlocked.
-        w.smart.queue = w.def.smart.as_ref().map(|sd| w.smart.burst(sd.max_targeted_burst)).unwrap_or_default();
-        w.burst_size = if w.smart.queue.is_empty() { w.def.burst_count.max(1) } else { w.smart.queue.len() as u32 };
+        w.smart.queue = w
+            .def
+            .smart
+            .as_ref()
+            .map(|sd| w.smart.burst(sd.max_targeted_burst))
+            .unwrap_or_default();
+        w.burst_size = if w.smart.queue.is_empty() {
+            w.def.burst_count.max(1)
+        } else {
+            w.smart.queue.len() as u32
+        };
         w.burst_left = w.burst_size;
         if charged {
-            log::info!("{} fires charged: {:.0} damage", w.def.name, shot_def.damage_near);
+            log::info!(
+                "{} fires charged: {:.0} damage",
+                w.def.name,
+                shot_def.damage_near
+            );
             w.charge = crate::weapons::Charge::default();
         }
         if !w.smart.queue.is_empty() {
@@ -1007,11 +1687,20 @@ pub fn pilot_weapon_fire(
     }
     let burst = w.burst_size.max(1);
     // Within a burst shots come at the fire rate; bursts are separated by burst_fire_delay.
-    w.rate_ramp = w.def.ramp_step(w.rate_ramp, w.trigger_held && w.ammo > 0 && !lowered, w.ads, dt);
+    w.rate_ramp = w.def.ramp_step(
+        w.rate_ramp,
+        w.trigger_held && w.ammo > 0 && !lowered,
+        w.ads,
+        dt,
+    );
     let interval = 1.0 / w.def.rate_at(w.rate_ramp).max(0.1);
     while w.cooldown <= 0.0 && w.ammo > 0 && w.burst_left > 0 {
         w.burst_left -= 1;
-        w.cooldown += if w.burst_left == 0 && burst > 1 { interval + w.def.burst_delay } else { interval };
+        w.cooldown += if w.burst_left == 0 && burst > 1 {
+            interval + w.def.burst_delay
+        } else {
+            interval
+        };
         // This round's smart target. A target that died since isn't shot at (the script returns
         // without firing), and the locks clear after the last round (SetUnlockAfterBurst).
         let smart_target = (!w.smart.queue.is_empty()).then(|| w.smart.queue.remove(0));
@@ -1020,7 +1709,9 @@ pub fn pilot_weapon_fire(
         }
         let target_at = match smart_target {
             Some(t) => match enemies.get(t) {
-                Ok((_, e)) if e.alive() => Some(crate::hitbox::aim_point(e, hitboxes, &actors, &globals)),
+                Ok((_, e)) if e.alive() => {
+                    Some(crate::hitbox::aim_point(e, hitboxes, &actors, &globals))
+                }
                 _ => continue,
             },
             None => None,
@@ -1029,7 +1720,11 @@ pub fn pilot_weapon_fire(
         w.since_fire = 0.0;
         w.fire_t = 0.0;
         let first_of_burst = w.burst_left + 1 == burst;
-        let part = if !w.firing_audio || (burst > 1 && first_of_burst) { GunPart::First } else { GunPart::Shot };
+        let part = if !w.firing_audio || (burst > 1 && first_of_burst) {
+            GunPart::First
+        } else {
+            GunPart::Shot
+        };
         if burst <= 1 || first_of_burst || smart_target.is_some() {
             audio::cue(&mut commands, cue_gun(part), None);
         }
@@ -1058,7 +1753,10 @@ pub fn pilot_weapon_fire(
             }
         } else if w.def.shotgun {
             for _ in 0..8 {
-                let (a, r) = (w.rand() * std::f32::consts::TAU, w.rand().sqrt() * base.to_radians() * 0.5);
+                let (a, r) = (
+                    w.rand() * std::f32::consts::TAU,
+                    w.rand().sqrt() * base.to_radians() * 0.5,
+                );
                 dirs.push((forward + right * a.cos() * r + up * a.sin() * r).normalize());
             }
         } else {
@@ -1073,15 +1771,39 @@ pub fn pilot_weapon_fire(
             .unwrap_or(to_bevy(eye));
         for dir in dirs {
             if let Some(sd) = missile {
-                spawn_smart_missile(&mut commands, eye + dir * 40.0, dir * sd.missile_speed, &shot_def, smart_target, sd.homing_speed, &w.projectile);
+                spawn_smart_missile(
+                    &mut commands,
+                    eye + dir * 40.0,
+                    dir * sd.missile_speed,
+                    &shot_def,
+                    smart_target,
+                    sd.homing_speed,
+                    &w.projectile,
+                );
                 continue;
             }
             if let Some(speed) = w.def.projectile_speed {
-                spawn_bolt(&mut commands, &fx, eye + dir * 40.0, dir * speed, w.def.gravity, &shot_def, false);
+                spawn_bolt(
+                    &mut commands,
+                    &fx,
+                    eye + dir * 40.0,
+                    dir * speed,
+                    w.def.gravity,
+                    &shot_def,
+                    false,
+                );
                 continue;
             }
             let max = 15000.0;
-            let mut hit_t = world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(dir.to_array()), max).map(|h| h.t).unwrap_or(max);
+            let mut hit_t = world
+                .0
+                .raycast(
+                    SVec3::from(eye.to_array()),
+                    SVec3::from(dir.to_array()),
+                    max,
+                )
+                .map(|h| h.t)
+                .unwrap_or(max);
             // An enemy Tone's Particle Wall stops the shot (and takes its damage).
             let mut wall = None;
             if let Some((we, t)) = enemy_walls.hit(eye, dir, hit_t) {
@@ -1091,7 +1813,9 @@ pub fn pilot_weapon_fire(
             let mut victim = None;
             for (id, e) in enemies.iter() {
                 if e.alive() {
-                    if let Some(h) = crate::hitbox::trace(eye, dir, hit_t, e, hitboxes, &actors, &globals) {
+                    if let Some(h) =
+                        crate::hitbox::trace(eye, dir, hit_t, e, hitboxes, &actors, &globals)
+                    {
                         hit_t = h.t;
                         victim = Some((id, h));
                     }
@@ -1099,11 +1823,24 @@ pub fn pilot_weapon_fire(
             }
             if let (Some(we), None) = (wall, victim.as_ref()) {
                 enemy_walls.absorbed.push((we, shot_def.damage_near));
-                crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: to_bevy(eye + dir * hit_t), normal: -to_bevy(dir).normalize_or(Vec3::Y), table: shot_def.impact_table, surface: crate::particles::Surface::Shield, victim: false, scale: 1.0 });
+                crate::particles::emit(
+                    &mut commands,
+                    crate::particles::Effect::Hit {
+                        at: to_bevy(eye + dir * hit_t),
+                        normal: -to_bevy(dir).normalize_or(Vec3::Y),
+                        table: shot_def.impact_table,
+                        surface: crate::particles::Surface::Shield,
+                        victim: false,
+                        scale: 1.0,
+                    },
+                );
             }
             // Out through your A-Wall: the round is amped (the weapon's burn mod: its damage
             // and tracer; CodeCallback_CheckPassThroughAddsMods).
-            let amped = shields.passes_out(eye, dir, hit_t).then_some(w.def.burn.as_deref()).flatten();
+            let amped = shields
+                .passes_out(eye, dir, hit_t)
+                .then_some(w.def.burn.as_deref())
+                .flatten();
             let shot = amped.unwrap_or(&shot_def);
             if amped.is_some() {
                 log::debug!("{} round amped through an a-wall", w.def.name);
@@ -1111,9 +1848,19 @@ pub fn pilot_weapon_fire(
             let mut surface = crate::particles::Surface::World;
             if let Some((id, h)) = victim {
                 if let Ok((_, mut e)) = enemies.get_mut(id) {
-                    surface = if e.infantry { crate::particles::Surface::Flesh } else { crate::particles::Surface::Titan };
+                    surface = if e.infantry {
+                        crate::particles::Surface::Flesh
+                    } else {
+                        crate::particles::Surface::Titan
+                    };
                     let dmg = crate::hitbox::damage(shot, &h, hit_t, e.infantry);
-                    log::debug!("{} hit {} group {} crit {} for {dmg:.0}", w.def.name, if e.infantry { "grunt" } else { "titan" }, h.group, h.crit);
+                    log::debug!(
+                        "{} hit {} group {} crit {} for {dmg:.0}",
+                        w.def.name,
+                        if e.infantry { "grunt" } else { "titan" },
+                        h.group,
+                        h.crit
+                    );
                     e.damage(dmg, w.def.stops_regen);
                 }
             }
@@ -1123,26 +1870,70 @@ pub fn pilot_weapon_fire(
                 // Charged shots are beams (P_wpn_defender_beam): thicker and hotter.
                 // The script's first-person tracer when the game's systems are loaded.
                 let tdef = amped.unwrap_or(&w.def);
-                let tracer = if tdef.fx.tracer_view.is_empty() { &tdef.fx.tracer_world } else { &tdef.fx.tracer_view };
-                if pfx_ready && !charged && !tracer.is_empty() && std::env::var_os("TF_OLD_FX").is_none() {
+                let tracer = if tdef.fx.tracer_view.is_empty() {
+                    &tdef.fx.tracer_world
+                } else {
+                    &tdef.fx.tracer_view
+                };
+                if pfx_ready
+                    && !charged
+                    && !tracer.is_empty()
+                    && std::env::var_os("TF_OLD_FX").is_none()
+                {
                     // The tracer starts where the gun's muzzle is seen (FormatViewModelAttachment).
-                    let fov = |vm: bool| lenses.iter().find(|l| l.2 == vm).and_then(|(g, p, _)| if let Projection::Perspective(pp) = p { Some((*g, pp.fov)) } else { None });
+                    let fov = |vm: bool| {
+                        lenses.iter().find(|l| l.2 == vm).and_then(|(g, p, _)| {
+                            if let Projection::Perspective(pp) = p {
+                                Some((*g, pp.fov))
+                            } else {
+                                None
+                            }
+                        })
+                    };
                     let start = match (fov(false), fov(true)) {
-                        (Some((cam, w)), Some((_, v))) => crate::vmcam::to_world(muzzle, &cam, w, v),
+                        (Some((cam, w)), Some((_, v))) => {
+                            crate::vmcam::to_world(muzzle, &cam, w, v)
+                        }
                         _ => muzzle,
                     };
                     crate::pfx::emit_beam(&mut commands, tracer, start, stop);
                 } else {
-                    let (width, color) = if charged { (0.12, Vec3::new(2.5, 3.5, 6.0)) } else { (0.035, Vec3::new(4.0, 2.4, 1.0)) };
-                    crate::particles::emit(&mut commands, crate::particles::Effect::Tracer { from: muzzle, to: stop, width, color });
+                    let (width, color) = if charged {
+                        (0.12, Vec3::new(2.5, 3.5, 6.0))
+                    } else {
+                        (0.035, Vec3::new(4.0, 2.4, 1.0))
+                    };
+                    crate::particles::emit(
+                        &mut commands,
+                        crate::particles::Effect::Tracer {
+                            from: muzzle,
+                            to: stop,
+                            width,
+                            color,
+                        },
+                    );
                 }
             }
-            crate::particles::emit(&mut commands, crate::particles::Effect::Hit { at: stop, normal: -dir_b, table: shot_def.impact_table, surface, victim: false, scale: if victim.is_some() { 1.4 } else { 1.0 } });
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Hit {
+                    at: stop,
+                    normal: -dir_b,
+                    table: shot_def.impact_table,
+                    surface,
+                    victim: false,
+                    scale: if victim.is_some() { 1.4 } else { 1.0 },
+                },
+            );
             if let Some((_, h)) = victim {
                 hit_feedback.push(h);
             }
         }
-        w.spread_kick = w.def.spread.kicked(w.spread_kick, crate::spread::pilot_stance(&pilot.state), ads);
+        w.spread_kick = w.def.spread.kicked(
+            w.spread_kick,
+            crate::spread::pilot_stance(&pilot.state),
+            ads,
+        );
         let r = [w.rand(), w.rand(), w.rand(), w.rand()];
         punch.kick(&w.def.kick, &springs, ads, pilot.state.crouched, 1.0, r);
         // viewkick_perm_*: the part of the kick that stays in the aim.
@@ -1152,22 +1943,47 @@ pub fn pilot_weapon_fire(
         // The script's first-person muzzle flash and shell eject at their attachments, drawn
         // with the viewmodel; the hand-built flash when the game's systems aren't available.
         let vm = w.viewmodel.map(|v| v.1);
-        let at = |i: usize| vm.zip(w.fx_atts[i].as_ref()).and_then(|(vm, a)| vm_joint(&actors, vm, a));
+        let at = |i: usize| {
+            vm.zip(w.fx_atts[i].as_ref())
+                .and_then(|(vm, a)| vm_joint(&actors, vm, a))
+        };
         let game_fx = pfx_ready && std::env::var_os("TF_OLD_FX").is_none();
         match (at(0), game_fx && !w.def.fx.muzzle_view.is_empty()) {
-            (Some((j, local)), true) => crate::pfx::emit_on_vm_joint(&mut commands, &w.def.fx.muzzle_view, j, local),
+            (Some((j, local)), true) => {
+                crate::pfx::emit_on_vm_joint(&mut commands, &w.def.fx.muzzle_view, j, local)
+            }
             _ => {
-                let energy = ["arc", "lstar", "plasma"].iter().any(|k| w.def.name.contains(k));
-                crate::particles::emit(&mut commands, crate::particles::Effect::Muzzle { at: muzzle, dir: to_bevy(forward).normalize_or(Vec3::NEG_Z), scale: 0.3, energy });
+                let energy = ["arc", "lstar", "plasma"]
+                    .iter()
+                    .any(|k| w.def.name.contains(k));
+                crate::particles::emit(
+                    &mut commands,
+                    crate::particles::Effect::Muzzle {
+                        at: muzzle,
+                        dir: to_bevy(forward).normalize_or(Vec3::NEG_Z),
+                        scale: 0.3,
+                        energy,
+                    },
+                );
             }
         }
         if let (Some((j, local)), true) = (at(1), game_fx && !w.def.fx.shell_view.is_empty()) {
             crate::pfx::emit_on_vm_joint(&mut commands, &w.def.fx.shell_view, j, local);
         }
         commands.spawn((
-            PointLight { color: Color::srgb(1.0, 0.75, 0.45), intensity: 60_000.0, range: 6.0, ..default() },
+            PointLight {
+                color: Color::srgb(1.0, 0.75, 0.45),
+                intensity: 60_000.0,
+                range: 6.0,
+                ..default()
+            },
             Transform::from_translation(muzzle),
-            Fx { life: 0.04, max: 0.04, base: Vec3::splat(0.15), keep_z: false },
+            Fx {
+                life: 0.04,
+                max: 0.04,
+                base: Vec3::splat(0.15),
+                keep_z: false,
+            },
         ));
     }
 }
@@ -1198,14 +2014,21 @@ pub fn update_pilot_bolts(
         b.life -= dt;
         b.vel.z -= 750.0 * b.gravity * dt;
         // Smart missiles turn toward their target's chest while it lives.
-        let homing = b.homing.and_then(|(t, turn)| enemies.get(t).ok().filter(|(_, e)| e.alive()).map(|(_, e)| (crate::smartammo::chest(e), turn)));
+        let homing = b.homing.and_then(|(t, turn)| {
+            enemies
+                .get(t)
+                .ok()
+                .filter(|(_, e)| e.alive())
+                .map(|(_, e)| (crate::smartammo::chest(e), turn))
+        });
         if let Some((at, turn)) = homing {
             let speed = b.vel.length();
             let (cur, want) = (b.vel / speed.max(1e-3), (at - b.pos).normalize_or_zero());
             let angle = cur.angle_between(want);
             let axis = cur.cross(want).normalize_or_zero();
             if angle > 1e-4 && axis != Vec3::ZERO {
-                b.vel = Quat::from_axis_angle(axis, angle.min(turn.to_radians() * dt)) * cur * speed;
+                b.vel =
+                    Quat::from_axis_angle(axis, angle.min(turn.to_radians() * dt)) * cur * speed;
             }
         }
         let step = b.vel * dt;
@@ -1213,7 +2036,11 @@ pub fn update_pilot_bolts(
         let dir = step / len;
         let mut t_end = len;
         let mut hit_world = false;
-        if let Some(h) = world.0.raycast(SVec3::from(b.pos.to_array()), SVec3::from(dir.to_array()), len) {
+        if let Some(h) = world.0.raycast(
+            SVec3::from(b.pos.to_array()),
+            SVec3::from(dir.to_array()),
+            len,
+        ) {
             t_end = h.t;
             hit_world = true;
         }
@@ -1227,7 +2054,9 @@ pub fn update_pilot_bolts(
         let mut victim = None;
         for (eid, e) in enemies.iter() {
             if e.alive() {
-                if let Some(h) = crate::hitbox::trace(b.pos, dir, t_end, e, hitboxes, &actors, &globals) {
+                if let Some(h) =
+                    crate::hitbox::trace(b.pos, dir, t_end, e, hitboxes, &actors, &globals)
+                {
                     t_end = h.t;
                     victim = Some((eid, h));
                 }
@@ -1242,8 +2071,19 @@ pub fn update_pilot_bolts(
         b.pos += dir * t_end;
         b.travelled += t_end;
         if b.from_titan && (victim.is_some() || hit_world) {
-            let nearest = enemies.iter().filter(|(_, e)| e.alive()).map(|(_, e)| (e.pos + Vec3::Z * e.height * 0.5).distance(b.pos) - e.radius).fold(f32::MAX, f32::min);
-            log::debug!("titan bolt ends at {:.0} after {:.0}: victim {} world {} nearest enemy {:.0}", b.pos, b.travelled, victim.is_some(), hit_world, nearest);
+            let nearest = enemies
+                .iter()
+                .filter(|(_, e)| e.alive())
+                .map(|(_, e)| (e.pos + Vec3::Z * e.height * 0.5).distance(b.pos) - e.radius)
+                .fold(f32::MAX, f32::min);
+            log::debug!(
+                "titan bolt ends at {:.0} after {:.0}: victim {} world {} nearest enemy {:.0}",
+                b.pos,
+                b.travelled,
+                victim.is_some(),
+                hit_world,
+                nearest
+            );
         }
         tf.translation = to_bevy(b.pos);
         tf.rotation = Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y));
@@ -1257,20 +2097,36 @@ pub fn update_pilot_bolts(
         let (near, far, nd, fd) = b.damage;
         let f = ((b.travelled - nd) / (fd - nd).max(1.0)).clamp(0.0, 1.0);
         if let (Some(we), None) = (wall, victim.as_ref()) {
-            enemy_walls.absorbed.push((we, near + (far - near) * f + b.explosion.0));
+            enemy_walls
+                .absorbed
+                .push((we, near + (far - near) * f + b.explosion.0));
         }
         let mut hits = Vec::new();
         // Titans this bolt actually damaged (the game's damage callbacks, Tone's
         // Tracker40mm_DamagedTarget among them, only run for damage dealt: a Vortex catch,
         // a Gun Shield soak or a Thermal Shield leave no mark).
         let mut damaged = Vec::new();
-        let mut surface = if wall.is_some() { crate::particles::Surface::Shield } else { crate::particles::Surface::World };
+        let mut surface = if wall.is_some() {
+            crate::particles::Surface::Shield
+        } else {
+            crate::particles::Surface::World
+        };
         if let Some((eid, h)) = victim {
             if let Ok((_, mut e)) = enemies.get_mut(eid) {
-                surface = if e.infantry { crate::particles::Surface::Flesh } else { crate::particles::Surface::Titan };
+                surface = if e.infantry {
+                    crate::particles::Surface::Flesh
+                } else {
+                    crate::particles::Surface::Titan
+                };
                 let base = near + (far - near) * f;
                 // Projectiles carry Titan-armour damage; headshots and crits multiply it.
-                let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD { b.headshot } else if !e.infantry && h.crit { b.crit } else { 1.0 };
+                let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD {
+                    b.headshot
+                } else if !e.infantry && h.crit {
+                    b.crit
+                } else {
+                    1.0
+                };
                 let hit = e.damage(base * k, b.stops_regen);
                 if hit.dealt > 0.0 && !e.infantry {
                     damaged.push(eid);
@@ -1281,7 +2137,15 @@ pub fn update_pilot_bolts(
         let (exp, inner, radius) = b.explosion;
         if b.thermite {
             fire_spots.blasts.push((b.pos, radius));
-            crate::titankit::spawn_meteor_thermite(&mut commands, b.pos - dir * 4.0, b.vel, victim.is_none(), b.pos.x.to_bits() ^ b.pos.y.to_bits().rotate_left(11) ^ b.travelled.to_bits().rotate_left(22));
+            crate::titankit::spawn_meteor_thermite(
+                &mut commands,
+                b.pos - dir * 4.0,
+                b.vel,
+                victim.is_none(),
+                b.pos.x.to_bits()
+                    ^ b.pos.y.to_bits().rotate_left(11)
+                    ^ b.travelled.to_bits().rotate_left(22),
+            );
         }
         if exp > 0.0 && radius > 0.0 {
             for (eid, mut e) in &mut enemies {
@@ -1313,20 +2177,35 @@ pub fn update_pilot_bolts(
         }
         let at = to_bevy(b.pos);
         let effect = if exp > 0.0 && radius > 0.0 {
-            crate::particles::Effect::Explosion { at, scale: (radius * crate::player::UNIT / 2.5).clamp(0.4, 2.0) }
+            crate::particles::Effect::Explosion {
+                at,
+                scale: (radius * crate::player::UNIT / 2.5).clamp(0.4, 2.0),
+            }
         } else {
             let back = -to_bevy(b.vel).normalize_or(Vec3::NEG_Z);
-            crate::particles::Effect::Hit { at, normal: back, table: b.impact_table, surface, victim: false, scale: if b.from_titan { 1.8 } else { 0.7 } }
+            crate::particles::Effect::Hit {
+                at,
+                normal: back,
+                table: b.impact_table,
+                surface,
+                victim: false,
+                scale: if b.from_titan { 1.8 } else { 0.7 },
+            }
         };
         crate::particles::emit(&mut commands, effect);
     }
 }
 
-
 /// `TF_VM_NO=walk,idle,jump,land,raise` turns viewmodel layers off (for comparisons).
 fn vm_off(layer: &str) -> bool {
     static OFF: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    OFF.get_or_init(|| std::env::var("TF_VM_NO").map(|v| v.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_default()).iter().any(|s| s == layer)
+    OFF.get_or_init(|| {
+        std::env::var("TF_VM_NO")
+            .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default()
+    })
+    .iter()
+    .any(|s| s == layer)
 }
 
 /// The active gun's viewmodel: rest pose (draw / ADS end), sprint, reload, draw and holster,
@@ -1343,46 +2222,76 @@ pub fn pilot_viewmodel(
     defs: Option<Res<crate::pilotability::PilotAbilityDefs>>,
     mut pilots: Query<(&PlayerPilot, &mut PilotLoadout)>,
     mut actors: Query<&mut Actor>,
-    mut tfs: Query<(&mut Transform, &mut Visibility), (Without<MainCamera>, Without<crate::actor::BodyPartMesh>)>,
+    mut tfs: Query<
+        (&mut Transform, &mut Visibility),
+        (Without<MainCamera>, Without<crate::actor::BodyPartMesh>),
+    >,
     mut part_meshes: Query<(&ChildOf, &crate::actor::BodyPartMesh, &mut Visibility)>,
     mut place: ResMut<VmPlacements>,
     (arms, settings): (Option<Res<crate::fparms::FpArms>>, Res<PilotSettings>),
 ) {
     place.0.clear();
-    let Ok((pilot, mut lo)) = pilots.single_mut() else { return };
-    let show = *control == Control::Pilot && *mode != CameraMode::Free && !rodeo.riding() && !fpseq.playing();
+    let Ok((pilot, mut lo)) = pilots.single_mut() else {
+        return;
+    };
+    let show = *control == Control::Pilot
+        && *mode != CameraMode::Free
+        && !rodeo.riding()
+        && !fpseq.playing();
     let active = lo.active;
     // The melee swing replaces the gun with the empty hands; the gun then raises from melee.
     let swinging = melee.t.filter(|&t| t < crate::executions::MELEE_ANIM_SECS);
     if let Some((anchor, vm)) = lo.melee_vm {
         if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-            v.set_if_neq(if show && swinging.is_some() { Visibility::Inherited } else { Visibility::Hidden });
+            v.set_if_neq(if show && swinging.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
         }
         if let Ok(mut a) = actors.get_mut(vm) {
             a.event_sounds = show && swinging.is_some();
             if let Some(t) = swinging.filter(|_| show) {
                 a.autoplay = false;
                 let n = MELEE_SEQS.len();
-                if let Some(c) = (0..n).map(|k| MELEE_SEQS[(melee.seq + k) % n]).find_map(|name| a.clip(name)) {
+                if let Some(c) = (0..n)
+                    .map(|k| MELEE_SEQS[(melee.seq + k) % n])
+                    .find_map(|name| a.clip(name))
+                {
                     let d = a.clips[c].duration.max(1e-3);
-                    a.layers = vec![Layer { clip: c, cycle: (t / d).min(0.999), weight: 1.0 }];
+                    a.layers = vec![Layer {
+                        clip: c,
+                        cycle: (t / d).min(0.999),
+                        weight: 1.0,
+                    }];
                     a.additive.clear();
                     a.grid_layers.clear();
                 }
-                let offset = a.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+                let offset = a
+                    .bone_model_transform("jx_c_camera")
+                    .map(|t| t.translation)
+                    .unwrap_or(Vec3::ZERO);
                 place.0.push((anchor, Transform::from_translation(-offset)));
             }
         }
     }
     // A throw replaces the gun with the grenade in hand: pull out, hold, toss.
-    let throwing = throw.phase.filter(|(p, _)| *p != crate::pilotability::ThrowPhase::Raise);
+    let throwing = throw
+        .phase
+        .filter(|(p, _)| *p != crate::pilotability::ThrowPhase::Raise);
     // Mantling puts the gun away while the arms climb (below).
     let mantling = matches!(pilot.state.mode, PilotMove::Mantle { .. });
     for (which, slot) in [(false, lo.ord_vm), (true, lo.tac_vm)] {
-        let Some((idx, anchor, vm)) = slot else { continue };
+        let Some((idx, anchor, vm)) = slot else {
+            continue;
+        };
         let mine = throwing.is_some() && throw.tactical == which;
         if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-            v.set_if_neq(if show && mine { Visibility::Inherited } else { Visibility::Hidden });
+            v.set_if_neq(if show && mine {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
         }
         if !mine {
             continue;
@@ -1391,7 +2300,13 @@ pub fn pilot_viewmodel(
             use crate::pilotability::ThrowPhase as T;
             a.autoplay = false;
             a.event_sounds = true;
-            let times = defs.as_deref().and_then(|d| if which { d.tactical.get(idx).map(|t| (t.pullout, t.toss)) } else { d.ordnance.get(idx).map(|o| (o.pullout, o.toss)) });
+            let times = defs.as_deref().and_then(|d| {
+                if which {
+                    d.tactical.get(idx).map(|t| (t.pullout, t.toss))
+                } else {
+                    d.ordnance.get(idx).map(|o| (o.pullout, o.toss))
+                }
+            });
             let (pullout, toss) = times.unwrap_or((0.35, 0.33));
             let (name, cycle) = match phase {
                 T::Pullout => ("toss_prep_pullout_seq", t / pullout),
@@ -1399,19 +2314,37 @@ pub fn pilot_viewmodel(
                 _ => ("toss_seq", t / toss),
             };
             if let Some(c) = a.clip(name).or_else(|| a.clip("idle_seq")) {
-                let cycle = if phase == T::Hold { (t / a.clips[c].duration.max(0.1)).fract() } else { cycle.min(0.999) };
-                a.layers = vec![Layer { clip: c, cycle, weight: 1.0 }];
+                let cycle = if phase == T::Hold {
+                    (t / a.clips[c].duration.max(0.1)).fract()
+                } else {
+                    cycle.min(0.999)
+                };
+                a.layers = vec![Layer {
+                    clip: c,
+                    cycle,
+                    weight: 1.0,
+                }];
                 a.additive.clear();
                 a.grid_layers.clear();
             }
-            let offset = a.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+            let offset = a
+                .bone_model_transform("jx_c_camera")
+                .map(|t| t.translation)
+                .unwrap_or(Vec3::ZERO);
             place.0.push((anchor, Transform::from_translation(-offset)));
         }
     }
     for (i, g) in lo.guns.iter().enumerate() {
         if let Some((anchor, vm)) = g.viewmodel {
             if let Ok((_, mut v)) = tfs.get_mut(anchor) {
-                v.set_if_neq(if show && i == active && swinging.is_none() && throwing.is_none() && !mantling { Visibility::Inherited } else { Visibility::Hidden });
+                v.set_if_neq(
+                    if show && i == active && swinging.is_none() && throwing.is_none() && !mantling
+                    {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    },
+                );
             }
             // Only the gun in your hands plays its animation sounds.
             if let Ok(mut a) = actors.get_mut(vm) {
@@ -1431,18 +2364,40 @@ pub fn pilot_viewmodel(
     // viewmodel; the view follows the mantle's own path, not the clip's camera.
     if let (PilotMove::Mantle { from, to, time: mt }, Some(arms)) = (s.mode, arms.as_deref()) {
         let above = from.z + settings.0.eye_height - to.z;
-        let i = if above < -10.0 { 0 } else if above < 10.0 { 1 } else if above < 30.0 { 2 } else { 3 };
+        let i = if above < -10.0 {
+            0
+        } else if above < 10.0 {
+            1
+        } else if above < 30.0 {
+            2
+        } else {
+            3
+        };
         let name = crate::fparms::MANTLE_CLIPS[i];
         if let Ok(mut a) = actors.get_mut(arms.actor) {
             let crouch = format!("{name}_Crouch");
-            if let Some(c) = s.crouched.then(|| a.clip(&crouch)).flatten().or_else(|| a.clip(name)) {
+            if let Some(c) = s
+                .crouched
+                .then(|| a.clip(&crouch))
+                .flatten()
+                .or_else(|| a.clip(name))
+            {
                 a.autoplay = false;
                 a.aim = None;
-                a.layers = vec![Layer { clip: c, cycle: (mt / tf_sim::pilot::mantle_time(above)).min(0.999), weight: 1.0 }];
+                a.layers = vec![Layer {
+                    clip: c,
+                    cycle: (mt / tf_sim::pilot::mantle_time(above)).min(0.999),
+                    weight: 1.0,
+                }];
                 a.additive.clear();
                 a.grid_layers.clear();
-                let offset = a.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
-                place.0.push((arms.anchor, Transform::from_translation(-offset)));
+                let offset = a
+                    .bone_model_transform("jx_c_camera")
+                    .map(|t| t.translation)
+                    .unwrap_or(Vec3::ZERO);
+                place
+                    .0
+                    .push((arms.anchor, Transform::from_translation(-offset)));
                 if let Ok((_, mut v)) = tfs.get_mut(arms.anchor) {
                     v.set_if_neq(Visibility::Inherited);
                 }
@@ -1478,14 +2433,19 @@ pub fn pilot_viewmodel(
     vl.jumps = s.jumps;
     vl.was_ground = on_ground;
     vl.was_sprint = sprint;
-    vl.ground_blend += (if on_ground { 1.0 } else { 0.0 } - vl.ground_blend) * (1.0 - (-dt * 10.0).exp());
+    vl.ground_blend +=
+        (if on_ground { 1.0 } else { 0.0 } - vl.ground_blend) * (1.0 - (-dt * 10.0).exp());
     let cur_ads = lo.guns.get(active).map_or(0.0, |g| g.ads);
     vl.ads_out = crate::vmmotion::ads_out_step(vl.ads_out, cur_ads, vl.last_ads, dt);
     vl.last_ads = cur_ads;
     // Crouching (sliding included) and leaving the ground change the activity modifiers, which
     // pick other sequences for the same activities (`ads_in_crouch_seq`...); the engine fades a
     // newly picked sequence in over its fadeintime (0.2 s for the idles).
-    let seqs = lo.guns.get(active).map(|g| g.seqs.clone()).unwrap_or_default();
+    let seqs = lo
+        .guns
+        .get(active)
+        .map(|g| g.seqs.clone())
+        .unwrap_or_default();
     let mods = VmMods::of(&s);
     let fade = seqs.fade_in("ACT_VM_IDLE", mods).unwrap_or(0.2).max(0.05);
     vl.mods_t += dt;
@@ -1493,7 +2453,11 @@ pub fn pilot_viewmodel(
         // The current pick joins the fading layers at the weight it reached; the older ones
         // keep their share of what is left. At most three linger (the rest are too faint).
         let k = (vl.mods_t / fade).min(1.0);
-        let mut old = [(vl.mods, k), (VmMods::default(), 0.0), (VmMods::default(), 0.0)];
+        let mut old = [
+            (vl.mods, k),
+            (VmMods::default(), 0.0),
+            (VmMods::default(), 0.0),
+        ];
         let mut n = 1;
         for &(m, w) in &vl.mod_fades {
             if w * (1.0 - k) > 0.01 && n < 3 {
@@ -1507,22 +2471,46 @@ pub fn pilot_viewmodel(
     }
     let mods_k = (vl.mods_t / fade).min(1.0);
     let cur_mods = vl.mods;
-    let old_mods: Vec<(VmMods, f32)> = vl.mod_fades.iter().filter(|&&(_, w)| w > 0.0).map(|&(m, w)| (m, w * (1.0 - mods_k))).collect();
+    let old_mods: Vec<(VmMods, f32)> = vl
+        .mod_fades
+        .iter()
+        .filter(|&&(_, w)| w > 0.0)
+        .map(|&(m, w)| (m, w * (1.0 - mods_k)))
+        .collect();
     lo.vm_layers = vl;
     // The sprint pose follows the engine's sprint fraction, which the game writes to the
     // viewmodel's `sprintfrac` pose parameter every frame (0x180149cc0).
     lo.sprint_blend = s.sprint_frac.clamp(0.0, 1.0);
     let (switching, deploy_t) = (lo.switching, lo.deploy_t);
     let Some(g) = lo.guns.get(active) else { return };
-    let Some((anchor, vm)) = g.viewmodel else { return };
-    let (ads, reloading, fire_t, empty_reload, reload_stage) = (g.ads, g.reloading(), g.fire_t, g.reload_empty, g.reload_stage);
+    let Some((anchor, vm)) = g.viewmodel else {
+        return;
+    };
+    let (ads, reloading, fire_t, empty_reload, reload_stage) = (
+        g.ads,
+        g.reloading(),
+        g.fire_t,
+        g.reload_empty,
+        g.reload_stage,
+    );
     // Reload, draw and holster sequences play scaled to the script's times (the R-201's 2 s
     // reload_seq over reload_time 2.2; the Wingman's 2.9 s one over 2.1), as the engine does.
     let reload_frac = (g.reload_t / (g.reload_t + g.reload_left).max(1e-3)).min(0.999);
     let (deploy_time, holster_time) = (g.deploy_secs().max(0.05), g.def.holster_time.max(0.05));
-    let (first_draw, sprint_cycle) = (g.first_draw && g.def.deploy_first_time > 0.0, g.def.sprint_cycle);
-    let (pivots, motion_def, ads_scope, scope_frac, vm_offset) = (g.pivots.clone(), g.def.motion.clone(), g.ads_scope, g.def.scope_frac, g.def.vm_offset);
-    let Ok(mut actor) = actors.get_mut(vm) else { return };
+    let (first_draw, sprint_cycle) = (
+        g.first_draw && g.def.deploy_first_time > 0.0,
+        g.def.sprint_cycle,
+    );
+    let (pivots, motion_def, ads_scope, scope_frac, vm_offset) = (
+        g.pivots.clone(),
+        g.def.motion.clone(),
+        g.ads_scope,
+        g.def.scope_frac,
+        g.def.vm_offset,
+    );
+    let Ok(mut actor) = actors.get_mut(vm) else {
+        return;
+    };
     actor.autoplay = false;
     let clip = |a: &Actor, n: &str| a.clip(n);
     // An activity's sequence under the current modifiers (slot 0) and, while that fades in,
@@ -1530,7 +2518,11 @@ pub fn pilot_viewmodel(
     // merge; the weights sum to 1); `plain` is the sequence to use when the model names no
     // activity.
     let pick = |a: &Actor, act: &str, plain: &str| -> [(Option<usize>, f32); 4] {
-        let by = |m: VmMods| seqs.pick(act, m).and_then(|l| a.clip(l)).or_else(|| a.clip(plain));
+        let by = |m: VmMods| {
+            seqs.pick(act, m)
+                .and_then(|l| a.clip(l))
+                .or_else(|| a.clip(plain))
+        };
         let mut out = [(None, 0.0f32); 4];
         let mut add = |c: Option<usize>, w: f32| {
             let Some(c) = c else { return };
@@ -1553,10 +2545,18 @@ pub fn pilot_viewmodel(
         out
     };
     // Push picked layers, each at the cycle `cycle` gives for its clip.
-    let push = |a: &Actor, layers: &mut Vec<Layer>, p: [(Option<usize>, f32); 4], cycle: &dyn Fn(&Actor, usize) -> f32, w: f32| {
+    let push = |a: &Actor,
+                layers: &mut Vec<Layer>,
+                p: [(Option<usize>, f32); 4],
+                cycle: &dyn Fn(&Actor, usize) -> f32,
+                w: f32| {
         for (c, f) in p {
             if let Some(c) = c.filter(|_| f > 0.0) {
-                layers.push(Layer { clip: c, cycle: cycle(a, c), weight: w * f });
+                layers.push(Layer {
+                    clip: c,
+                    cycle: cycle(a, c),
+                    weight: w * f,
+                });
             }
         }
     };
@@ -1567,40 +2567,87 @@ pub fn pilot_viewmodel(
     // The raise plays as the engine's sequence transitioner would: fading in over its own
     // fadeintime from whatever the gun was doing (the hip pose with the sprint fraction still
     // ramping down), and holding its last frame while the idle fades back in over the idle's.
-    let raise_fade_in = seqs.fade_in("ACT_VM_RAISE_FROM_SPRINT", mods).unwrap_or(0.2).max(0.05);
-    let raising = raise_clip.filter(|&c| !sprint && vl.sprint_end_t < actor.clips[c].duration + fade);
+    let raise_fade_in = seqs
+        .fade_in("ACT_VM_RAISE_FROM_SPRINT", mods)
+        .unwrap_or(0.2)
+        .max(0.05);
+    let raising =
+        raise_clip.filter(|&c| !sprint && vl.sprint_end_t < actor.clips[c].duration + fade);
     let raise_w = raising.map(|c| {
         let (t, dur) = (vl.sprint_end_t, actor.clips[c].duration);
-        if t < dur { (t / raise_fade_in).min(1.0) } else { 1.0 - ((t - dur) / fade).min(1.0) }
+        if t < dur {
+            (t / raise_fade_in).min(1.0)
+        } else {
+            1.0 - ((t - dur) / fade).min(1.0)
+        }
     });
     let sprint_blend = lo.sprint_blend;
     // `sprintcycle_time` sets the loop's pace (0.55 s against the clips' 0.667 s).
-    let dur = if sprint_cycle > 0.0 { sprint_cycle } else { sprint_clip.map(|c| actor.clips[c].duration).unwrap_or(1.0) };
+    let dur = if sprint_cycle > 0.0 {
+        sprint_cycle
+    } else {
+        sprint_clip.map(|c| actor.clips[c].duration).unwrap_or(1.0)
+    };
     lo.vm_cycle = (lo.vm_cycle + dt / dur.max(0.1)).rem_euclid(1.0);
     let once = |a: &Actor, c: usize, t: f32| (t / a.clips[c].duration.max(1e-3)).min(0.999);
     let mut layers = Vec::new();
     let mut additive = Vec::new();
     let mut grid_layers = Vec::new();
-    let grid_dur = |a: &Actor, n: &str| a.grids.get(n).and_then(|g| g.clips.first()).map(|&c| a.clips[c].duration.max(1e-3));
+    let grid_dur = |a: &Actor, n: &str| {
+        a.grids
+            .get(n)
+            .and_then(|g| g.clips.first())
+            .map(|&c| a.clips[c].duration.max(1e-3))
+    };
     let speed = Vec2::new(s.vel.x, s.vel.y).length();
     let draw = pick(&actor, "ACT_VM_DRAW", "draw_seq");
     // The first draw of a gun plays `drawfirst_seq` (ACT_VM_DRAWFIRST) where it has one.
-    let draw_now = if first_draw { Some(pick(&actor, "ACT_VM_DRAWFIRST", "drawfirst_seq")).filter(|p| p[0].0.is_some()).unwrap_or(draw) } else { draw };
+    let draw_now = if first_draw {
+        Some(pick(&actor, "ACT_VM_DRAWFIRST", "drawfirst_seq"))
+            .filter(|p| p[0].0.is_some())
+            .unwrap_or(draw)
+    } else {
+        draw
+    };
     // A resumed reload plays its stage's `_late` sequence.
     let reload_pick = {
         let late = (reload_stage > 0)
-            .then(|| if empty_reload { (format!("ACT_VM_RELOADEMPTY_LATE{reload_stage}"), format!("reload_empty_late{reload_stage}_seq")) } else { (format!("ACT_VM_RELOAD_LATE{reload_stage}"), format!("reload_late{reload_stage}_seq")) })
+            .then(|| {
+                if empty_reload {
+                    (
+                        format!("ACT_VM_RELOADEMPTY_LATE{reload_stage}"),
+                        format!("reload_empty_late{reload_stage}_seq"),
+                    )
+                } else {
+                    (
+                        format!("ACT_VM_RELOAD_LATE{reload_stage}"),
+                        format!("reload_late{reload_stage}_seq"),
+                    )
+                }
+            })
             .map(|(act, plain)| pick(&actor, &act, &plain))
             .filter(|p| p[0].0.is_some());
-        let base = if empty_reload { Some(pick(&actor, "ACT_VM_RELOADEMPTY", "reload_empty_seq")).filter(|p| p[0].0.is_some()) } else { None };
-        late.or(base).unwrap_or_else(|| pick(&actor, "ACT_VM_RELOAD", "reload_seq"))
+        let base = if empty_reload {
+            Some(pick(&actor, "ACT_VM_RELOADEMPTY", "reload_empty_seq"))
+                .filter(|p| p[0].0.is_some())
+        } else {
+            None
+        };
+        late.or(base)
+            .unwrap_or_else(|| pick(&actor, "ACT_VM_RELOAD", "reload_seq"))
     };
     let mut steady = false;
     // The share of the steady layers (idle, walk, aim, sprint) while a sprint-raise fades.
     let mut steady_w = 1.0f32;
     if let Some((_, t)) = switching {
         let k = (t / holster_time).min(0.999);
-        push(&actor, &mut layers, pick(&actor, "ACT_VM_HOLSTER", "holster_seq"), &|_, _| k, 1.0);
+        push(
+            &actor,
+            &mut layers,
+            pick(&actor, "ACT_VM_HOLSTER", "holster_seq"),
+            &|_, _| k,
+            1.0,
+        );
     } else if draw_now[0].0.is_some() && deploy_t < deploy_time {
         let k = (deploy_t / deploy_time).min(0.999);
         push(&actor, &mut layers, draw_now, &|_, _| k, 1.0);
@@ -1608,20 +2655,43 @@ pub fn pilot_viewmodel(
         push(&actor, &mut layers, reload_pick, &|_, _| reload_frac, 1.0);
         // Walking while reloading sways the gun with the reload's own run layer.
         if let Some(d) = grid_dur(&actor, "run_layer_reload").filter(|_| !vm_off("walk")) {
-            grid_layers.push(GridLayer { grid: "run_layer_reload", x: 0.0, y: 0.0, cycle: (vl.clock / d).fract(), weight: (speed / 173.0).min(1.0) * vl.ground_blend, relative: false });
+            grid_layers.push(GridLayer {
+                grid: "run_layer_reload",
+                x: 0.0,
+                y: 0.0,
+                cycle: (vl.clock / d).fract(),
+                weight: (speed / 173.0).min(1.0) * vl.ground_blend,
+                relative: false,
+            });
         }
-    } else if let (Some((crate::pilotability::ThrowPhase::Raise, t)), p @ [(Some(_), _), ..]) = (throw.phase, pick(&actor, "ACT_VM_RAISE", "raise_seq")) {
+    } else if let (Some((crate::pilotability::ThrowPhase::Raise, t)), p @ [(Some(_), _), ..]) =
+        (throw.phase, pick(&actor, "ACT_VM_RAISE", "raise_seq"))
+    {
         // Back up after a throw.
         let k = (t / crate::pilotability::THROW_RAISE_SECS).min(0.999);
         push(&actor, &mut layers, p, &|_, _| k, 1.0);
-    } else if let (Some(t), p @ [(Some(_), _), ..]) = (melee.t.filter(|&t| t >= crate::executions::MELEE_ANIM_SECS), pick(&actor, "ACT_VM_RAISE_FROM_MELEE", "raise_frommelee_seq")) {
+    } else if let (Some(t), p @ [(Some(_), _), ..]) = (
+        melee.t.filter(|&t| t >= crate::executions::MELEE_ANIM_SECS),
+        pick(&actor, "ACT_VM_RAISE_FROM_MELEE", "raise_frommelee_seq"),
+    ) {
         // Back up after a melee swing, over melee_raise_recovery_animtime.
         let k = ((t - crate::executions::MELEE_ANIM_SECS) / melee.raise.max(0.05)).min(0.999);
         push(&actor, &mut layers, p, &|_, _| k, 1.0);
-    } else if let Some((c, t)) = s.zipline.and_then(|r| Some((clip(&actor, "ptpov_zipline_start")?, r.mount))).filter(|&(c, t)| t < actor.clips[c].duration) {
+    } else if let Some((c, t)) = s
+        .zipline
+        .and_then(|r| Some((clip(&actor, "ptpov_zipline_start")?, r.mount)))
+        .filter(|&(c, t)| t < actor.clips[c].duration)
+    {
         // Grabbing a zipline: `ptpov_zipline_start` (ACT_VM_ZIPLINE_MOUNT).
-        layers.push(Layer { clip: c, cycle: once(&actor, c, t), weight: 1.0 });
-    } else if let Some(p) = Some(pick(&actor, "ACT_VM_RAISE", "raise_seq")).filter(|p| p[0].0.is_some_and(|c| vl.mantle_end_t < actor.clips[c].duration)) {
+        layers.push(Layer {
+            clip: c,
+            cycle: once(&actor, c, t),
+            weight: 1.0,
+        });
+    } else if let Some(p) = Some(pick(&actor, "ACT_VM_RAISE", "raise_seq")).filter(|p| {
+        p[0].0
+            .is_some_and(|c| vl.mantle_end_t < actor.clips[c].duration)
+    }) {
         // Back up after a mantle (ACT_VM_RAISE at its own pace).
         let t = vl.mantle_end_t;
         push(&actor, &mut layers, p, &|a, c| once(a, c, t), 1.0);
@@ -1637,11 +2707,21 @@ pub fn pilot_viewmodel(
         // zoom fraction, so their own motion paths show (the R-201's gun dips below the hip pose
         // on the way out); a change of direction cross-fades the two.
         // Crouched (and sliding) the crouch pair plays: its hip pose cants the gun to the middle.
-        match (pick(&actor, "ACT_VM_ADS_IN", "ads_in_seq"), pick(&actor, "ACT_VM_ADS_OUT", "ads_out_seq")) {
+        match (
+            pick(&actor, "ACT_VM_ADS_IN", "ads_in_seq"),
+            pick(&actor, "ACT_VM_ADS_OUT", "ads_out_seq"),
+        ) {
             (pin @ [(Some(_), _), ..], pout) => {
                 let out = pout[0].0.is_some();
-                let [(cyc_in, w_in), (cyc_out, w_out)] = crate::vmmotion::ads_layers(ads, if out { vl.ads_out } else { 0.0 });
-                push(&actor, &mut layers, pin, &|_, _| cyc_in, (still * w_in).max(1e-3));
+                let [(cyc_in, w_in), (cyc_out, w_out)] =
+                    crate::vmmotion::ads_layers(ads, if out { vl.ads_out } else { 0.0 });
+                push(
+                    &actor,
+                    &mut layers,
+                    pin,
+                    &|_, _| cyc_in,
+                    (still * w_in).max(1e-3),
+                );
                 if out {
                     push(&actor, &mut layers, pout, &|_, _| cyc_out, still * w_out);
                 }
@@ -1649,7 +2729,11 @@ pub fn pilot_viewmodel(
             _ => push(&actor, &mut layers, draw, &|_, _| 0.999, still.max(1e-3)),
         }
         if let Some(c) = sprint_clip {
-            layers.push(Layer { clip: c, cycle: lo.vm_cycle, weight: sprint_blend * steady_w });
+            layers.push(Layer {
+                clip: c,
+                cycle: lo.vm_cycle,
+                weight: sprint_blend * steady_w,
+            });
         }
         if let Some(g) = actor.grids.get("attack_seq").filter(|_| !vm_off("fire")) {
             // A new sequence blends in over its fadeintime (Source's sequence transitioner;
@@ -1669,7 +2753,14 @@ pub fn pilot_viewmodel(
         let still = (1.0 - sprint_blend) * steady_w;
         // Breathing: `idle_seq_autoplay` (STUDIO_AUTOPLAY) loops in real time, hip or ADS.
         if let Some(d) = grid_dur(&actor, "idle_seq_autoplay").filter(|_| !vm_off("idle")) {
-            grid_layers.push(GridLayer { grid: "idle_seq_autoplay", x: ads, y: 0.0, cycle: (vl.clock / d).fract(), weight: still, relative: false });
+            grid_layers.push(GridLayer {
+                grid: "idle_seq_autoplay",
+                x: ads,
+                y: 0.0,
+                cycle: (vl.clock / d).fract(),
+                weight: still,
+                relative: false,
+            });
         }
         // Walking: `walk_seq` (STUDIO_REALTIME) over the velocity and ads_blend parameters. Its
         // clips carry constant offsets from the rest pose (the gun 0.8 units off and the
@@ -1681,33 +2772,66 @@ pub fn pilot_viewmodel(
         // weight swung its ADS view to the side and back every 2.2 s while standing still.
         if let Some(d) = grid_dur(&actor, "walk_seq").filter(|_| !vm_off("walk")) {
             let moving = (speed / 173.0).min(1.0);
-            grid_layers.push(GridLayer { grid: "walk_seq", x: speed.min(173.0), y: ads, cycle: (vl.clock / d).fract(), weight: still * vl.ground_blend * moving, relative: true });
+            grid_layers.push(GridLayer {
+                grid: "walk_seq",
+                x: speed.min(173.0),
+                y: ads,
+                cycle: (vl.clock / d).fract(),
+                weight: still * vl.ground_blend * moving,
+                relative: true,
+            });
         }
     }
     if !reloading && switching.is_none() {
-        for (names, t, off) in [(["switch_to_jump_iron", "switch_to_jump"], vl.jump_t, "jump"), (["switch_to_land_iron", "switch_to_land"], vl.land_t, "land")] {
+        for (names, t, off) in [
+            (["switch_to_jump_iron", "switch_to_jump"], vl.jump_t, "jump"),
+            (["switch_to_land_iron", "switch_to_land"], vl.land_t, "land"),
+        ] {
             if vm_off(off) {
                 continue;
             }
-            let Some(name) = names.into_iter().find(|n| actor.grids.get(*n).is_some_and(|g| g.clips.first().is_some_and(|&c| actor.clips[c].delta))) else { continue };
+            let Some(name) = names.into_iter().find(|n| {
+                actor
+                    .grids
+                    .get(*n)
+                    .is_some_and(|g| g.clips.first().is_some_and(|&c| actor.clips[c].delta))
+            }) else {
+                continue;
+            };
             let d = grid_dur(&actor, name).unwrap_or(1.0);
             if t < d {
-                grid_layers.push(GridLayer { grid: name, x: ads, y: 0.0, cycle: t / d, weight: 1.0 - sprint_blend, relative: false });
+                grid_layers.push(GridLayer {
+                    grid: name,
+                    x: ads,
+                    y: 0.0,
+                    cycle: t / d,
+                    weight: 1.0 - sprint_blend,
+                    relative: false,
+                });
             }
         }
     }
     // TF_VM_LOG=1: every frame's layer weights (the viewmodel jerk shows as weight jumps).
     if std::env::var_os("TF_VM_LOG").is_some() {
         let name = |c: usize| actor.clip_name(c).unwrap_or("?");
-        let ls: Vec<String> = layers.iter().map(|l| format!("{}:{:.2}@{:.2}", name(l.clip), l.weight, l.cycle)).collect();
-        let gs: Vec<String> = grid_layers.iter().map(|g| format!("{}:{:.2}", g.grid, g.weight)).collect();
+        let ls: Vec<String> = layers
+            .iter()
+            .map(|l| format!("{}:{:.2}@{:.2}", name(l.clip), l.weight, l.cycle))
+            .collect();
+        let gs: Vec<String> = grid_layers
+            .iter()
+            .map(|g| format!("{}:{:.2}", g.grid, g.weight))
+            .collect();
         log::info!(target: "vm_log", "t {:.3} mods {:?} fade {:.2} | {} | {}", vl.clock, cur_mods, mods_k, ls.join(" "), gs.join(" "));
     }
     actor.grid_layers = grid_layers;
     actor.layers = layers;
     actor.additive = additive;
     actor.root_offsets.clear();
-    let offset = actor.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+    let offset = actor
+        .bone_model_transform("jx_c_camera")
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
     // Scopes: the ADS scope (a dark tube with the reticle and glowing emitters) sits where the
     // ADS animation puts its bone; it shows from zoom_scope_frac_start, and from
     // zoom_scope_frac_end it is all that is drawn (the rest of the gun would block the view).
@@ -1718,7 +2842,11 @@ pub fn pilot_viewmodel(
                 continue;
             }
             let on = if p.0 == part { show_scope } else { !only_scope };
-            v.set_if_neq(if on { Visibility::Inherited } else { Visibility::Hidden });
+            v.set_if_neq(if on {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
         }
     }
     // Sway and bob turn the viewmodel about its sway pivot (SWAY_ROTATE on the weapon bone;
@@ -1726,22 +2854,53 @@ pub fn pilot_viewmodel(
     // The gun's share of the recoil turns it about its origin, the eye: client.dll adds the
     // punch (0x1802c7360) to the viewmodel's angles after its origin is placed (0x1800d2685).
     // About the far ADS pivot a 0.5 degree kick up swung the whole gun down off the sight.
-    let pivot_of = |a: &Actor, (bone, off): &(String, Vec3)| a.bone_model_transform(bone).map(|t| t.transform_point(*off));
+    let pivot_of = |a: &Actor, (bone, off): &(String, Vec3)| {
+        a.bone_model_transform(bone)
+            .map(|t| t.transform_point(*off))
+    };
     let hp = pivot_of(&actor, &pivots[0]).unwrap_or(offset);
     let zp = pivot_of(&actor, &pivots[1]).unwrap_or(hp);
     let pivot = hp.lerp(zp, ads);
     let def = motion_def;
     let (cy, sy) = (s.yaw.cos(), s.yaw.sin());
-    let vel = Vec3::new(s.vel.x * cy + s.vel.y * sy, -s.vel.x * sy + s.vel.y * cy, s.vel.z);
-    let inp = crate::vmmotion::MotionInput { yaw: s.yaw, pitch: s.pitch, vel, on_ground, bob: sprint_blend < 0.5, ads };
-    let off = if vm_off("sway") { crate::vmmotion::VmOffset { rot: Vec3::ZERO, trans: Vec3::ZERO } } else { lo.vm_motion.step(&def, &inp, dt) };
+    let vel = Vec3::new(
+        s.vel.x * cy + s.vel.y * sy,
+        -s.vel.x * sy + s.vel.y * cy,
+        s.vel.z,
+    );
+    let inp = crate::vmmotion::MotionInput {
+        yaw: s.yaw,
+        pitch: s.pitch,
+        vel,
+        on_ground,
+        bob: sprint_blend < 0.5,
+        ads,
+    };
+    let off = if vm_off("sway") {
+        crate::vmmotion::VmOffset {
+            rot: Vec3::ZERO,
+            trans: Vec3::ZERO,
+        }
+    } else {
+        lo.vm_motion.step(&def, &inp, dt)
+    };
     let rs = crate::vmmotion::angles_quat(off.rot);
-    let rp = crate::vmmotion::angles_quat(if vm_off("punch") { Vec3::ZERO } else { punch.vm });
+    let rp = crate::vmmotion::angles_quat(if vm_off("punch") {
+        Vec3::ZERO
+    } else {
+        punch.vm
+    });
     // viewmodel_offset_hip/_ads, (right, forward, up) in the view.
     let (oh, oa) = vm_offset;
     let o = oh.lerp(oa, ads);
     let script_off = Vec3::new(o.y, -o.x, o.z);
-    place.0.push((anchor, Transform::from_translation(script_off + off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot)).with_rotation(rp * rs)));
+    place.0.push((
+        anchor,
+        Transform::from_translation(
+            script_off + off.trans + punch.vm_shake + rp * (pivot - offset - rs * pivot),
+        )
+        .with_rotation(rp * rs),
+    ));
 }
 
 /// Where each shown first-person model sits in the view frame (camera bone at the eye),
@@ -1750,7 +2909,13 @@ pub fn pilot_viewmodel(
 pub struct VmPlacements(pub Vec<(Entity, Transform)>);
 
 /// Put the Pilot's viewmodels at this frame's view origin (`VmEye`, set by `pilot_camera`).
-pub fn place_viewmodels(place: Res<VmPlacements>, vm_eye: Res<crate::pilotctl::VmEye>, settings: Res<PilotSettings>, pilots: Query<&PlayerPilot>, mut tfs: Query<&mut Transform>) {
+pub fn place_viewmodels(
+    place: Res<VmPlacements>,
+    vm_eye: Res<crate::pilotctl::VmEye>,
+    settings: Res<PilotSettings>,
+    pilots: Query<&PlayerPilot>,
+    mut tfs: Query<&mut Transform>,
+) {
     let Ok(pilot) = pilots.single() else { return };
     let (eye, rot) = vm_eye.frame(&pilot.state, &settings.0);
     for &(e, local) in &place.0 {

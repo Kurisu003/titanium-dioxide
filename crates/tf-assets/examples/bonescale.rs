@@ -5,7 +5,10 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let m = Model::parse(vpk.read(&a[2])?)?;
     for (i, b) in m.bones.iter().enumerate() {
-        println!("{i:3} {:24} scale {:?} ss {:?}", b.name, b.scale, b.scale_scale);
+        println!(
+            "{i:3} {:24} scale {:?} ss {:?}",
+            b.name, b.scale, b.scale_scale
+        );
     }
     Ok(())
 }

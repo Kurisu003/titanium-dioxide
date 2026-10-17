@@ -13,10 +13,20 @@ fn main() -> anyhow::Result<()> {
         }
     }
     for (name, m) in &all {
-        for s in m.sequences.iter().filter(|s| s.label.to_lowercase().contains(&f)) {
+        for s in m
+            .sequences
+            .iter()
+            .filter(|s| s.label.to_lowercase().contains(&f))
+        {
             if let Some(&ai) = s.anims.first() {
                 if let Ok(an) = m.animation(ai) {
-                    println!("{name}: {} {:.3}s ({} frames @ {} fps)", s.label, (an.num_frames.max(2) - 1) as f32 / an.fps.max(1.0), an.num_frames, an.fps);
+                    println!(
+                        "{name}: {} {:.3}s ({} frames @ {} fps)",
+                        s.label,
+                        (an.num_frames.max(2) - 1) as f32 / an.fps.max(1.0),
+                        an.num_frames,
+                        an.fps
+                    );
                 }
             }
         }

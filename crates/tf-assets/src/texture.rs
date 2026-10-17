@@ -59,7 +59,8 @@ impl TexFormat {
         use TexFormat::*;
         Some(match self {
             Bc1 | Bc1Srgb | Bc4 | Bc4Snorm => (8, 4, 4),
-            Bc2 | Bc2Srgb | Bc3 | Bc3Srgb | Bc5 | Bc5Snorm | Bc6hUf16 | Bc6hSf16 | Bc7 | Bc7Srgb => (16, 4, 4),
+            Bc2 | Bc2Srgb | Bc3 | Bc3Srgb | Bc5 | Bc5Snorm | Bc6hUf16 | Bc6hSf16 | Bc7
+            | Bc7Srgb => (16, 4, 4),
             Rgba16Float => (8, 1, 1),
             Rgba8 | Rgba8Srgb => (4, 1, 1),
             R8 => (1, 1, 1),
@@ -140,18 +141,39 @@ pub fn load_max(pak: &Rpak, a: &Asset, max: u32) -> Result<Texture> {
 pub fn decode_bc1(data: &[u8], w: usize, h: usize) -> Vec<[u8; 3]> {
     let mut out = vec![[0u8; 3]; w * h];
     let (bw, bh) = (w.div_ceil(4), h.div_ceil(4));
-    let rgb = |c: u16| [((c >> 11) & 31) as u32 * 255 / 31, ((c >> 5) & 63) as u32 * 255 / 63, (c & 31) as u32 * 255 / 31];
+    let rgb = |c: u16| {
+        [
+            ((c >> 11) & 31) as u32 * 255 / 31,
+            ((c >> 5) & 63) as u32 * 255 / 63,
+            (c & 31) as u32 * 255 / 31,
+        ]
+    };
     for by in 0..bh {
         for bx in 0..bw {
             let o = (by * bw + bx) * 8;
-            let Some(b) = data.get(o..o + 8) else { return out };
-            let (c0, c1) = (u16::from_le_bytes([b[0], b[1]]), u16::from_le_bytes([b[2], b[3]]));
+            let Some(b) = data.get(o..o + 8) else {
+                return out;
+            };
+            let (c0, c1) = (
+                u16::from_le_bytes([b[0], b[1]]),
+                u16::from_le_bytes([b[2], b[3]]),
+            );
             let (p0, p1) = (rgb(c0), rgb(c1));
             let mix = |a: u32, b: u32, n: u32, d: u32| ((a * (d - n) + b * n) / d) as u8;
             let pal: [[u8; 3]; 4] = if c0 > c1 {
-                [p0.map(|v| v as u8), p1.map(|v| v as u8), std::array::from_fn(|i| mix(p0[i], p1[i], 1, 3)), std::array::from_fn(|i| mix(p0[i], p1[i], 2, 3))]
+                [
+                    p0.map(|v| v as u8),
+                    p1.map(|v| v as u8),
+                    std::array::from_fn(|i| mix(p0[i], p1[i], 1, 3)),
+                    std::array::from_fn(|i| mix(p0[i], p1[i], 2, 3)),
+                ]
             } else {
-                [p0.map(|v| v as u8), p1.map(|v| v as u8), std::array::from_fn(|i| mix(p0[i], p1[i], 1, 2)), [0; 3]]
+                [
+                    p0.map(|v| v as u8),
+                    p1.map(|v| v as u8),
+                    std::array::from_fn(|i| mix(p0[i], p1[i], 1, 2)),
+                    [0; 3],
+                ]
             };
             let bits = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
             for k in 0..16 {
@@ -169,12 +191,23 @@ pub fn decode_bc1(data: &[u8], w: usize, h: usize) -> Vec<[u8; 3]> {
 pub fn decode_rgba(format: TexFormat, data: &[u8], w: usize, h: usize) -> Option<Vec<[u8; 4]>> {
     let mut px = vec![0u32; w * h];
     let ok = match format {
-        TexFormat::Bc3 | TexFormat::Bc3Srgb => texture2ddecoder::decode_bc3(data, w, h, &mut px).is_ok(),
-        TexFormat::Bc7 | TexFormat::Bc7Srgb => texture2ddecoder::decode_bc7(data, w, h, &mut px).is_ok(),
+        TexFormat::Bc3 | TexFormat::Bc3Srgb => {
+            texture2ddecoder::decode_bc3(data, w, h, &mut px).is_ok()
+        }
+        TexFormat::Bc7 | TexFormat::Bc7Srgb => {
+            texture2ddecoder::decode_bc7(data, w, h, &mut px).is_ok()
+        }
         _ => false,
     };
     // texture2ddecoder packs BGRA into a u32.
-    ok.then(|| px.iter().map(|p| { let b = p.to_le_bytes(); [b[2], b[1], b[0], b[3]] }).collect())
+    ok.then(|| {
+        px.iter()
+            .map(|p| {
+                let b = p.to_le_bytes();
+                [b[2], b[1], b[0], b[3]]
+            })
+            .collect()
+    })
 }
 
 /// Decode the top level of a BC4 image to one byte per texel.
@@ -184,7 +217,9 @@ pub fn decode_bc4(data: &[u8], w: usize, h: usize) -> Vec<u8> {
     for by in 0..bh {
         for bx in 0..bw {
             let o = (by * bw + bx) * 8;
-            let Some(b) = data.get(o..o + 8) else { return out };
+            let Some(b) = data.get(o..o + 8) else {
+                return out;
+            };
             let (r0, r1) = (b[0] as u32, b[1] as u32);
             let mut pal = [0u8; 8];
             pal[0] = r0 as u8;
@@ -216,12 +251,19 @@ pub fn decode_bc4(data: &[u8], w: usize, h: usize) -> Vec<u8> {
 /// per 16-byte block.
 pub fn decode_bc5(data: &[u8], w: usize, h: usize) -> Vec<[u8; 2]> {
     let blocks = w.div_ceil(4) * h.div_ceil(4);
-    let (mut r, mut g) = (Vec::with_capacity(blocks * 8), Vec::with_capacity(blocks * 8));
+    let (mut r, mut g) = (
+        Vec::with_capacity(blocks * 8),
+        Vec::with_capacity(blocks * 8),
+    );
     for b in data.chunks_exact(16).take(blocks) {
         r.extend_from_slice(&b[..8]);
         g.extend_from_slice(&b[8..]);
     }
-    decode_bc4(&r, w, h).into_iter().zip(decode_bc4(&g, w, h)).map(|(r, g)| [r, g]).collect()
+    decode_bc4(&r, w, h)
+        .into_iter()
+        .zip(decode_bc4(&g, w, h))
+        .map(|(r, g)| [r, g])
+        .collect()
 }
 
 /// The texture's mip chain from its largest available level, without the levels larger than
@@ -253,7 +295,9 @@ fn load_inner(pak: &Rpak, a: &Asset, starpak: bool, max: u32) -> Result<Texture>
         }
     }
     if starpak && info.streamed_mips > 0 && a.starpak_offset >= 0 {
-        let sizes: Vec<usize> = (0..info.streamed_mips).map(|i| aligned(level_size(i)) * arr).collect();
+        let sizes: Vec<usize> = (0..info.streamed_mips)
+            .map(|i| aligned(level_size(i)) * arr)
+            .collect();
         let total_size: usize = sizes.iter().sum();
         star_buf = pak.read_starpak(a.starpak_offset, total_size).ok();
         if let Some(buf) = &star_buf {
@@ -267,7 +311,10 @@ fn load_inner(pak: &Rpak, a: &Asset, starpak: bool, max: u32) -> Result<Texture>
     }
 
     // The run of levels from the largest present one, then without those above `max`.
-    let mut first = levels.iter().position(|l| l.is_some()).context("texture has no mip data")?;
+    let mut first = levels
+        .iter()
+        .position(|l| l.is_some())
+        .context("texture has no mip data")?;
     let mut mips = levels[first..].iter().take_while(|l| l.is_some()).count();
     let (mut width, mut height) = ((info.width >> first).max(1), (info.height >> first).max(1));
     while mips > 1 && (width > max || height > max) {
@@ -283,5 +330,11 @@ fn load_inner(pak: &Rpak, a: &Asset, starpak: bool, max: u32) -> Result<Texture>
     }
     // GPU block-compressed textures need the top level to be at least one block; drop
     // trailing levels smaller than that only if the format requires it (wgpu accepts them).
-    Ok(Texture { width, height, info, data, mips: mips as u32 })
+    Ok(Texture {
+        width,
+        height,
+        info,
+        data,
+        mips: mips as u32,
+    })
 }

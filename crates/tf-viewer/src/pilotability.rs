@@ -105,13 +105,55 @@ pub enum Tactical {
 
 /// (kind, weapon script, HUD icon, label, activation sound event)
 pub const TACTICALS: &[(Tactical, &str, &str, &str, &str)] = &[
-    (Tactical::Stim, "mp_ability_heal", "rui/pilot_loadout/tactical/pilot_tactical_stim", "STIM", "pilot_stimpack_activate_1P"),
-    (Tactical::Cloak, "mp_ability_cloak", "rui/pilot_loadout/tactical/pilot_tactical_cloak", "CLOAK", "cloak_on_1P"),
-    (Tactical::PhaseShift, "mp_ability_shifter", "rui/pilot_loadout/tactical/pilot_tactical_phase_shift", "PHASE SHIFT", "Pilot_PhaseShift_Activate_1P"),
-    (Tactical::Grapple, "mp_ability_grapple", "rui/pilot_loadout/tactical/pilot_tactical_grapple", "GRAPPLE", "pilot_grapple_fire"),
-    (Tactical::PulseBlade, "mp_weapon_grenade_sonar", "rui/pilot_loadout/tactical/pilot_tactical_pulse_blade", "PULSE BLADE", "Pilot_PulseBlade_Throw_1P"),
-    (Tactical::HoloPilot, "mp_ability_holopilot", "rui/pilot_loadout/tactical/pilot_tactical_holo_pilot", "HOLO PILOT", "holopilot_deploy_1p"),
-    (Tactical::AWall, "mp_weapon_deployable_cover", "rui/pilot_loadout/tactical/pilot_tactical_hardcover", "A-WALL", "Pilot_Hardcover_Toss_1P"),
+    (
+        Tactical::Stim,
+        "mp_ability_heal",
+        "rui/pilot_loadout/tactical/pilot_tactical_stim",
+        "STIM",
+        "pilot_stimpack_activate_1P",
+    ),
+    (
+        Tactical::Cloak,
+        "mp_ability_cloak",
+        "rui/pilot_loadout/tactical/pilot_tactical_cloak",
+        "CLOAK",
+        "cloak_on_1P",
+    ),
+    (
+        Tactical::PhaseShift,
+        "mp_ability_shifter",
+        "rui/pilot_loadout/tactical/pilot_tactical_phase_shift",
+        "PHASE SHIFT",
+        "Pilot_PhaseShift_Activate_1P",
+    ),
+    (
+        Tactical::Grapple,
+        "mp_ability_grapple",
+        "rui/pilot_loadout/tactical/pilot_tactical_grapple",
+        "GRAPPLE",
+        "pilot_grapple_fire",
+    ),
+    (
+        Tactical::PulseBlade,
+        "mp_weapon_grenade_sonar",
+        "rui/pilot_loadout/tactical/pilot_tactical_pulse_blade",
+        "PULSE BLADE",
+        "Pilot_PulseBlade_Throw_1P",
+    ),
+    (
+        Tactical::HoloPilot,
+        "mp_ability_holopilot",
+        "rui/pilot_loadout/tactical/pilot_tactical_holo_pilot",
+        "HOLO PILOT",
+        "holopilot_deploy_1p",
+    ),
+    (
+        Tactical::AWall,
+        "mp_weapon_deployable_cover",
+        "rui/pilot_loadout/tactical/pilot_tactical_hardcover",
+        "A-WALL",
+        "Pilot_Hardcover_Toss_1P",
+    ),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -126,12 +168,54 @@ pub enum Ordnance {
 
 /// (kind, weapon script, HUD icon, label, throw sound, explosion sound)
 pub const ORDNANCE: &[(Ordnance, &str, &str, &str, &str, &str)] = &[
-    (Ordnance::Frag, "mp_weapon_frag_grenade", "rui/pilot_loadout/ordnance/frag", "FRAG GRENADE", "Weapon_FragGrenade_Throw", "Explo_FragGrenade_Impact_3P"),
-    (Ordnance::Arc, "mp_weapon_grenade_emp", "rui/pilot_loadout/ordnance/arc_grenade", "ARC GRENADE", "weapon_empgrenade_throw", "explo_proximityemp_impact_3p"),
-    (Ordnance::Firestar, "mp_weapon_thermite_grenade", "rui/pilot_loadout/ordnance/firestar", "FIRESTAR", "weapon_firestar_throw_1p", "explo_firestar_impact"),
-    (Ordnance::GravityStar, "mp_weapon_grenade_gravity", "rui/pilot_loadout/ordnance/gravity_grenade", "GRAVITY STAR", "weapon_gravitystar_throw_1p", "gravitystar_explo_3p"),
-    (Ordnance::ElectricSmoke, "mp_weapon_grenade_electric_smoke", "rui/pilot_loadout/ordnance/electric_smoke", "ELECTRIC SMOKE", "weapon_electric_smoke_throw_1p", "explo_electric_smoke_impact"),
-    (Ordnance::Satchel, "mp_weapon_satchel", "rui/pilot_loadout/ordnance/satchel", "SATCHEL", "weapon_r1_satchel_throw", "explo_satchel_impact_3p"),
+    (
+        Ordnance::Frag,
+        "mp_weapon_frag_grenade",
+        "rui/pilot_loadout/ordnance/frag",
+        "FRAG GRENADE",
+        "Weapon_FragGrenade_Throw",
+        "Explo_FragGrenade_Impact_3P",
+    ),
+    (
+        Ordnance::Arc,
+        "mp_weapon_grenade_emp",
+        "rui/pilot_loadout/ordnance/arc_grenade",
+        "ARC GRENADE",
+        "weapon_empgrenade_throw",
+        "explo_proximityemp_impact_3p",
+    ),
+    (
+        Ordnance::Firestar,
+        "mp_weapon_thermite_grenade",
+        "rui/pilot_loadout/ordnance/firestar",
+        "FIRESTAR",
+        "weapon_firestar_throw_1p",
+        "explo_firestar_impact",
+    ),
+    (
+        Ordnance::GravityStar,
+        "mp_weapon_grenade_gravity",
+        "rui/pilot_loadout/ordnance/gravity_grenade",
+        "GRAVITY STAR",
+        "weapon_gravitystar_throw_1p",
+        "gravitystar_explo_3p",
+    ),
+    (
+        Ordnance::ElectricSmoke,
+        "mp_weapon_grenade_electric_smoke",
+        "rui/pilot_loadout/ordnance/electric_smoke",
+        "ELECTRIC SMOKE",
+        "weapon_electric_smoke_throw_1p",
+        "explo_electric_smoke_impact",
+    ),
+    (
+        Ordnance::Satchel,
+        "mp_weapon_satchel",
+        "rui/pilot_loadout/ordnance/satchel",
+        "SATCHEL",
+        "weapon_r1_satchel_throw",
+        "explo_satchel_impact_3p",
+    ),
 ];
 
 pub struct TacticalDef {
@@ -215,7 +299,10 @@ pub struct PilotAbilityDefs {
 
 /// A key from the script's MP_BASE block, else its top level.
 fn mp(s: &PlayerSettings, k: &str, default: f32) -> f32 {
-    s.get(&format!("mp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).and_then(|v| v.parse().ok()).unwrap_or(default)
+    s.get(&format!("mp_base.{k}"))
+        .or_else(|| s.get(&format!(".{k}")))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn cooldown(s: &PlayerSettings, default: f32) -> f32 {
@@ -235,8 +322,12 @@ fn charges(s: &PlayerSettings) -> u32 {
 
 impl PilotAbilityDefs {
     pub fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let pilot = PlayerSettings::load("scripts/players/mp/pilot_base.set", false, read).unwrap_or_default();
-        let mut load = |w: &str| PlayerSettings::load(&format!("scripts/weapons/{w}.txt"), false, read).unwrap_or_default();
+        let pilot = PlayerSettings::load("scripts/players/mp/pilot_base.set", false, read)
+            .unwrap_or_default();
+        let mut load = |w: &str| {
+            PlayerSettings::load(&format!("scripts/weapons/{w}.txt"), false, read)
+                .unwrap_or_default()
+        };
         let tactical: Vec<TacticalDef> = TACTICALS
             .iter()
             .map(|t| {
@@ -248,11 +339,19 @@ impl PilotAbilityDefs {
                     charges: charges(&s),
                     speed: mp(&s, "projectile_launch_speed", 1100.0),
                     regen_delay: 0.0,
-                    viewmodel: if thrown { s.get(".viewmodel").unwrap_or("").trim().to_string() } else { String::new() },
+                    viewmodel: if thrown {
+                        s.get(".viewmodel").unwrap_or("").trim().to_string()
+                    } else {
+                        String::new()
+                    },
                     pullout: mp(&s, "toss_pullout_time", 0.2),
                     toss: mp(&s, "toss_time", 0.3),
                     model: s.get(".projectilemodel").unwrap_or("").trim().to_string(),
-                    trail: s.get(".projectile_trail_effect_0").unwrap_or("").trim().to_string(),
+                    trail: s
+                        .get(".projectile_trail_effect_0")
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
                 };
                 match t.0 {
                     Tactical::Grapple => {
@@ -296,7 +395,11 @@ impl PilotAbilityDefs {
                     pullout: mp(&s, "toss_pullout_time", 0.35),
                     toss: mp(&s, "toss_time", 0.33),
                     model: s.get(".projectilemodel").unwrap_or("").trim().to_string(),
-                    trail: s.get(".projectile_trail_effect_0").unwrap_or("").trim().to_string(),
+                    trail: s
+                        .get(".projectile_trail_effect_0")
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
                 };
                 if o.0 == Ordnance::Satchel {
                     d.speed = SATCHEL_THROW;
@@ -304,11 +407,25 @@ impl PilotAbilityDefs {
                 d
             })
             .collect();
-        let tacs: Vec<String> = TACTICALS.iter().zip(tactical.iter()).map(|(t, d)| format!("{:?} {:.1}s x{} /{:.1}s", t.0, d.duration, d.charges, d.cooldown)).collect();
+        let tacs: Vec<String> = TACTICALS
+            .iter()
+            .zip(tactical.iter())
+            .map(|(t, d)| {
+                format!(
+                    "{:?} {:.1}s x{} /{:.1}s",
+                    t.0, d.duration, d.charges, d.cooldown
+                )
+            })
+            .collect();
         let ords: Vec<String> = ORDNANCE
             .iter()
             .zip(ordnance.iter())
-            .map(|(o, d)| format!("{:?} {:.0}/{:.0} r{:.0} x{} /{:.1}s", o.0, d.damage, d.damage_heavy, d.radius, d.charges, d.cooldown))
+            .map(|(o, d)| {
+                format!(
+                    "{:?} {:.0}/{:.0} r{:.0} x{} /{:.1}s",
+                    o.0, d.damage, d.damage_heavy, d.radius, d.charges, d.cooldown
+                )
+            })
             .collect();
         log::info!("pilot tacticals: {}", tacs.join(", "));
         log::info!("pilot ordnance: {}", ords.join(", "));
@@ -343,15 +460,24 @@ pub enum DecoyState {
     Idle,
     CrouchIdle,
     CrouchWalk,
-    CrouchStrafe { right: bool },
+    CrouchStrafe {
+        right: bool,
+    },
     Run,
-    Strafe { right: bool },
+    Strafe {
+        right: bool,
+    },
     Sprint,
     /// Seconds of slide left.
-    Slide { left: f32 },
+    Slide {
+        left: f32,
+    },
     Air,
     /// Along a wall with this outward normal, at this speed.
-    WallRun { normal: Vec3, speed: f32 },
+    WallRun {
+        normal: Vec3,
+        speed: f32,
+    },
     WallHang,
 }
 
@@ -370,17 +496,33 @@ const DECOY_STEP: f32 = 18.0;
 impl Decoy {
     /// CreatePlayerDecoy (server.dll 0x1801c40d0): copy the player's position and view yaw and
     /// pick the state from what the player is doing.
-    pub fn from_player(s: &tf_sim::pilot::PilotState, p: &tf_sim::pilot::PilotParams, forward: f32, right: f32) -> Self {
+    pub fn from_player(
+        s: &tf_sim::pilot::PilotState,
+        p: &tf_sim::pilot::PilotParams,
+        forward: f32,
+        right: f32,
+    ) -> Self {
         let mut dir = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
         let vel = Vec3::from(s.vel.to_array());
         let flat = Vec3::new(vel.x, vel.y, 0.0);
         let stick = (forward + right.abs()).clamp(0.0, 1.0);
         let strafing = right.abs() > forward.abs();
-        let mut d = Decoy { pos: Vec3::from(s.pos.to_array()), dir, time: DECOY_DURATION, state: DecoyState::Idle, vel: Vec3::ZERO, jump: None, was_sliding: false, strafe_right: None };
+        let mut d = Decoy {
+            pos: Vec3::from(s.pos.to_array()),
+            dir,
+            time: DECOY_DURATION,
+            state: DecoyState::Idle,
+            vel: Vec3::ZERO,
+            jump: None,
+            was_sliding: false,
+            strafe_right: None,
+        };
         d.state = match s.mode {
             PilotMove::Slide => {
                 d.was_sliding = true;
-                DecoyState::Slide { left: DECOY_SLIDE_TIME }
+                DecoyState::Slide {
+                    left: DECOY_SLIDE_TIME,
+                }
             }
             PilotMove::WallHang { .. } => DecoyState::WallHang,
             PilotMove::WallRun { .. } if flat.length() <= p.walk_speed => DecoyState::WallHang,
@@ -388,7 +530,10 @@ impl Decoy {
                 // Facing along the player's horizontal velocity.
                 dir = flat.normalize_or(dir);
                 d.dir = dir;
-                DecoyState::WallRun { normal: Vec3::from(normal.to_array()), speed: 0.0 }
+                DecoyState::WallRun {
+                    normal: Vec3::from(normal.to_array()),
+                    speed: 0.0,
+                }
             }
             PilotMove::Air | PilotMove::Mantle { .. } => {
                 // The horizontal speed carries on along the view yaw; a superjump-style jump
@@ -425,12 +570,19 @@ impl Decoy {
     /// The clip a state plays (activity, with the weapon's "pistol" modifier where the model has
     /// one), as sequence names.
     fn clip(&self, pistol: bool) -> &'static str {
-        let p = |rifle: &'static str, pistol_seq: &'static str| if pistol { pistol_seq } else { rifle };
+        let p =
+            |rifle: &'static str, pistol_seq: &'static str| if pistol { pistol_seq } else { rifle };
         match self.state {
             DecoyState::Idle => p("CQB_Idle_MP", "CQB_Idle_MP_Pistol"),
             DecoyState::CrouchIdle => p("CQB_CrouchIdle_MP", "CrouchIdle_Pistol_MP"),
             DecoyState::CrouchWalk => p("CrouchRun_forward_mp", "CrouchRun_pistol_forward_mp"),
-            DecoyState::CrouchStrafe { right } => if right { "CrouchRUN_mp_right" } else { "CrouchRUN_mp_left" },
+            DecoyState::CrouchStrafe { right } => {
+                if right {
+                    "CrouchRUN_mp_right"
+                } else {
+                    "CrouchRUN_mp_left"
+                }
+            }
             DecoyState::Run => p("Run_forward_mp", "Run_pistol_forward_mp"),
             DecoyState::Strafe { right } => match (right, pistol) {
                 (true, false) => "Run_mp_right",
@@ -440,7 +592,9 @@ impl Decoy {
             },
             DecoyState::Sprint => p("Sprint_mp_forward", "Sprint_mp_forward_Pistol"),
             DecoyState::Slide { .. } => p("Slide_forward_mp", "Slide_Pistol_forward_mp"),
-            DecoyState::Air if self.was_sliding => p("MP_Pt_Slide_Float", "MP_Pt_Pistol_Slide_Float"),
+            DecoyState::Air if self.was_sliding => {
+                p("MP_Pt_Slide_Float", "MP_Pt_Pistol_Slide_Float")
+            }
             DecoyState::Air => "Jump_float_MP",
             DecoyState::WallRun { normal, .. } => {
                 // ACT_MP_WALLRUN_RIGHT when dot(right, normal) >= 0, i.e. the wall is on the
@@ -461,11 +615,33 @@ impl Decoy {
 
 /// The sequences the decoy plays (`Decoy::clip`).
 const DECOY_SEQUENCES: &[&str] = &[
-    "CQB_Idle_MP", "CQB_Idle_MP_Pistol", "CQB_CrouchIdle_MP", "CrouchIdle_Pistol_MP", "CrouchRun_forward_mp", "CrouchRun_pistol_forward_mp",
-    "CrouchRUN_mp_right", "CrouchRUN_mp_left", "Run_forward_mp", "Run_pistol_forward_mp", "Run_mp_right", "Run_mp_left", "Run_mp_right_pistol",
-    "Run_mp_left_pistol", "Sprint_mp_forward", "Sprint_mp_forward_Pistol", "Slide_forward_mp", "Slide_Pistol_forward_mp", "MP_Pt_Slide_Float",
-    "MP_Pt_Pistol_Slide_Float", "Jump_float_MP", "a_pt_wallrun_right", "a_pt_wallrun_left", "a_pt_wallrun_pistol_right", "a_pt_wallrun_pistol_left",
-    "pt_wallrun_hang_idle", "pt_wallrun_Pistol_hang_idle",
+    "CQB_Idle_MP",
+    "CQB_Idle_MP_Pistol",
+    "CQB_CrouchIdle_MP",
+    "CrouchIdle_Pistol_MP",
+    "CrouchRun_forward_mp",
+    "CrouchRun_pistol_forward_mp",
+    "CrouchRUN_mp_right",
+    "CrouchRUN_mp_left",
+    "Run_forward_mp",
+    "Run_pistol_forward_mp",
+    "Run_mp_right",
+    "Run_mp_left",
+    "Run_mp_right_pistol",
+    "Run_mp_left_pistol",
+    "Sprint_mp_forward",
+    "Sprint_mp_forward_Pistol",
+    "Slide_forward_mp",
+    "Slide_Pistol_forward_mp",
+    "MP_Pt_Slide_Float",
+    "MP_Pt_Pistol_Slide_Float",
+    "Jump_float_MP",
+    "a_pt_wallrun_right",
+    "a_pt_wallrun_left",
+    "a_pt_wallrun_pistol_right",
+    "a_pt_wallrun_pistol_left",
+    "pt_wallrun_hang_idle",
+    "pt_wallrun_Pistol_hang_idle",
 ];
 
 /// What the Pilot's abilities are doing right now (read by movement, enemies and damage).
@@ -534,12 +710,19 @@ impl PilotStatus {
 
 /// Who an enemy at `from` goes after: the Holo Pilot decoy when it's closer than the player or
 /// the player can't be seen, else the player. Returns the target and whether it's the decoy.
-pub fn enemy_target(player: Option<(Vec3, f32, f32, bool)>, status: &PilotStatus, from: Vec3) -> (Option<(Vec3, f32, f32, bool)>, bool) {
+pub fn enemy_target(
+    player: Option<(Vec3, f32, f32, bool)>,
+    status: &PilotStatus,
+    from: Vec3,
+) -> (Option<(Vec3, f32, f32, bool)>, bool) {
     if let Some(d) = status.decoy {
         let decoy = (d.pos, 16.0, 72.0, true);
         let prefer = match player {
             None => true,
-            Some(p) => (p.3 && !status.visible_at(p.0.distance(from))) || d.pos.distance(from) < p.0.distance(from),
+            Some(p) => {
+                (p.3 && !status.visible_at(p.0.distance(from)))
+                    || d.pos.distance(from) < p.0.distance(from)
+            }
         };
         if prefer {
             return (Some(decoy), true);
@@ -570,7 +753,11 @@ impl Shields {
         self.0.iter().any(|s| {
             let o = (from - s.center).truncate();
             let d = dir.truncate();
-            let (a, b, c) = (d.length_squared(), 2.0 * o.dot(d), o.length_squared() - SHIELD_RADIUS * SHIELD_RADIUS);
+            let (a, b, c) = (
+                d.length_squared(),
+                2.0 * o.dot(d),
+                o.length_squared() - SHIELD_RADIUS * SHIELD_RADIUS,
+            );
             if a < 1e-6 || c > 0.0 {
                 return false;
             }
@@ -603,7 +790,10 @@ impl Shields {
             if disc < 0.0 {
                 continue;
             }
-            for t in [(-b - disc.sqrt()) / (2.0 * a), (-b + disc.sqrt()) / (2.0 * a)] {
+            for t in [
+                (-b - disc.sqrt()) / (2.0 * a),
+                (-b + disc.sqrt()) / (2.0 * a),
+            ] {
                 if t <= 0.0 || t >= max_t || best.is_some_and(|(_, bt)| bt <= t) {
                     continue;
                 }
@@ -693,7 +883,10 @@ pub fn setup_pilot_kit(
             idx.extend_from_slice(&[b, b + 2, b + 1, b + 1, b + 2, b + 3]);
         }
     }
-    let mut mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        bevy::mesh::PrimitiveTopology::TriangleList,
+        bevy::asset::RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uv);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, nrm);
@@ -710,28 +903,56 @@ pub fn setup_pilot_kit(
     });
     // The decoy: a copy of the player (CreatePlayerDecoy), so the player's own body model with
     // its locomotion clips; it carries the player's gun (`update_decoy_gun`).
-    let anchor = commands.spawn((game_tf(Vec3::ZERO, 0.0), Visibility::Hidden, DecoyActor)).id();
-    let spec = crate::actor::ActorSpec { path: crate::pilotbody::PILOT_BODY_MODEL, sequences: DECOY_SEQUENCES, grids: &[], body: &[] };
-    let (decoy, decoy_actor, decoy_hand) = match crate::actor::spawn_actor(&mut commands, anchor, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+    let anchor = commands
+        .spawn((game_tf(Vec3::ZERO, 0.0), Visibility::Hidden, DecoyActor))
+        .id();
+    let spec = crate::actor::ActorSpec {
+        path: crate::pilotbody::PILOT_BODY_MODEL,
+        sequences: DECOY_SEQUENCES,
+        grids: &[],
+        body: &[],
+    };
+    let (decoy, decoy_actor, decoy_hand) = match crate::actor::spawn_actor(
+        &mut commands,
+        anchor,
+        &gd,
+        &spec,
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+        &mut bindposes,
+    ) {
         Ok(a) => (Some(anchor), Some(a.entity), a.joint("ja_c_propGun")),
         Err(e) => {
             log::warn!("holo pilot model: {e:#}");
             (None, None, None)
         }
     };
-    commands.insert_resource(PilotKitAssets { shield_mesh, shield_mat, decoy, decoy_actor, decoy_hand });
+    commands.insert_resource(PilotKitAssets {
+        shield_mesh,
+        shield_mat,
+        decoy,
+        decoy_actor,
+        decoy_hand,
+    });
 }
 
 /// A game-space placement (feet position, yaw about Z) as a Bevy world transform (the world
 /// root's Z-up to Y-up turn and unit scale applied).
 fn game_tf(pos: Vec3, yaw: f32) -> Transform {
-    let root = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
+    let root = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+        .with_scale(Vec3::splat(crate::player::UNIT));
     root.mul_transform(Transform::from_translation(pos).with_rotation(Quat::from_rotation_z(yaw)))
 }
 
 fn view_dir(s: &tf_sim::pilot::PilotState, pitch_offset_deg: f32) -> Vec3 {
     let pitch = s.pitch - pitch_offset_deg.to_radians();
-    Vec3::new(pitch.cos() * s.yaw.cos(), pitch.cos() * s.yaw.sin(), -pitch.sin())
+    Vec3::new(
+        pitch.cos() * s.yaw.cos(),
+        pitch.cos() * s.yaw.sin(),
+        -pitch.sin(),
+    )
 }
 
 /// Use the tactical (Q) and ordnance (G) on foot; tick charges, Stim's regen, the decoy and
@@ -795,20 +1016,32 @@ pub fn pilot_abilities(
         }
         status.tac_charges = ((status.grapple_power + 1e-3) / need) as u32;
         let next = need * (status.tac_charges + 1) as f32 - status.grapple_power;
-        status.tac_cooldown = if status.tac_charges < def.charges { next / rate + (def.regen_delay - status.grapple_regen).max(0.0) } else { 0.0 };
+        status.tac_cooldown = if status.tac_charges < def.charges {
+            next / rate + (def.regen_delay - status.grapple_regen).max(0.0)
+        } else {
+            0.0
+        };
     } else if status.tac_charges < def.charges && status.active <= 0.0 {
         // Charges refill one at a time (not while a timed tactical runs).
         status.tac_cooldown -= dt;
         if status.tac_cooldown <= 0.0 {
             status.tac_charges += 1;
-            status.tac_cooldown = if status.tac_charges < def.charges { def.cooldown } else { 0.0 };
+            status.tac_cooldown = if status.tac_charges < def.charges {
+                def.cooldown
+            } else {
+                0.0
+            };
         }
     }
     if status.ord_charges < odef.charges {
         status.ord_cooldown -= dt;
         if status.ord_cooldown <= 0.0 {
             status.ord_charges += 1;
-            status.ord_cooldown = if status.ord_charges < odef.charges { odef.cooldown } else { 0.0 };
+            status.ord_cooldown = if status.ord_charges < odef.charges {
+                odef.cooldown
+            } else {
+                0.0
+            };
         }
     }
     if let Some((_, t)) = status.pulse.as_mut() {
@@ -825,14 +1058,19 @@ pub fn pilot_abilities(
     shields.0.retain(|s| {
         let keep = s.time > 0.0 && s.health > 0.0;
         if !keep {
-            log::info!("a-wall down with {:.0} of {SHIELD_HEALTH:.0} health left", s.health.max(0.0));
+            log::info!(
+                "a-wall down with {:.0} of {SHIELD_HEALTH:.0} health left",
+                s.health.max(0.0)
+            );
             commands.entity(s.entity).despawn();
             crate::audio::event_at(&mut commands, "Hardcover_Shield_End_3P", s.center);
         }
         keep
     });
 
-    let Ok((mut pilot, mut health)) = pilots.single_mut() else { return };
+    let Ok((mut pilot, mut health)) = pilots.single_mut() else {
+        return;
+    };
     if *control != Control::Pilot || health.dead() {
         pilot.state.grapple = None;
         pilot.state.hook = None;
@@ -845,15 +1083,28 @@ pub fn pilot_abilities(
         match ev {
             GrappleEvent::Hooked { point, normal } => {
                 let at = Vec3::from(point.to_array());
-                log::info!("grapple hooked {:.0} units away", (at - Vec3::from(pilot.state.eye(&settings.0).to_array())).length());
+                log::info!(
+                    "grapple hooked {:.0} units away",
+                    (at - Vec3::from(pilot.state.eye(&settings.0).to_array())).length()
+                );
                 crate::audio::event_at(&mut commands, "default_grapple_impact_1p_vs_3p", at);
-                emit(&mut commands, Effect::Impact { at: to_bevy(at), normal: to_bevy(Vec3::from(normal.to_array())), scale: 0.5, energy: false });
+                emit(
+                    &mut commands,
+                    Effect::Impact {
+                        at: to_bevy(at),
+                        normal: to_bevy(Vec3::from(normal.to_array())),
+                        scale: 0.5,
+                        energy: false,
+                    },
+                );
             }
             GrappleEvent::Pulling => {
                 status.grapple_power = (status.grapple_power - need).max(0.0);
                 status.grapple_regen = 0.0;
             }
-            GrappleEvent::Missed | GrappleEvent::Released => crate::audio::event(&mut commands, "pilot_grapple_retract_1p"),
+            GrappleEvent::Missed | GrappleEvent::Released => {
+                crate::audio::event(&mut commands, "pilot_grapple_retract_1p")
+            }
         }
     }
     if status.is(Tactical::Stim) {
@@ -875,7 +1126,11 @@ pub fn pilot_abilities(
     // The throw: pull out (toss_pullout_time), hold while the button is held, toss on
     // release (toss_time), then the gun comes back up.
     let mut launch = false;
-    let (pullout, toss) = if throw_state.tactical { (def.pullout, def.toss) } else { (odef.pullout, odef.toss) };
+    let (pullout, toss) = if throw_state.tactical {
+        (def.pullout, def.toss)
+    } else {
+        (odef.pullout, odef.toss)
+    };
     if let Some((phase, t0)) = throw_state.phase {
         let t = t0 + dt;
         throw_state.phase = Some((phase, t));
@@ -902,7 +1157,8 @@ pub fn pilot_abilities(
         }
     }
     // Pulse Blade and A-Wall are thrown: the press starts the throw, the toss uses the charge.
-    let thrown_tac = matches!(TACTICALS[ti].0, Tactical::PulseBlade | Tactical::AWall) && !def.viewmodel.is_empty();
+    let thrown_tac = matches!(TACTICALS[ti].0, Tactical::PulseBlade | Tactical::AWall)
+        && !def.viewmodel.is_empty();
     if tactical && thrown_tac && !launch {
         if status.tac_charges > 0 && status.active <= 0.0 && !throw_state.busy() {
             throw_state.phase = Some((ThrowPhase::Pullout, 0.0));
@@ -915,7 +1171,9 @@ pub fn pilot_abilities(
     }
     if tactical {
         let kind = TACTICALS[ti].0;
-        if kind == Tactical::Grapple && (pilot.state.grapple.is_some() || pilot.state.hook.is_some_and(|h| h.back.is_none())) {
+        if kind == Tactical::Grapple
+            && (pilot.state.grapple.is_some() || pilot.state.hook.is_some_and(|h| h.back.is_none()))
+        {
             // Pressing again while the hook is out lets go (CPlayer::Grapple, client.dll
             // 0x1802c8600).
             pilot.state.release_grapple(&settings.0);
@@ -926,22 +1184,38 @@ pub fn pilot_abilities(
             crate::audio::event(&mut commands, TACTICALS[ti].4);
             log::info!("tactical: {kind:?}");
             match kind {
-                Tactical::Stim | Tactical::Cloak | Tactical::PhaseShift => status.active = def.duration,
+                Tactical::Stim | Tactical::Cloak | Tactical::PhaseShift => {
+                    status.active = def.duration
+                }
                 // The hook flies out from the eye at grapple_shootVel up to grapple_maxLength
                 // (tf-sim moves it and reports where it lands).
                 Tactical::Grapple => {
-                    pilot.state.fire_grapple(SVec3::from(look.to_array()), def.speed, &settings.0);
+                    pilot
+                        .state
+                        .fire_grapple(SVec3::from(look.to_array()), def.speed, &settings.0);
                 }
                 Tactical::PulseBlade => {
                     let dir = view_dir(&pilot.state, 2.0);
                     commands.spawn((
                         Transform::from_translation(to_bevy(eye)),
                         crate::particles::Glow::new(Vec3::new(0.6, 2.0, 5.0), 0.12, false),
-                        Grenade { kind: None, pos: eye + dir * 20.0, vel: dir * def.speed + pvel, fuse: 0.0, stuck: Stuck::No, since: 0.0, tick: 0.0, first: true, wall: None, spin: 0.0 },
+                        Grenade {
+                            kind: None,
+                            pos: eye + dir * 20.0,
+                            vel: dir * def.speed + pvel,
+                            fuse: 0.0,
+                            stuck: Stuck::No,
+                            since: 0.0,
+                            tick: 0.0,
+                            first: true,
+                            wall: None,
+                            spin: 0.0,
+                        },
                     ));
                 }
                 Tactical::HoloPilot => {
-                    let mut d = Decoy::from_player(&pilot.state, &settings.0, input.forward, input.right);
+                    let mut d =
+                        Decoy::from_player(&pilot.state, &settings.0, input.forward, input.right);
                     d.time = def.duration;
                     log::debug!("holo pilot: {:?}", d.state);
                     status.decoy = Some(d);
@@ -955,13 +1229,29 @@ pub fn pilot_abilities(
                     // times harder looking down (GetDeployableThrowVelocity); it plants where
                     // it lands (OnDeployableCoverPlanted, in update_grenades).
                     let pitch = pilot.state.pitch.to_degrees() - 8.0;
-                    let power = DEPLOYABLE_THROW_POWER * (1.0 + 2.0 * (pitch / 80.0).clamp(0.0, 1.0));
+                    let power =
+                        DEPLOYABLE_THROW_POWER * (1.0 + 2.0 * (pitch / 80.0).clamp(0.0, 1.0));
                     let p = pitch.to_radians();
-                    let dir = Vec3::new(p.cos() * pilot.state.yaw.cos(), p.cos() * pilot.state.yaw.sin(), -p.sin());
+                    let dir = Vec3::new(
+                        p.cos() * pilot.state.yaw.cos(),
+                        p.cos() * pilot.state.yaw.sin(),
+                        -p.sin(),
+                    );
                     commands.spawn((
                         Transform::from_translation(to_bevy(eye)),
                         crate::particles::Glow::new(Vec3::new(0.6, 2.0, 5.0), 0.12, false),
-                        Grenade { kind: None, pos: eye + look * 15.0, vel: dir * power, fuse: 0.0, stuck: Stuck::No, since: 0.0, tick: 0.0, first: true, wall: Some(pilot.state.yaw), spin: 0.0 },
+                        Grenade {
+                            kind: None,
+                            pos: eye + look * 15.0,
+                            vel: dir * power,
+                            fuse: 0.0,
+                            stuck: Stuck::No,
+                            since: 0.0,
+                            tick: 0.0,
+                            first: true,
+                            wall: Some(pilot.state.yaw),
+                            spin: 0.0,
+                        },
                     ));
                 }
             }
@@ -1002,7 +1292,22 @@ pub fn pilot_abilities(
             commands.spawn((
                 Transform::from_translation(to_bevy(eye)),
                 crate::particles::Glow::new(color, 0.12, false),
-                Grenade { kind: Some(oi), pos: eye + dir * 20.0, vel: dir * odef.speed + pvel, fuse: if odef.fuse > 0.0 { (odef.fuse - throw_state.cooked).max(0.05) } else { 0.0 }, stuck: Stuck::No, since: 0.0, tick: 0.0, first: true, wall: None, spin: 0.0 },
+                Grenade {
+                    kind: Some(oi),
+                    pos: eye + dir * 20.0,
+                    vel: dir * odef.speed + pvel,
+                    fuse: if odef.fuse > 0.0 {
+                        (odef.fuse - throw_state.cooked).max(0.05)
+                    } else {
+                        0.0
+                    },
+                    stuck: Stuck::No,
+                    since: 0.0,
+                    tick: 0.0,
+                    first: true,
+                    wall: None,
+                    spin: 0.0,
+                },
             ));
         }
     }
@@ -1012,7 +1317,14 @@ pub fn pilot_abilities(
 #[derive(Resource)]
 pub struct Detonate;
 
-fn radius_damage(enemies: &mut Query<(Entity, &mut Enemy)>, at: Vec3, inner: f32, radius: f32, dmg: f32, heavy: f32) -> u32 {
+fn radius_damage(
+    enemies: &mut Query<(Entity, &mut Enemy)>,
+    at: Vec3,
+    inner: f32,
+    radius: f32,
+    dmg: f32,
+    heavy: f32,
+) -> u32 {
     let mut hits = 0;
     for (_, mut e) in enemies.iter_mut() {
         if !e.alive() {
@@ -1025,7 +1337,10 @@ fn radius_damage(enemies: &mut Query<(Entity, &mut Enemy)>, at: Vec3, inner: f32
             if amount > 0.0 {
                 e.damage(amount, false);
                 hits += 1;
-                log::debug!("ordnance hit {} for {amount:.0}", if e.infantry { "grunt" } else { "titan" });
+                log::debug!(
+                    "ordnance hit {} for {amount:.0}",
+                    if e.infantry { "grunt" } else { "titan" }
+                );
             }
         }
     }
@@ -1051,7 +1366,11 @@ pub fn update_grenades(
     let boom = detonate.is_some();
     // Your own ordnance hurts you too (the explosion's pilot damage, by distance).
     let god = std::env::var_os("TF_PILOT_GOD").is_some();
-    let self_damage = |pilots: &mut Query<(&PlayerPilot, &mut PilotHealth)>, at: Vec3, inner: f32, radius: f32, dmg: f32| {
+    let self_damage = |pilots: &mut Query<(&PlayerPilot, &mut PilotHealth)>,
+                       at: Vec3,
+                       inner: f32,
+                       radius: f32,
+                       dmg: f32| {
         if *control != Control::Pilot || god {
             return;
         }
@@ -1080,14 +1399,24 @@ pub fn update_grenades(
             }
         }
         if g.stuck == Stuck::No {
-            g.vel.z -= GRENADE_GRAVITY * if g.wall.is_some() { AWALL_GRAVITY_SCALE } else { 1.0 } * dt;
+            g.vel.z -= GRENADE_GRAVITY
+                * if g.wall.is_some() {
+                    AWALL_GRAVITY_SCALE
+                } else {
+                    1.0
+                }
+                * dt;
             let step = g.vel * dt;
             let len = step.length();
             if len > 1e-4 {
                 let dir = step / len;
                 let mut t_end = len + GRENADE_RADIUS;
                 let mut normal = None;
-                if let Some(h) = world.0.raycast(SVec3::from(g.pos.to_array()), SVec3::from(dir.to_array()), t_end) {
+                if let Some(h) = world.0.raycast(
+                    SVec3::from(g.pos.to_array()),
+                    SVec3::from(dir.to_array()),
+                    t_end,
+                ) {
                     t_end = h.t;
                     normal = Some(Vec3::from(h.normal.to_array()));
                 }
@@ -1096,7 +1425,13 @@ pub fn update_grenades(
                 if kind != Some(Ordnance::Frag) {
                     for (eid, e) in enemies.iter() {
                         if e.alive() {
-                            if let Some(t) = crate::weapons::ray_cylinder(g.pos, dir, e.pos, e.radius + 4.0, e.height) {
+                            if let Some(t) = crate::weapons::ray_cylinder(
+                                g.pos,
+                                dir,
+                                e.pos,
+                                e.radius + 4.0,
+                                e.height,
+                            ) {
                                 if t < t_end {
                                     t_end = t;
                                     hit_enemy = Some(eid);
@@ -1127,7 +1462,8 @@ pub fn update_grenades(
                         // grenade_bounce_vel_frac_*: glancing hits keep more speed than head-on.
                         let d = def.unwrap();
                         let into = -dir.dot(n);
-                        let keep = d.bounce_shallow + (d.bounce_sharp - d.bounce_shallow) * into.clamp(0.0, 1.0);
+                        let keep = d.bounce_shallow
+                            + (d.bounce_sharp - d.bounce_shallow) * into.clamp(0.0, 1.0);
                         let v = g.vel - 2.0 * g.vel.dot(n) * n;
                         g.vel = v * keep;
                         g.pos += dir * (t_end - GRENADE_RADIUS).max(0.0) + n * 0.5;
@@ -1136,7 +1472,11 @@ pub fn update_grenades(
                         g.stuck = Stuck::World;
                         g.since = 0.0;
                         if kind == Some(Ordnance::Satchel) {
-                            crate::audio::event_at(&mut commands, "weapon_r1_satchel_attach", g.pos);
+                            crate::audio::event_at(
+                                &mut commands,
+                                "weapon_r1_satchel_attach",
+                                g.pos,
+                            );
                         }
                     }
                 } else {
@@ -1176,13 +1516,37 @@ pub fn update_grenades(
                 let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
                 let center = g.pos - fwd * (SHIELD_RADIUS - 1.0) - Vec3::Z;
                 let e = if std::env::var_os("TF_OLD_FX").is_some() {
-                    kit.as_ref().map(|k| commands.spawn((Mesh3d(k.shield_mesh.clone()), MeshMaterial3d(k.shield_mat.clone()), game_tf(center, yaw), ShieldMesh)).id())
+                    kit.as_ref().map(|k| {
+                        commands
+                            .spawn((
+                                Mesh3d(k.shield_mesh.clone()),
+                                MeshMaterial3d(k.shield_mat.clone()),
+                                game_tf(center, yaw),
+                                ShieldMesh,
+                            ))
+                            .id()
+                    })
                 } else {
-                    Some(commands.spawn((Transform::from_translation(to_bevy(center)).looking_to(to_bevy(fwd).normalize(), Vec3::Y), Visibility::default(), crate::pfx::PfxTrail::oriented("P_pilot_amped_shield"))).id())
+                    Some(
+                        commands
+                            .spawn((
+                                Transform::from_translation(to_bevy(center))
+                                    .looking_to(to_bevy(fwd).normalize(), Vec3::Y),
+                                Visibility::default(),
+                                crate::pfx::PfxTrail::oriented("P_pilot_amped_shield"),
+                            ))
+                            .id(),
+                    )
                 };
                 if let Some(e) = e {
                     log::info!("a-wall up at {center:.0}");
-                    shields.0.push(Shield { center, facing: fwd, health: SHIELD_HEALTH, time: SHIELD_DURATION, entity: e });
+                    shields.0.push(Shield {
+                        center,
+                        facing: fwd,
+                        health: SHIELD_HEALTH,
+                        time: SHIELD_DURATION,
+                        entity: e,
+                    });
                     crate::audio::event_at(&mut commands, "Hardcover_Shield_Start_3P", g.pos);
                 }
             }
@@ -1196,7 +1560,13 @@ pub fn update_grenades(
                 status.pulse = Some((g.pos, SONAR_DURATION));
                 log::info!("pulse blade landed");
                 crate::audio::event_at(&mut commands, "Pilot_PulseBlade_Sonar_Pulse_1P", g.pos);
-                emit(&mut commands, Effect::DustRing { at: to_bevy(g.pos), radius: 6.0 });
+                emit(
+                    &mut commands,
+                    Effect::DustRing {
+                        at: to_bevy(g.pos),
+                        radius: 6.0,
+                    },
+                );
             }
             if landed && g.since > SONAR_DURATION {
                 commands.entity(id).despawn();
@@ -1210,9 +1580,22 @@ pub fn update_grenades(
                 g.fuse -= dt;
                 if g.fuse <= 0.0 {
                     commands.entity(id).despawn();
-                    emit(&mut commands, Effect::Explosion { at: to_bevy(g.pos), scale: 1.2 });
+                    emit(
+                        &mut commands,
+                        Effect::Explosion {
+                            at: to_bevy(g.pos),
+                            scale: 1.2,
+                        },
+                    );
                     crate::audio::event_at(&mut commands, sound, g.pos);
-                    let n = radius_damage(&mut enemies, g.pos, d.inner, d.radius, d.damage, d.damage_heavy);
+                    let n = radius_damage(
+                        &mut enemies,
+                        g.pos,
+                        d.inner,
+                        d.radius,
+                        d.damage,
+                        d.damage_heavy,
+                    );
                     self_damage(&mut pilots, g.pos, d.inner, d.radius, d.damage);
                     log::info!("frag exploded, {n} enemies hit");
                 }
@@ -1220,10 +1603,31 @@ pub fn update_grenades(
             Ordnance::Arc => {
                 if landed {
                     commands.entity(id).despawn();
-                    emit(&mut commands, Effect::Impact { at: to_bevy(g.pos), normal: Vec3::Y, scale: 4.0, energy: true });
-                    emit(&mut commands, Effect::DustRing { at: to_bevy(g.pos), radius: d.radius * crate::player::UNIT });
+                    emit(
+                        &mut commands,
+                        Effect::Impact {
+                            at: to_bevy(g.pos),
+                            normal: Vec3::Y,
+                            scale: 4.0,
+                            energy: true,
+                        },
+                    );
+                    emit(
+                        &mut commands,
+                        Effect::DustRing {
+                            at: to_bevy(g.pos),
+                            radius: d.radius * crate::player::UNIT,
+                        },
+                    );
                     crate::audio::event_at(&mut commands, sound, g.pos);
-                    let n = radius_damage(&mut enemies, g.pos, d.inner, d.radius, d.damage, d.damage_heavy);
+                    let n = radius_damage(
+                        &mut enemies,
+                        g.pos,
+                        d.inner,
+                        d.radius,
+                        d.damage,
+                        d.damage_heavy,
+                    );
                     self_damage(&mut pilots, g.pos, d.inner, d.radius, d.damage);
                     log::info!("arc grenade went off, {n} enemies hit");
                     for (_, mut e) in enemies.iter_mut() {
@@ -1245,9 +1649,30 @@ pub fn update_grenades(
                         g.tick += THERMITE_TICK;
                         // The first burst is stronger (x1.2, x2.5 against heavy armour).
                         let (m, mh) = if g.first { (1.2, 2.5) } else { (1.0, 1.0) };
-                        radius_damage(&mut enemies, g.pos, d.inner, d.radius, d.damage * m, d.damage_heavy * mh);
-                        emit(&mut commands, Effect::TrailPuff { at: to_bevy(g.pos + Vec3::Z * 10.0), scale: 1.5 });
-                        emit(&mut commands, Effect::Impact { at: to_bevy(g.pos), normal: Vec3::Y, scale: 2.0, energy: false });
+                        radius_damage(
+                            &mut enemies,
+                            g.pos,
+                            d.inner,
+                            d.radius,
+                            d.damage * m,
+                            d.damage_heavy * mh,
+                        );
+                        emit(
+                            &mut commands,
+                            Effect::TrailPuff {
+                                at: to_bevy(g.pos + Vec3::Z * 10.0),
+                                scale: 1.5,
+                            },
+                        );
+                        emit(
+                            &mut commands,
+                            Effect::Impact {
+                                at: to_bevy(g.pos),
+                                normal: Vec3::Y,
+                                scale: 2.0,
+                                energy: false,
+                            },
+                        );
                         g.first = false;
                     }
                     if g.since > THERMITE_BURN_TIME {
@@ -1265,7 +1690,11 @@ pub fn update_grenades(
                                 g.pos.z += GRAV_POP_HEIGHT;
                                 g.stuck = Stuck::World;
                             }
-                            crate::audio::event_at(&mut commands, "weapon_gravitystar_preexplo", g.pos);
+                            crate::audio::event_at(
+                                &mut commands,
+                                "weapon_gravitystar_preexplo",
+                                g.pos,
+                            );
                         }
                         // Pull grunts in (the intense pull: accel 2000 up to 400 u/s).
                         for (_, mut e) in enemies.iter_mut() {
@@ -1273,7 +1702,8 @@ pub fn update_grenades(
                                 let to = g.pos - (e.pos + Vec3::Z * 36.0);
                                 let dist = to.length();
                                 if dist < GRAV_PULL_RADIUS && dist > 20.0 {
-                                    let speed = (GRAV_PULL_ACCEL * (g.since - GRAV_POP_DELAY)).min(GRAV_PULL_SPEED);
+                                    let speed = (GRAV_PULL_ACCEL * (g.since - GRAV_POP_DELAY))
+                                        .min(GRAV_PULL_SPEED);
                                     let step = to / dist * speed * dt;
                                     e.state.pos += SVec3::new(step.x, step.y, 0.0);
                                     e.pos = Vec3::from(e.state.pos.to_array());
@@ -1284,9 +1714,22 @@ pub fn update_grenades(
                     }
                     if g.since >= GRAV_POP_DELAY + GRAV_PULL_DELAY {
                         commands.entity(id).despawn();
-                        emit(&mut commands, Effect::Explosion { at: to_bevy(g.pos), scale: 1.0 });
+                        emit(
+                            &mut commands,
+                            Effect::Explosion {
+                                at: to_bevy(g.pos),
+                                scale: 1.0,
+                            },
+                        );
                         crate::audio::event_at(&mut commands, sound, g.pos);
-                        let n = radius_damage(&mut enemies, g.pos, d.inner.min(d.radius - 1.0), d.radius, d.damage, d.damage_heavy);
+                        let n = radius_damage(
+                            &mut enemies,
+                            g.pos,
+                            d.inner.min(d.radius - 1.0),
+                            d.radius,
+                            d.damage,
+                            d.damage_heavy,
+                        );
                         log::info!("gravity star exploded, {n} enemies hit");
                     }
                 }
@@ -1303,13 +1746,34 @@ pub fn update_grenades(
                         let a = g.since * 7.3;
                         let r = (d.radius * 0.6) * (a * 0.37).sin().abs();
                         let p = g.pos + Vec3::new(a.cos() * r, a.sin() * r, 30.0);
-                        emit(&mut commands, Effect::TrailPuff { at: to_bevy(p), scale: 4.0 });
-                        emit(&mut commands, Effect::Impact { at: to_bevy(p), normal: Vec3::Y, scale: 1.0, energy: true });
+                        emit(
+                            &mut commands,
+                            Effect::TrailPuff {
+                                at: to_bevy(p),
+                                scale: 4.0,
+                            },
+                        );
+                        emit(
+                            &mut commands,
+                            Effect::Impact {
+                                at: to_bevy(p),
+                                normal: Vec3::Y,
+                                scale: 1.0,
+                                energy: true,
+                            },
+                        );
                     }
                     g.tick -= dt;
                     while g.tick <= 0.0 {
                         g.tick += SMOKE_TICK;
-                        radius_damage(&mut enemies, g.pos, d.inner, d.radius, d.damage * SMOKE_TICK, d.damage_heavy * SMOKE_TICK);
+                        radius_damage(
+                            &mut enemies,
+                            g.pos,
+                            d.inner,
+                            d.radius,
+                            d.damage * SMOKE_TICK,
+                            d.damage_heavy * SMOKE_TICK,
+                        );
                     }
                     if g.since > SMOKE_LIFETIME {
                         log::info!("electric smoke cleared");
@@ -1320,9 +1784,22 @@ pub fn update_grenades(
             Ordnance::Satchel => {
                 if boom {
                     commands.entity(id).despawn();
-                    emit(&mut commands, Effect::Explosion { at: to_bevy(g.pos), scale: 1.5 });
+                    emit(
+                        &mut commands,
+                        Effect::Explosion {
+                            at: to_bevy(g.pos),
+                            scale: 1.5,
+                        },
+                    );
                     crate::audio::event_at(&mut commands, sound, g.pos);
-                    let n = radius_damage(&mut enemies, g.pos, d.inner, d.radius, d.damage, d.damage_heavy);
+                    let n = radius_damage(
+                        &mut enemies,
+                        g.pos,
+                        d.inner,
+                        d.radius,
+                        d.damage,
+                        d.damage_heavy,
+                    );
                     self_damage(&mut pilots, g.pos, d.inner, d.radius, d.damage);
                     log::info!("satchel detonated, {n} enemies hit");
                 }
@@ -1350,11 +1827,22 @@ pub struct PulseMarker(usize);
 
 const PULSE_MARKERS: usize = 24;
 
-pub fn spawn_pilot_slots(mut commands: Commands, ui: Res<UiAssets>, status: Res<PilotStatus>, hud: Query<Entity, With<crate::hud::HudRoot>>) {
+pub fn spawn_pilot_slots(
+    mut commands: Commands,
+    ui: Res<UiAssets>,
+    status: Res<PilotStatus>,
+    hud: Query<Entity, With<crate::hud::HudRoot>>,
+) {
     let vh = Val::Vh;
     let root = commands
         .spawn((
-            Node { position_type: PositionType::Absolute, left: vh(crate::hud::SLOTS_X), top: vh(crate::hud::SLOTS_Y), column_gap: vh(crate::hud::SLOT_GAP), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                left: vh(crate::hud::SLOTS_X),
+                top: vh(crate::hud::SLOTS_Y),
+                column_gap: vh(crate::hud::SLOT_GAP),
+                ..default()
+            },
             Visibility::Hidden,
             PilotSlots,
         ))
@@ -1375,14 +1863,30 @@ pub fn spawn_pilot_slots(mut commands: Commands, ui: Res<UiAssets>, status: Res<
     }
     // The old Phase Shift / Cloak screen tints (TF_NO_PHASE_FX / TF_NO_CLOAK_FX).
     commands.spawn((
-        Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
         BackgroundColor(Color::NONE),
         PhaseTint,
     ));
     // Pulse Blade reveals: red diamonds over enemies, seen through walls.
     for i in 0..PULSE_MARKERS {
         commands.spawn((
-            Node { position_type: PositionType::Absolute, width: vh(1.4), height: vh(1.4), margin: UiRect { left: vh(-0.7), top: vh(-0.7), ..default() }, border: UiRect::all(Val::Px(2.0)), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                width: vh(1.4),
+                height: vh(1.4),
+                margin: UiRect {
+                    left: vh(-0.7),
+                    top: vh(-0.7),
+                    ..default()
+                },
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
             BorderColor::all(Color::srgb(1.0, 0.25, 0.15)),
             BackgroundColor(Color::srgba(1.0, 0.25, 0.15, 0.25)),
             UiTransform::from_rotation(Rot2::degrees(45.0)),
@@ -1422,16 +1926,35 @@ pub fn update_pilot_slots(
             }
         }
     }
-    let playing = matches!(game.state, crate::game::GameState::Playing | crate::game::GameState::Intermission) && !hidden.0;
+    let playing = matches!(
+        game.state,
+        crate::game::GameState::Playing | crate::game::GameState::Intermission
+    ) && !hidden.0;
     if let Ok(mut v) = root.single_mut() {
-        v.set_if_neq(if *control == Control::Pilot && playing { Visibility::Inherited } else { Visibility::Hidden });
+        v.set_if_neq(if *control == Control::Pilot && playing {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
     let def = &defs.tactical[status.tactical.min(defs.tactical.len() - 1)];
     let odef = &defs.ordnance[status.ordnance.min(defs.ordnance.len() - 1)];
-    let tac_frac = if status.active > 0.0 || status.tac_charges > 0 { 0.0 } else { (status.tac_cooldown / def.cooldown.max(0.1)).clamp(0.0, 1.0) };
-    let ord_frac = if status.ord_charges > 0 { 0.0 } else { (status.ord_cooldown / odef.cooldown.max(0.1)).clamp(0.0, 1.0) };
+    let tac_frac = if status.active > 0.0 || status.tac_charges > 0 {
+        0.0
+    } else {
+        (status.tac_cooldown / def.cooldown.max(0.1)).clamp(0.0, 1.0)
+    };
+    let ord_frac = if status.ord_charges > 0 {
+        0.0
+    } else {
+        (status.ord_cooldown / odef.cooldown.max(0.1)).clamp(0.0, 1.0)
+    };
     for (s, mut n) in &mut shades {
-        crate::hud::set(&mut n, |n| &mut n.height, Val::Percent(100.0 * if s.0 == 0 { tac_frac } else { ord_frac }));
+        crate::hud::set(
+            &mut n,
+            |n| &mut n.height,
+            Val::Percent(100.0 * if s.0 == 0 { tac_frac } else { ord_frac }),
+        );
     }
     for (s, mut t) in &mut texts {
         let v = if s.0 == 0 {
@@ -1475,12 +1998,16 @@ pub fn update_pulse_markers(
     enemies: Query<&Enemy>,
     mut markers: Query<(&PulseMarker, &mut Node, &mut Visibility)>,
 ) {
-    let Ok((camera, cam_tf)) = cameras.single() else { return };
+    let Ok((camera, cam_tf)) = cameras.single() else {
+        return;
+    };
     let mut spots = Vec::new();
     if let Some((at, _)) = status.pulse {
         for e in &enemies {
             if e.alive() && e.pos.distance(at) < SONAR_RADIUS {
-                if let Ok(p) = camera.world_to_viewport(cam_tf, to_bevy(e.pos + Vec3::Z * e.height * 0.6)) {
+                if let Ok(p) =
+                    camera.world_to_viewport(cam_tf, to_bevy(e.pos + Vec3::Z * e.height * 0.6))
+                {
                     spots.push(p);
                 }
             }
@@ -1512,11 +2039,27 @@ pub fn grapple_cable(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let hook = pilots.single().ok().and_then(|p| p.state.hook_pos()).filter(|_| *control == Control::Pilot);
+    let hook = pilots
+        .single()
+        .ok()
+        .and_then(|p| p.state.hook_pos())
+        .filter(|_| *control == Control::Pilot);
     let Ok((mut tf, mut vis)) = cables.single_mut() else {
         let mesh = meshes.add(Cylinder::new(1.0, 1.0));
-        let mat = materials.add(StandardMaterial { base_color: Color::srgb(0.1, 0.1, 0.11), metallic: 0.2, perceptual_roughness: 0.6, ..default() });
-        commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::default(), Visibility::Hidden, GrappleCable, bevy::light::NotShadowCaster));
+        let mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.1, 0.1, 0.11),
+            metallic: 0.2,
+            perceptual_roughness: 0.6,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(mat),
+            Transform::default(),
+            Visibility::Hidden,
+            GrappleCable,
+            bevy::light::NotShadowCaster,
+        ));
         return;
     };
     let (Some(hook), Ok(cam)) = (hook, cams.single()) else {
@@ -1533,7 +2076,11 @@ pub fn grapple_cable(
         vis.set_if_neq(Visibility::Hidden);
         return;
     }
-    *tf = Transform { translation: hand + d * 0.5, rotation: Quat::from_rotation_arc(Vec3::Y, d / len), scale: Vec3::new(0.35 * u, len, 0.35 * u) };
+    *tf = Transform {
+        translation: hand + d * 0.5,
+        rotation: Quat::from_rotation_arc(Vec3::Y, d / len),
+        scale: Vec3::new(0.35 * u, len, 0.35 * u),
+    };
     vis.set_if_neq(Visibility::Visible);
 }
 
@@ -1542,7 +2089,9 @@ pub struct GrappleCable;
 
 /// Thrown ordnance and tactical models by path (None: failed to build).
 #[derive(Resource, Default)]
-pub struct GrenadeModels(pub std::collections::HashMap<String, Option<Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>>);
+pub struct GrenadeModels(
+    pub std::collections::HashMap<String, Option<Vec<(Handle<Mesh>, Handle<StandardMaterial>)>>>,
+);
 
 /// Build every thrown model once, under the loading screen (built on the first throw, the
 /// A-Wall's stalled that frame for 70 ms).
@@ -1562,9 +2111,26 @@ pub fn preload_grenade_models(
         return;
     }
     *done = true;
-    let paths: Vec<String> = defs.ordnance.iter().map(|o| o.model.clone()).chain(defs.tactical.iter().map(|t| t.model.clone())).filter(|m| !m.is_empty()).collect();
+    let paths: Vec<String> = defs
+        .ordnance
+        .iter()
+        .map(|o| o.model.clone())
+        .chain(defs.tactical.iter().map(|t| t.model.clone()))
+        .filter(|m| !m.is_empty())
+        .collect();
     for m in paths {
-        models.0.entry(m.clone()).or_insert_with(|| crate::world::build_static_model(&gd, &m, &mut cache, &mut meshes, &mut images, &mut materials).ok().map(|(parts, _)| parts));
+        models.0.entry(m.clone()).or_insert_with(|| {
+            crate::world::build_static_model(
+                &gd,
+                &m,
+                &mut cache,
+                &mut meshes,
+                &mut images,
+                &mut materials,
+            )
+            .ok()
+            .map(|(parts, _)| parts)
+        });
     }
 }
 
@@ -1593,11 +2159,17 @@ pub fn grenade_visuals(
         let (model, trail) = match (g.kind, g.wall) {
             (Some(i), _) => (&defs.ordnance[i].model, &defs.ordnance[i].trail),
             (None, Some(_)) => {
-                let t = &defs.tactical[TACTICALS.iter().position(|t| t.0 == Tactical::AWall).unwrap_or(0)];
+                let t = &defs.tactical[TACTICALS
+                    .iter()
+                    .position(|t| t.0 == Tactical::AWall)
+                    .unwrap_or(0)];
                 (&t.model, &t.trail)
             }
             (None, None) => {
-                let t = &defs.tactical[TACTICALS.iter().position(|t| t.0 == Tactical::PulseBlade).unwrap_or(0)];
+                let t = &defs.tactical[TACTICALS
+                    .iter()
+                    .position(|t| t.0 == Tactical::PulseBlade)
+                    .unwrap_or(0)];
                 (&t.model, &t.trail)
             }
         };
@@ -1612,22 +2184,37 @@ pub fn grenade_visuals(
         }
         let parts = models
             .entry(model.clone())
-            .or_insert_with(|| match crate::world::build_static_model(&gd, model, &mut cache, &mut meshes, &mut images, &mut materials) {
-                Ok((parts, _)) => Some(parts),
-                Err(err) => {
-                    log::warn!("grenade model {model}: {err:#}");
-                    None
+            .or_insert_with(|| {
+                match crate::world::build_static_model(
+                    &gd,
+                    model,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                ) {
+                    Ok((parts, _)) => Some(parts),
+                    Err(err) => {
+                        log::warn!("grenade model {model}: {err:#}");
+                        None
+                    }
                 }
             })
             .clone();
         let Some(parts) = parts else { continue };
-        commands.entity(e).remove::<crate::particles::Glow>().insert(Visibility::default());
+        commands
+            .entity(e)
+            .remove::<crate::particles::Glow>()
+            .insert(Visibility::default());
         // The model is in game axes and units: turn it into Bevy's Y-up, metre space.
-        let local = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)).with_scale(Vec3::splat(crate::player::UNIT));
+        let local = Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+            .with_scale(Vec3::splat(crate::player::UNIT));
         let holder = commands.spawn((local, Visibility::default())).id();
         commands.entity(e).add_child(holder);
         for (mesh, mat) in parts {
-            let c = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY)).id();
+            let c = commands
+                .spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY))
+                .id();
             commands.entity(holder).add_child(c);
         }
     }
@@ -1664,8 +2251,17 @@ pub fn update_decoy(
     gd: Res<GameData>,
     mut cache: ResMut<Cache>,
     // Grouped: the system is at Bevy's parameter limit.
-    assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>),
-    mut dissolve: (Query<&Children>, Query<&MeshMaterial3d<StandardMaterial>>, Local<Vec<(Entity, Handle<StandardMaterial>, Handle<StandardMaterial>)>>),
+    assets: (
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<Image>>,
+        ResMut<Assets<StandardMaterial>>,
+        ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    ),
+    mut dissolve: (
+        Query<&Children>,
+        Query<&MeshMaterial3d<StandardMaterial>>,
+        Local<Vec<(Entity, Handle<StandardMaterial>, Handle<StandardMaterial>)>>,
+    ),
 ) {
     let Some(kit) = kit else { return };
     let dt = time.delta_secs().min(0.1);
@@ -1677,8 +2273,13 @@ pub fn update_decoy(
             if fading.is_empty() && t == 0.0 {
                 for e in children.iter_descendants(anchor) {
                     let Ok(m) = mesh_mats.get(e) else { continue };
-                    let Some(src) = materials.get(&m.0).cloned() else { continue };
-                    let copy = materials.add(StandardMaterial { alpha_mode: AlphaMode::Blend, ..src });
+                    let Some(src) = materials.get(&m.0).cloned() else {
+                        continue;
+                    };
+                    let copy = materials.add(StandardMaterial {
+                        alpha_mode: AlphaMode::Blend,
+                        ..src
+                    });
                     commands.entity(e).insert(MeshMaterial3d(copy.clone()));
                     fading.push((e, m.0.clone(), copy));
                 }
@@ -1714,12 +2315,30 @@ pub fn update_decoy(
     };
     // The gun, once, from the weapon in hand.
     if rig.gun.is_none() {
-        if let (Some(hand), Some(g)) = (kit.decoy_hand, loadouts.iter().next().and_then(|lo| lo.guns.get(lo.active))) {
+        if let (Some(hand), Some(g)) = (
+            kit.decoy_hand,
+            loadouts.iter().next().and_then(|lo| lo.guns.get(lo.active)),
+        ) {
             rig.pistol = g.def.activity_modifier == "pistol";
             let path = g.def.playermodel.clone();
             if !path.is_empty() {
-                let spec = crate::actor::ActorSpec { path: &path, sequences: &[], grids: &[], body: &[] };
-                match crate::actor::spawn_actor(&mut commands, hand, &gd, &spec, &mut cache, &mut meshes, &mut images, &mut materials, &mut bindposes) {
+                let spec = crate::actor::ActorSpec {
+                    path: &path,
+                    sequences: &[],
+                    grids: &[],
+                    body: &[],
+                };
+                match crate::actor::spawn_actor(
+                    &mut commands,
+                    hand,
+                    &gd,
+                    &spec,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                    &mut bindposes,
+                ) {
                     Ok(a) => rig.gun = Some(a.entity),
                     Err(e) => log::warn!("holo pilot gun {path}: {e:#}"),
                 }
@@ -1727,8 +2346,15 @@ pub fn update_decoy(
         }
     }
     let p = &settings.0;
-    let Ok(mut actor) = kit.decoy_actor.map_or(Err(()), |e| actors.get_mut(e).map_err(|_| ())) else { return };
-    let clip = actor.clip(d.clip(rig.pistol)).or_else(|| actor.clip(d.clip(false)));
+    let Ok(mut actor) = kit
+        .decoy_actor
+        .map_or(Err(()), |e| actors.get_mut(e).map_err(|_| ()))
+    else {
+        return;
+    };
+    let clip = actor
+        .clip(d.clip(rig.pistol))
+        .or_else(|| actor.clip(d.clip(false)));
     if clip != rig.clip {
         // A new activity starts its sequence from the beginning.
         rig.clip = clip;
@@ -1739,11 +2365,32 @@ pub fn update_decoy(
         rig.cycle = (rig.cycle + dt / actor.clips[c].duration.max(1e-3)).rem_euclid(1.0);
         actor.autoplay = false;
         actor.aim = None;
-        actor.layers = vec![crate::actor::Layer { clip: c, cycle: rig.cycle, weight: 1.0 }];
+        actor.layers = vec![crate::actor::Layer {
+            clip: c,
+            cycle: rig.cycle,
+            weight: 1.0,
+        }];
     }
-    let ray = |o: Vec3, dir: Vec3, len: f32| world.0.raycast(SVec3::from(o.to_array()), SVec3::from(dir.to_array()), len).map(|h| (Vec3::from(h.point.to_array()), Vec3::from(h.normal.to_array())));
-    let blocked = |pos: Vec3, dir: Vec3, dist: f32| ray(pos + Vec3::Z * (DECOY_STEP + 2.0), dir, dist + DECOY_HULL).is_some_and(|(_, n)| n.z.abs() < 0.7);
-    let ground_below = |pos: Vec3, below: f32| ray(pos + Vec3::Z * DECOY_STEP, -Vec3::Z, DECOY_STEP + below).filter(|(_, n)| n.z > 0.7).map(|(h, _)| h.z);
+    let ray = |o: Vec3, dir: Vec3, len: f32| {
+        world
+            .0
+            .raycast(SVec3::from(o.to_array()), SVec3::from(dir.to_array()), len)
+            .map(|h| {
+                (
+                    Vec3::from(h.point.to_array()),
+                    Vec3::from(h.normal.to_array()),
+                )
+            })
+    };
+    let blocked = |pos: Vec3, dir: Vec3, dist: f32| {
+        ray(pos + Vec3::Z * (DECOY_STEP + 2.0), dir, dist + DECOY_HULL)
+            .is_some_and(|(_, n)| n.z.abs() < 0.7)
+    };
+    let ground_below = |pos: Vec3, below: f32| {
+        ray(pos + Vec3::Z * DECOY_STEP, -Vec3::Z, DECOY_STEP + below)
+            .filter(|(_, n)| n.z > 0.7)
+            .map(|(h, _)| h.z)
+    };
     let right = Vec3::new(d.dir.y, -d.dir.x, 0.0);
     d.time -= dt;
     match d.state {
@@ -1759,7 +2406,9 @@ pub fn update_decoy(
             }
             let next = d.pos + d.vel * dt;
             // Land (SurfaceTouch): ground under the feet while falling.
-            let land = (d.vel.z <= 0.0).then(|| ground_below(next, (-d.vel.z * dt).max(1.0))).flatten();
+            let land = (d.vel.z <= 0.0)
+                .then(|| ground_below(next, (-d.vel.z * dt).max(1.0)))
+                .flatten();
             if let Some(z) = land.filter(|&z| z >= next.z - 1.0) {
                 d.pos = Vec3::new(next.x, next.y, z);
                 let speed = Vec2::new(d.vel.x, d.vel.y).length();
@@ -1768,7 +2417,9 @@ pub fn update_decoy(
                 } else if speed < p.sprint_speed {
                     DecoyState::Run
                 } else if d.was_sliding {
-                    DecoyState::Slide { left: DECOY_SLIDE_TIME }
+                    DecoyState::Slide {
+                        left: DECOY_SLIDE_TIME,
+                    }
                 } else {
                     DecoyState::Sprint
                 };
@@ -1780,12 +2431,14 @@ pub fn update_decoy(
         DecoyState::WallRun { normal, speed } => {
             let speed = (speed + DECOY_WALLRUN_ACCEL * dt).min(DECOY_WALLRUN_MAX);
             let along = (d.dir - normal * d.dir.dot(normal)).normalize_or(d.dir);
-            let on_wall = ray(d.pos + Vec3::Z * 16.0, -normal, 13.0 + DECOY_HULL + 4.7).filter(|(_, n)| (-0.35..=0.7).contains(&n.z));
+            let on_wall = ray(d.pos + Vec3::Z * 16.0, -normal, 13.0 + DECOY_HULL + 4.7)
+                .filter(|(_, n)| (-0.35..=0.7).contains(&n.z));
             if on_wall.is_none() || blocked(d.pos, along, speed * dt) {
                 // Off the end of the wall: jump away from it (server.dll 0x1801c9350).
                 let strength = p.wallrun_jump_input + p.wallrun_jump_out;
                 let out = (d.dir + normal).normalize_or(normal);
-                d.vel = Vec3::new(out.x, out.y, 0.0) * strength + Vec3::Z * strength * (normal.z + 0.2);
+                d.vel =
+                    Vec3::new(out.x, out.y, 0.0) * strength + Vec3::Z * strength * (normal.z + 0.2);
                 d.state = DecoyState::Air;
             } else {
                 d.pos += along * speed * dt;
@@ -1800,7 +2453,9 @@ pub fn update_decoy(
         _ => {
             // Ground states: root motion along the facing (sideways for a strafe).
             let (move_dir, speed) = match d.state {
-                DecoyState::Strafe { right: r } | DecoyState::CrouchStrafe { right: r } => (if r { right } else { -right }, ground_speed),
+                DecoyState::Strafe { right: r } | DecoyState::CrouchStrafe { right: r } => {
+                    (if r { right } else { -right }, ground_speed)
+                }
                 DecoyState::Slide { left } => {
                     // Sprint speed x 1.5, slowing (cubic) over the last 1.25 s.
                     let into = (DECOY_SLIDE_SLOWDOWN - left).max(0.0) / DECOY_SLIDE_SLOWDOWN;
@@ -1809,7 +2464,11 @@ pub fn update_decoy(
                 _ => (d.dir, ground_speed),
             };
             if let DecoyState::Slide { left } = d.state {
-                d.state = if left - dt <= 0.0 { DecoyState::CrouchIdle } else { DecoyState::Slide { left: left - dt } };
+                d.state = if left - dt <= 0.0 {
+                    DecoyState::CrouchIdle
+                } else {
+                    DecoyState::Slide { left: left - dt }
+                };
             }
             let step = move_dir * speed * dt;
             if !blocked(d.pos, move_dir, step.length()) {
@@ -1846,7 +2505,12 @@ pub fn update_decoy(
         crate::audio::event_at(&mut commands, "holopilot_end_3P", d.pos);
         crate::audio::event_at(&mut commands, "Death.Dissolve", d.pos);
         if let Some(anchor) = kit.decoy {
-            commands.spawn((Transform::from_translation(Vec3::new(0.0, 0.0, 36.0)), crate::pfx::PfxTrail::oriented("dissolve"), crate::pfx::PfxOneShot(DECOY_DISSOLVE_TOTAL), ChildOf(anchor)));
+            commands.spawn((
+                Transform::from_translation(Vec3::new(0.0, 0.0, 36.0)),
+                crate::pfx::PfxTrail::oriented("dissolve"),
+                crate::pfx::PfxOneShot(DECOY_DISSOLVE_TOTAL),
+                ChildOf(anchor),
+            ));
         }
     } else {
         status.decoy = Some(d);

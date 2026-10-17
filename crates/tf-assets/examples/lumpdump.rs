@@ -6,7 +6,9 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let map = &a[2];
     let data = vpk.read(&format!("maps/{map}.bsp"))?;
-    let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
+    let bsp = Bsp::parse(map, &data, |i| {
+        vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok()
+    })?;
     for l in &a[4..] {
         let i = usize::from_str_radix(l, 16)?;
         std::fs::write(format!("{}/{map}.{i:02x}.lump", a[3]), bsp.lump(i))?;

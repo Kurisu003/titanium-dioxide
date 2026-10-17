@@ -9,7 +9,9 @@ fn main() -> anyhow::Result<()> {
         for (i, p) in md.positions.iter().enumerate() {
             let (j, w) = (md.joints[i], md.weights[i]);
             let k = (0..4).max_by(|&x, &y| w[x].total_cmp(&w[y])).unwrap();
-            let e = by.entry(j[k] as usize).or_insert((0, [f32::MAX; 3], [f32::MIN; 3]));
+            let e = by
+                .entry(j[k] as usize)
+                .or_insert((0, [f32::MAX; 3], [f32::MIN; 3]));
             e.0 += 1;
             for (c, &pc) in p.iter().enumerate() {
                 e.1[c] = e.1[c].min(pc);
@@ -18,7 +20,12 @@ fn main() -> anyhow::Result<()> {
         }
     }
     for (b, (n, lo, hi)) in by {
-        println!("{b:3} {:24} {n:6} {:?}..{:?}", m.bones[b].name, lo.map(|x| x.round()), hi.map(|x| x.round()));
+        println!(
+            "{b:3} {:24} {n:6} {:?}..{:?}",
+            m.bones[b].name,
+            lo.map(|x| x.round()),
+            hi.map(|x| x.round())
+        );
     }
     Ok(())
 }

@@ -1,10 +1,18 @@
 //! Model-space bone positions in one animation frame: `bonepos <dir.vpk> <model.mdl> <anim index> [frame] [name filter]`
 use tf_assets::{mdl::Model, vpk::Vpk};
 fn qmul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
-    [a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1], a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0], a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3], a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2]]
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
 }
 fn qrot(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
-    let p = qmul(qmul(q, [v[0], v[1], v[2], 0.0]), [-q[0], -q[1], -q[2], q[3]]);
+    let p = qmul(
+        qmul(q, [v[0], v[1], v[2], 0.0]),
+        [-q[0], -q[1], -q[2], q[3]],
+    );
     [p[0], p[1], p[2]]
 }
 fn main() -> anyhow::Result<()> {
@@ -21,9 +29,16 @@ fn main() -> anyhow::Result<()> {
             let (pp, pq) = g[b.parent as usize];
             let r = qrot(pq, p);
             ([pp[0] + r[0], pp[1] + r[1], pp[2] + r[2]], qmul(pq, q))
-        } else { (p, q) };
+        } else {
+            (p, q)
+        };
         g.push(w);
-        if b.name.contains(&filt) { println!("{bi:3} {:24} {:7.1} {:7.1} {:7.1}", b.name, w.0[0], w.0[1], w.0[2]); }
+        if b.name.contains(&filt) {
+            println!(
+                "{bi:3} {:24} {:7.1} {:7.1} {:7.1}",
+                b.name, w.0[0], w.0[1], w.0[2]
+            );
+        }
     }
     Ok(())
 }

@@ -48,7 +48,9 @@ pub struct NavMesh {
 }
 
 fn u32_at(d: &[u8], o: usize) -> Result<u32> {
-    d.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).ok_or_else(|| anyhow!("navmesh: truncated at {o}"))
+    d.get(o..o + 4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .ok_or_else(|| anyhow!("navmesh: truncated at {o}"))
 }
 fn i32_at(d: &[u8], o: usize) -> Result<i32> {
     Ok(u32_at(d, o)? as i32)
@@ -57,7 +59,9 @@ fn f32_at(d: &[u8], o: usize) -> Result<f32> {
     Ok(f32::from_bits(u32_at(d, o)?))
 }
 fn u16_at(d: &[u8], o: usize) -> Result<u16> {
-    d.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or_else(|| anyhow!("navmesh: truncated at {o}"))
+    d.get(o..o + 2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .ok_or_else(|| anyhow!("navmesh: truncated at {o}"))
 }
 
 fn bits_for(n: u32) -> u32 {
@@ -130,7 +134,11 @@ pub fn parse(d: &[u8]) -> Result<NavMesh> {
             let mut pv = Vec::with_capacity(vc);
             for k in 0..vc {
                 let vi = u16_at(t, o + 4 + k * 2)? as usize;
-                pv.push(*verts.get(vi).ok_or_else(|| anyhow!("navmesh: vertex {vi} of {vert_count}"))?);
+                pv.push(
+                    *verts
+                        .get(vi)
+                        .ok_or_else(|| anyhow!("navmesh: vertex {vi} of {vert_count}"))?,
+                );
             }
             let center = [f32_at(t, o + 36)?, f32_at(t, o + 40)?, f32_at(t, o + 44)?];
             // Walk the link chain.
@@ -147,9 +155,23 @@ pub fn parse(d: &[u8]) -> Result<NavMesh> {
             if off_mesh {
                 mesh.off_mesh += 1;
             }
-            polys.push((Poly { verts: pv, center, links: Vec::new(), flags, area: area_type & 0x3f }, if off_mesh { u32::MAX } else { first_link }, refs));
+            polys.push((
+                Poly {
+                    verts: pv,
+                    center,
+                    links: Vec::new(),
+                    flags,
+                    area: area_type & 0x3f,
+                },
+                if off_mesh { u32::MAX } else { first_link },
+                refs,
+            ));
         }
-        raw.push(RawTile { index: (tile_ref >> poly_bits) & tile_mask, first: global, polys });
+        raw.push(RawTile {
+            index: (tile_ref >> poly_bits) & tile_mask,
+            first: global,
+            polys,
+        });
         global += poly_count;
         off += size;
     }
@@ -211,14 +233,24 @@ mod tests {
             push_f(&mut t, v);
         }
         assert_eq!(t.len(), TILE_HEADER);
-        for v in [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 100.0, 0.0], [0.0, 100.0, 0.0], [200.0, 0.0, 0.0], [200.0, 100.0, 0.0]] {
+        for v in [
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [100.0, 100.0, 0.0],
+            [0.0, 100.0, 0.0],
+            [200.0, 0.0, 0.0],
+            [200.0, 100.0, 0.0],
+        ] {
             for c in v {
                 push_f(&mut t, c);
             }
         }
         let tile_ref = 1u32 << 22;
         // Poly 0: verts 0,1,2,3; link 0 -> poly 1. Poly 1: verts 1,4,5,2; link 1 -> poly 0.
-        for (first, verts, center) in [(0u32, [0u16, 1, 2, 3, 0, 0], [50.0, 50.0, 0.0]), (1, [1, 4, 5, 2, 0, 0], [150.0, 50.0, 0.0])] {
+        for (first, verts, center) in [
+            (0u32, [0u16, 1, 2, 3, 0, 0], [50.0, 50.0, 0.0]),
+            (1, [1, 4, 5, 2, 0, 0], [150.0, 50.0, 0.0]),
+        ] {
             t.extend_from_slice(&first.to_le_bytes());
             for v in verts {
                 t.extend_from_slice(&v.to_le_bytes());

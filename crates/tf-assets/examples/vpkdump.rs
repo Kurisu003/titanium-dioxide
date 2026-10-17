@@ -6,7 +6,11 @@ fn main() -> anyhow::Result<()> {
     let mut n = 0;
     for path in &args[3..] {
         let vpk = tf_assets::vpk::Vpk::open(path)?;
-        for name in vpk.entries.keys().filter(|k| k.starts_with(prefix.as_str())) {
+        for name in vpk
+            .entries
+            .keys()
+            .filter(|k| k.starts_with(prefix.as_str()))
+        {
             let dest = out.join(name);
             if dest.exists() {
                 continue;

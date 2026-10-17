@@ -13,7 +13,10 @@ fn main() -> anyhow::Result<()> {
     loop {
         let (bone, flags) = (raw[p + 4] as usize, raw[p + 5]);
         if bone == want {
-            println!("bone {bone} flags {flags:#x} header {:02x?}", &raw[p..p + 32]);
+            println!(
+                "bone {bone} flags {flags:#x} header {:02x?}",
+                &raw[p..p + 32]
+            );
             for (name, vp) in [("rot", p + 8), ("pos", p + 16)] {
                 for k in 0..3 {
                     let off = i16_at(vp + k * 2);
@@ -25,7 +28,9 @@ fn main() -> anyhow::Result<()> {
                             let (valid, total) = (raw[v] as usize, raw[v + 1] as usize);
                             let vals: Vec<i16> = (1..=valid).map(|j| i16_at(v + j * 2)).collect();
                             print!(" [{valid}/{total} {:?}]", vals);
-                            if total == 0 { break; }
+                            if total == 0 {
+                                break;
+                            }
                             frames += total;
                             v += (valid + 1) * 2;
                         }
@@ -35,7 +40,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
         let nx = i32_at(p + 28);
-        if nx == 0 { break; }
+        if nx == 0 {
+            break;
+        }
         p = (p as i64 + nx as i64) as usize;
     }
     Ok(())

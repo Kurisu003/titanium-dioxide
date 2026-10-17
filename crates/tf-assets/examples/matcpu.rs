@@ -20,7 +20,10 @@ fn main() -> anyhow::Result<()> {
         if let Some(p) = ptr {
             let n = (size as usize / 4).min(160);
             for row in 0..n.div_ceil(8) {
-                let vals: Vec<String> = (0..8).filter(|k| row * 8 + k < n).map(|k| format!("{:9.4}", f32::from_bits(pak.u32(p + (row * 8 + k) * 4)))).collect();
+                let vals: Vec<String> = (0..8)
+                    .filter(|k| row * 8 + k < n)
+                    .map(|k| format!("{:9.4}", f32::from_bits(pak.u32(p + (row * 8 + k) * 4))))
+                    .collect();
                 println!("  {:#05x}: {}", row * 32, vals.join(" "));
             }
         }

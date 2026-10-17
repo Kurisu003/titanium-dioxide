@@ -17,7 +17,12 @@ pub const LIGHTMAP_EXPOSURE: f32 = 26000.0;
 /// same view measured 0.6x their brightness at EV 13 (and the ground 0.5x), so EV 12.
 pub fn ev100() -> f32 {
     static EV: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *EV.get_or_init(|| std::env::var("TF_EV100").ok().and_then(|v| v.parse().ok()).unwrap_or(12.0))
+    *EV.get_or_init(|| {
+        std::env::var("TF_EV100")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12.0)
+    })
 }
 
 /// The tonemapper (TF_TONEMAP=tony|aces|agx|reinhard|none|sbdt|blender, for calibration).
@@ -85,9 +90,15 @@ impl Default for MapEnv {
 }
 
 fn rgb_and_brightness(v: &str) -> (Color, f32) {
-    let n: Vec<f32> = v.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    let n: Vec<f32> = v
+        .split_whitespace()
+        .filter_map(|x| x.parse().ok())
+        .collect();
     let c = |i: usize| n.get(i).copied().unwrap_or(255.0) / 255.0;
-    (Color::srgb(c(0), c(1), c(2)), n.get(3).copied().unwrap_or(200.0))
+    (
+        Color::srgb(c(0), c(1), c(2)),
+        n.get(3).copied().unwrap_or(200.0),
+    )
 }
 
 fn color(v: &str) -> Color {
@@ -108,16 +119,33 @@ impl MapEnv {
             return env;
         };
         let ents = tf_assets::bsp::parse_entities(&String::from_utf8_lossy(&bytes));
-        let get = |e: &Vec<(String, String)>, k: &str| e.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+        let get = |e: &Vec<(String, String)>, k: &str| {
+            e.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone())
+        };
         // Several light_environments can exist (skybox, intro); the one with the highest index
         // is the playable world's in the maps checked, and it has the cloud mask.
-        let mut suns: Vec<&Vec<(String, String)>> = ents.iter().filter(|e| get(e, "classname").as_deref() == Some("light_environment")).collect();
-        suns.sort_by_key(|e| get(e, "lightEnvironmentIndex").and_then(|v| v.trim_start_matches('*').parse::<i32>().ok()).unwrap_or(0));
+        let mut suns: Vec<&Vec<(String, String)>> = ents
+            .iter()
+            .filter(|e| get(e, "classname").as_deref() == Some("light_environment"))
+            .collect();
+        suns.sort_by_key(|e| {
+            get(e, "lightEnvironmentIndex")
+                .and_then(|v| v.trim_start_matches('*').parse::<i32>().ok())
+                .unwrap_or(0)
+        });
         if let Some(sun) = suns.last() {
-            let angles: Vec<f32> = get(sun, "angles").unwrap_or_default().split_whitespace().filter_map(|x| x.parse().ok()).collect();
+            let angles: Vec<f32> = get(sun, "angles")
+                .unwrap_or_default()
+                .split_whitespace()
+                .filter_map(|x| x.parse().ok())
+                .collect();
             let yaw = angles.get(1).copied().unwrap_or(0.0);
             // "pitch" is negative for a sun above the horizon; the light travels downwards.
-            let pitch = get(sun, "pitch").and_then(|v| v.parse::<f32>().ok()).map(|p| -p).or(angles.first().copied()).unwrap_or(45.0);
+            let pitch = get(sun, "pitch")
+                .and_then(|v| v.parse::<f32>().ok())
+                .map(|p| -p)
+                .or(angles.first().copied())
+                .unwrap_or(45.0);
             // The angles' yaw points at the sun (checked against the baked sun visibility in
             // the lightmaps), so the light travels the opposite way, downwards.
             env.sun_dir = forward(pitch, yaw + 180.0).normalize();
@@ -128,7 +156,10 @@ impl MapEnv {
                 (env.ambient_color, env.ambient_brightness) = rgb_and_brightness(&a);
             }
         }
-        if let Some(f) = ents.iter().find(|e| get(e, "classname").as_deref() == Some("env_fog_controller")) {
+        if let Some(f) = ents
+            .iter()
+            .find(|e| get(e, "classname").as_deref() == Some("env_fog_controller"))
+        {
             if get(f, "fogenable").as_deref() != Some("0") {
                 let num = |k: &str, d: f32| get(f, k).and_then(|v| v.parse().ok()).unwrap_or(d);
                 env.fog = Some(Fog {
@@ -144,22 +175,37 @@ impl MapEnv {
         // everywhere; the maps checked have exactly one).
         env.color_correction = ents
             .iter()
-            .filter(|e| get(e, "classname").as_deref() == Some("color_correction") && get(e, "StartDisabled").as_deref() != Some("1"))
+            .filter(|e| {
+                get(e, "classname").as_deref() == Some("color_correction")
+                    && get(e, "StartDisabled").as_deref() != Some("1")
+            })
             .find_map(|e| get(e, "filename"))
             .filter(|f| !f.is_empty());
         // Maps can have several sky cameras (intro, level); prefer the level's, else the one
         // with fog enabled, else the first.
-        let cams: Vec<&Vec<(String, String)>> = ents.iter().filter(|e| get(e, "classname").as_deref() == Some("sky_camera")).collect();
+        let cams: Vec<&Vec<(String, String)>> = ents
+            .iter()
+            .filter(|e| get(e, "classname").as_deref() == Some("sky_camera"))
+            .collect();
         let pick = cams
             .iter()
             .find(|e| get(e, "targetname").is_some_and(|n| n.contains("level")))
-            .or_else(|| cams.iter().find(|e| get(e, "fogenable").as_deref() == Some("1")))
+            .or_else(|| {
+                cams.iter()
+                    .find(|e| get(e, "fogenable").as_deref() == Some("1"))
+            })
             .or(cams.first());
-        if let Some(sc) = pick.and_then(|e| get(e, "skyscale")).and_then(|v| v.parse::<f32>().ok()) {
+        if let Some(sc) = pick
+            .and_then(|e| get(e, "skyscale"))
+            .and_then(|v| v.parse::<f32>().ok())
+        {
             env.sky_scale = sc.max(1.0);
         }
         env.sky_camera = pick.and_then(|e| get(e, "origin")).map(|o| {
-            let v: Vec<f32> = o.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+            let v: Vec<f32> = o
+                .split_whitespace()
+                .filter_map(|x| x.parse().ok())
+                .collect();
             Vec3::new(v[0], v[1], v[2])
         });
         log::info!("map env: {env:?}");
@@ -171,7 +217,12 @@ impl MapEnv {
         let d = self.sun_dir;
         let dir = Vec3::new(d.x, d.z, -d.y);
         (
-            DirectionalLight { illuminance: self.sun_brightness * LUX_PER_UNIT, color: self.sun_color, shadows_enabled: std::env::var_os("TF_NO_SHADOWS").is_none(), ..default() },
+            DirectionalLight {
+                illuminance: self.sun_brightness * LUX_PER_UNIT,
+                color: self.sun_color,
+                shadows_enabled: std::env::var_os("TF_NO_SHADOWS").is_none(),
+                ..default()
+            },
             Transform::default().looking_to(dir, Vec3::Y),
         )
     }
@@ -193,7 +244,9 @@ impl MapEnv {
             color: f.color.with_alpha(f.density),
             directional_light_color: Color::LinearRgba(dir.with_alpha(f.density * 0.5)),
             directional_light_exponent: 12.0,
-            falloff: FogFalloff::Exponential { density: std::f32::consts::LN_2 / half_m },
+            falloff: FogFalloff::Exponential {
+                density: std::f32::consts::LN_2 / half_m,
+            },
         })
     }
 }
@@ -211,10 +264,19 @@ const VOXEL_MIN: f32 = 128.0;
 /// Give everything without a lightmap (props, Titans, the pilot's arms) the map's baked
 /// indirect light: the LIGHTPROBES resampled onto a Bevy irradiance volume covering the
 /// probes. Returns false (keep the flat ambient light) when the map has no probes.
-pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_assets::bsp::Bsp, images: &mut Assets<Image>) -> bool {
+pub fn spawn_irradiance_volume(
+    commands: &mut Commands,
+    root: Entity,
+    bsp: &tf_assets::bsp::Bsp,
+    images: &mut Assets<Image>,
+) -> bool {
     let t = std::time::Instant::now();
     let probes = bsp.light_probes();
-    let refs: Vec<([f32; 3], u32)> = bsp.light_probe_refs().into_iter().filter(|r| (r.1 as usize) < probes.len()).collect();
+    let refs: Vec<([f32; 3], u32)> = bsp
+        .light_probe_refs()
+        .into_iter()
+        .filter(|r| (r.1 as usize) < probes.len())
+        .collect();
     if refs.len() < 8 {
         return false;
     }
@@ -227,7 +289,9 @@ pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_a
     let lo = Vec3::new(pct(0, 0.002), pct(1, 0.002), pct(2, 0.002)) - Vec3::splat(256.0);
     let hi = Vec3::new(pct(0, 0.998), pct(1, 0.998), pct(2, 0.998)) + Vec3::splat(256.0);
     let size = hi - lo;
-    let cell = (0..3).map(|a| size[a] / VOLUME_MAX[a] as f32).fold(VOXEL_MIN, f32::max);
+    let cell = (0..3)
+        .map(|a| size[a] / VOLUME_MAX[a] as f32)
+        .fold(VOXEL_MIN, f32::max);
     let dims = [0, 1, 2].map(|a| ((size[a] / cell).ceil() as usize).max(1));
 
     // Splat each probe onto the voxels around it (inverse-distance weights), then give voxels
@@ -244,7 +308,11 @@ pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_a
             for dy in 0..2 {
                 for dx in 0..2 {
                     let v = c + IVec3::new(dx, dy, dz);
-                    if v.min_element() < 0 || v.x >= dims[0] as i32 || v.y >= dims[1] as i32 || v.z >= dims[2] as i32 {
+                    if v.min_element() < 0
+                        || v.x >= dims[0] as i32
+                        || v.y >= dims[1] as i32
+                        || v.z >= dims[2] as i32
+                    {
                         continue;
                     }
                     let center = lo + (v.as_vec3() + 0.5) * cell;
@@ -279,12 +347,24 @@ pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_a
                 queue.push_back(j);
             }
         };
-        if x > 0 { visit(x - 1, y, z) }
-        if x + 1 < dims[0] { visit(x + 1, y, z) }
-        if y > 0 { visit(x, y - 1, z) }
-        if y + 1 < dims[1] { visit(x, y + 1, z) }
-        if z > 0 { visit(x, y, z - 1) }
-        if z + 1 < dims[2] { visit(x, y, z + 1) }
+        if x > 0 {
+            visit(x - 1, y, z)
+        }
+        if x + 1 < dims[0] {
+            visit(x + 1, y, z)
+        }
+        if y > 0 {
+            visit(x, y - 1, z)
+        }
+        if y + 1 < dims[1] {
+            visit(x, y + 1, z)
+        }
+        if z > 0 {
+            visit(x, y, z - 1)
+        }
+        if z + 1 < dims[2] {
+            visit(x, y, z + 1)
+        }
     }
     // Ambient-cube faces in Bevy's order (+X -X, +Y -Y, +Z -Z of Bevy space) as game directions.
     let faces = [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, -Vec3::Y, Vec3::Y];
@@ -299,7 +379,8 @@ pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_a
                     let idx = (((slab * dims[2] + z) * h) + neg * dims[1] + y) * w + x;
                     for ch in 0..3 {
                         let [cx, cy, cz, dc] = sh[ch];
-                        let e = (dc - (cx * dir.x + cy * dir.y + cz * dir.z)).max(0.0) / PROBE_UNITS;
+                        let e =
+                            (dc - (cx * dir.x + cy * dir.y + cz * dir.z)).max(0.0) / PROBE_UNITS;
                         data[idx * 4 + ch] = f32_to_half(e);
                     }
                     data[idx * 4 + 3] = 0x3C00;
@@ -309,7 +390,11 @@ pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_a
     }
     let bytes: Vec<u8> = data.iter().flat_map(|v| v.to_le_bytes()).collect();
     let mut img = Image::new(
-        bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: d as u32 },
+        bevy::render::render_resource::Extent3d {
+            width: w as u32,
+            height: h as u32,
+            depth_or_array_layers: d as u32,
+        },
         bevy::render::render_resource::TextureDimension::D3,
         bytes,
         bevy::render::render_resource::TextureFormat::Rgba16Float,
@@ -317,10 +402,17 @@ pub fn spawn_irradiance_volume(commands: &mut Commands, root: Entity, bsp: &tf_a
     );
     img.sampler = bevy::image::ImageSampler::linear();
     let voxels = images.add(img);
-    let gain = std::env::var("TF_PROBE_GAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    let gain = std::env::var("TF_PROBE_GAIN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.0);
     let volume = commands
         .spawn((
-            bevy::light::IrradianceVolume { voxels, intensity: LIGHTMAP_EXPOSURE * gain, affects_lightmapped_meshes: false },
+            bevy::light::IrradianceVolume {
+                voxels,
+                intensity: LIGHTMAP_EXPOSURE * gain,
+                affects_lightmapped_meshes: false,
+            },
             Transform::from_translation((lo + hi) * 0.5).with_scale(size),
         ))
         .id();
@@ -372,20 +464,35 @@ impl Reflections {
         let n = set.count.min(origins.len());
         let maps: Vec<(Handle<Image>, Handle<Image>)> = std::thread::scope(|s| {
             let set = &set;
-            let jobs: Vec<_> = (0..n).map(|i| s.spawn(move || cube_texels(set, i))).collect();
-            jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect::<Vec<_>>()
+            let jobs: Vec<_> = (0..n)
+                .map(|i| s.spawn(move || cube_texels(set, i)))
+                .collect();
+            jobs.into_iter()
+                .map(|j| j.join().unwrap_or_default())
+                .collect::<Vec<_>>()
         })
         .into_iter()
         .map(|levels| {
             let spec = images.add(cube_image(&levels));
             // Diffuse lighting comes from the lightmaps and the irradiance volume; this blurry
             // low mip only lights what lies outside the volume.
-            let diffuse = images.add(cube_image(&levels[levels.len().saturating_sub(4).min(levels.len() - 1)..]));
+            let diffuse = images.add(cube_image(
+                &levels[levels.len().saturating_sub(4).min(levels.len() - 1)..],
+            ));
             (diffuse, spec)
         })
         .collect();
-        log::info!("{} cubemaps ({}px) decoded in {:?}", maps.len(), set.size, t.elapsed());
-        Self { origins: origins[..n].to_vec(), maps, current: None }
+        log::info!(
+            "{} cubemaps ({}px) decoded in {:?}",
+            maps.len(),
+            set.size,
+            t.elapsed()
+        );
+        Self {
+            origins: origins[..n].to_vec(),
+            maps,
+            current: None,
+        }
     }
 }
 
@@ -397,7 +504,10 @@ impl Reflections {
     pub fn spawn_probes(&self, commands: &mut Commands, root: Entity) {
         // Off by default: the probes cost ~40% of the frame rate (2026-10-05); TF_CUBEMAP_PROBES=1
         // turns them on, the camera's nearest cubemap is used otherwise.
-        if std::env::var_os("TF_CUBEMAP_PROBES").is_none() || std::env::var_os("TF_NO_CUBEMAPS").is_some() || std::env::var_os("TF_ONE_CUBEMAP").is_some() {
+        if std::env::var_os("TF_CUBEMAP_PROBES").is_none()
+            || std::env::var_os("TF_NO_CUBEMAPS").is_some()
+            || std::env::var_os("TF_ONE_CUBEMAP").is_some()
+        {
             return;
         }
         for (i, o) in self.origins.iter().enumerate() {
@@ -408,7 +518,11 @@ impl Reflections {
                 .filter(|(j, _)| *j != i)
                 .map(|(_, q)| q.truncate().distance(o.truncate()).max((q.z - o.z).abs()))
                 .fold(f32::MAX, f32::min);
-            let r = if near < f32::MAX { (near * 0.6).clamp(384.0, 3000.0) } else { 3000.0 };
+            let r = if near < f32::MAX {
+                (near * 0.6).clamp(384.0, 3000.0)
+            } else {
+                3000.0
+            };
             let (diffuse, specular) = self.maps[i].clone();
             let e = commands
                 .spawn((
@@ -420,7 +534,11 @@ impl Reflections {
                         rotation: Quat::IDENTITY,
                         affects_lightmapped_mesh_diffuse: false,
                     },
-                    Transform::from_translation(*o).with_scale(Vec3::new(r * 2.0, r * 2.0, r * 3.0)),
+                    Transform::from_translation(*o).with_scale(Vec3::new(
+                        r * 2.0,
+                        r * 2.0,
+                        r * 3.0,
+                    )),
                 ))
                 .id();
             commands.entity(root).add_child(e);
@@ -446,10 +564,17 @@ fn cube_texels(set: &tf_assets::cubemap::CubemapSet, frame: usize) -> Vec<[Vec<u
                         let v = (i as f32 + 0.5) / s as f32 * 2.0 - 1.0;
                         let sd = cube_dir(face, u, v);
                         let (sf, su, sv) = cube_lookup(Vec3::new(sd.x, sd.z, sd.y));
-                        let (x, y) = (((su + 1.0) * 0.5 * s as f32) as usize, ((sv + 1.0) * 0.5 * s as f32) as usize);
+                        let (x, y) = (
+                            ((su + 1.0) * 0.5 * s as f32) as usize,
+                            ((sv + 1.0) * 0.5 * s as f32) as usize,
+                        );
                         let px = src[sf][y.min(s - 1) * s + x.min(s - 1)];
                         for c in px {
-                            out.push(if c & 0x8000 != 0 { 0 } else { c.min(CUBEMAP_CLAMP) });
+                            out.push(if c & 0x8000 != 0 {
+                                0
+                            } else {
+                                c.min(CUBEMAP_CLAMP)
+                            });
                         }
                         out.push(0x3C00);
                     }
@@ -476,9 +601,17 @@ fn cube_dir(face: usize, sc: f32, tc: f32) -> Vec3 {
 fn cube_lookup(d: Vec3) -> (usize, f32, f32) {
     let a = d.abs();
     if a.x >= a.y && a.x >= a.z {
-        if d.x > 0.0 { (0, -d.z / a.x, -d.y / a.x) } else { (1, d.z / a.x, -d.y / a.x) }
+        if d.x > 0.0 {
+            (0, -d.z / a.x, -d.y / a.x)
+        } else {
+            (1, d.z / a.x, -d.y / a.x)
+        }
     } else if a.y >= a.z {
-        if d.y > 0.0 { (2, d.x / a.y, d.z / a.y) } else { (3, d.x / a.y, -d.z / a.y) }
+        if d.y > 0.0 {
+            (2, d.x / a.y, d.z / a.y)
+        } else {
+            (3, d.x / a.y, -d.z / a.y)
+        }
     } else if d.z > 0.0 {
         (4, d.x / a.z, -d.y / a.z)
     } else {
@@ -498,7 +631,11 @@ fn cube_image(levels: &[[Vec<u16>; 6]]) -> Image {
     }
     let mut img = Image::default();
     img.data = Some(bytes);
-    img.texture_descriptor.size = bevy::render::render_resource::Extent3d { width: size, height: size, depth_or_array_layers: 6 };
+    img.texture_descriptor.size = bevy::render::render_resource::Extent3d {
+        width: size,
+        height: size,
+        depth_or_array_layers: 6,
+    };
     img.texture_descriptor.mip_level_count = levels.len() as u32;
     img.texture_descriptor.format = bevy::render::render_resource::TextureFormat::Rgba16Float;
     img.texture_descriptor.dimension = bevy::render::render_resource::TextureDimension::D2;
@@ -517,11 +654,20 @@ const CUBEMAP_GAIN: f32 = 0.35;
 
 /// Cubemap brightness: a texel of 1.0 is about display white, like the game's HDR captures.
 pub fn cubemap_intensity() -> f32 {
-    CUBEMAP_GAIN * nits_for_white() * std::env::var("TF_CUBEMAP_GAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
+    CUBEMAP_GAIN
+        * nits_for_white()
+        * std::env::var("TF_CUBEMAP_GAIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0)
 }
 
 /// Point the camera's environment map at the cubemap captured nearest to it.
-pub fn nearest_reflection(mut commands: Commands, refl: Option<ResMut<Reflections>>, cams: Query<(Entity, &GlobalTransform), With<crate::player::MainCamera>>) {
+pub fn nearest_reflection(
+    mut commands: Commands,
+    refl: Option<ResMut<Reflections>>,
+    cams: Query<(Entity, &GlobalTransform), With<crate::player::MainCamera>>,
+) {
     let Some(mut refl) = refl else { return };
     let Ok((cam, gt)) = cams.single() else { return };
     if refl.maps.is_empty() || std::env::var_os("TF_NO_CUBEMAPS").is_some() {
@@ -529,18 +675,28 @@ pub fn nearest_reflection(mut commands: Commands, refl: Option<ResMut<Reflection
     }
     let b = gt.translation() / crate::player::UNIT;
     let pos = Vec3::new(b.x, -b.z, b.y);
-    let nearest = refl.origins.iter().enumerate().min_by(|a, b| a.1.distance_squared(pos).total_cmp(&b.1.distance_squared(pos))).map(|(i, _)| i);
+    let nearest = refl
+        .origins
+        .iter()
+        .enumerate()
+        .min_by(|a, b| {
+            a.1.distance_squared(pos)
+                .total_cmp(&b.1.distance_squared(pos))
+        })
+        .map(|(i, _)| i);
     if nearest == refl.current {
         return;
     }
     refl.current = nearest;
     let Some(i) = nearest else { return };
     let (diffuse, specular) = refl.maps[i].clone();
-    commands.entity(cam).insert(bevy::light::EnvironmentMapLight {
-        diffuse_map: diffuse,
-        specular_map: specular,
-        intensity: cubemap_intensity(),
-        rotation: Quat::IDENTITY,
-        affects_lightmapped_mesh_diffuse: false,
-    });
+    commands
+        .entity(cam)
+        .insert(bevy::light::EnvironmentMapLight {
+            diffuse_map: diffuse,
+            specular_map: specular,
+            intensity: cubemap_intensity(),
+            rotation: Quat::IDENTITY,
+            affects_lightmapped_mesh_diffuse: false,
+        });
 }

@@ -21,16 +21,24 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{NoAutoAabb, VisibilityRange};
 use bevy::math::{Affine3, Vec3A};
-use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexAttributeValues, VertexFormat};
-use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
+use bevy::mesh::{
+    Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology,
+    VertexAttributeValues, VertexFormat,
+};
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError};
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+};
 use bevy::render::storage::ShaderStorageBuffer;
 use bevy::shader::{ShaderDefVal, ShaderRef};
 use std::collections::HashMap;
 
 /// The batch meshes' one vertex attribute: (prop instance, model vertex).
-pub const ATTRIBUTE_PROP_IDS: MeshVertexAttribute = MeshVertexAttribute::new("PropIds", 0x7466_7072_6f70_6964, VertexFormat::Uint32x2);
+pub const ATTRIBUTE_PROP_IDS: MeshVertexAttribute =
+    MeshVertexAttribute::new("PropIds", 0x7466_7072_6f70_6964, VertexFormat::Uint32x2);
 
 const SHADER: &str = "embedded://tf_viewer/propbatch.wgsl";
 
@@ -65,20 +73,32 @@ impl MaterialExtension for PropBatch {
     ) -> Result<(), SpecializedMeshPipelineError> {
         // Bevy sets these from the mesh's attributes, which a batch mesh doesn't have: the
         // shader defs the props' own meshes (positions, normals, UVs, tangents) gave them.
-        let has = |defs: &[ShaderDefVal], name: &str| defs.iter().any(|d| matches!(d, ShaderDefVal::Bool(n, true) if n == name));
+        let has = |defs: &[ShaderDefVal], name: &str| {
+            defs.iter()
+                .any(|d| matches!(d, ShaderDefVal::Bool(n, true) if n == name))
+        };
         let prepass = has(&descriptor.vertex.shader_defs, "PREPASS_PIPELINE");
         let mut defs = vec!["VERTEX_POSITIONS", "VERTEX_UVS", "VERTEX_UVS_A"];
-        if !prepass || has(&descriptor.vertex.shader_defs, "NORMAL_PREPASS_OR_DEFERRED_PREPASS") {
+        if !prepass
+            || has(
+                &descriptor.vertex.shader_defs,
+                "NORMAL_PREPASS_OR_DEFERRED_PREPASS",
+            )
+        {
             defs.extend(["VERTEX_NORMALS", "VERTEX_TANGENTS"]);
         }
-        for list in std::iter::once(&mut descriptor.vertex.shader_defs).chain(descriptor.fragment.as_mut().map(|f| &mut f.shader_defs)) {
+        for list in std::iter::once(&mut descriptor.vertex.shader_defs)
+            .chain(descriptor.fragment.as_mut().map(|f| &mut f.shader_defs))
+        {
             for d in &defs {
                 if !has(list, d) {
                     list.push((*d).into());
                 }
             }
         }
-        descriptor.vertex.buffers = vec![layout.0.get_layout(&[ATTRIBUTE_PROP_IDS.at_shader_location(0)])?];
+        descriptor.vertex.buffers = vec![layout
+            .0
+            .get_layout(&[ATTRIBUTE_PROP_IDS.at_shader_location(0)])?];
         Ok(())
     }
 }
@@ -192,7 +212,9 @@ impl PropBatcher {
         let global = self.root.mul_transform(*tf);
         let affine = global.affine();
         // The tangent sign comes from the batch entity (see the shader).
-        if affine.matrix3.determinant().is_sign_positive() != self.batch.affine().matrix3.determinant().is_sign_positive() {
+        if affine.matrix3.determinant().is_sign_positive()
+            != self.batch.affine().matrix3.determinant().is_sign_positive()
+        {
             return false;
         }
         if !range.end_margin.end.is_finite() || range.use_aabb {
@@ -201,9 +223,12 @@ impl PropBatcher {
         let pi = match self.part_index.get(&(model, lod, part)) {
             Some(&i) => i,
             None => {
-                let Some(p) = self.pool(mesh) else { return false };
+                let Some(p) = self.pool(mesh) else {
+                    return false;
+                };
                 self.parts.push(p);
-                self.part_index.insert((model, lod, part), self.parts.len() - 1);
+                self.part_index
+                    .insert((model, lod, part), self.parts.len() - 1);
                 self.parts.len() - 1
             }
         };
@@ -214,15 +239,25 @@ impl PropBatcher {
         let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
         let mut reach = 0.0f32;
         for c in 0..8 {
-            let corner = Vec3::new(if c & 1 == 0 { pmin.x } else { pmax.x }, if c & 2 == 0 { pmin.y } else { pmax.y }, if c & 4 == 0 { pmin.z } else { pmax.z });
+            let corner = Vec3::new(
+                if c & 1 == 0 { pmin.x } else { pmax.x },
+                if c & 2 == 0 { pmin.y } else { pmax.y },
+                if c & 4 == 0 { pmin.z } else { pmax.z },
+            );
             let p = m.transform_point3(corner);
             min = min.min(p);
             max = max.max(p);
-            reach = reach.max(affine.transform_point3(corner).distance(affine.translation.into()));
+            reach = reach.max(
+                affine
+                    .transform_point3(corner)
+                    .distance(affine.translation.into()),
+            );
         }
         // Batches skip Bevy's per-prop frustum test, which only changes the picture through
         // the far plane (the projection itself has none): batched props must stay nearer.
-        if range.end_margin.end + reach * 1.01 + 1.0 >= bevy::camera::PerspectiveProjection::default().far {
+        if range.end_margin.end + reach * 1.01 + 1.0
+            >= bevy::camera::PerspectiveProjection::default().far
+        {
             return false;
         }
         let pad = Vec3::splat(1.0) + (max - min).abs() * 1e-4;
@@ -230,27 +265,52 @@ impl PropBatcher {
         let instance = *self.instance_index.entry((prop, lod)).or_insert_with(|| {
             let t = Affine3::from(&affine).to_transpose();
             self.instances.extend(t);
-            self.instances.push(Vec4::new(range.start_margin.start, range.start_margin.end, range.end_margin.start, range.end_margin.end));
+            self.instances.push(Vec4::new(
+                range.start_margin.start,
+                range.start_margin.end,
+                range.end_margin.start,
+                range.end_margin.end,
+            ));
             (self.instances.len() / 4 - 1) as u32
         });
         let cell = (tf.translation / CELL).floor().as_ivec3();
-        let gi = *self.group_index.entry((cell, material.id(), lod)).or_insert_with(|| {
-            self.groups.push(Group { material: material.clone(), members: Vec::new() });
-            self.groups.len() - 1
+        let gi = *self
+            .group_index
+            .entry((cell, material.id(), lod))
+            .or_insert_with(|| {
+                self.groups.push(Group {
+                    material: material.clone(),
+                    members: Vec::new(),
+                });
+                self.groups.len() - 1
+            });
+        self.groups[gi].members.push(Member {
+            instance,
+            part: pi,
+            min,
+            max,
+            origin: global.translation_vec3a(),
+            start: range.start_margin.start,
+            end: range.end_margin.end,
         });
-        self.groups[gi].members.push(Member { instance, part: pi, min, max, origin: global.translation_vec3a(), start: range.start_margin.start, end: range.end_margin.end });
         true
     }
 
     /// Put a part's vertices into the shared vertex buffer.
     fn pool(&mut self, mesh: &Mesh) -> Option<PoolPart> {
         use VertexAttributeValues as V;
-        let (Some(V::Float32x3(pos)), Some(V::Float32x3(nrm)), Some(V::Float32x2(uv)), Some(V::Float32x4(tan))) = (
+        let (
+            Some(V::Float32x3(pos)),
+            Some(V::Float32x3(nrm)),
+            Some(V::Float32x2(uv)),
+            Some(V::Float32x4(tan)),
+        ) = (
             mesh.attribute(Mesh::ATTRIBUTE_POSITION),
             mesh.attribute(Mesh::ATTRIBUTE_NORMAL),
             mesh.attribute(Mesh::ATTRIBUTE_UV_0),
             mesh.attribute(Mesh::ATTRIBUTE_TANGENT),
-        ) else {
+        )
+        else {
             return None;
         };
         let indices: Vec<u32> = mesh.indices()?.iter().map(|i| i as u32).collect();
@@ -267,7 +327,13 @@ impl PropBatcher {
             min = min.min(Vec3::from_array(p));
             max = max.max(Vec3::from_array(p));
         }
-        Some(PoolPart { base, count: pos.len() as u32, indices, min, max })
+        Some(PoolPart {
+            base,
+            count: pos.len() as u32,
+            indices,
+            min,
+            max,
+        })
     }
 
     /// Build the batch meshes and spawn them under `root`. Returns the number of batches.
@@ -284,9 +350,20 @@ impl PropBatcher {
         if self.groups.is_empty() {
             return 0;
         }
-        let bytes = |v: &[Vec4]| v.iter().flat_map(|x| x.to_array()).flat_map(f32::to_le_bytes).collect::<Vec<u8>>();
-        let instances = buffers.add(ShaderStorageBuffer::new(&bytes(&self.instances), RenderAssetUsages::RENDER_WORLD));
-        let vertices = buffers.add(ShaderStorageBuffer::new(&bytes(&self.vertices), RenderAssetUsages::RENDER_WORLD));
+        let bytes = |v: &[Vec4]| {
+            v.iter()
+                .flat_map(|x| x.to_array())
+                .flat_map(f32::to_le_bytes)
+                .collect::<Vec<u8>>()
+        };
+        let instances = buffers.add(ShaderStorageBuffer::new(
+            &bytes(&self.instances),
+            RenderAssetUsages::RENDER_WORLD,
+        ));
+        let vertices = buffers.add(ShaderStorageBuffer::new(
+            &bytes(&self.vertices),
+            RenderAssetUsages::RENDER_WORLD,
+        ));
         // Split groups into meshes of at most 65535 vertices (16-bit indices).
         let mut chunks: Vec<(usize, std::ops::Range<usize>)> = Vec::new();
         for (gi, g) in self.groups.iter().enumerate() {
@@ -310,23 +387,44 @@ impl PropBatcher {
                 idx.extend(p.indices.iter().map(|&i| first + i));
                 ids.extend((0..p.count).map(|k| [m.instance, p.base + k]));
             }
-            let indices = if ids.len() <= u16::MAX as usize + 1 { Indices::U16(idx.into_iter().map(|i| i as u16).collect()) } else { Indices::U32(idx) };
-            Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
-                .with_inserted_attribute(ATTRIBUTE_PROP_IDS, VertexAttributeValues::Uint32x2(ids))
-                .with_inserted_indices(indices)
+            let indices = if ids.len() <= u16::MAX as usize + 1 {
+                Indices::U16(idx.into_iter().map(|i| i as u16).collect())
+            } else {
+                Indices::U32(idx)
+            };
+            Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::RENDER_WORLD,
+            )
+            .with_inserted_attribute(ATTRIBUTE_PROP_IDS, VertexAttributeValues::Uint32x2(ids))
+            .with_inserted_indices(indices)
         });
-        let mut mats: HashMap<AssetId<StandardMaterial>, Handle<PropBatchMaterial>> = HashMap::new();
+        let mut mats: HashMap<AssetId<StandardMaterial>, Handle<PropBatchMaterial>> =
+            HashMap::new();
         let batch = self.batch.affine();
         for ((gi, r), mesh) in chunks.iter().zip(built) {
             let Some(mesh) = mesh else { continue };
             let g = &self.groups[*gi];
             let members = &g.members[r.clone()];
-            let Some(base) = materials.get(&g.material) else { continue };
+            let Some(base) = materials.get(&g.material) else {
+                continue;
+            };
             let mat = mats
                 .entry(g.material.id())
-                .or_insert_with(|| batch_materials.add(PropBatchMaterial { base: base.clone(), extension: PropBatch { instances: instances.clone(), vertices: vertices.clone() } }))
+                .or_insert_with(|| {
+                    batch_materials.add(PropBatchMaterial {
+                        base: base.clone(),
+                        extension: PropBatch {
+                            instances: instances.clone(),
+                            vertices: vertices.clone(),
+                        },
+                    })
+                })
                 .clone();
-            let (min, max) = members.iter().fold((Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)), |(a, b), m| (a.min(m.min), b.max(m.max)));
+            let (min, max) = members.iter().fold(
+                (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                |(a, b), m| (a.min(m.min), b.max(m.max)),
+            );
             let aabb = Aabb::from_min_max(min, max);
             // The batch's range, from where Bevy measures it (its box's centre, `use_aabb`):
             // wide enough for every prop's range, with a margin for rounding.
@@ -341,9 +439,21 @@ impl PropBatcher {
             let hi = hi * 1.001 + 0.1;
             // A crossfade margin, so the batch is specialized with the dither (Bevy only
             // dithers entities whose range has one); the shader dithers each prop by its own.
-            let range = VisibilityRange { start_margin: lo..lo, end_margin: hi * 0.999..hi, use_aabb: true };
+            let range = VisibilityRange {
+                start_margin: lo..lo,
+                end_margin: hi * 0.999..hi,
+                use_aabb: true,
+            };
             let e = commands
-                .spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::IDENTITY, aabb, NoAutoAabb, range, bevy::light::NotShadowCaster))
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(mat),
+                    Transform::IDENTITY,
+                    aabb,
+                    NoAutoAabb,
+                    range,
+                    bevy::light::NotShadowCaster,
+                ))
                 .id();
             commands.entity(root).add_child(e);
         }

@@ -6,11 +6,20 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let map = &a[2];
     let data = vpk.read(&format!("maps/{map}.bsp"))?;
-    let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
+    let bsp = Bsp::parse(map, &data, |i| {
+        vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok()
+    })?;
     let probes = bsp.light_probes();
     let refs = bsp.light_probe_refs();
-    println!("{} probes, {} refs, cubemaps at {:?}", probes.len(), refs.len(), bsp.cubemap_origins());
-    let vtf = bsp.pakfile_entry("cubemaps.hdr.vtf").expect("no cubemaps.hdr.vtf");
+    println!(
+        "{} probes, {} refs, cubemaps at {:?}",
+        probes.len(),
+        refs.len(),
+        bsp.cubemap_origins()
+    );
+    let vtf = bsp
+        .pakfile_entry("cubemaps.hdr.vtf")
+        .expect("no cubemaps.hdr.vtf");
     let set = CubemapSet::parse(vtf)?;
     println!("{} cubemaps, {}px, {} mips", set.count, set.size, set.mips);
     let frame: usize = a.get(4).and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -35,6 +44,14 @@ fn main() -> anyhow::Result<()> {
 
 fn half(h: u16) -> f32 {
     let (s, e, m) = ((h >> 15) as u32, ((h >> 10) & 31) as i32, (h & 1023) as f32);
-    let v = if e == 0 { m / 1024.0 * 2f32.powi(-14) } else { (1.0 + m / 1024.0) * 2f32.powi(e - 15) };
-    if s == 1 { -v } else { v }
+    let v = if e == 0 {
+        m / 1024.0 * 2f32.powi(-14)
+    } else {
+        (1.0 + m / 1024.0) * 2f32.powi(e - 15)
+    };
+    if s == 1 {
+        -v
+    } else {
+        v
+    }
 }

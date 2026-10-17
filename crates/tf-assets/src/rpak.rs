@@ -59,7 +59,9 @@ pub struct Asset {
 impl Asset {
     /// [`Asset::kind`] as a string (`"txtr"`).
     pub fn kind_str(&self) -> String {
-        String::from_utf8_lossy(&self.kind).trim_end_matches('\0').to_string()
+        String::from_utf8_lossy(&self.kind)
+            .trim_end_matches('\0')
+            .to_string()
     }
 }
 
@@ -91,7 +93,10 @@ impl Rpak {
         }
         let version = u16_at(&raw, 4);
         if version != 7 {
-            bail!("{}: rpak version {version} unsupported (Titanfall 2 uses 7)", path.display());
+            bail!(
+                "{}: rpak version {version} unsupported (Titanfall 2 uses 7)",
+                path.display()
+            );
         }
         let flags = u16_at(&raw, 6);
         let data = if rpak_decompress::is_rtech_compressed(flags) {
@@ -101,7 +106,11 @@ impl Rpak {
         };
         let dcmp_size = u64_at(&data, 0x28) as usize;
         if data.len() != dcmp_size {
-            bail!("rpak: decompressed {} bytes, header says {}", data.len(), dcmp_size);
+            bail!(
+                "rpak: decompressed {} bytes, header says {}",
+                data.len(),
+                dcmp_size
+            );
         }
         Self::parse(path, data)
     }
@@ -141,14 +150,23 @@ impl Rpak {
         let mut segments = Vec::with_capacity(num_segments);
         for i in 0..num_segments {
             let o = off + i * 16;
-            segments.push(Segment { flags: u32_at(h, o), align: u32_at(h, o + 4), size: u64_at(h, o + 8) });
+            segments.push(Segment {
+                flags: u32_at(h, o),
+                align: u32_at(h, o + 4),
+                size: u64_at(h, o + 8),
+            });
         }
         off += num_segments * 16;
 
         let mut pages = Vec::with_capacity(num_pages);
         for i in 0..num_pages {
             let o = off + i * 12;
-            pages.push(Page { segment: u32_at(h, o), align: u32_at(h, o + 4), size: u32_at(h, o + 8), start: usize::MAX });
+            pages.push(Page {
+                segment: u32_at(h, o),
+                align: u32_at(h, o + 4),
+                size: u32_at(h, o + 8),
+                start: usize::MAX,
+            });
         }
         off += num_pages * 12;
 
@@ -170,7 +188,10 @@ impl Rpak {
             off += p.size as usize;
         }
         if off > data.len() {
-            bail!("rpak: page data runs past end of file ({off} > {})", data.len());
+            bail!(
+                "rpak: page data runs past end of file ({off} > {})",
+                data.len()
+            );
         }
 
         let page_addr = |pages: &[Page], idx: u32, offset: u32| -> Option<usize> {
@@ -185,7 +206,9 @@ impl Rpak {
         for i in 0..num_pointers {
             let o = pointers_off + i * 8;
             let (pi, po) = (u32_at(&data, o), u32_at(&data, o + 4));
-            let Some(slot) = page_addr(&pages, pi, po) else { continue };
+            let Some(slot) = page_addr(&pages, pi, po) else {
+                continue;
+            };
             let (ti, to) = (u32_at(&data, slot), u32_at(&data, slot + 4));
             let abs = page_addr(&pages, ti, to).map(|a| a as u64).unwrap_or(0);
             data[slot..slot + 8].copy_from_slice(&abs.to_le_bytes());
@@ -226,7 +249,17 @@ impl Rpak {
             assets.push(asset);
         }
 
-        Ok(Self { path, version, flags, data, starpaks, pages, segments, assets, by_guid })
+        Ok(Self {
+            path,
+            version,
+            flags,
+            data,
+            starpaks,
+            pages,
+            segments,
+            assets,
+            by_guid,
+        })
     }
 
     /// The asset with this GUID, if the pak has it.
@@ -276,17 +309,20 @@ impl Rpak {
         }
         let idx = (packed_offset & 0xFFF) as usize;
         let offset = (packed_offset as u64) & !0xFFF;
-        let name = self.starpaks.get(idx).context("starpak index out of range")?;
+        let name = self
+            .starpaks
+            .get(idx)
+            .context("starpak index out of range")?;
         let file_name = name.rsplit(['/', '\\']).next().unwrap();
         let path = self.dir().join(file_name);
-        let mut f = std::fs::File::open(&path).with_context(|| format!("open {}", path.display()))?;
+        let mut f =
+            std::fs::File::open(&path).with_context(|| format!("open {}", path.display()))?;
         f.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; size];
         f.read_exact(&mut buf)?;
         Ok(buf)
     }
 }
-
 
 /// Find the self-contained pak for `name` (e.g. "mp_rise.rpak") in `dir`: the plain file if it
 /// exists, else the earliest `name(NN).rpak` that isn't a patch (DLC maps ship that way).
@@ -298,9 +334,13 @@ pub fn resolve(dir: &Path, file: &str) -> Option<std::path::PathBuf> {
     let stem = file.strip_suffix(".rpak")?;
     for n in 1..=99 {
         let p = dir.join(format!("{stem}({n:02}).rpak"));
-        let Ok(mut f) = std::fs::File::open(&p) else { continue };
+        let Ok(mut f) = std::fs::File::open(&p) else {
+            continue;
+        };
         let mut h = [0u8; 0x40];
-        if std::io::Read::read_exact(&mut f, &mut h).is_ok() && u16::from_le_bytes([h[0x3E], h[0x3F]]) == 0 {
+        if std::io::Read::read_exact(&mut f, &mut h).is_ok()
+            && u16::from_le_bytes([h[0x3E], h[0x3F]]) == 0
+        {
             return Some(p);
         }
     }

@@ -98,7 +98,13 @@ impl Cue {
             }
             TitanGun(i, part) => {
                 let g = &crate::weapons::TITAN_ARSENAL[i as usize];
-                let pick = |a: &'static [&'static str], b: &'static [&'static str]| if a.is_empty() { b } else { a };
+                let pick = |a: &'static [&'static str], b: &'static [&'static str]| {
+                    if a.is_empty() {
+                        b
+                    } else {
+                        a
+                    }
+                };
                 return match part {
                     GunPart::First => (pick(g.first, g.shot), false),
                     GunPart::Shot => (pick(g.shot, g.first), false),
@@ -107,7 +113,13 @@ impl Cue {
             }
             Gun(i, part) => {
                 let s = &crate::pilotweapon::ARSENAL[i as usize].sound;
-                let pick = |a: &'static [&'static str], b: &'static [&'static str]| if a.is_empty() { b } else { a };
+                let pick = |a: &'static [&'static str], b: &'static [&'static str]| {
+                    if a.is_empty() {
+                        b
+                    } else {
+                        a
+                    }
+                };
                 return match part {
                     GunPart::First => (pick(s.first, s.shot), false),
                     GunPart::Shot => (pick(s.shot, s.first), false),
@@ -116,7 +128,13 @@ impl Cue {
             }
             Xo16First => (&["wpn_xo16_1p_wpnfire_firstshot_core"], false),
             Xo16Shot => (&["wpn_xo16_1p_wpnfire_secondshot_core"], false),
-            Xo16Tail => (&["wpn_xo16_1p_wpnfire_tail_core", "wpn_xo16_1p_wpnfire_tail_mech_"], true),
+            Xo16Tail => (
+                &[
+                    "wpn_xo16_1p_wpnfire_tail_core",
+                    "wpn_xo16_1p_wpnfire_tail_mech_",
+                ],
+                true,
+            ),
             Xo16ReloadStart => (&["wpn_xo16_1p_reload_pt1_"], false),
             Xo16ReloadMid => (&["wpn_xo16_1p_reload_pt5_"], false),
             Xo16ReloadEnd => (&["wpn_xo16_1p_reload_pt9_"], false),
@@ -134,7 +152,13 @@ impl Cue {
             TitanLand => (&["titan_land_generic_6ch"], false),
             TitanDeath => (&["titan_atlas_deathexplo"], false),
             EnemyStep => (&["atlas_footstep_generic_close_m"], false),
-            SplitterBurst => (&["wpn_particleaccel_3p_shot_loop_close", "wpn_particleaccel_3p_ballisticloop_2ch_v2"], true),
+            SplitterBurst => (
+                &[
+                    "wpn_particleaccel_3p_shot_loop_close",
+                    "wpn_particleaccel_3p_ballisticloop_2ch_v2",
+                ],
+                true,
+            ),
             R201First => (&["wpn_r101_1p_wpnfire_firstshot_core"], false),
             R201Shot => (&["wpn_r101_1p_wpnfire_loop_core2"], false),
             R201Tail => (&["wpn_r101_1p_wpnfire_tail_core"], false),
@@ -144,8 +168,14 @@ impl Cue {
             BtCritical => (&["diag_gs_titanbt_briefcriticaldamage_0"], false),
             PilotStep => (&["mv_footstep_left", "mv_footstep_right"], false),
             PilotJump => (&["mvmt_human_1p_fs_jump_2ch", "jumpjet_jumpstart_st"], true),
-            PilotDoubleJump => (&["jumpjet_jetstart_chuff_st", "jumpjet_jetstart_flame_st"], true),
-            PilotLand => (&["mvmt_human_1p_fs_jumpland_gear", "jumpland_concrete"], true),
+            PilotDoubleJump => (
+                &["jumpjet_jetstart_chuff_st", "jumpjet_jetstart_flame_st"],
+                true,
+            ),
+            PilotLand => (
+                &["mvmt_human_1p_fs_jumpland_gear", "jumpland_concrete"],
+                true,
+            ),
             PilotWallrunStart => (&["wallrun_start_2ch", "jumpjet_wallrunbody_st"], true),
             PilotWallrunStep => (&["mvmt_human_1p_fs_wallrun_concrete"], false),
             PilotSlide => (&["mvmt_human_1p_crouchdown_2ch"], false),
@@ -155,10 +185,35 @@ impl Cue {
             RailgunWindDown => (&["wpn_titansniper_1p_charge_end_2ch"], false),
             RailgunTick => (&["wpn_titansniper_1p_bullet_tick_2ch"], false),
             RailgunTickFinal => (&["wpn_titansniper_1p_final_tick_2ch"], false),
-            RailgunFire(1) => (&["wpn_titansniper_1p_wpnfire_level1_6ch", "wpn_titansniperrifle_1p_scifi_layer"], true),
-            RailgunFire(2) => (&["wpn_titansniper_1p_wpnfire_level2_6ch", "wpn_titansniperrifle_1p_scifi_layer"], true),
-            RailgunFire(3) => (&["wpn_titansniper_1p_wpnfire_level4_6ch_v1", "wpn_titansniperrifle_1p_core_bass_layer"], true),
-            RailgunFire(_) => (&["wpn_titansniper_1p_wpnfire_level4_6ch_v1", "wpn_titansniperrifle_1p_core_bass_layer", "wpn_titansniper_1p_wpnfire_uber_tail_2ch_v4"], true),
+            RailgunFire(1) => (
+                &[
+                    "wpn_titansniper_1p_wpnfire_level1_6ch",
+                    "wpn_titansniperrifle_1p_scifi_layer",
+                ],
+                true,
+            ),
+            RailgunFire(2) => (
+                &[
+                    "wpn_titansniper_1p_wpnfire_level2_6ch",
+                    "wpn_titansniperrifle_1p_scifi_layer",
+                ],
+                true,
+            ),
+            RailgunFire(3) => (
+                &[
+                    "wpn_titansniper_1p_wpnfire_level4_6ch_v1",
+                    "wpn_titansniperrifle_1p_core_bass_layer",
+                ],
+                true,
+            ),
+            RailgunFire(_) => (
+                &[
+                    "wpn_titansniper_1p_wpnfire_level4_6ch_v1",
+                    "wpn_titansniperrifle_1p_core_bass_layer",
+                    "wpn_titansniper_1p_wpnfire_uber_tail_2ch_v4",
+                ],
+                true,
+            ),
             ChargeRifleWindUp => (&["wpn_chargerifle_1p_chargeup_6ch_v2"], false),
             ChargeRifleWindDown => (&["wpn_chargerifle_1p_chargedown_test1_6ch"], false),
             ChargeRifleTrigger => (&["wpn_chargerifle_1p_trigger_1ch"], false),
@@ -213,7 +268,8 @@ impl Cue {
             Gun(_, GunPart::Tail) => (1e9, 1e9, 0.35),
             PilotStep | PilotWallrunStep => (1e9, 1e9, 0.3),
             HitBeep => (1e9, 1e9, 0.35),
-            PilotJump | PilotDoubleJump | PilotLand | PilotWallrunStart | PilotSlide | PilotMantle => (1e9, 1e9, 0.45),
+            PilotJump | PilotDoubleJump | PilotLand | PilotWallrunStart | PilotSlide
+            | PilotMantle => (1e9, 1e9, 0.45),
             Gun(..) => (1e9, 1e9, 0.5),
             TitanGun(_, GunPart::Tail) => (1e9, 1e9, 0.5),
             TitanGun(..) => (1e9, 1e9, 0.6),
@@ -235,9 +291,13 @@ pub struct SoundCue {
 }
 
 pub fn cue(commands: &mut Commands, cue: Cue, at: Option<Vec3>) {
-    commands.spawn(SoundCue { cue, at, delay: 0.0, duration: None });
+    commands.spawn(SoundCue {
+        cue,
+        at,
+        delay: 0.0,
+        duration: None,
+    });
 }
-
 
 /// A sound event by its game name (from animation events and scripts), resolved through the
 /// bank's event table. Its volume, 2D/3D placement, falloff distances and looping come from
@@ -250,12 +310,18 @@ pub struct SoundEvent {
 }
 
 pub fn event(commands: &mut Commands, name: &str) {
-    commands.spawn(SoundEvent { name: name.to_string(), at: None });
+    commands.spawn(SoundEvent {
+        name: name.to_string(),
+        at: None,
+    });
 }
 
 /// A sound event in the world.
 pub fn event_at(commands: &mut Commands, name: &str, at: Vec3) {
-    commands.spawn(SoundEvent { name: name.to_string(), at: Some(at) });
+    commands.spawn(SoundEvent {
+        name: name.to_string(),
+        at: Some(at),
+    });
 }
 
 /// Start (or keep alive) a looping sound event under `key`, or stop it.
@@ -276,24 +342,52 @@ pub struct SoundLoop {
 /// Play `event` once under `key`, so `loop_stop(key)` can cut it short (the jump-jet body
 /// tails, which the engine stops at the end of the jump).
 pub fn keyed(commands: &mut Commands, key: &str, event: &str) {
-    commands.spawn(SoundLoop { key: key.into(), event: Some(event.into()), at: None, end: None, timeout: None, once: true });
+    commands.spawn(SoundLoop {
+        key: key.into(),
+        event: Some(event.into()),
+        at: None,
+        end: None,
+        timeout: None,
+        once: true,
+    });
 }
 
 /// Loop `event` until `loop_stop(key)` (stim and cloak sustains, vortex hum, weapon fire).
 #[allow(dead_code)]
 pub fn loop_start(commands: &mut Commands, key: &str, event: &str, at: Option<Vec3>) {
-    commands.spawn(SoundLoop { key: key.into(), event: Some(event.into()), at, end: None, timeout: None, once: false });
+    commands.spawn(SoundLoop {
+        key: key.into(),
+        event: Some(event.into()),
+        at,
+        end: None,
+        timeout: None,
+        once: false,
+    });
 }
 
 /// Start or refresh the loop under `key`; it stops by itself half a second after the last hold
 /// (for abilities that hold a sustain while they run).
 pub fn loop_hold(commands: &mut Commands, key: &str, event: &str, at: Option<Vec3>) {
-    commands.spawn(SoundLoop { key: key.into(), event: Some(event.into()), at, end: None, timeout: Some(0.5), once: false });
+    commands.spawn(SoundLoop {
+        key: key.into(),
+        event: Some(event.into()),
+        at,
+        end: None,
+        timeout: Some(0.5),
+        once: false,
+    });
 }
 
 /// Stop the loop under `key`, playing `end` (if any) as it stops.
 pub fn loop_stop(commands: &mut Commands, key: &str, end: Option<&str>) {
-    commands.spawn(SoundLoop { key: key.into(), event: None, at: None, end: end.map(str::to_string), timeout: None, once: false });
+    commands.spawn(SoundLoop {
+        key: key.into(),
+        event: None,
+        at: None,
+        end: end.map(str::to_string),
+        timeout: None,
+        once: false,
+    });
 }
 
 /// Gain for first-person animation sounds (reloads, draws) and other 2D events.
@@ -311,19 +405,64 @@ const OCCLUDED_CUTOFF: f32 = 1400.0;
 
 /// Every cue, for preloading.
 pub const ALL_CUES: &[Cue] = &[
-    Cue::Xo16First, Cue::Xo16Shot, Cue::Xo16Tail, Cue::Xo16ReloadStart, Cue::Xo16ReloadMid, Cue::Xo16ReloadEnd,
-    Cue::MissileLock, Cue::MissileFire, Cue::MissileExplode, Cue::VortexStart, Cue::VortexEnd, Cue::VortexThrow,
-    Cue::VortexAbsorb, Cue::BtStep, Cue::BtDash, Cue::BtPunch, Cue::PunchImpact, Cue::TitanLand, Cue::TitanDeath,
-    Cue::EnemyStep, Cue::SplitterBurst, Cue::R201First, Cue::R201Shot, Cue::R201Tail, Cue::BtCoreReady,
-    Cue::BtCoreActivated, Cue::BtDoomed, Cue::BtCritical, Cue::PilotStep, Cue::PilotJump, Cue::PilotDoubleJump,
-    Cue::PilotLand, Cue::PilotWallrunStart, Cue::PilotWallrunStep, Cue::PilotSlide, Cue::PilotMantle, Cue::HitBeep,
-    Cue::RailgunWindUp, Cue::RailgunWindDown, Cue::RailgunTick, Cue::RailgunTickFinal, Cue::RailgunFire(1), Cue::RailgunFire(2),
-    Cue::RailgunFire(3), Cue::RailgunFire(4), Cue::ChargeRifleWindUp, Cue::ChargeRifleWindDown, Cue::ChargeRifleTrigger,
+    Cue::Xo16First,
+    Cue::Xo16Shot,
+    Cue::Xo16Tail,
+    Cue::Xo16ReloadStart,
+    Cue::Xo16ReloadMid,
+    Cue::Xo16ReloadEnd,
+    Cue::MissileLock,
+    Cue::MissileFire,
+    Cue::MissileExplode,
+    Cue::VortexStart,
+    Cue::VortexEnd,
+    Cue::VortexThrow,
+    Cue::VortexAbsorb,
+    Cue::BtStep,
+    Cue::BtDash,
+    Cue::BtPunch,
+    Cue::PunchImpact,
+    Cue::TitanLand,
+    Cue::TitanDeath,
+    Cue::EnemyStep,
+    Cue::SplitterBurst,
+    Cue::R201First,
+    Cue::R201Shot,
+    Cue::R201Tail,
+    Cue::BtCoreReady,
+    Cue::BtCoreActivated,
+    Cue::BtDoomed,
+    Cue::BtCritical,
+    Cue::PilotStep,
+    Cue::PilotJump,
+    Cue::PilotDoubleJump,
+    Cue::PilotLand,
+    Cue::PilotWallrunStart,
+    Cue::PilotWallrunStep,
+    Cue::PilotSlide,
+    Cue::PilotMantle,
+    Cue::HitBeep,
+    Cue::RailgunWindUp,
+    Cue::RailgunWindDown,
+    Cue::RailgunTick,
+    Cue::RailgunTickFinal,
+    Cue::RailgunFire(1),
+    Cue::RailgunFire(2),
+    Cue::RailgunFire(3),
+    Cue::RailgunFire(4),
+    Cue::ChargeRifleWindUp,
+    Cue::ChargeRifleWindDown,
+    Cue::ChargeRifleTrigger,
 ];
 
 /// Play a cue for at most `duration` seconds (a wind-up cut short when the charge stops).
 pub fn cue_for(commands: &mut Commands, cue: Cue, at: Option<Vec3>, duration: f32) {
-    commands.spawn(SoundCue { cue, at, delay: 0.0, duration: Some(duration) });
+    commands.spawn(SoundCue {
+        cue,
+        at,
+        delay: 0.0,
+        duration: Some(duration),
+    });
 }
 
 /// Decoded, stereo-interleaved PCM played with fixed per-ear gains, optionally low-passed
@@ -339,7 +478,12 @@ pub struct Sound {
 
 impl Sound {
     pub fn new(pcm: Arc<Vec<f32>>, rate: u32, gains: [f32; 2]) -> Self {
-        Self { pcm, rate, gains, lowpass: 1.0 }
+        Self {
+            pcm,
+            rate,
+            gains,
+            lowpass: 1.0,
+        }
     }
 }
 
@@ -370,7 +514,10 @@ impl MasterVolume {
 
 fn apply_master_volume(master: Res<MasterVolume>) {
     if master.is_changed() {
-        MASTER.store(master.volume.to_linear().clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+        MASTER.store(
+            master.volume.to_linear().clamp(0.0, 1.0).to_bits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 
@@ -398,7 +545,9 @@ impl Source for SoundIter {
         self.rate
     }
     fn total_duration(&self) -> Option<Duration> {
-        Some(Duration::from_secs_f32(self.pcm.len() as f32 / 2.0 / self.rate as f32))
+        Some(Duration::from_secs_f32(
+            self.pcm.len() as f32 / 2.0 / self.rate as f32,
+        ))
     }
 }
 
@@ -406,7 +555,14 @@ impl Decodable for Sound {
     type DecoderItem = f32;
     type Decoder = SoundIter;
     fn decoder(&self) -> SoundIter {
-        SoundIter { pcm: self.pcm.clone(), pos: 0, rate: self.rate, gains: self.gains, lowpass: self.lowpass, state: [0.0; 2] }
+        SoundIter {
+            pcm: self.pcm.clone(),
+            pos: 0,
+            rate: self.rate,
+            gains: self.gains,
+            lowpass: self.lowpass,
+            state: [0.0; 2],
+        }
     }
 }
 
@@ -444,7 +600,11 @@ impl Sfx {
     pub fn open(game: &str) -> Self {
         let bank = match MilesBank::open(&std::path::Path::new(game).join("r2/sound")) {
             Ok(b) => {
-                log::info!("sound bank: {} sources, {} events", b.sources.len(), b.event_count());
+                log::info!(
+                    "sound bank: {} sources, {} events",
+                    b.sources.len(),
+                    b.event_count()
+                );
                 Some(Arc::new(b))
             }
             Err(e) => {
@@ -481,7 +641,14 @@ impl Sfx {
         let v: Vec<usize> = self
             .bank
             .as_ref()
-            .map(|b| b.sources.iter().enumerate().filter(|(_, s)| s.name.starts_with(prefix)).map(|(i, _)| i).collect())
+            .map(|b| {
+                b.sources
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.name.starts_with(prefix))
+                    .map(|(i, _)| i)
+                    .collect()
+            })
             .unwrap_or_default();
         if v.is_empty() && self.bank.is_some() {
             log::warn!("no sound source matches {prefix}");
@@ -500,7 +667,12 @@ impl Sfx {
         let info = self.bank.as_ref().and_then(|b| {
             b.event_info(name).cloned().or_else(|| {
                 let sources = b.event_variants(name);
-                (!sources.is_empty()).then(|| EventInfo { sources, volume: 1.0, spatial: true, ..Default::default() })
+                (!sources.is_empty()).then(|| EventInfo {
+                    sources,
+                    volume: 1.0,
+                    spatial: true,
+                    ..Default::default()
+                })
             })
         });
         if info.is_none() && self.bank.is_some() {
@@ -545,11 +717,22 @@ impl Sfx {
     pub fn load_game_data(&mut self, gd: &crate::gamedata::GameData) {
         let t = std::time::Instant::now();
         self.captions = crate::dialogue::Captions::load(gd);
-        let ids: Vec<&str> = crate::pilotweapon::ARSENAL.iter().map(|a| a.id).chain(crate::weapons::TITAN_ARSENAL.iter().map(|g| g.id)).collect();
+        let ids: Vec<&str> = crate::pilotweapon::ARSENAL
+            .iter()
+            .map(|a| a.id)
+            .chain(crate::weapons::TITAN_ARSENAL.iter().map(|g| g.id))
+            .collect();
         let mut want = Vec::new();
         for id in ids {
             let ws = self.read_weapon(gd, id);
-            for n in ws.start_1p.iter().chain(&ws.end_1p).chain(&ws.shot_1p).chain(&ws.shot_npc).chain(ws.middle_1p.iter()) {
+            for n in ws
+                .start_1p
+                .iter()
+                .chain(&ws.end_1p)
+                .chain(&ws.shot_1p)
+                .chain(&ws.shot_npc)
+                .chain(ws.middle_1p.iter())
+            {
                 want.extend(self.event_sources(n));
             }
             self.weapons.insert(id.to_string(), ws);
@@ -563,35 +746,75 @@ impl Sfx {
             want.extend(self.event_sources(n));
         }
         self.decode_parallel(want);
-        log::info!("weapon sounds from {} scripts, {} captions, in {:?}", self.weapons.len(), self.captions.len(), t.elapsed());
+        log::info!(
+            "weapon sounds from {} scripts, {} captions, in {:?}",
+            self.weapons.len(),
+            self.captions.len(),
+            t.elapsed()
+        );
     }
 
     fn read_weapon(&mut self, gd: &crate::gamedata::GameData, id: &str) -> WeaponSounds {
-        let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
-        let Some(s) = tf_assets::settings::PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read) else {
+        let mut read = |p: &str| {
+            gd.read_file(p)
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        };
+        let Some(s) = tf_assets::settings::PlayerSettings::load(
+            &format!("scripts/weapons/{id}.txt"),
+            true,
+            &mut read,
+        ) else {
             return WeaponSounds::default();
         };
-        let key = |k: &str| s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).map(str::to_string).unwrap_or_default();
+        let key = |k: &str| {
+            s.get(&format!("sp_base.{k}"))
+                .or_else(|| s.get(&format!(".{k}")))
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
         let mut ev = |k: &str| -> Option<String> {
             let n = key(k);
             self.has_event(&n).then_some(n)
         };
-        let start_1p: Vec<String> = ev("burst_or_looping_fire_sound_start_1p").into_iter().collect();
+        let start_1p: Vec<String> = ev("burst_or_looping_fire_sound_start_1p")
+            .into_iter()
+            .collect();
         let middle_1p = ev("burst_or_looping_fire_sound_middle_1p");
-        let end_1p: Vec<String> = ev("burst_or_looping_fire_sound_end_1p").into_iter().collect();
-        let shot_1p: Vec<String> = [ev("fire_sound_1_player_1p"), ev("fire_sound_2_player_1p")].into_iter().flatten().collect();
-        let mut shot_npc: Vec<String> = [ev("fire_sound_1_npc"), ev("fire_sound_2_npc")].into_iter().flatten().collect();
+        let end_1p: Vec<String> = ev("burst_or_looping_fire_sound_end_1p")
+            .into_iter()
+            .collect();
+        let shot_1p: Vec<String> = [ev("fire_sound_1_player_1p"), ev("fire_sound_2_player_1p")]
+            .into_iter()
+            .flatten()
+            .collect();
+        let mut shot_npc: Vec<String> = [ev("fire_sound_1_npc"), ev("fire_sound_2_npc")]
+            .into_iter()
+            .flatten()
+            .collect();
         if shot_npc.is_empty() {
-            shot_npc = [ev("fire_sound_1_player_3p"), ev("fire_sound_2_player_3p")].into_iter().flatten().collect();
+            shot_npc = [ev("fire_sound_1_player_3p"), ev("fire_sound_2_player_3p")]
+                .into_iter()
+                .flatten()
+                .collect();
         }
         let looping = key("looping_sounds") == "1" && middle_1p.is_some();
-        let ws = WeaponSounds { looping, start_1p, middle_1p, end_1p, shot_1p, shot_npc };
+        let ws = WeaponSounds {
+            looping,
+            start_1p,
+            middle_1p,
+            end_1p,
+            shot_1p,
+            shot_npc,
+        };
         log::debug!("weapon sounds {id}: {ws:?}");
         ws
     }
 
     fn weapon(&self, id: &str) -> Option<&WeaponSounds> {
-        self.weapons.get(id).filter(|w| w.looping || !w.shot_1p.is_empty() || !w.start_1p.is_empty())
+        self.weapons
+            .get(id)
+            .filter(|w| w.looping || !w.shot_1p.is_empty() || !w.start_1p.is_empty())
     }
 
     fn pcm(&mut self, index: usize) -> Option<(Arc<Vec<f32>>, u32)> {
@@ -628,8 +851,13 @@ impl Sfx {
         want.sort_unstable();
         want.dedup();
         want.retain(|i| !self.decoded.contains_key(i));
-        let Some(bank) = self.bank.clone() else { return };
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16);
+        let Some(bank) = self.bank.clone() else {
+            return;
+        };
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(16);
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results: Vec<(usize, Option<(Arc<Vec<f32>>, u32)>)> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..threads)
@@ -644,7 +872,9 @@ impl Sfx {
                             let r = bank
                                 .read_binka(src)
                                 .and_then(|f| tf_assets::binka::decode(&f))
-                                .map(|p| (Arc::new(to_stereo(&p.samples, p.channels)), p.sample_rate))
+                                .map(|p| {
+                                    (Arc::new(to_stereo(&p.samples, p.channels)), p.sample_rate)
+                                })
                                 .map_err(|e| log::warn!("sound {}: {e:#}", src.name))
                                 .ok();
                             out.push((i, r));
@@ -653,18 +883,28 @@ impl Sfx {
                     })
                 })
                 .collect();
-            handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap_or_default())
+                .collect()
         });
         self.decoded.extend(results);
     }
 
     /// Decode a source off the main thread (music, long dialogue).
-    pub fn decode_detached(&self, index: usize) -> Option<std::sync::mpsc::Receiver<Option<(Arc<Vec<f32>>, u32)>>> {
+    pub fn decode_detached(
+        &self,
+        index: usize,
+    ) -> Option<std::sync::mpsc::Receiver<Option<(Arc<Vec<f32>>, u32)>>> {
         let bank = self.bank.clone()?;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let src = &bank.sources[index];
-            let pcm = bank.read_binka(src).and_then(|f| tf_assets::binka::decode(&f)).ok().map(|p| (Arc::new(to_stereo(&p.samples, p.channels)), p.sample_rate));
+            let pcm = bank
+                .read_binka(src)
+                .and_then(|f| tf_assets::binka::decode(&f))
+                .ok()
+                .map(|p| (Arc::new(to_stereo(&p.samples, p.channels)), p.sample_rate));
             let _ = tx.send(pcm);
         });
         Some(rx)
@@ -687,7 +927,11 @@ pub fn to_stereo(s: &[f32], channels: usize) -> Vec<f32> {
             n => {
                 let (mut l, mut r) = (0.0, 0.0);
                 for (i, v) in f.iter().enumerate().take(n) {
-                    if i % 2 == 0 { l += v } else { r += v }
+                    if i % 2 == 0 {
+                        l += v
+                    } else {
+                        r += v
+                    }
                 }
                 (l, r)
             }
@@ -724,10 +968,18 @@ impl Plugin for GameAudioPlugin {
             .init_resource::<Mixer>()
             .init_resource::<crate::ui::Subtitles>()
             .init_resource::<crate::music::Music>()
-            .add_systems(Update, (crate::music::update_music, crate::dialogue::announcer).run_if(crate::ui::loaded))
-            .insert_resource(MasterVolume::new(bevy::audio::Volume::Linear(DEFAULT_VOLUME)))
+            .add_systems(
+                Update,
+                (crate::music::update_music, crate::dialogue::announcer).run_if(crate::ui::loaded),
+            )
+            .insert_resource(MasterVolume::new(bevy::audio::Volume::Linear(
+                DEFAULT_VOLUME,
+            )))
             .add_systems(Update, (volume_keys, apply_master_volume).chain())
-            .add_systems(PostUpdate, (crate::actor::actor_event_sounds, play_cues).chain());
+            .add_systems(
+                PostUpdate,
+                (crate::actor::actor_event_sounds, play_cues).chain(),
+            );
     }
 }
 
@@ -765,7 +1017,13 @@ struct Listener {
 }
 
 /// Per-ear gains and low-pass for a sound at `at` (game space), or None if it's out of range.
-fn place(info: &EventInfo, at: Option<Vec3>, fallback: (f32, f32, f32), listener: &Option<Listener>, world: Option<&crate::player::Collision>) -> Option<([f32; 2], f32)> {
+fn place(
+    info: &EventInfo,
+    at: Option<Vec3>,
+    fallback: (f32, f32, f32),
+    listener: &Option<Listener>,
+    world: Option<&crate::player::Collision>,
+) -> Option<([f32; 2], f32)> {
     let base = fallback.2 * info.volume * EVENT_TRIM;
     let (Some(at), Some(l), true) = (at, listener, info.spatial || fallback.0 < 1e8) else {
         return Some(([base.min(1.0), base.min(1.0)], 1.0));
@@ -794,13 +1052,24 @@ fn place(info: &EventInfo, at: Option<Vec3>, fallback: (f32, f32, f32), listener
         if len > 60.0 {
             let n = dir / len;
             let from = at + n * 30.0;
-            if w.0.raycast(tf_sim::glam::Vec3::new(from.x, from.y, from.z), tf_sim::glam::Vec3::new(n.x, n.y, n.z), len - 60.0).is_some() {
+            if w.0
+                .raycast(
+                    tf_sim::glam::Vec3::new(from.x, from.y, from.z),
+                    tf_sim::glam::Vec3::new(n.x, n.y, n.z),
+                    len - 60.0,
+                )
+                .is_some()
+            {
                 g *= OCCLUDED_GAIN;
                 lowpass = OCCLUDED_CUTOFF;
             }
         }
     }
-    let gains = [g * a.cos() * std::f32::consts::SQRT_2, g * a.sin() * std::f32::consts::SQRT_2].map(|v| v.min(1.0));
+    let gains = [
+        g * a.cos() * std::f32::consts::SQRT_2,
+        g * a.sin() * std::f32::consts::SQRT_2,
+    ]
+    .map(|v| v.min(1.0));
     Some((gains, lowpass))
 }
 
@@ -850,8 +1119,16 @@ fn play_event(
     let (pcm, rate) = sfx.pcm(i)?;
     let secs = pcm.len() as f32 / 2.0 / rate as f32;
     if dialogue {
-        let source = sfx.bank.as_ref().map(|b| b.sources[i].name.clone()).unwrap_or_default();
-        if let Some(text) = sfx.captions.find(&source).or_else(|| sfx.captions.find(p.name)) {
+        let source = sfx
+            .bank
+            .as_ref()
+            .map(|b| b.sources[i].name.clone())
+            .unwrap_or_default();
+        if let Some(text) = sfx
+            .captions
+            .find(&source)
+            .or_else(|| sfx.captions.find(p.name))
+        {
             log::info!("subtitle: {text}");
             subtitle.push("", &text, secs + 0.5);
         }
@@ -867,14 +1144,23 @@ fn play_event(
     sound.lowpass = lowpass_coef(cutoff, rate);
     let handle = sounds.add(sound);
     let looped = p.looped || (info.looped && p.duration.is_none());
-    let mut settings = if looped { PlaybackSettings::LOOP } else { PlaybackSettings::DESPAWN };
+    let mut settings = if looped {
+        PlaybackSettings::LOOP
+    } else {
+        PlaybackSettings::DESPAWN
+    };
     if let Some(d) = p.duration {
         settings = settings.with_duration(Duration::from_secs_f32(d.max(0.01)));
     }
     if !looped {
-        mixer.voices.push((now + p.duration.unwrap_or(secs).min(secs), p.name.to_string()));
+        mixer.voices.push((
+            now + p.duration.unwrap_or(secs).min(secs),
+            p.name.to_string(),
+        ));
     }
-    let e = commands.spawn((AudioPlayer::<Sound>(handle), settings)).id();
+    let e = commands
+        .spawn((AudioPlayer::<Sound>(handle), settings))
+        .id();
     (looped || p.keep).then_some(e)
 }
 
@@ -906,7 +1192,11 @@ fn play_cues(
     };
     let now = time.elapsed_secs();
     mixer.duck = (mixer.duck - time.delta_secs() * 0.8).max(0.0);
-    let listener = camera.single().ok().map(|g| Listener { ear: g.translation(), right: g.right().as_vec3(), ear_game: to_game(g.translation()) });
+    let listener = camera.single().ok().map(|g| Listener {
+        ear: g.translation(),
+        right: g.right().as_vec3(),
+        ear_game: to_game(g.translation()),
+    });
     let world = world.as_deref();
     let sfx = &mut *sfx;
     let (mixer, subtitle) = (&mut *mixer, &mut *subtitle);
@@ -917,11 +1207,35 @@ fn play_cues(
     for (e, ev) in &events {
         commands.entity(e).despawn();
         log::debug!("sound event {}", ev.name);
-        let fallback = if ev.at.is_some() { world_fallback } else { event_fallback };
-        let play = Play { name: &ev.name, at: ev.at, fallback, duration: None, looped: false, keep: false };
-        if let Some(looper) = play_event(&mut commands, sfx, &mut sounds, mixer, subtitle, &listener, world, now, play) {
+        let fallback = if ev.at.is_some() {
+            world_fallback
+        } else {
+            event_fallback
+        };
+        let play = Play {
+            name: &ev.name,
+            at: ev.at,
+            fallback,
+            duration: None,
+            looped: false,
+            keep: false,
+        };
+        if let Some(looper) = play_event(
+            &mut commands,
+            sfx,
+            &mut sounds,
+            mixer,
+            subtitle,
+            &listener,
+            world,
+            now,
+            play,
+        ) {
             // A looping event fired as a one-shot (an emitter): let it run a while, then stop.
-            mixer.loops.insert(format!("event:{}:{}", ev.name, looper.index()), (looper, now, Some(6.0), None, ev.at));
+            mixer.loops.insert(
+                format!("event:{}:{}", ev.name, looper.index()),
+                (looper, now, Some(6.0), None, ev.at),
+            );
         }
     }
 
@@ -939,18 +1253,68 @@ fn play_cues(
                     entry.1 = now;
                     continue;
                 }
-                let play = Play { name, at: l.at, fallback: if l.at.is_some() { world_fallback } else { event_fallback }, duration: None, looped: !l.once, keep: l.once };
-                if let Some(ent) = play_event(&mut commands, sfx, &mut sounds, mixer, subtitle, &listener, world, now, play) {
-                    mixer.loops.insert(l.key.clone(), (ent, now, l.timeout, l.end.clone(), l.at));
+                let play = Play {
+                    name,
+                    at: l.at,
+                    fallback: if l.at.is_some() {
+                        world_fallback
+                    } else {
+                        event_fallback
+                    },
+                    duration: None,
+                    looped: !l.once,
+                    keep: l.once,
+                };
+                if let Some(ent) = play_event(
+                    &mut commands,
+                    sfx,
+                    &mut sounds,
+                    mixer,
+                    subtitle,
+                    &listener,
+                    world,
+                    now,
+                    play,
+                ) {
+                    mixer
+                        .loops
+                        .insert(l.key.clone(), (ent, now, l.timeout, l.end.clone(), l.at));
                 }
             }
-            None => stop_loop(&mut commands, sfx, &mut sounds, mixer, subtitle, &listener, world, now, &l.key, l.end.as_deref()),
+            None => stop_loop(
+                &mut commands,
+                sfx,
+                &mut sounds,
+                mixer,
+                subtitle,
+                &listener,
+                world,
+                now,
+                &l.key,
+                l.end.as_deref(),
+            ),
         }
     }
     // Loops nobody refreshed in time stop by themselves.
-    let stale: Vec<String> = mixer.loops.iter().filter(|(_, v)| v.2.is_some_and(|t| now - v.1 > t)).map(|(k, _)| k.clone()).collect();
+    let stale: Vec<String> = mixer
+        .loops
+        .iter()
+        .filter(|(_, v)| v.2.is_some_and(|t| now - v.1 > t))
+        .map(|(k, _)| k.clone())
+        .collect();
     for k in stale {
-        stop_loop(&mut commands, sfx, &mut sounds, mixer, subtitle, &listener, world, now, &k, None);
+        stop_loop(
+            &mut commands,
+            sfx,
+            &mut sounds,
+            mixer,
+            subtitle,
+            &listener,
+            world,
+            now,
+            &k,
+            None,
+        );
     }
 
     // Gameplay cues.
@@ -962,14 +1326,30 @@ fn play_cues(
         commands.entity(e).despawn();
         log::debug!("cue {:?}", c.cue);
         let fallback = c.cue.falloff();
-        let mut ctx = Ctx { commands: &mut commands, sfx: &mut *sfx, sounds: &mut sounds, mixer: &mut *mixer, subtitle: &mut *subtitle, listener: &listener, world, now };
+        let mut ctx = Ctx {
+            commands: &mut commands,
+            sfx: &mut *sfx,
+            sounds: &mut sounds,
+            mixer: &mut *mixer,
+            subtitle: &mut *subtitle,
+            listener: &listener,
+            world,
+            now,
+        };
         if ctx.weapon_cue(c.cue, c.at, fallback) {
             continue;
         }
         let names = c.cue.events();
         if !names.is_empty() && names.iter().all(|n| ctx.sfx.has_event(n)) {
             for n in names {
-                let play = Play { name: n, at: c.at, fallback, duration: c.duration, looped: false, keep: false };
+                let play = Play {
+                    name: n,
+                    at: c.at,
+                    fallback,
+                    duration: c.duration,
+                    looped: false,
+                    keep: false,
+                };
                 ctx.play_oneshot(play);
             }
             ctx.cue_side_effects(c.cue, c.at);
@@ -993,12 +1373,35 @@ fn stop_loop(
     key: &str,
     end: Option<&str>,
 ) {
-    let Some((ent, _, _, own_end, at)) = mixer.loops.remove(key) else { return };
+    let Some((ent, _, _, own_end, at)) = mixer.loops.remove(key) else {
+        return;
+    };
     log::debug!("stop loop {key}");
     commands.entity(ent).try_despawn();
     for name in end.into_iter().chain(own_end.as_deref()) {
-        let fallback = if at.is_some() { (400.0, 7000.0, 0.55) } else { (1e9, 1e9, EVENT_GAIN) };
-        play_event(commands, sfx, sounds, mixer, subtitle, listener, world, now, Play { name, at, fallback, duration: None, looped: false, keep: false });
+        let fallback = if at.is_some() {
+            (400.0, 7000.0, 0.55)
+        } else {
+            (1e9, 1e9, EVENT_GAIN)
+        };
+        play_event(
+            commands,
+            sfx,
+            sounds,
+            mixer,
+            subtitle,
+            listener,
+            world,
+            now,
+            Play {
+                name,
+                at,
+                fallback,
+                duration: None,
+                looped: false,
+                keep: false,
+            },
+        );
     }
 }
 
@@ -1016,14 +1419,27 @@ struct Ctx<'a, 'w, 's> {
 
 impl Ctx<'_, '_, '_> {
     fn play(&mut self, p: Play) -> Option<Entity> {
-        play_event(self.commands, self.sfx, self.sounds, self.mixer, self.subtitle, self.listener, self.world, self.now, p)
+        play_event(
+            self.commands,
+            self.sfx,
+            self.sounds,
+            self.mixer,
+            self.subtitle,
+            self.listener,
+            self.world,
+            self.now,
+            p,
+        )
     }
 
     /// Play once; an event whose record loops is let run a few seconds, then stopped.
     fn play_oneshot(&mut self, p: Play) {
         let (name, at) = (p.name.to_string(), p.at);
         if let Some(ent) = self.play(p) {
-            self.mixer.loops.insert(format!("event:{name}:{}", ent.index()), (ent, self.now, Some(6.0), None, at));
+            self.mixer.loops.insert(
+                format!("event:{name}:{}", ent.index()),
+                (ent, self.now, Some(6.0), None, at),
+            );
         }
     }
 
@@ -1033,17 +1449,30 @@ impl Ctx<'_, '_, '_> {
         let (id, part, npc) = match cue {
             Cue::Gun(i, part) => (crate::pilotweapon::ARSENAL[i as usize].id, part, false),
             Cue::TitanGun(i, part) => (crate::weapons::TITAN_ARSENAL[i as usize].id, part, false),
-            Cue::EnemyGun(i) => (crate::weapons::TITAN_ARSENAL[i as usize].id, GunPart::Shot, true),
+            Cue::EnemyGun(i) => (
+                crate::weapons::TITAN_ARSENAL[i as usize].id,
+                GunPart::Shot,
+                true,
+            ),
             _ => return false,
         };
-        let Some(ws) = self.sfx.weapon(id).cloned() else { return false };
+        let Some(ws) = self.sfx.weapon(id).cloned() else {
+            return false;
+        };
         let gain = fallback.2;
         if npc {
             if ws.shot_npc.is_empty() {
                 return false;
             }
             for n in &ws.shot_npc {
-                self.play(Play { name: n, at, fallback: (400.0, 7000.0, 0.55), duration: None, looped: false, keep: false });
+                self.play(Play {
+                    name: n,
+                    at,
+                    fallback: (400.0, 7000.0, 0.55),
+                    duration: None,
+                    looped: false,
+                    keep: false,
+                });
             }
             return true;
         }
@@ -1055,20 +1484,48 @@ impl Ctx<'_, '_, '_> {
                     if !self.mixer.loops.contains_key(&key) {
                         if part == GunPart::First {
                             for n in &ws.start_1p {
-                                self.play(Play { name: n, at, fallback: (fallback.0, fallback.1, gain), duration: None, looped: false, keep: false });
+                                self.play(Play {
+                                    name: n,
+                                    at,
+                                    fallback: (fallback.0, fallback.1, gain),
+                                    duration: None,
+                                    looped: false,
+                                    keep: false,
+                                });
                             }
                         }
-                        let p = Play { name: &middle, at, fallback: (fallback.0, fallback.1, gain), duration: None, looped: true, keep: false };
+                        let p = Play {
+                            name: &middle,
+                            at,
+                            fallback: (fallback.0, fallback.1, gain),
+                            duration: None,
+                            looped: true,
+                            keep: false,
+                        };
                         if let Some(ent) = self.play(p) {
                             // The tail cue ends the loop; a weapon switch or stall without one
                             // still ends it after a while.
-                            self.mixer.loops.insert(key, (ent, self.now, Some(2.0), ws.end_1p.first().cloned(), at));
+                            self.mixer.loops.insert(
+                                key,
+                                (ent, self.now, Some(2.0), ws.end_1p.first().cloned(), at),
+                            );
                         }
                     } else if let Some(entry) = self.mixer.loops.get_mut(&key) {
                         entry.1 = self.now;
                     }
                 }
-                GunPart::Tail => stop_loop(self.commands, self.sfx, self.sounds, self.mixer, self.subtitle, self.listener, self.world, self.now, &key, None),
+                GunPart::Tail => stop_loop(
+                    self.commands,
+                    self.sfx,
+                    self.sounds,
+                    self.mixer,
+                    self.subtitle,
+                    self.listener,
+                    self.world,
+                    self.now,
+                    &key,
+                    None,
+                ),
             }
             return true;
         }
@@ -1078,24 +1535,48 @@ impl Ctx<'_, '_, '_> {
             GunPart::Tail => ws.end_1p.clone(),
         };
         for n in &names {
-            self.play_oneshot(Play { name: n, at, fallback: (fallback.0, fallback.1, gain), duration: None, looped: false, keep: false });
+            self.play_oneshot(Play {
+                name: n,
+                at,
+                fallback: (fallback.0, fallback.1, gain),
+                duration: None,
+                looped: false,
+                keep: false,
+            });
         }
         true
     }
 
     /// Hand-mapped sources (cues the scripts don't name, or events the bank lacks).
-    fn legacy(&mut self, cue: Cue, at: Option<Vec3>, fallback: (f32, f32, f32), duration: Option<f32>) {
+    fn legacy(
+        &mut self,
+        cue: Cue,
+        at: Option<Vec3>,
+        fallback: (f32, f32, f32),
+        duration: Option<f32>,
+    ) {
         let (prefixes, all) = cue.sources();
         let groups: Vec<Vec<usize>> = if all {
             prefixes.iter().map(|p| self.sfx.variants_of(p)).collect()
         } else {
-            vec![prefixes.iter().flat_map(|p| self.sfx.variants_of(p)).collect()]
+            vec![prefixes
+                .iter()
+                .flat_map(|p| self.sfx.variants_of(p))
+                .collect()]
         };
-        let info = EventInfo { volume: 1.0, spatial: fallback.0 < 1e8, ..Default::default() };
-        let Some((gains, cutoff)) = place(&info, at, fallback, self.listener, self.world) else { return };
+        let info = EventInfo {
+            volume: 1.0,
+            spatial: fallback.0 < 1e8,
+            ..Default::default()
+        };
+        let Some((gains, cutoff)) = place(&info, at, fallback, self.listener, self.world) else {
+            return;
+        };
         for g in groups {
             let Some(i) = self.sfx.pick(&g) else { continue };
-            let Some((pcm, rate)) = self.sfx.pcm(i) else { continue };
+            let Some((pcm, rate)) = self.sfx.pcm(i) else {
+                continue;
+            };
             let mut sound = Sound::new(pcm, rate, gains);
             sound.lowpass = lowpass_coef(cutoff, rate);
             let handle = self.sounds.add(sound);
@@ -1103,7 +1584,8 @@ impl Ctx<'_, '_, '_> {
             if let Some(d) = duration {
                 settings = settings.with_duration(Duration::from_secs_f32(d.max(0.01)));
             }
-            self.commands.spawn((AudioPlayer::<Sound>(handle), settings));
+            self.commands
+                .spawn((AudioPlayer::<Sound>(handle), settings));
         }
         if matches!(cue, Cue::MissileExplode | Cue::TitanDeath | Cue::TitanLand) {
             self.mixer.duck = self.mixer.duck.max(0.6);
@@ -1114,14 +1596,34 @@ impl Ctx<'_, '_, '_> {
     fn cue_side_effects(&mut self, cue: Cue, at: Option<Vec3>) {
         match cue {
             Cue::VortexStart => {
-                let p = Play { name: "vortex_shield_loop_1P", at, fallback: (1e9, 1e9, 0.6), duration: None, looped: true, keep: false };
+                let p = Play {
+                    name: "vortex_shield_loop_1P",
+                    at,
+                    fallback: (1e9, 1e9, 0.6),
+                    duration: None,
+                    looped: true,
+                    keep: false,
+                };
                 if !self.mixer.loops.contains_key("vortex") {
                     if let Some(ent) = self.play(p) {
-                        self.mixer.loops.insert("vortex".into(), (ent, self.now, Some(12.0), None, at));
+                        self.mixer
+                            .loops
+                            .insert("vortex".into(), (ent, self.now, Some(12.0), None, at));
                     }
                 }
             }
-            Cue::VortexEnd | Cue::VortexThrow => stop_loop(self.commands, self.sfx, self.sounds, self.mixer, self.subtitle, self.listener, self.world, self.now, "vortex", None),
+            Cue::VortexEnd | Cue::VortexThrow => stop_loop(
+                self.commands,
+                self.sfx,
+                self.sounds,
+                self.mixer,
+                self.subtitle,
+                self.listener,
+                self.world,
+                self.now,
+                "vortex",
+                None,
+            ),
             _ => {}
         }
     }
@@ -1129,12 +1631,52 @@ impl Ctx<'_, '_, '_> {
 
 /// Sound events the code plays by literal name (preloaded with `Sfx::preload_code_events`).
 const CODE_EVENTS: &[&str] = &[
-    "pilot_stimpack_loop_1P", "pilot_stimpack_deactivate_1P", "cloak_sustain_loop_1P", "cloak_interruptend_1P", "Pilot_PhaseShift_Loop_1P", "Pilot_PhaseShift_End_1P",
-    "Jumpjet_Jump_Body_1P", "Jumpjet_Jet_Body_1P", "Jumpjet_Wallrun_Body_1P", "Player_Zipline_Attach", "Player_Zipline_Detach", "Player_Zipline_Loop", "pilot_grapple_ready", "pilot_grapple_retract_1p", "default_grapple_impact_1p_vs_3p",
-    "Pilot_PulseBlade_Sonar_Pulse_1P", "Pilot_Mvmt_Melee_Hit_1P", "Pilot_Rodeo_Titan_Attach", "weapon_gravitystar_preexplo", "weapon_r1_satchel_armedbeep", "weapon_r1_satchel_attach",
-    "holopilot_end_3P", "Hardcover_Shield_Start_3P", "Hardcover_Shield_End_3P", "player_eject_windrush", "Titan_Eject_PilotLaunch_3P", "Titan_Eject_Servos_3P", "titan_eject_xbutton",
-    "vortex_1p_shield_throw", "vortex_3p_shield_end_1", "vortex_3p_shield_start_1_long", "flamewall_flame_start", "incendiary_trap_burn", "incendiary_trap_explode", "incendiary_trap_gas",
-    "incendiary_trap_land", "Titan_Offhand_ElectricSmoke_Deploy_3P", "titan_core_flight_liftoff_1p", "Titan_Core_Laser_FireBeam_1P", "Titan_Tone_SonarLock_Impact_1P",
-    "Titan_Tone_SonarLock_Impact_Pulse_1P", "UI_TitanBattery_Pilot_PickUp", "UI_TitanBattery_Titan_PickUp", "Wpn_TetherTrap_Land", "Wpn_TetherTrap_PopOpen_3p",
-    "weapon_predator_rangeswitch_tolong_1p", "weapon_predator_rangeswitch_toshort_1p", "Atlas_3p_Sync_Melee",
+    "pilot_stimpack_loop_1P",
+    "pilot_stimpack_deactivate_1P",
+    "cloak_sustain_loop_1P",
+    "cloak_interruptend_1P",
+    "Pilot_PhaseShift_Loop_1P",
+    "Pilot_PhaseShift_End_1P",
+    "Jumpjet_Jump_Body_1P",
+    "Jumpjet_Jet_Body_1P",
+    "Jumpjet_Wallrun_Body_1P",
+    "Player_Zipline_Attach",
+    "Player_Zipline_Detach",
+    "Player_Zipline_Loop",
+    "pilot_grapple_ready",
+    "pilot_grapple_retract_1p",
+    "default_grapple_impact_1p_vs_3p",
+    "Pilot_PulseBlade_Sonar_Pulse_1P",
+    "Pilot_Mvmt_Melee_Hit_1P",
+    "Pilot_Rodeo_Titan_Attach",
+    "weapon_gravitystar_preexplo",
+    "weapon_r1_satchel_armedbeep",
+    "weapon_r1_satchel_attach",
+    "holopilot_end_3P",
+    "Hardcover_Shield_Start_3P",
+    "Hardcover_Shield_End_3P",
+    "player_eject_windrush",
+    "Titan_Eject_PilotLaunch_3P",
+    "Titan_Eject_Servos_3P",
+    "titan_eject_xbutton",
+    "vortex_1p_shield_throw",
+    "vortex_3p_shield_end_1",
+    "vortex_3p_shield_start_1_long",
+    "flamewall_flame_start",
+    "incendiary_trap_burn",
+    "incendiary_trap_explode",
+    "incendiary_trap_gas",
+    "incendiary_trap_land",
+    "Titan_Offhand_ElectricSmoke_Deploy_3P",
+    "titan_core_flight_liftoff_1p",
+    "Titan_Core_Laser_FireBeam_1P",
+    "Titan_Tone_SonarLock_Impact_1P",
+    "Titan_Tone_SonarLock_Impact_Pulse_1P",
+    "UI_TitanBattery_Pilot_PickUp",
+    "UI_TitanBattery_Titan_PickUp",
+    "Wpn_TetherTrap_Land",
+    "Wpn_TetherTrap_PopOpen_3p",
+    "weapon_predator_rangeswitch_tolong_1p",
+    "weapon_predator_rangeswitch_toshort_1p",
+    "Atlas_3p_Sync_Melee",
 ];

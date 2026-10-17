@@ -5,7 +5,10 @@ fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let vpk = Vpk::open(&a[1])?;
     let verbose = a.iter().any(|s| s == "-v");
-    let filter = a.get(2).filter(|s| *s != "-v").map(|s| s.to_ascii_lowercase());
+    let filter = a
+        .get(2)
+        .filter(|s| *s != "-v")
+        .map(|s| s.to_ascii_lowercase());
     let t = std::time::Instant::now();
     let (mut files, mut systems) = (0, 0);
     let mut paths: Vec<&String> = vpk.entries.keys().filter(|p| p.ends_with(".pcf")).collect();
@@ -14,7 +17,11 @@ fn main() -> anyhow::Result<()> {
         let defs = pcf::parse_pcf(&vpk.read(path)?).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
         files += 1;
         systems += defs.len();
-        for d in defs.iter().filter(|d| filter.as_ref().is_some_and(|f| d.name.to_ascii_lowercase().contains(f.as_str()))) {
+        for d in defs.iter().filter(|d| {
+            filter
+                .as_ref()
+                .is_some_and(|f| d.name.to_ascii_lowercase().contains(f.as_str()))
+        }) {
             println!(
                 "{path}: {} material={:?} max={} emit={:?} init={} ops={} render={:?} children={:?}",
                 d.name,
@@ -27,12 +34,28 @@ fn main() -> anyhow::Result<()> {
                 d.children.iter().map(|c| (c.name.as_str(), c.delay)).collect::<Vec<_>>()
             );
             if verbose {
-                println!("  radius={} color={:?} hdr={} initial={} screen_space={} draw_screen_space={}", d.radius, d.color, d.hdr_scale, d.initial_particles, d.screen_space, d.draw_screen_space);
-                for (kind, ops) in [("emit", &d.emitters), ("init", &d.initializers), ("op", &d.operators), ("render", &d.renderers), ("force", &d.forces), ("constraint", &d.constraints)] {
+                println!(
+                    "  radius={} color={:?} hdr={} initial={} screen_space={} draw_screen_space={}",
+                    d.radius,
+                    d.color,
+                    d.hdr_scale,
+                    d.initial_particles,
+                    d.screen_space,
+                    d.draw_screen_space
+                );
+                for (kind, ops) in [
+                    ("emit", &d.emitters),
+                    ("init", &d.initializers),
+                    ("op", &d.operators),
+                    ("render", &d.renderers),
+                    ("force", &d.forces),
+                    ("constraint", &d.constraints),
+                ] {
                     for o in ops {
                         let mut ps: Vec<(&String, &pcf::Value)> = o.params.iter().collect();
                         ps.sort_by(|x, y| x.0.cmp(y.0));
-                        let ps: Vec<String> = ps.iter().map(|(k, v)| format!("{k}={v:?}")).collect();
+                        let ps: Vec<String> =
+                            ps.iter().map(|(k, v)| format!("{k}={v:?}")).collect();
                         println!("  {kind} {}: {}", o.function, ps.join(", "));
                     }
                 }

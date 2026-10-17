@@ -42,7 +42,9 @@ use crate::gamedata::GameData;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError};
+use bevy::render::render_resource::{
+    AsBindGroup, Face, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
 
 /// `c_maxLightingValue`: `mat_bloom_max_lighting_value`'s default (materialsystem_dx11.dll
 /// ConVar at 0x1819ac7b0, "5.0").
@@ -134,7 +136,9 @@ pub struct FxUberKey {
 
 impl From<&FxUberMaterial> for FxUberKey {
     fn from(m: &FxUberMaterial) -> Self {
-        FxUberKey { two_sided: m.two_sided }
+        FxUberKey {
+            two_sided: m.two_sided,
+        }
     }
 }
 
@@ -143,7 +147,11 @@ impl Material for FxUberMaterial {
         "embedded://tf_viewer/fxuber.wgsl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
-        if self.additive { AlphaMode::Add } else { AlphaMode::Premultiplied }
+        if self.additive {
+            AlphaMode::Add
+        } else {
+            AlphaMode::Premultiplied
+        }
     }
     fn enable_prepass() -> bool {
         false
@@ -151,8 +159,17 @@ impl Material for FxUberMaterial {
     fn enable_shadows() -> bool {
         false
     }
-    fn specialize(_pipeline: &MaterialPipeline, descriptor: &mut RenderPipelineDescriptor, _layout: &MeshVertexBufferLayoutRef, key: MaterialPipelineKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = if key.bind_group_data.two_sided { None } else { Some(Face::Back) };
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = if key.bind_group_data.two_sided {
+            None
+        } else {
+            Some(Face::Back)
+        };
         Ok(())
     }
 }
@@ -167,11 +184,24 @@ impl Plugin for FxUberPlugin {
 }
 
 /// Texture slots in the order the shader set name's UV digits list them.
-const SLOTS: [(usize, u32); 7] = [(0, ALBEDO), (4, EMISSIVE), (17, EMUL), (13, OPAM), (14, DETAIL), (18, UVD1), (19, UVD2)];
+const SLOTS: [(usize, u32); 7] = [
+    (0, ALBEDO),
+    (4, EMISSIVE),
+    (17, EMUL),
+    (13, OPAM),
+    (14, DETAIL),
+    (18, UVD1),
+    (19, UVD2),
+];
 
 /// The game's unlit uber material `name` as an effect material, or None when it isn't one
 /// (lit, or no constants). `two_sided` comes from the material's rasterizer flags.
-pub fn material(gd: &GameData, cache: &mut crate::convert::Cache, images: &mut Assets<Image>, name: &str) -> Option<FxUberMaterial> {
+pub fn material(
+    gd: &GameData,
+    cache: &mut crate::convert::Cache,
+    images: &mut Assets<Image>,
+    name: &str,
+) -> Option<FxUberMaterial> {
     let (pi, m) = gd.material(name)?;
     let p = m.params?;
     let shader = gd.shader_set_name(m.shader_set)?;
@@ -184,7 +214,14 @@ pub fn material(gd: &GameData, cache: &mut crate::convert::Cache, images: &mut A
         return None;
     }
     let mut flags = 0;
-    for (t, f) in [("Vcolt", VCOLT), ("Vcola", VCOLA), ("Aef", AEF), ("Eef", EEF), ("Adf", ADF), ("Add", ADD)] {
+    for (t, f) in [
+        ("Vcolt", VCOLT),
+        ("Vcola", VCOLA),
+        ("Aef", AEF),
+        ("Eef", EEF),
+        ("Adf", ADF),
+        ("Add", ADD),
+    ] {
         if has(t) {
             flags |= f;
         }
@@ -210,7 +247,11 @@ pub fn material(gd: &GameData, cache: &mut crate::convert::Cache, images: &mut A
         }
         tex_uv[k] = digits.get(next).copied().unwrap_or(0) as u32;
         next += 1;
-        textures[k] = m.textures.get(slot).filter(|&&g| g != 0).and_then(|&g| crate::convert::image(gd, cache, images, pi, g));
+        textures[k] = m
+            .textures
+            .get(slot)
+            .filter(|&&g| g != 0)
+            .and_then(|&g| crate::convert::image(gd, cache, images, pi, g));
         if textures[k].is_some() {
             flags |= f;
         }
@@ -229,12 +270,42 @@ pub fn material(gd: &GameData, cache: &mut crate::convert::Cache, images: &mut A
     let params = FxUberParams {
         uv_rs: [uv(0), uv(1), uv(2)],
         uv_t: [uvt(0), uvt(1), uvt(2)],
-        distort: Vec4::new(p.uv_distortion[0], p.uv_distortion[1], p.uv_distortion2[0], p.uv_distortion2[1]),
-        albedo: Vec4::new(p.albedo_tint[0], p.albedo_tint[1], p.albedo_tint[2], p.opacity),
-        aef: Vec4::new(p.edge_fade[0], p.edge_fade[1], p.edge_fade[2], p.distance_fade[0]),
-        eef: Vec4::new(p.emissive_edge_fade[0], p.emissive_edge_fade[1], p.emissive_edge_fade[2], p.distance_fade[1]),
-        emissive: Vec4::new(p.emissive_tint[0], p.emissive_tint[1], p.emissive_tint[2], 1.0 / crate::player::UNIT),
-        misc: Vec4::new(p.alpha_modulate[0], p.alpha_modulate[1], MAX_LIGHTING_VALUE, 0.0),
+        distort: Vec4::new(
+            p.uv_distortion[0],
+            p.uv_distortion[1],
+            p.uv_distortion2[0],
+            p.uv_distortion2[1],
+        ),
+        albedo: Vec4::new(
+            p.albedo_tint[0],
+            p.albedo_tint[1],
+            p.albedo_tint[2],
+            p.opacity,
+        ),
+        aef: Vec4::new(
+            p.edge_fade[0],
+            p.edge_fade[1],
+            p.edge_fade[2],
+            p.distance_fade[0],
+        ),
+        eef: Vec4::new(
+            p.emissive_edge_fade[0],
+            p.emissive_edge_fade[1],
+            p.emissive_edge_fade[2],
+            p.distance_fade[1],
+        ),
+        emissive: Vec4::new(
+            p.emissive_tint[0],
+            p.emissive_tint[1],
+            p.emissive_tint[2],
+            1.0 / crate::player::UNIT,
+        ),
+        misc: Vec4::new(
+            p.alpha_modulate[0],
+            p.alpha_modulate[1],
+            MAX_LIGHTING_VALUE,
+            0.0,
+        ),
         modulation: Vec4::ONE,
         tex_uv: UVec4::new(tex_uv[0], tex_uv[1], tex_uv[2], tex_uv[3]),
         tex_uv2: UVec4::new(tex_uv[4], tex_uv[5], tex_uv[6], flags),
@@ -242,13 +313,34 @@ pub fn material(gd: &GameData, cache: &mut crate::convert::Cache, images: &mut A
     };
     log::debug!("effect model material {name}: {shader} flags {flags:#x} uv {tex_uv:?} uv flags {uv_flags:?} albedo tint {:?} opacity {} edge fade {:?} distance fade {:?} alpha modulate {:?} two-sided {}", p.albedo_tint, p.opacity, p.edge_fade, p.distance_fade, p.alpha_modulate, m.two_sided());
     let [albedo, emissive, emissive_mul, opacity_mul, detail, distort1, distort2] = textures;
-    Some(FxUberMaterial { params, albedo, emissive, emissive_mul, opacity_mul, detail, distort1, distort2, two_sided: m.two_sided(), additive: flags & ADD != 0 })
+    Some(FxUberMaterial {
+        params,
+        albedo,
+        emissive,
+        emissive_mul,
+        opacity_mul,
+        detail,
+        distort1,
+        distort2,
+        two_sided: m.two_sided(),
+        additive: flags & ADD != 0,
+    })
 }
 
 /// The mesh's vertex colours as the game's vertex shader passes them on: RGB raised to 2.2,
 /// alpha as is.
 pub fn vertex_colors(colors: &[[u8; 4]]) -> Vec<[f32; 4]> {
-    colors.iter().map(|c| [(c[0] as f32 / 255.0).powf(2.2), (c[1] as f32 / 255.0).powf(2.2), (c[2] as f32 / 255.0).powf(2.2), c[3] as f32 / 255.0]).collect()
+    colors
+        .iter()
+        .map(|c| {
+            [
+                (c[0] as f32 / 255.0).powf(2.2),
+                (c[1] as f32 / 255.0).powf(2.2),
+                (c[2] as f32 / 255.0).powf(2.2),
+                c[3] as f32 / 255.0,
+            ]
+        })
+        .collect()
 }
 
 /// The shield colour scripts pass in control point 1 (0-255 per channel): `_vortex.nut`'s
@@ -287,6 +379,11 @@ mod tests {
     #[test]
     fn vertex_colors_are_gamma_decoded() {
         let c = vertex_colors(&[[255, 128, 0, 128]]);
-        assert!((c[0][0] - 1.0).abs() < 1e-6 && (c[0][1] - 0.2195).abs() < 1e-3 && c[0][2] == 0.0 && (c[0][3] - 0.502).abs() < 1e-3);
+        assert!(
+            (c[0][0] - 1.0).abs() < 1e-6
+                && (c[0][1] - 0.2195).abs() < 1e-3
+                && c[0][2] == 0.0
+                && (c[0][3] - 0.502).abs() < 1e-3
+        );
     }
 }

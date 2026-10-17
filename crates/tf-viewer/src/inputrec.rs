@@ -102,7 +102,17 @@ impl Frame {
         }
         let f = |i: usize| v[i].parse::<f32>().ok();
         let n = |i: usize| v[i].parse::<i64>().ok();
-        Some(Self { t: f(0)?, yaw: f(1)?, pitch: f(2)?, forward: f(3)?, right: f(4)?, flags: n(5)? as u32, nav: n(6)? as i32, slot: n(7)? as i32, kit: n(8)? as i32 })
+        Some(Self {
+            t: f(0)?,
+            yaw: f(1)?,
+            pitch: f(2)?,
+            forward: f(3)?,
+            right: f(4)?,
+            flags: n(5)? as u32,
+            nav: n(6)? as i32,
+            slot: n(7)? as i32,
+            kit: n(8)? as i32,
+        })
     }
 }
 
@@ -128,7 +138,9 @@ pub fn record_input(
             }
         }
     });
-    let (Some(w), Some(l)) = (file.as_mut(), loaded_at) else { return };
+    let (Some(w), Some(l)) = (file.as_mut(), loaded_at) else {
+        return;
+    };
     let mut flags = 0u32;
     for (i, b) in flag_refs(&mut input).into_iter().enumerate() {
         if *b {
@@ -136,17 +148,38 @@ pub fn record_input(
         }
     }
     let i = &*input;
-    let mut line = format!("{:.4} {:.5} {:.5} {:.2} {:.2} {flags} {} {} {} |", l.secs(), i.yaw, i.pitch, i.forward, i.right, opt(i.menu_nav), opt(i.pilot_slot), opt(i.titan_kit));
+    let mut line = format!(
+        "{:.4} {:.5} {:.5} {:.2} {:.2} {flags} {} {} {} |",
+        l.secs(),
+        i.yaw,
+        i.pitch,
+        i.forward,
+        i.right,
+        opt(i.menu_nav),
+        opt(i.pilot_slot),
+        opt(i.titan_kit)
+    );
     line += &format!(" ctl={:?}", *control);
     if let Ok(t) = titans.single() {
         let s = &t.state;
-        line += &format!(" bt=({:.1},{:.1},{:.1}) btvel=({:.1},{:.1},{:.1}) btyaw={:.3} anim={:?}", s.pos.x, s.pos.y, s.pos.z, s.vel.x, s.vel.y, s.vel.z, s.yaw, t.override_anim);
+        line += &format!(
+            " bt=({:.1},{:.1},{:.1}) btvel=({:.1},{:.1},{:.1}) btyaw={:.3} anim={:?}",
+            s.pos.x, s.pos.y, s.pos.z, s.vel.x, s.vel.y, s.vel.z, s.yaw, t.override_anim
+        );
     }
     if let Ok(p) = pilots.single() {
         let s = &p.state;
-        line += &format!(" pilot=({:.1},{:.1},{:.1}) pvel=({:.1},{:.1},{:.1})", s.pos.x, s.pos.y, s.pos.z, s.vel.x, s.vel.y, s.vel.z);
+        line += &format!(
+            " pilot=({:.1},{:.1},{:.1}) pvel=({:.1},{:.1},{:.1})",
+            s.pos.x, s.pos.y, s.pos.z, s.vel.x, s.vel.y, s.vel.z
+        );
     }
-    let names: Vec<&str> = FLAGS.iter().enumerate().filter(|(k, _)| flags & (1 << k) != 0).map(|(_, f)| f.0).collect();
+    let names: Vec<&str> = FLAGS
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| flags & (1 << k) != 0)
+        .map(|(_, f)| f.0)
+        .collect();
     if !names.is_empty() {
         line += &format!(" keys={}", names.join(","));
     }
@@ -164,14 +197,22 @@ pub struct Replay {
 }
 
 /// Replace this frame's input with the recording's (TF_REPLAY).
-pub fn replay_input(mut input: ResMut<PlayerInput>, loaded_at: Option<Res<crate::ui::LoadedAt>>, mut replay: Local<Replay>) {
+pub fn replay_input(
+    mut input: ResMut<PlayerInput>,
+    loaded_at: Option<Res<crate::ui::LoadedAt>>,
+    mut replay: Local<Replay>,
+) {
     if !replay.loaded {
         replay.loaded = true;
         if let Some(path) = std::env::var_os("TF_REPLAY") {
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
                     replay.frames = text.lines().filter_map(Frame::parse).collect();
-                    log::info!("replaying {} frames from {}", replay.frames.len(), path.to_string_lossy());
+                    log::info!(
+                        "replaying {} frames from {}",
+                        replay.frames.len(),
+                        path.to_string_lossy()
+                    );
                 }
                 Err(e) => log::warn!("TF_REPLAY {}: {e}", path.to_string_lossy()),
             }
@@ -201,7 +242,11 @@ pub fn replay_input(mut input: ResMut<PlayerInput>, loaded_at: Option<Res<crate:
     input.right = f.right;
     for (k, b) in flag_refs(&mut input).into_iter().enumerate() {
         let bit = 1 << k;
-        *b = if FLAGS[k].1 { once & bit != 0 } else { f.flags & bit != 0 };
+        *b = if FLAGS[k].1 {
+            once & bit != 0
+        } else {
+            f.flags & bit != 0
+        };
     }
     // Menu, weapon slot and kit choices are one-shot too.
     let fresh = newest.is_some();

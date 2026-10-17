@@ -71,41 +71,146 @@ pub fn spawn(commands: &mut Commands, ui: &UiAssets, root: Entity) {
         .id();
     commands.entity(root).add_child(feed);
     for i in 0..MAX_ROWS {
-        let row = commands.spawn((Node { display: Display::None, align_items: AlignItems::Center, column_gap: vh(0.6), ..default() }, FeedRow(i))).id();
-        let killer = commands.spawn((Text::new("You"), TextFont { font: ui.font.clone(), font_size: 16.0, ..default() }, TextColor(FRIENDLY), VhText(1.9), FeedRowKiller)).id();
-        let icon_box = commands.spawn(Node { width: vh(5.0), height: vh(2.0), ..default() }).id();
-        let icon = commands.spawn((Node::default(), ImageNode { color: Color::NONE, ..default() }, crate::hud::FitIcon, FeedRowIcon)).id();
+        let row = commands
+            .spawn((
+                Node {
+                    display: Display::None,
+                    align_items: AlignItems::Center,
+                    column_gap: vh(0.6),
+                    ..default()
+                },
+                FeedRow(i),
+            ))
+            .id();
+        let killer = commands
+            .spawn((
+                Text::new("You"),
+                TextFont {
+                    font: ui.font.clone(),
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(FRIENDLY),
+                VhText(1.9),
+                FeedRowKiller,
+            ))
+            .id();
+        let icon_box = commands
+            .spawn(Node {
+                width: vh(5.0),
+                height: vh(2.0),
+                ..default()
+            })
+            .id();
+        let icon = commands
+            .spawn((
+                Node::default(),
+                ImageNode {
+                    color: Color::NONE,
+                    ..default()
+                },
+                crate::hud::FitIcon,
+                FeedRowIcon,
+            ))
+            .id();
         commands.entity(icon_box).add_child(icon);
-        let victim = commands.spawn((Text::new(""), TextFont { font: ui.font.clone(), font_size: 16.0, ..default() }, TextColor(ENEMY), VhText(1.9), FeedRowVictim)).id();
-        commands.entity(row).add_children(&[killer, icon_box, victim]);
+        let victim = commands
+            .spawn((
+                Text::new(""),
+                TextFont {
+                    font: ui.font.clone(),
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(ENEMY),
+                VhText(1.9),
+                FeedRowVictim,
+            ))
+            .id();
+        commands
+            .entity(row)
+            .add_children(&[killer, icon_box, victim]);
         commands.entity(feed).add_child(row);
     }
     // Cash popups (pooled) and the counter.
     for i in 0..8 {
         let p = commands
-            .spawn((Node { position_type: PositionType::Absolute, display: Display::None, align_items: AlignItems::Center, column_gap: vh(0.5), ..default() }, PopupNode(i)))
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    display: Display::None,
+                    align_items: AlignItems::Center,
+                    column_gap: vh(0.5),
+                    ..default()
+                },
+                PopupNode(i),
+            ))
             .id();
         let d = dollar(commands, ui, 2.6);
-        let t = commands.spawn((Text::new(""), TextFont { font: ui.bold_font.clone(), font_size: 16.0, ..default() }, TextColor(Color::WHITE), VhText(2.4), PopupText)).id();
+        let t = commands
+            .spawn((
+                Text::new(""),
+                TextFont {
+                    font: ui.bold_font.clone(),
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                VhText(2.4),
+                PopupText,
+            ))
+            .id();
         commands.entity(p).add_children(&[d, t]);
         commands.entity(root).add_child(p);
     }
     let cash = commands
         // Measured on a 720p Frontier Defense frame: the tag at (380, 578) of 1280x720.
-        .spawn((Node { position_type: PositionType::Absolute, left: vh(52.8), top: vh(78.5), align_items: AlignItems::Center, column_gap: vh(0.8), ..default() }, CashRoot))
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: vh(52.8),
+                top: vh(78.5),
+                align_items: AlignItems::Center,
+                column_gap: vh(0.8),
+                ..default()
+            },
+            CashRoot,
+        ))
         .id();
     let d = dollar(commands, ui, 3.6);
-    let t = commands.spawn((Text::new("0"), TextFont { font: ui.bold_font.clone(), font_size: 16.0, ..default() }, TextColor(Color::WHITE), VhText(4.0), CashText)).id();
+    let t = commands
+        .spawn((
+            Text::new("0"),
+            TextFont {
+                font: ui.bold_font.clone(),
+                font_size: 16.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            VhText(4.0),
+            CashText,
+        ))
+        .id();
     commands.entity(cash).add_children(&[d, t]);
     commands.entity(root).add_child(cash);
 }
 
 /// The game's gold dollar tag.
 fn dollar(commands: &mut Commands, ui: &UiAssets, size: f32) -> Entity {
-    let b = commands.spawn(Node { width: vh(size * 0.62), height: vh(size), ..default() }).id();
-    let mut img = ui.image("rui/gencard_icons/gc_icon_dollarsign_small").unwrap_or_default();
+    let b = commands
+        .spawn(Node {
+            width: vh(size * 0.62),
+            height: vh(size),
+            ..default()
+        })
+        .id();
+    let mut img = ui
+        .image("rui/gencard_icons/gc_icon_dollarsign_small")
+        .unwrap_or_default();
     img.color = CASH;
-    let i = commands.spawn((Node::default(), img, crate::hud::FitIcon)).id();
+    let i = commands
+        .spawn((Node::default(), img, crate::hud::FitIcon))
+        .id();
     commands.entity(b).add_child(i);
     b
 }
@@ -118,11 +223,35 @@ pub fn update(
     ui: Res<UiAssets>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut rows: Query<(&FeedRow, &mut Node, &Children), (Without<PopupNode>, Without<CashRoot>)>,
-    mut victims: Query<(&mut Text, &mut TextColor), (With<FeedRowVictim>, Without<PopupText>, Without<CashText>, Without<FeedRowKiller>)>,
-    mut killers: Query<&mut TextColor, (With<FeedRowKiller>, Without<FeedRowVictim>, Without<PopupText>, Without<CashText>)>,
+    mut victims: Query<
+        (&mut Text, &mut TextColor),
+        (
+            With<FeedRowVictim>,
+            Without<PopupText>,
+            Without<CashText>,
+            Without<FeedRowKiller>,
+        ),
+    >,
+    mut killers: Query<
+        &mut TextColor,
+        (
+            With<FeedRowKiller>,
+            Without<FeedRowVictim>,
+            Without<PopupText>,
+            Without<CashText>,
+        ),
+    >,
     mut icons: Query<&mut ImageNode, With<FeedRowIcon>>,
     mut popups: Query<(&PopupNode, &mut Node, &Children), (Without<FeedRow>, Without<CashRoot>)>,
-    mut popup_texts: Query<(&mut Text, &mut TextColor), (With<PopupText>, Without<FeedRowVictim>, Without<CashText>, Without<FeedRowKiller>)>,
+    mut popup_texts: Query<
+        (&mut Text, &mut TextColor),
+        (
+            With<PopupText>,
+            Without<FeedRowVictim>,
+            Without<CashText>,
+            Without<FeedRowKiller>,
+        ),
+    >,
     mut cash: Query<&mut Text, (With<CashText>, Without<PopupText>, Without<FeedRowVictim>)>,
     mut cash_root: Query<&mut Node, (With<CashRoot>, Without<FeedRow>, Without<PopupNode>)>,
 ) {
@@ -133,7 +262,11 @@ pub fn update(
     let first = n.saturating_sub(MAX_ROWS);
     for (row, mut node, children) in &mut rows {
         // Newest at the top.
-        let k = feed.kills.get(n.checked_sub(1 + row.0).map(|i| i.max(first)).unwrap_or(usize::MAX));
+        let k = feed.kills.get(
+            n.checked_sub(1 + row.0)
+                .map(|i| i.max(first))
+                .unwrap_or(usize::MAX),
+        );
         let Some(k) = k.filter(|_| row.0 < n) else {
             crate::hud::set(&mut node, |n| &mut n.display, Display::None);
             continue;
@@ -172,7 +305,10 @@ pub fn update(
             continue;
         };
         let age = now - pop.at;
-        let screen = cam.and_then(|(c, tf)| c.world_to_viewport(tf, crate::player::to_bevy(pop.pos)).ok());
+        let screen = cam.and_then(|(c, tf)| {
+            c.world_to_viewport(tf, crate::player::to_bevy(pop.pos))
+                .ok()
+        });
         let Some(s) = screen else {
             crate::hud::set(&mut node, |n| &mut n.display, Display::None);
             continue;
@@ -181,7 +317,11 @@ pub fn update(
         // Rises 4 vh over its life and fades in the last third.
         crate::hud::set(&mut node, |n| &mut n.left, Val::Px(s.x));
         crate::hud::set(&mut node, |n| &mut n.top, Val::Px(s.y));
-        crate::hud::set(&mut node, |n| &mut n.margin, UiRect::top(vh(-age / POPUP_SECS * 4.0)));
+        crate::hud::set(
+            &mut node,
+            |n| &mut n.margin,
+            UiRect::top(vh(-age / POPUP_SECS * 4.0)),
+        );
         let alpha = ((POPUP_SECS - age) / (POPUP_SECS / 3.0)).clamp(0.0, 1.0);
         for &c in children {
             if let Ok((mut t, mut col)) = popup_texts.get_mut(c) {
@@ -200,6 +340,14 @@ pub fn update(
         }
     }
     if let Ok(mut n) = cash_root.single_mut() {
-        crate::hud::set(&mut n, |n| &mut n.display, if game.in_play() { Display::Flex } else { Display::None });
+        crate::hud::set(
+            &mut n,
+            |n| &mut n.display,
+            if game.in_play() {
+                Display::Flex
+            } else {
+                Display::None
+            },
+        );
     }
 }

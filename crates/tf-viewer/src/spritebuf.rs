@@ -58,15 +58,25 @@ fn bucket_mesh(quads: usize) -> Mesh {
     let n = quads * 4;
     // The attributes are those the sprite meshes had (the same vertex layout and shader defs);
     // only UV x, the vertex's index, is read.
-    let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+    let mut m = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
     m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; n]);
     m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; n]);
-    m.insert_attribute(Mesh::ATTRIBUTE_UV_0, (0..n).map(|i| [i as f32, 0.0]).collect::<Vec<_>>());
+    m.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        (0..n).map(|i| [i as f32, 0.0]).collect::<Vec<_>>(),
+    );
     m.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32; 4]; n]);
-    m.insert_indices(Indices::U32((0..quads as u32).flat_map(|q| {
-        let b = q * 4;
-        [b, b + 1, b + 2, b, b + 2, b + 3]
-    }).collect()));
+    m.insert_indices(Indices::U32(
+        (0..quads as u32)
+            .flat_map(|q| {
+                let b = q * 4;
+                [b, b + 1, b + 2, b, b + 2, b + 3]
+            })
+            .collect(),
+    ));
     m
 }
 
@@ -112,7 +122,15 @@ impl SpriteBuf {
     /// made by the particle system itself (it reaches it next frame). The new buffer is zeroed:
     /// no quads.
     pub fn new(device: &RenderDevice, before_asset_events: bool) -> Self {
-        SpriteBuf { buffer: new_buffer(device, FIRST_CAP), cap: FIRST_CAP, bucket: Some(0), pending: before_asset_events, made: !before_asset_events, nonempty: false, held: None }
+        SpriteBuf {
+            buffer: new_buffer(device, FIRST_CAP),
+            cap: FIRST_CAP,
+            bucket: Some(0),
+            pending: before_asset_events,
+            made: !before_asset_events,
+            nonempty: false,
+            held: None,
+        }
     }
 
     /// A vertex list to fill with `push`: the header, then `STRIDE` floats per vertex.
@@ -123,14 +141,23 @@ impl SpriteBuf {
     }
 
     pub fn push(v: &mut Vec<f32>, pos: [f32; 3], normal: [f32; 3], uv: [f32; 2], col: [f32; 4]) {
-        v.extend([pos[0], pos[1], pos[2], uv[0], normal[0], normal[1], normal[2], uv[1], col[0], col[1], col[2], col[3]]);
+        v.extend([
+            pos[0], pos[1], pos[2], uv[0], normal[0], normal[1], normal[2], uv[1], col[0], col[1],
+            col[2], col[3],
+        ]);
     }
 
     /// A frame in which the layer's mesh was written (or emptied): this frame's `quads`, pushed
     /// in draw order into `v` (from `begin`). Exactly one of `frame` or `idle` runs per layer
     /// every frame. When the buffer has to grow, the new one is returned for the caller to put
     /// in the layer's material (see `swap_buffer`).
-    pub fn frame(&mut self, quads: usize, v: Vec<f32>, entity: Entity, ctx: &mut SpriteCtx) -> Option<Buffer> {
+    pub fn frame(
+        &mut self,
+        quads: usize,
+        v: Vec<f32>,
+        entity: Entity,
+        ctx: &mut SpriteCtx,
+    ) -> Option<Buffer> {
         debug_assert_eq!(v.len(), HEADER + quads * 4 * STRIDE);
         // The old code wrote the mesh when it had quads and emptied it when it had none.
         let modified = self.made || quads > 0 || self.nonempty;
@@ -158,7 +185,13 @@ impl SpriteBuf {
         grown
     }
 
-    fn upload(&mut self, quads: usize, mut v: Vec<f32>, entity: Entity, ctx: &mut SpriteCtx) -> Option<Buffer> {
+    fn upload(
+        &mut self,
+        quads: usize,
+        mut v: Vec<f32>,
+        entity: Entity,
+        ctx: &mut SpriteCtx,
+    ) -> Option<Buffer> {
         v[0] = quads as f32;
         let mut grown = None;
         if quads > self.cap {
@@ -170,7 +203,9 @@ impl SpriteBuf {
             let k = SpriteMeshes::bucket_of(quads);
             if self.bucket != Some(k) {
                 self.bucket = Some(k);
-                ctx.commands.entity(entity).insert(Mesh3d(ctx.buckets.get(ctx.meshes, k)));
+                ctx.commands
+                    .entity(entity)
+                    .insert(Mesh3d(ctx.buckets.get(ctx.meshes, k)));
             }
         }
         ctx.uploads.0.push((self.buffer.clone(), v));
@@ -190,7 +225,13 @@ pub struct SpriteCtx<'a, 'w, 's> {
 /// Puts a grown buffer in a layer's material, reaching the render world this frame like the
 /// buffer's contents (a tracked change would arrive a frame late, after the asset events): the
 /// material is changed untracked and its modified event sent directly.
-pub fn swap_buffer<M: Asset>(mats: &mut Assets<M>, events: &mut MessageWriter<AssetEvent<M>>, h: &Handle<M>, buffer: Buffer, slot: impl FnOnce(&mut M) -> &mut Buffer) {
+pub fn swap_buffer<M: Asset>(
+    mats: &mut Assets<M>,
+    events: &mut MessageWriter<AssetEvent<M>>,
+    h: &Handle<M>,
+    buffer: Buffer,
+    slot: impl FnOnce(&mut M) -> &mut Buffer,
+) {
     if let Some(m) = mats.get_mut_untracked(h) {
         *slot(m) = buffer;
         events.write(AssetEvent::Modified { id: h.id() });
@@ -219,12 +260,22 @@ impl Plugin for SpriteBufPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "pull.wgsl");
         app.add_plugins(MaterialPlugin::<SpriteMaterial>::default());
-        app.init_resource::<SpriteUploads>().init_resource::<SpriteMeshes>().add_systems(Startup, |mut b: ResMut<SpriteMeshes>, mut meshes: ResMut<Assets<Mesh>>| b.prebuild(&mut meshes));
+        app.init_resource::<SpriteUploads>()
+            .init_resource::<SpriteMeshes>()
+            .add_systems(
+                Startup,
+                |mut b: ResMut<SpriteMeshes>, mut meshes: ResMut<Assets<Mesh>>| {
+                    b.prebuild(&mut meshes)
+                },
+            );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .init_resource::<PendingUploads>()
                 .add_systems(ExtractSchedule, extract_uploads)
-                .add_systems(Render, write_uploads.in_set(RenderSystems::PrepareResources));
+                .add_systems(
+                    Render,
+                    write_uploads.in_set(RenderSystems::PrepareResources),
+                );
         }
     }
 }

@@ -22,15 +22,30 @@ use tf_sim::glam::Vec3 as SVec3;
 
 /// BT's executions: (campaign ref, attacker sequence, victim sequence).
 pub const BT_EXECUTIONS: [(&str, &str, &str); 3] = [
-    ("execution_bt_flip", "bt_synced_titan_execute_flip_takedown_A", "titan_synced_bt_execute_flip_takedown_V"),
-    ("execution_bt_kickshoot", "bt_synced_titan_execute_kickshoot_A", "titan_synced_bt_execute_kickshoot_V"),
-    ("execution_bt_pilotrip", "bt_synced_titan_execute_pilot_rip_A", "titan_synced_bt_execute_pilot_rip_V"),
+    (
+        "execution_bt_flip",
+        "bt_synced_titan_execute_flip_takedown_A",
+        "titan_synced_bt_execute_flip_takedown_V",
+    ),
+    (
+        "execution_bt_kickshoot",
+        "bt_synced_titan_execute_kickshoot_A",
+        "titan_synced_bt_execute_kickshoot_V",
+    ),
+    (
+        "execution_bt_pilotrip",
+        "bt_synced_titan_execute_pilot_rip_A",
+        "titan_synced_bt_execute_pilot_rip_V",
+    ),
 ];
 
 /// Pilot executions on humans that need no extra props: (attacker, victim).
 pub const PILOT_EXECUTIONS: [(&str, &str); 2] = [
     ("pt_mp_execution_attacker_nb", "pt_mp_execution_victim_nb"),
-    ("pt_mp_execution_attacker_kick", "pt_mp_execution_victim_kick"),
+    (
+        "pt_mp_execution_attacker_kick",
+        "pt_mp_execution_victim_kick",
+    ),
 ];
 
 /// GetTitanLevelLoadoutDefaultsForMapname: the campaign's execution for each level.
@@ -112,8 +127,18 @@ pub struct PilotMeleeDef {
 
 impl PilotMeleeDef {
     pub fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let s = tf_assets::settings::PlayerSettings::load("scripts/weapons/melee_pilot_emptyhanded.txt", true, read).unwrap_or_default();
-        let f = |k: &str, d: f32| s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}"))).and_then(|v| v.parse().ok()).unwrap_or(d);
+        let s = tf_assets::settings::PlayerSettings::load(
+            "scripts/weapons/melee_pilot_emptyhanded.txt",
+            true,
+            read,
+        )
+        .unwrap_or_default();
+        let f = |k: &str, d: f32| {
+            s.get(&format!("sp_base.{k}"))
+                .or_else(|| s.get(&format!(".{k}")))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d)
+        };
         Self {
             damage: f("melee_damage", 100.0),
             range: f("melee_range", 60.0),
@@ -156,7 +181,13 @@ impl PilotExecution {
 }
 
 /// Root motion of `clip` at `t`, placed at the shared reference: (position, yaw).
-fn place(actor: &Actor, clip: &str, t: f32, origin: Vec3, yaw: f32) -> Option<(usize, Vec3, f32, f32)> {
+fn place(
+    actor: &Actor,
+    clip: &str,
+    t: f32,
+    origin: Vec3,
+    yaw: f32,
+) -> Option<(usize, Vec3, f32, f32)> {
     let c = actor.clip(clip)?;
     let cl = &actor.clips[c];
     let m = cl.movement_at(t).unwrap_or([0.0; 4]);
@@ -165,12 +196,28 @@ fn place(actor: &Actor, clip: &str, t: f32, origin: Vec3, yaw: f32) -> Option<(u
 }
 
 /// Drive one enemy through its victim sequence.
-fn drive_victim(actors: &mut Query<&mut Actor>, e: &mut Enemy, etf: &mut Transform, seq: &str, t: f32, origin: Vec3, yaw: f32) {
-    let Ok(mut a) = actors.get_mut(e.actor) else { return };
-    let Some((c, pos, y, d)) = place(&a, seq, t, origin, yaw) else { return };
+fn drive_victim(
+    actors: &mut Query<&mut Actor>,
+    e: &mut Enemy,
+    etf: &mut Transform,
+    seq: &str,
+    t: f32,
+    origin: Vec3,
+    yaw: f32,
+) {
+    let Ok(mut a) = actors.get_mut(e.actor) else {
+        return;
+    };
+    let Some((c, pos, y, d)) = place(&a, seq, t, origin, yaw) else {
+        return;
+    };
     a.autoplay = false;
     a.aim = None;
-    a.layers = vec![Layer { clip: c, cycle: (t / d.max(1e-3)).min(0.999), weight: 1.0 }];
+    a.layers = vec![Layer {
+        clip: c,
+        cycle: (t / d.max(1e-3)).min(0.999),
+        weight: 1.0,
+    }];
     e.pos = pos;
     e.state.pos = SVec3::new(pos.x, pos.y, pos.z);
     e.state.vel = SVec3::ZERO;
@@ -193,16 +240,27 @@ pub fn titan_execution(
     mut actors: Query<&mut Actor>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    let Ok((mut titan, mut tf, mut health)) = titans.single_mut() else { return };
+    let Ok((mut titan, mut tf, mut health)) = titans.single_mut() else {
+        return;
+    };
     // TF_EXEC_TEST: debug toggle that dooms the first landed enemy Titan and stands it in front
     // of BT, so a scripted melee executes it.
-    if let Some(want) = std::env::var("TF_EXEC_TEST").ok().filter(|_| exec.0.is_none() && *control == Control::Titan) {
+    if let Some(want) = std::env::var("TF_EXEC_TEST")
+        .ok()
+        .filter(|_| exec.0.is_none() && *control == Control::Titan)
+    {
         let bt = Vec3::from(titan.state.pos.to_array());
         // Along the view, so the crosshair is on it in the cockpit.
         let fwd = Vec3::new(input.yaw.cos(), input.yaw.sin(), 0.0);
         // TF_EXEC_TEST=<class> (ion, scorch, ...) picks that class; anything else, the first.
         let want = want.to_ascii_lowercase();
-        if let Some((_, mut e, mut etf)) = enemies.iter_mut().find(|(_, e, _)| e.alive() && !e.infantry && !e.arriving() && !e.held && e.sound_type.is_none_or(|t| want == "1" || t == want)) {
+        if let Some((_, mut e, mut etf)) = enemies.iter_mut().find(|(_, e, _)| {
+            e.alive()
+                && !e.infantry
+                && !e.arriving()
+                && !e.held
+                && e.sound_type.is_none_or(|t| want == "1" || t == want)
+        }) {
             if !e.doomed() {
                 let hp = e.v.health + e.v.shield;
                 e.damage_unblockable(hp, false);
@@ -220,7 +278,11 @@ pub fn titan_execution(
         }
     }
     if exec.0.is_none() {
-        let can = *control == Control::Titan && input.melee && health.dead_for.is_none() && titan.override_anim.is_none() && *mode != CameraMode::Free;
+        let can = *control == Control::Titan
+            && input.melee
+            && health.dead_for.is_none()
+            && titan.override_anim.is_none()
+            && *mode != CameraMode::Free;
         if !can {
             return;
         }
@@ -232,7 +294,12 @@ pub fn titan_execution(
             .filter_map(|(id, e, _)| {
                 let to = (e.pos - bt).truncate();
                 let dist = to.length() - e.radius;
-                let ang = to.normalize_or_zero().dot(fwd).clamp(-1.0, 1.0).acos().to_degrees();
+                let ang = to
+                    .normalize_or_zero()
+                    .dot(fwd)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
                 (dist < TITAN_EXECUTION_RANGE && ang < TITAN_EXECUTION_ANGLE).then_some((id, dist))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -245,10 +312,21 @@ pub fn titan_execution(
         let to = (e.pos - bt).truncate();
         let yaw = to.y.atan2(to.x);
         e.held = true;
-        let duration = actors.get(e.actor).ok().and_then(|ac| ac.clip(v).map(|c| ac.clips[c].duration)).unwrap_or(5.0);
-        log::info!("titan execution: {a} / {v} ({duration:.2}s); BT at {bt:.0}, victim at {:.0}", e.pos);
+        let duration = actors
+            .get(e.actor)
+            .ok()
+            .and_then(|ac| ac.clip(v).map(|c| ac.clips[c].duration))
+            .unwrap_or(5.0);
+        log::info!(
+            "titan execution: {a} / {v} ({duration:.2}s); BT at {bt:.0}, victim at {:.0}",
+            e.pos
+        );
         for (who, actor_e, clip) in [("attacker", titan.actor, a), ("victim", e.actor, v)] {
-            if let Some((ac, c)) = actors.get(actor_e).ok().and_then(|ac| ac.clip(clip).map(|c| (ac, c))) {
+            if let Some((ac, c)) = actors
+                .get(actor_e)
+                .ok()
+                .and_then(|ac| ac.clip(clip).map(|c| (ac, c)))
+            {
                 let cl = &ac.clips[c];
                 let p0 = cl.sample(0.0);
                 let p1 = cl.sample(0.999);
@@ -256,7 +334,18 @@ pub fn titan_execution(
             }
         }
         crate::audio::event_at(&mut commands, "Atlas_3p_Sync_Melee", e.pos);
-        exec.0 = Some(Running { victim, t: 0.0, origin: e.pos, yaw, attacker: a, victim_seq: v, duration, start: bt, prev_mode: *mode, health: Some(health.v.clone()) });
+        exec.0 = Some(Running {
+            victim,
+            t: 0.0,
+            origin: e.pos,
+            yaw,
+            attacker: a,
+            victim_seq: v,
+            duration,
+            start: bt,
+            prev_mode: *mode,
+            health: Some(health.v.clone()),
+        });
         *mode = CameraMode::Third;
     }
     let Some(run) = exec.0.as_mut() else { return };
@@ -264,7 +353,11 @@ pub fn titan_execution(
     let t = run.t;
     input.melee = false;
     // BT rides the attacker sequence's root motion from the shared reference.
-    if let Some((_, pos, yaw, _)) = actors.get(titan.actor).ok().and_then(|a| place(a, run.attacker, t, run.origin, run.yaw)) {
+    if let Some((_, pos, yaw, _)) = actors
+        .get(titan.actor)
+        .ok()
+        .and_then(|a| place(a, run.attacker, t, run.origin, run.yaw))
+    {
         let k = (t / BLEND_TIME).min(1.0);
         let pos = run.start.lerp(pos, k);
         titan.state.pos = SVec3::new(pos.x, pos.y, pos.z);
@@ -280,7 +373,15 @@ pub fn titan_execution(
     let done = t >= run.duration;
     match enemies.get_mut(run.victim) {
         Ok((_, mut e, mut etf)) => {
-            drive_victim(&mut actors, &mut e, &mut etf, run.victim_seq, t, run.origin, run.yaw);
+            drive_victim(
+                &mut actors,
+                &mut e,
+                &mut etf,
+                run.victim_seq,
+                t,
+                run.origin,
+                run.yaw,
+            );
             if done {
                 e.held = false;
                 e.executed = true;
@@ -310,10 +411,16 @@ pub fn pilot_execution(
     mut enemies: Query<(Entity, &mut Enemy, &mut Transform)>,
     mut anchors: Query<&mut Transform, Without<Enemy>>,
     mut actors: Query<&mut Actor>,
-    (mut melee, mut punch, springs): (ResMut<PilotMelee>, ResMut<crate::vmmotion::ViewPunch>, Res<crate::vmmotion::WeaponSprings>),
+    (mut melee, mut punch, springs): (
+        ResMut<PilotMelee>,
+        ResMut<crate::vmmotion::ViewPunch>,
+        Res<crate::vmmotion::WeaponSprings>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.1);
-    let Ok(mut pilot) = pilots.single_mut() else { return };
+    let Ok(mut pilot) = pilots.single_mut() else {
+        return;
+    };
     let Some(body) = body else { return };
     // The empty-handed melee under way: lunge, strike at the attack event, then recover.
     if let (Some(t0), Some(d)) = (melee.t, def.as_deref()) {
@@ -335,22 +442,43 @@ pub fn pilot_execution(
             let look = Vec2::new(pilot.state.yaw.cos(), pilot.state.yaw.sin());
             // The lunge target if it is still in reach, else whoever is right in front.
             let reach = |e: &Enemy| (e.pos - me).truncate().length() - e.radius < d.range + 16.0;
-            let target = melee.target.filter(|&id| enemies.get(id).is_ok_and(|(_, e, _)| e.alive() && reach(&e))).or_else(|| {
-                enemies
-                    .iter()
-                    .filter(|(_, e, _)| e.alive() && e.infantry && reach(e) && (e.pos - me).truncate().normalize_or_zero().dot(look) > 0.7)
-                    .map(|(id, ..)| id)
-                    .next()
-            });
+            let target = melee
+                .target
+                .filter(|&id| {
+                    enemies
+                        .get(id)
+                        .is_ok_and(|(_, e, _)| e.alive() && reach(&e))
+                })
+                .or_else(|| {
+                    enemies
+                        .iter()
+                        .filter(|(_, e, _)| {
+                            e.alive()
+                                && e.infantry
+                                && reach(e)
+                                && (e.pos - me).truncate().normalize_or_zero().dot(look) > 0.7
+                        })
+                        .map(|(id, ..)| id)
+                        .next()
+                });
             if let Some((_, mut e, _)) = target.and_then(|id| enemies.get_mut(id).ok()) {
                 e.damage_unblockable(d.damage, false);
                 melee.hit = true;
                 crate::audio::event(&mut commands, "Pilot_Mvmt_Melee_Hit_1P");
                 log::info!("pilot melee hit for {}", d.damage);
             }
-            let r = [rand01(&mut *pick), rand01(&mut *pick), rand01(&mut *pick), rand01(&mut *pick)];
+            let r = [
+                rand01(&mut *pick),
+                rand01(&mut *pick),
+                rand01(&mut *pick),
+                rand01(&mut *pick),
+            ];
             punch.kick(&d.kick, &springs, 0.0, false, 1.0, r);
-            melee.raise = if melee.hit { d.raise_quick } else { d.raise_normal };
+            melee.raise = if melee.hit {
+                d.raise_quick
+            } else {
+                d.raise_normal
+            };
         }
         if t >= MELEE_ANIM_SECS + melee.raise {
             melee.t = None;
@@ -358,10 +486,14 @@ pub fn pilot_execution(
         input.melee = false;
     }
     // TF_EXEC_TEST: stand the nearest grunt in front of the Pilot with its back turned.
-    if std::env::var_os("TF_EXEC_TEST").is_some() && exec.0.is_none() && *control == Control::Pilot {
+    if std::env::var_os("TF_EXEC_TEST").is_some() && exec.0.is_none() && *control == Control::Pilot
+    {
         let me = Vec3::from(pilot.state.pos.to_array());
         let fwd = Vec3::new(pilot.state.yaw.cos(), pilot.state.yaw.sin(), 0.0);
-        if let Some((_, mut e, mut etf)) = enemies.iter_mut().find(|(_, e, _)| e.alive() && e.infantry && !e.held) {
+        if let Some((_, mut e, mut etf)) = enemies
+            .iter_mut()
+            .find(|(_, e, _)| e.alive() && e.infantry && !e.held)
+        {
             let p = me + fwd * 70.0;
             e.pos = p;
             e.state.pos = SVec3::new(p.x, p.y, p.z);
@@ -384,11 +516,17 @@ pub fn pilot_execution(
             .filter_map(|(id, e, _)| {
                 let to = (e.pos - me).truncate();
                 let dist = to.length();
-                let ang = to.normalize_or_zero().dot(look).clamp(-1.0, 1.0).acos().to_degrees();
+                let ang = to
+                    .normalize_or_zero()
+                    .dot(look)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
                 let their_fwd = Vec2::new(e.state.yaw.cos(), e.state.yaw.sin());
                 // The attacker must be at the victim's local -X.
                 let behind = (-to).normalize_or_zero().dot(-their_fwd);
-                (dist < HUMAN_EXECUTION_RANGE + e.radius && ang < HUMAN_EXECUTION_ANGLE).then_some((id, dist, behind))
+                (dist < HUMAN_EXECUTION_RANGE + e.radius && ang < HUMAN_EXECUTION_ANGLE)
+                    .then_some((id, dist, behind))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         match target {
@@ -397,9 +535,24 @@ pub fn pilot_execution(
                 *pick = (*pick + 1) % PILOT_EXECUTIONS.len();
                 let (a, v) = PILOT_EXECUTIONS[*pick];
                 e.held = true;
-                let duration = actors.get(e.actor).ok().and_then(|ac| ac.clip(v).map(|c| ac.clips[c].duration)).unwrap_or(3.0);
+                let duration = actors
+                    .get(e.actor)
+                    .ok()
+                    .and_then(|ac| ac.clip(v).map(|c| ac.clips[c].duration))
+                    .unwrap_or(3.0);
                 log::info!("pilot execution: {a} / {v} ({duration:.2}s)");
-                exec.0 = Some(Running { victim: id, t: 0.0, origin: e.pos, yaw: e.state.yaw, attacker: a, victim_seq: v, duration, start: me, prev_mode: CameraMode::Third, health: None });
+                exec.0 = Some(Running {
+                    victim: id,
+                    t: 0.0,
+                    origin: e.pos,
+                    yaw: e.state.yaw,
+                    attacker: a,
+                    victim_seq: v,
+                    duration,
+                    start: me,
+                    prev_mode: CameraMode::Third,
+                    health: None,
+                });
             }
             _ if melee.busy() => {}
             _ => {
@@ -412,10 +565,19 @@ pub fn pilot_execution(
                     .iter()
                     .filter(|(_, e, _)| e.alive() && e.infantry)
                     .map(|(id, e, _)| (id, (e.pos - me).truncate().length() - e.radius, e.pos))
-                    .filter(|(_, d, p)| *d < def.lunge_range.max(def.range) && (*p - me).truncate().normalize_or_zero().dot(look) > cos)
+                    .filter(|(_, d, p)| {
+                        *d < def.lunge_range.max(def.range)
+                            && (*p - me).truncate().normalize_or_zero().dot(look) > cos
+                    })
                     .min_by(|a, b| a.1.total_cmp(&b.1));
                 *pick += 1;
-                *melee = PilotMelee { t: Some(0.0), seq: *pick, target: near.map(|n| n.0), raise: def.raise_normal, ..Default::default() };
+                *melee = PilotMelee {
+                    t: Some(0.0),
+                    seq: *pick,
+                    target: near.map(|n| n.0),
+                    raise: def.raise_normal,
+                    ..Default::default()
+                };
                 // Lunge to arm's length (melee_range) over melee_lunge_time.
                 if let Some((_, dist, p)) = near.filter(|n| n.1 > def.range * 0.7) {
                     let dir = (p - me).truncate().normalize_or_zero();
@@ -435,7 +597,11 @@ pub fn pilot_execution(
         if let Some((c, pos, yaw, d)) = place(&a, run.attacker, t, run.origin, run.yaw) {
             a.autoplay = false;
             a.aim = None;
-            a.layers = vec![Layer { clip: c, cycle: (t / d.max(1e-3)).min(0.999), weight: 1.0 }];
+            a.layers = vec![Layer {
+                clip: c,
+                cycle: (t / d.max(1e-3)).min(0.999),
+                weight: 1.0,
+            }];
             let k = (t / 0.4).min(1.0); // the attacker sequence's blendTime
             let pos = run.start.lerp(pos, k);
             pilot.state.pos = SVec3::new(pos.x, pos.y, pos.z);
@@ -448,7 +614,15 @@ pub fn pilot_execution(
     }
     let done = t >= run.duration;
     if let Ok((_, mut e, mut etf)) = enemies.get_mut(run.victim) {
-        drive_victim(&mut actors, &mut e, &mut etf, run.victim_seq, t, run.origin, run.yaw);
+        drive_victim(
+            &mut actors,
+            &mut e,
+            &mut etf,
+            run.victim_seq,
+            t,
+            run.origin,
+            run.yaw,
+        );
         if done {
             e.held = false;
             e.executed = true;
@@ -500,8 +674,12 @@ pub fn execution_camera(
     } else {
         return;
     };
-    let Ok((actor, gt)) = actors.get(actor_entity) else { return };
-    let Ok(e) = enemies.get(run.victim) else { return };
+    let Ok((actor, gt)) = actors.get(actor_entity) else {
+        return;
+    };
+    let Ok(e) = enemies.get(run.victim) else {
+        return;
+    };
     let Some(bone) = actor.bone_model_transform("jx_c_camera") else {
         log::warn!("execution camera: no jx_c_camera bone on the attacker");
         return;
@@ -512,7 +690,15 @@ pub fn execution_camera(
     let rot = gt.rotation() * bone.rotation;
     let (fwd, up) = (rot * Vec3::Z, rot * Vec3::Y);
     let target = to_bevy(e.pos + Vec3::Z * height);
-    log::debug!("exec cam t={:.2}: bone {:.0} eye(bevy) {:.2} fwd {:.2} up {:.2} victim(bevy) {:.2}", run.t, bone.translation, eye, fwd, up, target);
+    log::debug!(
+        "exec cam t={:.2}: bone {:.0} eye(bevy) {:.2} fwd {:.2} up {:.2} victim(bevy) {:.2}",
+        run.t,
+        bone.translation,
+        eye,
+        fwd,
+        up,
+        target
+    );
     if let Ok(mut cam) = cams.single_mut() {
         // The view is the bone's own; TF_EXEC_LOOKAT=1 looks at the victim from it instead.
         if std::env::var_os("TF_EXEC_LOOKAT").is_some() || fwd.length_squared() < 0.5 {

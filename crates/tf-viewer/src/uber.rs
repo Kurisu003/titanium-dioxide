@@ -106,15 +106,29 @@ pub fn info_always(gd: &GameData, name: &str) -> Option<UberInfo> {
     let tokens = tf_assets::material::shader_flags(&shader);
     let has = |t: &str| tokens.iter().any(|x| x == t);
     let mut flags = 0;
-    for (t, f) in [("Unlit", UNLIT), ("Add", ADD), ("Vcolt", VCOLT), ("Vcola", VCOLA), ("Adf", ADF), ("Aef", AEF)] {
+    for (t, f) in [
+        ("Unlit", UNLIT),
+        ("Add", ADD),
+        ("Vcolt", VCOLT),
+        ("Vcola", VCOLA),
+        ("Adf", ADF),
+        ("Aef", AEF),
+    ] {
         if has(t) {
             flags |= f;
         }
     }
     // The colour texture (slot 0) samples through the UV transform its digit names; `Uv<n>at`
     // animates that transform's translate.
-    let slot = tf_assets::material::uv_slots(&shader).first().copied().unwrap_or(0) as usize;
-    let uv = if (1..=3).contains(&slot) { params.uv[slot - 1] } else { [1.0, 0.0, 0.0, 1.0, 0.0, 0.0] };
+    let slot = tf_assets::material::uv_slots(&shader)
+        .first()
+        .copied()
+        .unwrap_or(0) as usize;
+    let uv = if (1..=3).contains(&slot) {
+        params.uv[slot - 1]
+    } else {
+        [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    };
     let scroll = slot > 0 && has(&format!("Uv{slot}at")) && (uv[4] != 0.0 || uv[5] != 0.0);
     let mut params = params;
     params.uv[0] = uv;
@@ -123,7 +137,12 @@ pub fn info_always(gd: &GameData, name: &str) -> Option<UberInfo> {
         return None;
     }
     log::debug!("effect material {name}: {shader} flags {flags:#x} scroll {scroll} {params:?}");
-    Some(UberInfo { flags, scroll, params, blended: has("Trans") || has("Add") || m.blended() })
+    Some(UberInfo {
+        flags,
+        scroll,
+        params,
+        blended: has("Trans") || has("Add") || m.blended(),
+    })
 }
 
 /// Give every mesh whose material needs the effect path (registered in the material cache by
@@ -137,7 +156,10 @@ pub fn swap_materials(
     mut uber: ResMut<Assets<UberMaterial>>,
     mut made: Local<std::collections::HashMap<AssetId<StandardMaterial>, Handle<UberMaterial>>>,
     all: Query<(Entity, &MeshMaterial3d<StandardMaterial>)>,
-    added: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Added<MeshMaterial3d<StandardMaterial>>>,
+    added: Query<
+        (Entity, &MeshMaterial3d<StandardMaterial>),
+        Added<MeshMaterial3d<StandardMaterial>>,
+    >,
 ) {
     let Some(cache) = cache else { return };
     if cache.uber.is_empty() {
@@ -145,7 +167,9 @@ pub fn swap_materials(
     }
     let mut swap = |e: Entity, m: &MeshMaterial3d<StandardMaterial>| {
         let id = m.0.id();
-        let Some(info) = cache.uber.get(&id) else { return };
+        let Some(info) = cache.uber.get(&id) else {
+            return;
+        };
         let h = match made.get(&id) {
             Some(h) => h.clone(),
             None => {
@@ -155,13 +179,20 @@ pub fn swap_materials(
                 h
             }
         };
-        commands.entity(e).remove::<MeshMaterial3d<StandardMaterial>>().insert(MeshMaterial3d(h));
+        commands
+            .entity(e)
+            .remove::<MeshMaterial3d<StandardMaterial>>()
+            .insert(MeshMaterial3d(h));
     };
     if cache.is_added() {
         for (e, m) in &all {
             swap(e, m);
         }
-        log::info!("effect materials: {} of {} kinds in use", made.len(), cache.uber.len());
+        log::info!(
+            "effect materials: {} of {} kinds in use",
+            made.len(),
+            cache.uber.len()
+        );
     } else {
         for (e, m) in &added {
             swap(e, m);
@@ -170,7 +201,11 @@ pub fn swap_materials(
 }
 
 /// Build the effect material on top of the ordinary one (its textures and blend mode).
-pub fn material(base: &StandardMaterial, info: &UberInfo, uber: &mut Assets<UberMaterial>) -> Handle<UberMaterial> {
+pub fn material(
+    base: &StandardMaterial,
+    info: &UberInfo,
+    uber: &mut Assets<UberMaterial>,
+) -> Handle<UberMaterial> {
     let p = &info.params;
     let mut base = base.clone();
     if info.flags & ADD != 0 {
@@ -190,12 +225,41 @@ pub fn material(base: &StandardMaterial, info: &UberInfo, uber: &mut Assets<Uber
     let uv = p.uv[0];
     let params = UberParams {
         uv: Vec4::new(uv[0], uv[1], uv[2], uv[3]),
-        uv_t: Vec4::new(uv[4], uv[5], if info.scroll { 1.0 } else { 0.0 }, 1.0 / crate::player::UNIT),
-        fade: Vec4::new(p.distance_fade[0], p.distance_fade[1], p.edge_fade[0], p.edge_fade[1]),
-        fade2: Vec4::new(p.edge_fade[2], info.flags as f32, p.opacity.clamp(0.0, 1.0), if matches!(base.alpha_mode, AlphaMode::Add | AlphaMode::Blend | AlphaMode::Premultiplied) { 1.0 } else { 0.0 }),
+        uv_t: Vec4::new(
+            uv[4],
+            uv[5],
+            if info.scroll { 1.0 } else { 0.0 },
+            1.0 / crate::player::UNIT,
+        ),
+        fade: Vec4::new(
+            p.distance_fade[0],
+            p.distance_fade[1],
+            p.edge_fade[0],
+            p.edge_fade[1],
+        ),
+        fade2: Vec4::new(
+            p.edge_fade[2],
+            info.flags as f32,
+            p.opacity.clamp(0.0, 1.0),
+            if matches!(
+                base.alpha_mode,
+                AlphaMode::Add | AlphaMode::Blend | AlphaMode::Premultiplied
+            ) {
+                1.0
+            } else {
+                0.0
+            },
+        ),
         tint: Vec4::new(p.albedo_tint[0], p.albedo_tint[1], p.albedo_tint[2], 1.0),
         uv2: Vec4::new(1.0, 0.0, 0.0, 1.0),
         uv2_t: Vec4::ZERO,
     };
-    uber.add(UberMaterial { base, extension: UberExt { params, opacity: None, distort: None } })
+    uber.add(UberMaterial {
+        base,
+        extension: UberExt {
+            params,
+            opacity: None,
+            distort: None,
+        },
+    })
 }

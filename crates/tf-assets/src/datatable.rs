@@ -81,6 +81,8 @@ impl DataTable {
 
     /// The index of the column named `name` (ignoring ASCII case).
     pub fn column(&self, name: &str) -> Option<usize> {
-        self.columns.iter().position(|c| c.eq_ignore_ascii_case(name))
+        self.columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(name))
     }
 }

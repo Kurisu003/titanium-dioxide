@@ -23,9 +23,19 @@ pub struct ScreenMesh {
 pub fn screens_for(model: &tf_assets::mdl::Model, rui: &[(String, String)]) -> Vec<ScreenMesh> {
     rui.iter()
         .filter_map(|(ui, mesh)| {
-            let m = model.rui_meshes.iter().find(|m| m.name.eq_ignore_ascii_case(mesh))?;
-            let faces = m.faces.iter().filter_map(|f| Some((model.bones.get(f.bone)?.name.clone(), f.corners, f.uvs))).collect();
-            Some(ScreenMesh { ui: ui.clone(), faces })
+            let m = model
+                .rui_meshes
+                .iter()
+                .find(|m| m.name.eq_ignore_ascii_case(mesh))?;
+            let faces = m
+                .faces
+                .iter()
+                .filter_map(|f| Some((model.bones.get(f.bone)?.name.clone(), f.corners, f.uvs)))
+                .collect();
+            Some(ScreenMesh {
+                ui: ui.clone(),
+                faces,
+            })
         })
         .collect()
 }
@@ -38,8 +48,18 @@ fn drawn(ui: &str) -> bool {
 /// Whether every face shows (nearly) the whole canvas region the mesh covers: a ring of faces
 /// (the SMR's) each shows a slice of the RUI's own layout, which centred digits would garble.
 fn shows_whole(screen: &ScreenMesh) -> bool {
-    let bounds = |uvs: &mut dyn Iterator<Item = Vec2>| uvs.fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(a, b), uv| (a.min(uv), b.max(uv)));
-    let (lo, hi) = bounds(&mut screen.faces.iter().flat_map(|f| f.2.iter().map(|uv| Vec2::from(*uv))));
+    let bounds = |uvs: &mut dyn Iterator<Item = Vec2>| {
+        uvs.fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(a, b), uv| (a.min(uv), b.max(uv)),
+        )
+    };
+    let (lo, hi) = bounds(
+        &mut screen
+            .faces
+            .iter()
+            .flat_map(|f| f.2.iter().map(|uv| Vec2::from(*uv))),
+    );
     let span = (hi - lo).max(Vec2::splat(1e-3));
     screen.faces.iter().all(|f| {
         let (a, b) = bounds(&mut f.2.iter().map(|uv| Vec2::from(*uv)));
@@ -79,7 +99,9 @@ pub fn weapon_screens(
     ui_scale: Res<UiScale>,
     mut built: Local<HashMap<(Entity, usize), Built>>,
 ) {
-    let Ok(loadout) = loadouts.single() else { return };
+    let Ok(loadout) = loadouts.single() else {
+        return;
+    };
     let Some(ui) = ui else { return };
     // Drop screens whose viewmodel is gone (the loadout was rebuilt).
     built.retain(|(vm, _), b| {
@@ -94,7 +116,9 @@ pub fn weapon_screens(
         return;
     }
     for gun in &loadout.guns {
-        let Some((_, vm)) = gun.viewmodel else { continue };
+        let Some((_, vm)) = gun.viewmodel else {
+            continue;
+        };
         let Ok(actor) = actors.get(vm) else { continue };
         for (i, screen) in gun.screens.iter().enumerate() {
             if !drawn(&screen.ui) || !shows_whole(screen) {
@@ -102,10 +126,22 @@ pub fn weapon_screens(
             }
             let key = (vm, i);
             if !built.contains_key(&key) {
-                let Some(b) = build(&mut commands, actor, screen, &ui.bold_font, &mut meshes, &mut images, &mut materials) else { continue };
+                let Some(b) = build(
+                    &mut commands,
+                    actor,
+                    screen,
+                    &ui.bold_font,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                ) else {
+                    continue;
+                };
                 built.insert(key, b);
             }
-            let Some(b) = built.get_mut(&key) else { continue };
+            let Some(b) = built.get_mut(&key) else {
+                continue;
+            };
             if b.shown != Some(gun.ammo) {
                 if let Ok(mut t) = texts.get_mut(b.text) {
                     t.0 = gun.ammo.to_string();
@@ -113,7 +149,8 @@ pub fn weapon_screens(
                     b.hot = HOT_FRAMES;
                 }
             }
-            let laid_out = b.shown.is_some() && layouts.get(b.text).is_ok_and(|l| !l.glyphs.is_empty());
+            let laid_out =
+                b.shown.is_some() && layouts.get(b.text).is_ok_and(|l| !l.glyphs.is_empty());
             if ui_scale.is_changed() {
                 b.hot = HOT_FRAMES;
             }
@@ -148,22 +185,59 @@ fn build(
         }
     }
     let span = (hi - lo).max(Vec2::splat(1e-3));
-    let (w, h) = (((span.x * 256.0) as u32).clamp(16, 512), ((span.y * 256.0) as u32).clamp(16, 512));
-    let mut image = Image::new_fill(Extent3d { width: w, height: h, ..default() }, TextureDimension::D2, &[0, 0, 0, 0], TextureFormat::Bgra8UnormSrgb, default());
-    image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
+    let (w, h) = (
+        ((span.x * 256.0) as u32).clamp(16, 512),
+        ((span.y * 256.0) as u32).clamp(16, 512),
+    );
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: w,
+            height: h,
+            ..default()
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Bgra8UnormSrgb,
+        default(),
+    );
+    image.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
     let image = images.add(image);
     // UI only: no render layers (see ui::spawn_loading_screen).
     let camera = commands
-        .spawn((Camera2d, Camera { order: -20, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() }, RenderTarget::Image(image.clone().into()), bevy::camera::visibility::RenderLayers::none()))
+        .spawn((
+            Camera2d,
+            Camera {
+                order: -20,
+                clear_color: ClearColorConfig::Custom(Color::NONE),
+                ..default()
+            },
+            RenderTarget::Image(image.clone().into()),
+            bevy::camera::visibility::RenderLayers::none(),
+        ))
         .id();
     let ui_root = commands
         .spawn((
-            Node { width: Val::Percent(100.0), height: Val::Percent(100.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
             UiTargetCamera(camera),
         ))
         .id();
     let text = commands
-        .spawn((Text::new(""), TextFont { font: font.clone(), font_size: h as f32 * 0.7, ..default() }, TextColor(Color::srgb(0.85, 0.95, 1.0))))
+        .spawn((
+            Text::new(""),
+            TextFont {
+                font: font.clone(),
+                font_size: h as f32 * 0.7,
+                ..default()
+            },
+            TextColor(Color::srgb(0.85, 0.95, 1.0)),
+        ))
         .id();
     commands.entity(ui_root).add_child(text);
     // The faces, in the bone's space, UVs remapped onto the texture.
@@ -191,8 +265,25 @@ fn build(
         cull_mode: None,
         ..default()
     });
-    let m = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster)).id();
+    let m = commands
+        .spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(mat),
+            Transform::IDENTITY,
+            NotShadowCaster,
+        ))
+        .id();
     commands.entity(joint).add_child(m);
-    log::debug!("weapon screen {} on {bone}: {} faces, {w}x{h}", screen.ui, screen.faces.len());
-    Some(Built { camera, ui_root, text, shown: None, hot: HOT_FRAMES })
+    log::debug!(
+        "weapon screen {} on {bone}: {} faces, {w}x{h}",
+        screen.ui,
+        screen.faces.len()
+    );
+    Some(Built {
+        camera,
+        ui_root,
+        text,
+        shown: None,
+        hot: HOT_FRAMES,
+    })
 }

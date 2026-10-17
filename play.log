@@ -1,0 +1,43 @@
+[2m2026-10-17T10:12:59.360836Z[0m [33m WARN[0m [2mwgpu_hal::vulkan::instance[0m[2m:[0m Unable to find extension: VK_EXT_physical_device_drm
+[2m2026-10-17T10:12:59.471638Z[0m [33m WARN[0m [2mgilrs::gamepad[0m[2m:[0m No mapping found for UUID 03000000-6469-0000-8000-000011010000
+	Default mapping will be used.
+[2m2026-10-17T10:13:03.114439Z[0m [33m WARN[0m [2mtf_viewer::audio[0m[2m:[0m no sound for event Pilot_Mvmt_Melee_Hit_1P
+[2m2026-10-17T10:13:03.114478Z[0m [33m WARN[0m [2mtf_viewer::audio[0m[2m:[0m no sound for event Pilot_Rodeo_Titan_Attach
+[2m2026-10-17T10:13:03.114516Z[0m [33m WARN[0m [2mtf_viewer::audio[0m[2m:[0m no sound for event Titan_Tone_SonarLock_Impact_1P
+[2m2026-10-17T10:13:03.114532Z[0m [33m WARN[0m [2mtf_viewer::audio[0m[2m:[0m no sound for event weapon_predator_rangeswitch_tolong_1p
+[2m2026-10-17T10:13:03.114541Z[0m [33m WARN[0m [2mtf_viewer::audio[0m[2m:[0m no sound for event weapon_predator_rangeswitch_toshort_1p
+[2m2026-10-17T10:13:06.718222Z[0m [33m WARN[0m [2mtf_viewer::nav[0m[2m:[0m navmesh: maps/navmesh/mp_forwardbase_kodai_large.nm not found in any open VPK
+[2m2026-10-17T10:13:06.776885Z[0m [33m WARN[0m [2mtf_viewer::nav[0m[2m:[0m navmesh: maps/navmesh/mp_forwardbase_kodai_small.nm not found in any open VPK
+[2m2026-10-17T10:13:06.975311Z[0m [33m WARN[0m [2mtf_viewer[0m[2m:[0m 4 materials not found, e.g. ["models/domestic/luggage_01_screen", "models/mendoko/interior/mendoko_ui_decals/mendoko_ui_decals_01", "models/titans/titan_ar_marker/titan_ar_marker", "models/weapons_r2/titan_plasma_railgun/titan_sniper_charge_fx"]
+[2m2026-10-17T10:13:07.247992Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-10-17T10:13:07.248037Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-10-17T10:13:07.502984Z[0m [33m WARN[0m [2mtf_viewer::audio[0m[2m:[0m no sound for event titan_weapon_raise
+[2m2026-10-17T10:13:08.194541Z[0m [33m WARN[0m [2mtf_viewer::actor[0m[2m:[0m models/weapons/defender/ptpov_defender.mdl: sequence reload_empty_seq not found
+[2m2026-10-17T10:13:09.483700Z[0m [32m INFO[0m [2mtf_viewer::inputrec[0m[2m:[0m recording input to /home/kurisu/td-recordings/user_rec66_kodai_hud2.txt
+[2m2026-10-17T10:13:09.511835Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-10-17T10:13:09.512210Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-10-17T10:13:09.512447Z[0m [33m WARN[0m [2mbevy_pbr::prepass[0m[2m:[0m The default normal prepass expects the mesh to have vertex normal attributes.
+[2m2026-10-17T10:31:12.939454Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m disembarking (at_dismount_stand, ptpov_dismount_buddy_stand)
+[2m2026-10-17T10:31:13.941432Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot on foot
+[2m2026-10-17T10:31:14.744445Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Ground at Vec3(1049.2703, -3245.5623, 796.19836) vel Vec3(0.0, 0.0, 0.0)
+[2m2026-10-17T10:31:17.245865Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Ground -> Slide at Vec3(1176.5728, -2710.817, 794.47095) vel Vec3(96.76248, 387.0615, 0.0)
+[2m2026-10-17T10:31:17.647205Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Slide -> Air at Vec3(1210.2238, -2568.174, 794.9564) vel Vec3(72.00065, 342.51944, 263.85834)
+[2m2026-10-17T10:31:18.197006Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> WallRun { normal: Vec3(0.7071068, -0.7071068, -0.0), time: 0.0 } at Vec3(1226.388, -2386.4404, 881.7476) vel Vec3(119.080536, 119.08054, 250.0)
+[2m2026-10-17T10:31:18.206000Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot WallRun { normal: Vec3(0.7071068, -0.7071068, -0.0), time: 0.0 } -> Air at Vec3(1227.9152, -2385.7656, 884.0505) vel Vec3(165.7733, 73.236946, 247.2108)
+[2m2026-10-17T10:31:18.998175Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> WallRun { normal: Vec3(1.0, 0.0, 0.0), time: 0.0 } at Vec3(1244.0313, -2273.408, 990.7637) vel Vec3(0.0, 123.90743, 250.0)
+[2m2026-10-17T10:31:19.528451Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot WallRun { normal: Vec3(1.0, 0.0, 0.0), time: 0.52029705 } -> Air at Vec3(1247.9003, -2138.0432, 1054.4285) vel Vec3(191.84679, 373.0798, 225.44798)
+[2m2026-10-17T10:31:21.669281Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Slide at Vec3(1526.869, -1306.4633, 810.83356) vel Vec3(111.14964, 393.8267, 0.0)
+[2m2026-10-17T10:31:21.969173Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Slide -> Air at Vec3(1563.4106, -1197.0901, 806.6856) vel Vec3(129.38083, 340.87234, 264.6153)
+[2m2026-10-17T10:31:22.792377Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Slide at Vec3(1769.6323, -1010.9982, 808.62256) vel Vec3(261.88058, 215.73936, 0.0)
+[2m2026-10-17T10:31:23.040327Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Slide -> Air at Vec3(1830.009, -958.95605, 806.5984) vel Vec3(228.60043, 205.50186, 264.05176)
+[2m2026-10-17T10:31:23.902160Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Slide at Vec3(2026.9769, -781.6083, 811.1899) vel Vec3(228.60123, 205.31584, 0.0)
+[2m2026-10-17T10:31:24.111678Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Slide -> Air at Vec3(2073.0132, -742.5964, 813.16815) vel Vec3(216.10614, 172.74365, 264.69415)
+[2m2026-10-17T10:31:24.937492Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Ground at Vec3(2251.2834, -599.52216, 814.52844) vel Vec3(215.54094, 173.80333, 0.0)
+[2m2026-10-17T10:31:26.976552Z[0m [33m WARN[0m [2mcalloop::loop_logic[0m[2m:[0m [calloop] Received an event for non-existence source: TokenInner { id: 3, version: 12, sub_id: 0 }
+[2m2026-10-17T10:31:27.717832Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Ground -> Air at Vec3(1996.4493, 65.1534, 950.3962) vel Vec3(-307.52817, 194.7368, -3.397826)
+[2m2026-10-17T10:31:27.877557Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Ground at Vec3(1947.261, 96.28258, 942.1822) vel Vec3(-307.64487, 194.56183, 0.0)
+[2m2026-10-17T10:31:28.038945Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Ground -> Air at Vec3(1890.3124, 98.807045, 944.69867) vel Vec3(-351.2973, -95.362564, 287.59775)
+[2m2026-10-17T10:31:29.006946Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> WallRun { normal: Vec3(1.0, 0.0, 0.0), time: 0.0 } at Vec3(1552.0313, 8.749235, 1081.5597) vel Vec3(0.0, -91.39035, 191.64989)
+[2m2026-10-17T10:31:29.543617Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot WallRun { normal: Vec3(1.0, 0.0, 0.0), time: 0.5285845 } -> Air at Vec3(1553.8057, 108.24522, 1142.1165) vel Vec3(204.98616, 364.14136, 226.00566)
+[2m2026-10-17T10:31:30.767495Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Air -> Mantle { from: Vec3(1562.6182, 435.58118, 1240.8815), to: Vec3(1531.4906, 449.25873, 1292.2112), time: 0.0 } at Vec3(1562.6182, 435.58118, 1240.8815) vel Vec3(0.0, 0.0, 0.0)
+[2m2026-10-17T10:31:31.776984Z[0m [32m INFO[0m [2mtf_viewer::pilotctl[0m[2m:[0m pilot Mantle { from: Vec3(1562.6182, 435.58118, 1240.8815), to: Vec3(1531.4906, 449.25873, 1292.2112), time: 0.9990415 } -> Ground at Vec3(1531.4906, 449.25873, 1292.2112) vel Vec3(-94.72342, 43.17737, 0.0)

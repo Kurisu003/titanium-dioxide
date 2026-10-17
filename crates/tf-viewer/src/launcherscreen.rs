@@ -72,7 +72,13 @@ pub fn panel_for(model: &tf_assets::mdl::Model) -> Option<Panel> {
     let (right, up) = (bl.rotation * Vec3::X, bl.rotation * Vec3::Y);
     let d = tr.translation - bl.translation;
     let size = Vec2::new(d.dot(right), d.dot(up));
-    (size.min_element() > 0.0).then_some(Panel { bone, bl: bl.translation, right, up, size })
+    (size.min_element() > 0.0).then_some(Panel {
+        bone,
+        bl: bl.translation,
+        right,
+        up,
+        size,
+    })
 }
 
 /// Critically damped spring (Game Programming Gems 4 SmoothCD), as client.dll inlines it for the
@@ -118,14 +124,20 @@ fn pct_y(y: f32) -> Val {
 
 /// A `vgui\hud\sram` image: its material's colour texture, decoded with alpha from brightness so
 /// that the additive art (black backgrounds) can overlap in the panel texture.
-fn vgui_image(gd: &crate::gamedata::GameData, images: &mut Assets<Image>, material: &str) -> Option<Handle<Image>> {
+fn vgui_image(
+    gd: &crate::gamedata::GameData,
+    images: &mut Assets<Image>,
+    material: &str,
+) -> Option<Handle<Image>> {
     let (pi, mat) = gd.material(material)?;
     let (pi, ai) = gd.find_texture(pi, *mat.textures.first()?)?;
     let pak = &gd.paks[pi];
     let tex = tf_assets::texture::load_max(pak, &pak.assets[ai], 512).ok()?;
     let (w, h) = (tex.width as usize, tex.height as usize);
     let rgb = match tex.info.format {
-        tf_assets::texture::TexFormat::Bc1 | tf_assets::texture::TexFormat::Bc1Srgb => tf_assets::texture::decode_bc1(&tex.data, w, h),
+        tf_assets::texture::TexFormat::Bc1 | tf_assets::texture::TexFormat::Bc1Srgb => {
+            tf_assets::texture::decode_bc1(&tex.data, w, h)
+        }
         f => {
             log::warn!("{material}: texture format {f:?} not decoded");
             return None;
@@ -135,9 +147,24 @@ fn vgui_image(gd: &crate::gamedata::GameData, images: &mut Assets<Image>, materi
     for p in rgb {
         let a = p[0].max(p[1]).max(p[2]);
         let k = if a > 0 { 255.0 / a as f32 } else { 0.0 };
-        data.extend_from_slice(&[(p[0] as f32 * k) as u8, (p[1] as f32 * k) as u8, (p[2] as f32 * k) as u8, a]);
+        data.extend_from_slice(&[
+            (p[0] as f32 * k) as u8,
+            (p[1] as f32 * k) as u8,
+            (p[2] as f32 * k) as u8,
+            a,
+        ]);
     }
-    let img = Image::new(Extent3d { width: w as u32, height: h as u32, ..default() }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, default());
+    let img = Image::new(
+        Extent3d {
+            width: w as u32,
+            height: h as u32,
+            ..default()
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        default(),
+    );
     Some(images.add(img))
 }
 
@@ -170,7 +197,14 @@ pub struct Sight {
     rng: u32,
 }
 
-type Parts<'a> = (&'a mut Node, &'a mut Visibility, Option<&'a mut ImageNode>, Option<&'a mut TextColor>, Option<&'a mut Text>, Option<&'a mut UiTransform>);
+type Parts<'a> = (
+    &'a mut Node,
+    &'a mut Visibility,
+    Option<&'a mut ImageNode>,
+    Option<&'a mut TextColor>,
+    Option<&'a mut Text>,
+    Option<&'a mut UiTransform>,
+);
 
 #[allow(clippy::too_many_arguments)]
 fn build(
@@ -185,32 +219,93 @@ fn build(
     materials: &mut Assets<StandardMaterial>,
 ) -> Option<Built> {
     let joint = actor.joint(&panel.bone)?;
-    let mut target = Image::new_fill(Extent3d { width: TEX.0, height: TEX.1, ..default() }, TextureDimension::D2, &[0, 0, 0, 0], TextureFormat::Bgra8UnormSrgb, default());
-    target.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
+    let mut target = Image::new_fill(
+        Extent3d {
+            width: TEX.0,
+            height: TEX.1,
+            ..default()
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Bgra8UnormSrgb,
+        default(),
+    );
+    target.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
     let target = images.add(target);
     // UI only: no render layers (see ui::spawn_loading_screen).
     let camera = commands
-        .spawn((Camera2d, Camera { order: -21, clear_color: ClearColorConfig::Custom(Color::NONE), is_active: false, ..default() }, RenderTarget::Image(target.clone().into()), bevy::camera::visibility::RenderLayers::none()))
+        .spawn((
+            Camera2d,
+            Camera {
+                order: -21,
+                clear_color: ClearColorConfig::Custom(Color::NONE),
+                is_active: false,
+                ..default()
+            },
+            RenderTarget::Image(target.clone().into()),
+            bevy::camera::visibility::RenderLayers::none(),
+        ))
         .id();
-    let root = commands.spawn((Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, UiTargetCamera(camera))).id();
+    let root = commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            UiTargetCamera(camera),
+        ))
+        .id();
     let px = TEX.1 as f32 / PANEL.y;
     let mut image = |path: &str, (x, y, w, h): (f32, f32, f32, f32)| {
         let handle = vgui_image(gd, images, path);
         if handle.is_none() {
             log::warn!("pilot launcher screen: no image {path}");
         }
-        let node = Node { position_type: PositionType::Absolute, left: pct_x(x), top: pct_y(y), width: pct_x(w), height: pct_y(h), ..default() };
-        let e = commands.spawn((node, ImageNode::new(handle.unwrap_or_default()), UiTransform::IDENTITY, Visibility::Hidden)).id();
+        let node = Node {
+            position_type: PositionType::Absolute,
+            left: pct_x(x),
+            top: pct_y(y),
+            width: pct_x(w),
+            height: pct_y(h),
+            ..default()
+        };
+        let e = commands
+            .spawn((
+                node,
+                ImageNode::new(handle.unwrap_or_default()),
+                UiTransform::IDENTITY,
+                Visibility::Hidden,
+            ))
+            .id();
         commands.entity(root).add_child(e);
         e
     };
     // vgui_pilot_launcher.res, in its zpos order.
-    let icons = std::array::from_fn(|i| image("vgui\\hud\\sram\\sram_rocket_icon", (320.0 - 54.0 * i as f32, 800.0, 72.0, 144.0)));
-    let tickers = [image("vgui\\hud\\sram\\sram_ticker", (45.0, 0.0, 899.0, 112.0)), image("vgui\\hud\\sram\\sram_ticker", (944.0, 0.0, 899.0, 112.0))];
-    let circle = image("vgui\\hud\\sram\\sram_targeting_circle", (697.0, 483.0, 90.0, 79.0));
+    let icons = std::array::from_fn(|i| {
+        image(
+            "vgui\\hud\\sram\\sram_rocket_icon",
+            (320.0 - 54.0 * i as f32, 800.0, 72.0, 144.0),
+        )
+    });
+    let tickers = [
+        image("vgui\\hud\\sram\\sram_ticker", (45.0, 0.0, 899.0, 112.0)),
+        image("vgui\\hud\\sram\\sram_ticker", (944.0, 0.0, 899.0, 112.0)),
+    ];
+    let circle = image(
+        "vgui\\hud\\sram\\sram_targeting_circle",
+        (697.0, 483.0, 90.0, 79.0),
+    );
     let rings = [
-        image("vgui\\hud\\sram\\sram_targeting_inner_ring_static", (0.0, 0.0, 337.0, 337.0)),
-        image("vgui\\hud\\sram\\sram_targeting_outer_ring_static", (0.0, 0.0, 337.0, 337.0)),
+        image(
+            "vgui\\hud\\sram\\sram_targeting_inner_ring_static",
+            (0.0, 0.0, 337.0, 337.0),
+        ),
+        image(
+            "vgui\\hud\\sram\\sram_targeting_outer_ring_static",
+            (0.0, 0.0, 337.0, 337.0),
+        ),
     ];
     // Labels: Default_55_Responsive / Default_69_Responsive (font height in panel pixels).
     let mut label = |(x, y, w, h): (f32, f32, f32, f32), font: f32, centred: bool| {
@@ -220,13 +315,28 @@ fn build(
             top: pct_y(y),
             width: pct_x(w),
             height: pct_y(h),
-            justify_content: if centred { JustifyContent::Center } else { JustifyContent::FlexStart },
+            justify_content: if centred {
+                JustifyContent::Center
+            } else {
+                JustifyContent::FlexStart
+            },
             align_items: AlignItems::Center,
             overflow: Overflow::visible(),
             ..default()
         };
         let text = commands
-            .spawn((Text::new(""), TextFont { font: ui.font.clone(), font_size: font * px, ..default() }, TextColor(Color::WHITE), TextLayout::new_with_no_wrap(), Node::default(), Visibility::Hidden))
+            .spawn((
+                Text::new(""),
+                TextFont {
+                    font: ui.font.clone(),
+                    font_size: font * px,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                TextLayout::new_with_no_wrap(),
+                Node::default(),
+                Visibility::Hidden,
+            ))
             .id();
         let e = commands.spawn(node).id();
         commands.entity(e).add_child(text);
@@ -239,13 +349,25 @@ fn build(
     let ammo_label = label((0.0, 924.0, 315.0, 56.0), 69.0, true);
 
     // The quad from SCR_BL to SCR_TR, in the bone's space; texture rows run top down.
-    let (bl, r, u) = (panel.bl, panel.right * panel.size.x, panel.up * panel.size.y);
-    let pos = vec![bl.to_array(), (bl + r).to_array(), (bl + r + u).to_array(), (bl + u).to_array()];
+    let (bl, r, u) = (
+        panel.bl,
+        panel.right * panel.size.x,
+        panel.up * panel.size.y,
+    );
+    let pos = vec![
+        bl.to_array(),
+        (bl + r).to_array(),
+        (bl + r + u).to_array(),
+        (bl + u).to_array(),
+    ];
     let n = r.cross(u).normalize_or_zero().to_array();
     let mut mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![n; 4]);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+    );
     mesh.insert_indices(bevy::mesh::Indices::U32(vec![0, 1, 2, 0, 2, 3]));
     let mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
@@ -256,10 +378,35 @@ fn build(
         cull_mode: None,
         ..default()
     });
-    let quad = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster)).id();
+    let quad = commands
+        .spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(mat),
+            Transform::IDENTITY,
+            NotShadowCaster,
+        ))
+        .id();
     commands.entity(joint).add_child(quad);
-    log::debug!("pilot launcher screen on {}: {:?} x {:?}", panel.bone, panel.size, panel.right);
-    Some(Built { vm, camera, root, quad, tickers, icons, ammo_label, lock_status, target_name, range, circle, rings })
+    log::debug!(
+        "pilot launcher screen on {}: {:?} x {:?}",
+        panel.bone,
+        panel.size,
+        panel.right
+    );
+    Some(Built {
+        vm,
+        camera,
+        root,
+        quad,
+        tickers,
+        icons,
+        ammo_label,
+        lock_status,
+        target_name,
+        range,
+        circle,
+        rings,
+    })
 }
 
 /// Build the active launcher's sight screen and run client.dll's update on it.
@@ -268,7 +415,12 @@ pub fn update(
     mut commands: Commands,
     time: Res<Time>,
     control: Res<Control>,
-    (gd, ui, strings, kits): (Option<Res<crate::gamedata::GameData>>, Option<Res<crate::ui::UiAssets>>, Res<crate::pilotweapon::Strings>, Option<Res<crate::targets::EnemyKits>>),
+    (gd, ui, strings, kits): (
+        Option<Res<crate::gamedata::GameData>>,
+        Option<Res<crate::ui::UiAssets>>,
+        Res<crate::pilotweapon::Strings>,
+        Option<Res<crate::targets::EnemyKits>>,
+    ),
     loadouts: Query<&crate::pilotweapon::PilotLoadout, With<PlayerPilot>>,
     actors: Query<&crate::actor::Actor>,
     globals: Query<&GlobalTransform>,
@@ -277,15 +429,28 @@ pub fn update(
     mut cams: Query<&mut Camera>,
     mut parts: Query<Parts, Without<Camera>>,
     mut quads: Query<&mut Visibility, (With<Mesh3d>, Without<Node>)>,
-    (mut meshes, mut images, mut materials): (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
+    (mut meshes, mut images, mut materials): (
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<Image>>,
+        ResMut<Assets<StandardMaterial>>,
+    ),
     mut sight: Local<Sight>,
 ) {
-    let (Some(gd), Some(ui)) = (gd, ui) else { return };
-    let gun = loadouts.single().ok().and_then(|l| l.active()).filter(|_| *control == Control::Pilot);
+    let (Some(gd), Some(ui)) = (gd, ui) else {
+        return;
+    };
+    let gun = loadouts
+        .single()
+        .ok()
+        .and_then(|l| l.active())
+        .filter(|_| *control == Control::Pilot);
     let screen = gun.and_then(|g| Some((g, g.sight.as_ref()?, g.viewmodel?.1)));
     // Drop a screen whose viewmodel is gone (the loadout was rebuilt) or that belongs to another
     // launcher's viewmodel.
-    if let Some(b) = sight.built.take_if(|b| !actors.contains(b.vm) || screen.is_some_and(|s| s.2 != b.vm)) {
+    if let Some(b) = sight
+        .built
+        .take_if(|b| !actors.contains(b.vm) || screen.is_some_and(|s| s.2 != b.vm))
+    {
         commands.entity(b.camera).despawn();
         commands.entity(b.root).despawn();
         if let Ok(mut q) = commands.get_entity(b.quad) {
@@ -307,16 +472,36 @@ pub fn update(
     };
     if sight.built.is_none() {
         let Ok(actor) = actors.get(vm) else { return };
-        sight.built = build(&mut commands, &gd, &ui, actor, vm, panel, &mut meshes, &mut images, &mut materials);
+        sight.built = build(
+            &mut commands,
+            &gd,
+            &ui,
+            actor,
+            vm,
+            panel,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+        );
         return;
     }
-    let Ok((cam_t, cam_g, projection)) = cameras.single() else { return };
+    let Ok((cam_t, cam_g, projection)) = cameras.single() else {
+        return;
+    };
     // Everything fades in over the last 35% of the zoom; at no zoom the game skips the update.
     let alpha = ((gun.ads - 0.65) / 0.35).clamp(0.0, 1.0);
     set_active(&mut cams, &sight.built, alpha > 0.0);
     // The texture keeps its last picture while the camera is off, so the quad hides with it.
-    if let Some(mut v) = sight.built.as_ref().and_then(|b| quads.get_mut(b.quad).ok()) {
-        let want = if alpha > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+    if let Some(mut v) = sight
+        .built
+        .as_ref()
+        .and_then(|b| quads.get_mut(b.quad).ok())
+    {
+        let want = if alpha > 0.0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *v != want {
             *v = want;
         }
@@ -333,7 +518,10 @@ pub fn update(
     // The lock: the first target with a lock forming; the update tracks it while it is in sight.
     let lock = gun.smart.targets.iter().find(|l| l.frac > 0.0);
     let lock_frac = lock.map(|l| l.frac.min(1.0)).unwrap_or(0.0);
-    let target = lock.filter(|l| l.lost == 0.0).and_then(|l| enemies.get(l.target).ok()).filter(|e| e.alive());
+    let target = lock
+        .filter(|l| l.lost == 0.0)
+        .and_then(|l| enemies.get(l.target).ok())
+        .filter(|e| e.alive());
     let lock_vis = (lock_frac / 0.9).clamp(0.0, 1.0);
 
     // The tracked point: toward the lock point relative to the target, else 500 units ahead.
@@ -344,11 +532,24 @@ pub fn update(
     s.point = Some(match target {
         Some(e) => {
             let origin = crate::player::to_bevy(e.pos);
-            origin + smooth_cd(point - origin, &mut s.vel, crate::player::to_bevy(crate::smartammo::chest(e)) - origin, dt, 8.0)
+            origin
+                + smooth_cd(
+                    point - origin,
+                    &mut s.vel,
+                    crate::player::to_bevy(crate::smartammo::chest(e)) - origin,
+                    dt,
+                    8.0,
+                )
         }
         None => {
             let rel = cam_inv.transform_point3(point);
-            cam_m.transform_point3(smooth_cd(rel, &mut s.vel, Vec3::NEG_Z * 500.0 * crate::player::UNIT, dt, 8.0))
+            cam_m.transform_point3(smooth_cd(
+                rel,
+                &mut s.vel,
+                Vec3::NEG_Z * 500.0 * crate::player::UNIT,
+                dt,
+                8.0,
+            ))
         }
     });
 
@@ -356,17 +557,23 @@ pub fn update(
     // point's direction through the viewmodel's lens: the ring sits over the target as seen
     // (the game cuts the world-space ray; with the world zoomed past the viewmodel FOV that
     // would pull the rings toward the middle, so the direction is rescaled to the viewmodel FOV).
-    let Some(joint) = actors.get(vm).ok().and_then(|a| a.joint(&panel.bone)) else { return };
+    let Some(joint) = actors.get(vm).ok().and_then(|a| a.joint(&panel.bone)) else {
+        return;
+    };
     let Ok(jg) = globals.get(joint) else { return };
     let cam_g_inv = cam_g.affine().inverse();
     let to_cam = |p: Vec3| cam_g_inv.transform_point3(jg.transform_point(p));
     let bl = to_cam(panel.bl);
-    let (right, up) = (to_cam(panel.bl + panel.right) - bl, to_cam(panel.bl + panel.up) - bl);
+    let (right, up) = (
+        to_cam(panel.bl + panel.right) - bl,
+        to_cam(panel.bl + panel.up) - bl,
+    );
     let world_fov = match projection {
         Projection::Perspective(p) => p.fov,
         _ => crate::vmcam::vertical_from_43(crate::vmcam::PILOT_VM_FOV),
     };
-    let k = (crate::vmcam::vertical_from_43(crate::vmcam::PILOT_VM_FOV) * 0.5).tan() / (world_fov * 0.5).tan();
+    let k = (crate::vmcam::vertical_from_43(crate::vmcam::PILOT_VM_FOV) * 0.5).tan()
+        / (world_fov * 0.5).tan();
     let mut dir = cam_inv.transform_point3(s.point.unwrap_or(ahead));
     dir.x *= k;
     dir.y *= k;
@@ -400,20 +607,51 @@ pub fn update(
     if lock_vis <= 0.0 {
         s.blink_t = 0.0;
         s.blink_red = false;
-        texts.push((b.lock_status, text_of(if rockets > 0 { "HUD_NO_TARGET_IN_RANGE" } else { "HUD_OFFLINE" })));
+        texts.push((
+            b.lock_status,
+            text_of(if rockets > 0 {
+                "HUD_NO_TARGET_IN_RANGE"
+            } else {
+                "HUD_OFFLINE"
+            }),
+        ));
         // The rings keep their colour, at alpha 0.
-        for e in [b.lock_status, b.tickers[0], b.tickers[1], b.circle, b.rings[0], b.rings[1]].into_iter().chain(b.icons) {
+        for e in [
+            b.lock_status,
+            b.tickers[0],
+            b.tickers[1],
+            b.circle,
+            b.rings[0],
+            b.rings[1],
+        ]
+        .into_iter()
+        .chain(b.icons)
+        {
             tint.push((e, IDLE));
         }
         shown.extend(b.tickers);
     } else if lock_vis >= 1.0 {
-        let name = lock.and_then(|l| enemies.get(l.target).ok()).map(|e| title(e, kits.as_deref(), &strings)).unwrap_or_default();
-        texts.push((b.target_name, text_of("HUD_ARCHER_TARGET").replace("%s1", &name).replace("%s2", "")));
+        let name = lock
+            .and_then(|l| enemies.get(l.target).ok())
+            .map(|e| title(e, kits.as_deref(), &strings))
+            .unwrap_or_default();
+        texts.push((
+            b.target_name,
+            text_of("HUD_ARCHER_TARGET")
+                .replace("%s1", &name)
+                .replace("%s2", ""),
+        ));
         let dist = lock
             .and_then(|l| enemies.get(l.target).ok())
-            .map(|e| (cam_t.translation.distance(crate::player::to_bevy(e.pos)) / crate::player::UNIT * 0.0254) as i32)
+            .map(|e| {
+                (cam_t.translation.distance(crate::player::to_bevy(e.pos)) / crate::player::UNIT
+                    * 0.0254) as i32
+            })
             .unwrap_or(0);
-        texts.push((b.range, text_of("HUD_DISTANCE_METERS").replace("%s1", &format!("{dist:04}"))));
+        texts.push((
+            b.range,
+            text_of("HUD_DISTANCE_METERS").replace("%s1", &format!("{dist:04}")),
+        ));
         texts.push((b.lock_status, text_of("HUD_LOCKED")));
         for e in [b.tickers[0], b.tickers[1], b.circle] {
             tint.push((e, LOCKED));
@@ -425,7 +663,16 @@ pub fn update(
             s.blink_t = if s.blink_red { 0.15 } else { 0.4 };
         }
         let c = if s.blink_red { LOCKED } else { BLINK };
-        for e in [b.rings[0], b.rings[1], b.range, b.target_name, b.lock_status].into_iter().chain(b.icons) {
+        for e in [
+            b.rings[0],
+            b.rings[1],
+            b.range,
+            b.target_name,
+            b.lock_status,
+        ]
+        .into_iter()
+        .chain(b.icons)
+        {
             tint.push((e, c));
         }
         shown.extend([b.target_name, b.range]);
@@ -436,15 +683,40 @@ pub fn update(
         texts.push((b.lock_status, text_of("HUD_LOCKING")));
         texts.push((b.target_name, text_of("HUD_SCANNING")));
         s.rng = s.rng.wrapping_mul(1_103_515_245).wrapping_add(12345);
-        texts.push((b.range, text_of("HUD_DISTANCE_METERS").replace("%s1", &format!("{}", (s.rng >> 8) % 10000))));
-        for e in [b.lock_status, b.tickers[0], b.tickers[1], b.range, b.target_name, b.circle, b.rings[0], b.rings[1]].into_iter().chain(b.icons) {
+        texts.push((
+            b.range,
+            text_of("HUD_DISTANCE_METERS").replace("%s1", &format!("{}", (s.rng >> 8) % 10000)),
+        ));
+        for e in [
+            b.lock_status,
+            b.tickers[0],
+            b.tickers[1],
+            b.range,
+            b.target_name,
+            b.circle,
+            b.rings[0],
+            b.rings[1],
+        ]
+        .into_iter()
+        .chain(b.icons)
+        {
             tint.push((e, LOCKING));
         }
         shown.extend([b.target_name, b.range]);
     }
-    for &e in b.tickers.iter().chain(&b.icons).chain(&b.rings).chain(&[b.ammo_label, b.lock_status, b.target_name, b.range, b.circle]) {
+    for &e in b.tickers.iter().chain(&b.icons).chain(&b.rings).chain(&[
+        b.ammo_label,
+        b.lock_status,
+        b.target_name,
+        b.range,
+        b.circle,
+    ]) {
         if let Ok(p) = parts.get_mut(e) {
-            let v = if shown.contains(&e) { Visibility::Inherited } else { Visibility::Hidden };
+            let v = if shown.contains(&e) {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
             let mut vis = p.1;
             if *vis != v {
                 *vis = v;
@@ -453,7 +725,11 @@ pub fn update(
     }
     let ring_alpha = (lock_vis / 0.2).clamp(0.0, 1.0) * alpha;
     for (e, c) in tint {
-        let a = if b.rings.contains(&e) { ring_alpha } else { alpha };
+        let a = if b.rings.contains(&e) {
+            ring_alpha
+        } else {
+            alpha
+        };
         if let Ok(p) = parts.get_mut(e) {
             if let Some(mut img) = p.2 {
                 img.color = color(c, a);
@@ -474,7 +750,11 @@ pub fn update(
     }
     // Circle and rings centred on the tracked point; rings 337 px x (3 - 2 lockVis).
     let ring = 337.0 * (3.0 - 2.0 * lock_vis);
-    for (e, (w, h), rot) in [(b.circle, (90.0, 79.0), 0.0), (b.rings[0], (ring, ring), ring_rot[0]), (b.rings[1], (ring, ring), ring_rot[1])] {
+    for (e, (w, h), rot) in [
+        (b.circle, (90.0, 79.0), 0.0),
+        (b.rings[0], (ring, ring), ring_rot[0]),
+        (b.rings[1], (ring, ring), ring_rot[1]),
+    ] {
         if let Ok(p) = parts.get_mut(e) {
             let mut node = p.0;
             node.left = pct_x(at.x - w * 0.5);
@@ -490,10 +770,18 @@ pub fn update(
 
 /// The target line's name: the enemy's AI settings `title` (`#NPC_TITAN_ATLAS_STICKYBOMB` is
 /// "Ion"), "Titan" without one.
-fn title(e: &Enemy, kits: Option<&crate::targets::EnemyKits>, strings: &crate::pilotweapon::Strings) -> String {
+fn title(
+    e: &Enemy,
+    kits: Option<&crate::targets::EnemyKits>,
+    strings: &crate::pilotweapon::Strings,
+) -> String {
     let kit = kits.and_then(|k| k.0.get(e.kit));
-    let ai = kit.and_then(|k| crate::targets::ENEMY_CLASSES.iter().find(|c| c.3 == k.name)).map(|c| c.0.to_ascii_uppercase());
-    ai.and_then(|k| strings.0.get(&k).cloned()).or_else(|| strings.0.get("NPC_TITAN").cloned()).unwrap_or_else(|| "Titan".into())
+    let ai = kit
+        .and_then(|k| crate::targets::ENEMY_CLASSES.iter().find(|c| c.3 == k.name))
+        .map(|c| c.0.to_ascii_uppercase());
+    ai.and_then(|k| strings.0.get(&k).cloned())
+        .or_else(|| strings.0.get("NPC_TITAN").cloned())
+        .unwrap_or_else(|| "Titan".into())
 }
 
 #[cfg(test)]
@@ -512,7 +800,12 @@ mod tests {
     #[test]
     fn panel_pixel_centre_and_corner() {
         // A 2 x 1 panel 5 units ahead, its bottom-left at (-1, -0.5).
-        let (bl, right, up, size) = (Vec3::new(-1.0, -0.5, -5.0), Vec3::X, Vec3::Y, Vec2::new(2.0, 1.0));
+        let (bl, right, up, size) = (
+            Vec3::new(-1.0, -0.5, -5.0),
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(2.0, 1.0),
+        );
         let c = panel_pixel(Vec3::NEG_Z, bl, right, up, size);
         assert!((c - PANEL * 0.5).length() < 1e-3, "{c}");
         let tl = panel_pixel(Vec3::new(-1.0, 0.5, -5.0), bl, right, up, size);

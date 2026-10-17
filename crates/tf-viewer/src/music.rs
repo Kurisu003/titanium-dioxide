@@ -37,7 +37,10 @@ pub struct Music {
 fn cue_for(game: &crate::game::Game, difficulty: crate::vitals::Difficulty) -> Cue {
     use crate::game::GameState::*;
     match game.state {
-        Title => Cue { stinger: None, bed: Some("music_lobby_menumusic02".into()) },
+        Title => Cue {
+            stinger: None,
+            bed: Some("music_lobby_menumusic02".into()),
+        },
         Intermission if game.wave == 0 => Cue {
             stinger: Some(match difficulty {
                 crate::vitals::Difficulty::Easy => "music_mp_fd_intro_easy",
@@ -46,10 +49,22 @@ fn cue_for(game: &crate::game::Game, difficulty: crate::vitals::Difficulty) -> C
             }),
             bed: Some("music_mp_fd_betweenwaves".into()),
         },
-        Intermission => Cue { stinger: Some("music_mp_fd_wavecleared"), bed: Some("music_mp_fd_betweenwaves".into()) },
-        Playing if game.wave % 5 == 0 => Cue { stinger: Some("music_mp_fd_introwave"), bed: Some("music_mp_fd_finalwave".into()) },
-        Playing => Cue { stinger: Some("music_mp_fd_introwave"), bed: Some("music_mp_fd_midwave".into()) },
-        GameOver => Cue { stinger: Some("music_mp_fd_defeat"), bed: None },
+        Intermission => Cue {
+            stinger: Some("music_mp_fd_wavecleared"),
+            bed: Some("music_mp_fd_betweenwaves".into()),
+        },
+        Playing if game.wave % 5 == 0 => Cue {
+            stinger: Some("music_mp_fd_introwave"),
+            bed: Some("music_mp_fd_finalwave".into()),
+        },
+        Playing => Cue {
+            stinger: Some("music_mp_fd_introwave"),
+            bed: Some("music_mp_fd_midwave".into()),
+        },
+        GameOver => Cue {
+            stinger: Some("music_mp_fd_defeat"),
+            bed: None,
+        },
     }
 }
 
@@ -84,9 +99,13 @@ pub fn update_music(
         }
         let mut start = |is_bed: bool, name: &str, music: &mut Music| {
             let Some(info) = sfx.info(name) else { return };
-            let Some(i) = sfx.pick(&info.sources) else { return };
+            let Some(i) = sfx.pick(&info.sources) else {
+                return;
+            };
             if let Some(rx) = sfx.decode_detached(i) {
-                music.pending.push((is_bed, name.to_string(), Mutex::new(rx)));
+                music
+                    .pending
+                    .push((is_bed, name.to_string(), Mutex::new(rx)));
             }
         };
         if let Some(s) = want.stinger {
@@ -101,14 +120,16 @@ pub fn update_music(
 
     // Finished decodes start playing.
     let mut ready = Vec::new();
-    music.pending.retain(|(is_bed, name, rx)| match rx.lock().unwrap().try_recv() {
-        Ok(pcm) => {
-            ready.push((*is_bed, name.clone(), pcm));
-            false
-        }
-        Err(std::sync::mpsc::TryRecvError::Empty) => true,
-        Err(_) => false,
-    });
+    music
+        .pending
+        .retain(|(is_bed, name, rx)| match rx.lock().unwrap().try_recv() {
+            Ok(pcm) => {
+                ready.push((*is_bed, name.clone(), pcm));
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(_) => false,
+        });
     for (is_bed, name, pcm) in ready {
         let Some((pcm, rate)) = pcm else {
             log::warn!("music {name} unavailable");
@@ -116,8 +137,14 @@ pub fn update_music(
         };
         log::info!("music: {name}");
         let handle = sounds.add(Sound::new(pcm, rate, [MUSIC_GAIN, MUSIC_GAIN]));
-        let settings = if is_bed { PlaybackSettings::LOOP } else { PlaybackSettings::DESPAWN };
-        let e = commands.spawn((AudioPlayer::<Sound>(handle), settings)).id();
+        let settings = if is_bed {
+            PlaybackSettings::LOOP
+        } else {
+            PlaybackSettings::DESPAWN
+        };
+        let e = commands
+            .spawn((AudioPlayer::<Sound>(handle), settings))
+            .id();
         if is_bed {
             music.bed = Some(e);
         } else {

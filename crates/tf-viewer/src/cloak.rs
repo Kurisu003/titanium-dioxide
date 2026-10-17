@@ -7,8 +7,8 @@
 //! model writes into the frame's alpha, and that model shader isn't known; here the whole
 //! surface is masked and the distance is 0.012 of the screen width.
 
-use crate::pilotctl::Control;
 use crate::pilotability::PilotStatus;
+use crate::pilotctl::Control;
 use bevy::camera::visibility::RenderLayers;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
@@ -51,8 +51,16 @@ impl Plugin for CloakPlugin {
 pub struct Cloaked(Handle<StandardMaterial>);
 
 fn tuned(d: Vec4) -> Vec4 {
-    let v: Vec<f32> = std::env::var("TF_CLOAK").unwrap_or_default().split_whitespace().filter_map(|x| x.parse().ok()).collect();
-    if v.len() == 4 { Vec4::new(v[0], v[1], v[2], v[3]) } else { d }
+    let v: Vec<f32> = std::env::var("TF_CLOAK")
+        .unwrap_or_default()
+        .split_whitespace()
+        .filter_map(|x| x.parse().ok())
+        .collect();
+    if v.len() == 4 {
+        Vec4::new(v[0], v[1], v[2], v[3])
+    } else {
+        d
+    }
 }
 
 /// Swap the first-person meshes to the cloak material while the Pilot is cloaked.
@@ -66,27 +74,45 @@ pub fn cloak_viewmodel(
     meshes: Query<(Entity, &MeshMaterial3d<StandardMaterial>, &RenderLayers), Without<Cloaked>>,
     cloaked: Query<(Entity, &Cloaked)>,
 ) {
-    let on = status.cloaked() && *control == Control::Pilot && std::env::var_os("TF_NO_CLOAK_FX").is_none();
+    let on = status.cloaked()
+        && *control == Control::Pilot
+        && std::env::var_os("TF_NO_CLOAK_FX").is_none();
     if on {
         let mat = shared
             .get_or_insert_with(|| {
                 mats.add(CloakMaterial {
                     // In the transmissive phase (specular_transmission), drawn opaque-style.
-                    base: StandardMaterial { specular_transmission: 1.0, unlit: true, alpha_mode: AlphaMode::Opaque, ..default() },
+                    base: StandardMaterial {
+                        specular_transmission: 1.0,
+                        unlit: true,
+                        alpha_mode: AlphaMode::Opaque,
+                        ..default()
+                    },
                     // TF_CLOAK="distance jitter mul add" overrides the post's numbers (testing).
                     // The weights: cloak_pilotTint1-3 over their sum (0x18003b064).
-                    extension: CloakExt { params: CloakParams { params: tuned(Vec4::new(0.012, 0.25, 1.2, 0.02)), tints: Vec4::new(0.35 / 1.5, 0.5 / 1.5, 0.65 / 1.5, 0.6) } },
+                    extension: CloakExt {
+                        params: CloakParams {
+                            params: tuned(Vec4::new(0.012, 0.25, 1.2, 0.02)),
+                            tints: Vec4::new(0.35 / 1.5, 0.5 / 1.5, 0.65 / 1.5, 0.6),
+                        },
+                    },
                 })
             })
             .clone();
         for (e, m, layers) in &meshes {
             if layers.intersects(&RenderLayers::layer(crate::vmcam::VM_LAYER)) {
-                commands.entity(e).remove::<MeshMaterial3d<StandardMaterial>>().insert((MeshMaterial3d(mat.clone()), Cloaked(m.0.clone())));
+                commands
+                    .entity(e)
+                    .remove::<MeshMaterial3d<StandardMaterial>>()
+                    .insert((MeshMaterial3d(mat.clone()), Cloaked(m.0.clone())));
             }
         }
     } else {
         for (e, c) in &cloaked {
-            commands.entity(e).remove::<(MeshMaterial3d<CloakMaterial>, Cloaked)>().insert(MeshMaterial3d(c.0.clone()));
+            commands
+                .entity(e)
+                .remove::<(MeshMaterial3d<CloakMaterial>, Cloaked)>()
+                .insert(MeshMaterial3d(c.0.clone()));
         }
     }
 }
@@ -105,7 +131,10 @@ pub fn phase_shift_fx(
     gd: Res<crate::gamedata::GameData>,
     mut images: ResMut<Assets<Image>>,
     mut state: Local<(Option<Option<Handle<Image>>>, bool, f32, Option<Entity>)>,
-    cams: Query<(Entity, Option<&crate::colorcorr::ColorCorrection>), With<crate::vmcam::ViewmodelCamera>>,
+    cams: Query<
+        (Entity, Option<&crate::colorcorr::ColorCorrection>),
+        With<crate::vmcam::ViewmodelCamera>,
+    >,
     main: Query<&GlobalTransform, With<crate::player::MainCamera>>,
     titan: Query<&crate::titankit::KitState>,
     map_cc: Res<crate::colorcorr::MapColorCorrection>,
@@ -113,16 +142,27 @@ pub fn phase_shift_fx(
     let (lut, was, weight, screen) = &mut *state;
     let lut = lut
         .get_or_insert_with(|| {
-            let raw = gd.read_file("materials/correction/mp_ability_shifter.raw").ok()?;
+            let raw = gd
+                .read_file("materials/correction/mp_ability_shifter.raw")
+                .ok()?;
             crate::colorcorr::lut_image(&raw).map(|img| images.add(img))
         })
         .clone();
     // Ronin's Phase Dash phases BT the same way (sh_phase_shift.gnut handles Titans too).
     let titan_phased = *control == Control::Titan && titan.iter().any(|k| k.phase > 0.0);
-    let phased = ((status.phased() && *control == Control::Pilot) || titan_phased) && std::env::var_os("TF_NO_PHASE_FX").is_none();
+    let phased = ((status.phased() && *control == Control::Pilot) || titan_phased)
+        && std::env::var_os("TF_NO_PHASE_FX").is_none();
     let cam = main.single().ok();
     if phased && !*was {
-        *screen = Some(commands.spawn((Transform::default(), crate::pfx::PfxTrail::new("P_phase_shift_screen"), crate::pfx::PfxScreen)).id());
+        *screen = Some(
+            commands
+                .spawn((
+                    Transform::default(),
+                    crate::pfx::PfxTrail::new("P_phase_shift_screen"),
+                    crate::pfx::PfxScreen,
+                ))
+                .id(),
+        );
         crate::pfx::emit_screen(&mut commands, "P_phase_shift_screen_start");
     } else if !phased && *was {
         if let Some(e) = screen.take() {
@@ -132,14 +172,28 @@ pub fn phase_shift_fx(
         if let Some(c) = cam {
             // At the Pilot's feet, 30 units ahead along the view's level heading.
             let fwd = (c.forward().as_vec3() * Vec3::new(1.0, 0.0, 1.0)).normalize_or(Vec3::NEG_Z);
-            let at = c.translation() - Vec3::Y * 60.0 * crate::player::UNIT + fwd * 30.0 * crate::player::UNIT;
-            crate::pfx::emit_named(&mut commands, if *control == Control::Titan { "P_phase_shift_main_XO" } else { "P_phase_shift_main" }, at, Vec3::Y);
+            let at = c.translation() - Vec3::Y * 60.0 * crate::player::UNIT
+                + fwd * 30.0 * crate::player::UNIT;
+            crate::pfx::emit_named(
+                &mut commands,
+                if *control == Control::Titan {
+                    "P_phase_shift_main_XO"
+                } else {
+                    "P_phase_shift_main"
+                },
+                at,
+                Vec3::Y,
+            );
         }
     }
     *was = phased;
     let target = if phased { 1.0 } else { 0.0 };
     let step = time.delta_secs() / 0.15;
-    *weight = if *weight < target { (*weight + step).min(target) } else { (*weight - step).max(target) };
+    *weight = if *weight < target {
+        (*weight + step).min(target)
+    } else {
+        (*weight - step).max(target)
+    };
     // The viewmodel camera draws last, so its colour correction grades the whole picture:
     // the map's own table (its color_correction entity) normally, the phase shift's while
     // phased (the engine blends every active correction by weight; here the phase shift's
@@ -152,12 +206,19 @@ pub fn phase_shift_fx(
         match &want {
             Some((l, w)) => {
                 if cc.is_none_or(|c| c.lut != *l || (c.weight - w).abs() > 1e-4) {
-                    commands.entity(e).insert(crate::colorcorr::ColorCorrection { lut: l.clone(), weight: *w });
+                    commands
+                        .entity(e)
+                        .insert(crate::colorcorr::ColorCorrection {
+                            lut: l.clone(),
+                            weight: *w,
+                        });
                 }
             }
             None => {
                 if cc.is_some() {
-                    commands.entity(e).remove::<crate::colorcorr::ColorCorrection>();
+                    commands
+                        .entity(e)
+                        .remove::<crate::colorcorr::ColorCorrection>();
                 }
             }
         }

@@ -118,7 +118,6 @@ static S_BPTC_P2: [usize; 64] = [
     0xee22, // 0, 1, 0, 0,  0, 1, 0, 0,  0, 1, 1, 1,  0, 1, 1, 1
 ];
 
-
 struct Bc6hModeInfo {
     transformed: bool,
     partition_bits: usize,
@@ -441,7 +440,6 @@ fn sign_extend(_value: u16, _num_bits: usize) -> u16 {
     let mask: u16 = 1 << (_num_bits - 1);
     (_value ^ mask).overflowing_sub(mask).0
 }
-
 
 /// Decode one 16-byte block to 16 texels of half-float RGB bits.
 pub fn decode_block(data: &[u8], outbuf: &mut [[u16; 3]], signed: bool) {
@@ -856,4 +854,3 @@ pub fn decode_block(data: &[u8], outbuf: &mut [[u16; 3]], signed: bool) {
         });
     });
 }
-

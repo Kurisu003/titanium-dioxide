@@ -57,5 +57,11 @@ pub fn load(pak: &Rpak, a: &Asset) -> Result<UiAtlas> {
             }
         })
         .collect();
-    Ok(UiAtlas { guid: a.guid, texture, width, height, images })
+    Ok(UiAtlas {
+        guid: a.guid,
+        texture,
+        width,
+        height,
+        images,
+    })
 }

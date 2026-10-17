@@ -25,7 +25,9 @@ fn main() -> anyhow::Result<()> {
                 for _ in 0..80 {
                     print!(" {}:{:x}", raw[p + 4], raw[p + 5]);
                     let nx = i32_at(p + 28);
-                    if nx == 0 { break; }
+                    if nx == 0 {
+                        break;
+                    }
                     p = (p as i64 + nx as i64) as usize;
                 }
             }

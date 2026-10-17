@@ -88,21 +88,41 @@ pub struct SmartDef {
 impl SmartDef {
     /// The smart ammo block of a (modded) weapon script, if it has one.
     pub fn from_settings(name: &str, mods: &[String], s: &PlayerSettings) -> Option<Self> {
-        let get = |k: &str| s.get(&format!("sp_base.{k}")).or_else(|| s.get(&format!(".{k}")));
-        let f = |k: &str, d: f32| get(k).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(d);
+        let get = |k: &str| {
+            s.get(&format!("sp_base.{k}"))
+                .or_else(|| s.get(&format!(".{k}")))
+        };
+        let f = |k: &str, d: f32| {
+            get(k)
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .unwrap_or(d)
+        };
         let text = |k: &str| get(k).unwrap_or_default().to_string();
         if f("smart_ammo_search_distance", 0.0) <= 0.0 || f("smart_ammo_search_angle", 0.0) <= 0.0 {
             return None;
         }
-        let missile = get("smart_ammo_weapon_type").is_some_and(|t| t.eq_ignore_ascii_case("homing_missile"));
+        let missile =
+            get("smart_ammo_weapon_type").is_some_and(|t| t.eq_ignore_ascii_case("homing_missile"));
         let (missile_speed, homing_speed) = missile_flight(name, mods);
         Some(Self {
             search_angle: f("smart_ammo_search_angle", 0.0),
             search_distance: f("smart_ammo_search_distance", 0.0),
             time_min: f("smart_ammo_targeting_time_min", 0.5),
-            time_max: f("smart_ammo_targeting_time_max", f("smart_ammo_targeting_time_min", 0.5)),
-            time_min_npc: f("smart_ammo_targeting_time_min_npc", f("smart_ammo_targeting_time_min", 0.5)),
-            time_max_npc: f("smart_ammo_targeting_time_max_npc", f("smart_ammo_targeting_time_max", f("smart_ammo_targeting_time_min", 0.5))),
+            time_max: f(
+                "smart_ammo_targeting_time_max",
+                f("smart_ammo_targeting_time_min", 0.5),
+            ),
+            time_min_npc: f(
+                "smart_ammo_targeting_time_min_npc",
+                f("smart_ammo_targeting_time_min", 0.5),
+            ),
+            time_max_npc: f(
+                "smart_ammo_targeting_time_max_npc",
+                f(
+                    "smart_ammo_targeting_time_max",
+                    f("smart_ammo_targeting_time_min", 0.5),
+                ),
+            ),
             new_target_delay: f("smart_ammo_new_target_delay", 0.0),
             max_targeted_burst: f("smart_ammo_max_targeted_burst", 1.0).max(1.0) as u32,
             max_targets: f("smart_ammo_max_targets", 0.0).max(0.0) as u32,
@@ -112,7 +132,10 @@ impl SmartDef {
             unlock_debounce: f("smart_ammo_unlock_debounce_time", 0.0),
             hip_lock: f("smart_ammo_allow_hip_fire_lock", 0.0) > 0.0,
             ads_lock: f("smart_ammo_allow_ads_lock", 0.0) > 0.0,
-            lock_type: match get("smart_ammo_lock_type").map(str::to_ascii_lowercase).as_deref() {
+            lock_type: match get("smart_ammo_lock_type")
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
                 Some("small") => LockType::Small,
                 Some("large") => LockType::Large,
                 _ => LockType::Any,
@@ -124,8 +147,12 @@ impl SmartDef {
             confirmed_sound: text("smart_ammo_target_confirmed_sound"),
             acquiring_sound: text("smart_ammo_looping_sound_acquiring"),
             locked_sound: text("smart_ammo_looping_sound_locked"),
-            hud_circle: get("smart_ammo_hud_type").is_some_and(|t| t.eq_ignore_ascii_case("smart_pistol")),
-            launcher_screen: match get("smart_ammo_hud_type").map(str::trim).filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none")) {
+            hud_circle: get("smart_ammo_hud_type")
+                .is_some_and(|t| t.eq_ignore_ascii_case("smart_pistol")),
+            launcher_screen: match get("smart_ammo_hud_type")
+                .map(str::trim)
+                .filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("none"))
+            {
                 Some(t) => t.eq_ignore_ascii_case("rocket_launcher"),
                 None => name == "mp_weapon_rocket_launcher",
             },
@@ -144,7 +171,10 @@ impl SmartDef {
     pub fn max_locks(&self, e: &Enemy, def: &WeaponDef) -> u32 {
         let n = if e.infantry {
             match self.max_locks_normal {
-                n if n < 0 => (e.v.health / (def.damage_near_pilot * self.npc_lock_factor).max(1.0)).ceil() as i32,
+                n if n < 0 => {
+                    (e.v.health / (def.damage_near_pilot * self.npc_lock_factor).max(1.0)).ceil()
+                        as i32
+                }
                 n => n,
             }
         } else {
@@ -232,7 +262,15 @@ pub struct LockView {
 
 impl Locks {
     pub fn view(&self) -> Vec<LockView> {
-        self.targets.iter().filter(|l| l.lost == 0.0).map(|l| LockView { target: l.target, frac: l.frac, max: l.max }).collect()
+        self.targets
+            .iter()
+            .filter(|l| l.lost == 0.0)
+            .map(|l| LockView {
+                target: l.target,
+                frac: l.frac,
+                max: l.max,
+            })
+            .collect()
     }
 }
 
@@ -245,7 +283,18 @@ pub fn chest(e: &Enemy) -> Vec3 {
 /// that left. `searching` is false when the weapon can't lock right now (hip fire on the
 /// Archer, reloading, sprinting). Plays the script's lock sounds.
 #[allow(clippy::too_many_arguments)]
-pub fn search(commands: &mut Commands, sd: &SmartDef, def: &WeaponDef, locks: &mut Locks, searching: bool, eye: Vec3, view: Vec3, dt: f32, world: &Collision, enemies: &Query<(Entity, &mut Enemy)>) {
+pub fn search(
+    commands: &mut Commands,
+    sd: &SmartDef,
+    def: &WeaponDef,
+    locks: &mut Locks,
+    searching: bool,
+    eye: Vec3,
+    view: Vec3,
+    dt: f32,
+    world: &Collision,
+    enemies: &Query<(Entity, &mut Enemy)>,
+) {
     let cos_half = (sd.search_angle * 0.5).to_radians().cos();
     // (target, distance, alignment, max locks)
     let mut found: Vec<(Entity, f32, f32, u32)> = Vec::new();
@@ -265,11 +314,25 @@ pub fn search(commands: &mut Commands, sd: &SmartDef, def: &WeaponDef, locks: &m
                 continue;
             }
             let reach = (dist - e.radius).max(1.0);
-            if world.0.raycast(SVec3::from(eye.to_array()), SVec3::from(dir.to_array()), reach).is_some() {
+            if world
+                .0
+                .raycast(
+                    SVec3::from(eye.to_array()),
+                    SVec3::from(dir.to_array()),
+                    reach,
+                )
+                .is_some()
+            {
                 continue;
             }
             if sd.titans_block_los
-                && enemies.iter().any(|(o, oe)| o != id && oe.alive() && !oe.infantry && ray_cylinder(eye, dir, oe.pos, oe.radius, oe.height).is_some_and(|t| t < reach))
+                && enemies.iter().any(|(o, oe)| {
+                    o != id
+                        && oe.alive()
+                        && !oe.infantry
+                        && ray_cylinder(eye, dir, oe.pos, oe.radius, oe.height)
+                            .is_some_and(|t| t < reach)
+                })
             {
                 continue;
             }
@@ -286,13 +349,21 @@ pub fn search(commands: &mut Commands, sd: &SmartDef, def: &WeaponDef, locks: &m
             None => l.lost += dt,
         }
     }
-    locks.targets.retain(|l| l.lost == 0.0 || l.lost < sd.unlock_debounce);
+    locks
+        .targets
+        .retain(|l| l.lost == 0.0 || l.lost < sd.unlock_debounce);
     // New targets, nearest the crosshair first.
     found.sort_by(|a, b| b.2.total_cmp(&a.2));
     for &(id, _, _, max) in &found {
         let full = sd.max_targets > 0 && locks.targets.len() as u32 >= sd.max_targets;
         if !full && !locks.targets.iter().any(|l| l.target == id) {
-            locks.targets.push(Lock { target: id, frac: 0.0, max, seen: 0.0, lost: 0.0 });
+            locks.targets.push(Lock {
+                target: id,
+                frac: 0.0,
+                max,
+                seen: 0.0,
+                lost: 0.0,
+            });
         }
     }
     // Grow the locks of the targets in view, keeping the total within one burst.
@@ -303,7 +374,11 @@ pub fn search(commands: &mut Commands, sd: &SmartDef, def: &WeaponDef, locks: &m
         let room = sd.max_targeted_burst.saturating_sub(total - before);
         let limit = l.max.min(room) as f32;
         if l.lost == 0.0 && l.seen >= sd.new_target_delay && l.frac < limit {
-            let dist = found.iter().find(|f| f.0 == l.target).map(|f| f.1).unwrap_or(sd.search_distance);
+            let dist = found
+                .iter()
+                .find(|f| f.0 == l.target)
+                .map(|f| f.1)
+                .unwrap_or(sd.search_distance);
             started |= l.frac == 0.0;
             l.frac += dt / sd.targeting_time(dist);
         }

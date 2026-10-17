@@ -27,11 +27,18 @@ fn main() -> anyhow::Result<()> {
         if !mat.name.to_lowercase().contains(&filter.to_lowercase()) {
             continue;
         }
-        let n = names.get(&mat.shader_set).cloned().unwrap_or_else(|| format!("{:016x} (external)", mat.shader_set));
+        let n = names
+            .get(&mat.shader_set)
+            .cloned()
+            .unwrap_or_else(|| format!("{:016x} (external)", mat.shader_set));
         uses.entry(n).or_default().push(mat.name);
     }
     for (s, ms) in &uses {
-        println!("{s}: {} materials, e.g. {:?}", ms.len(), &ms[..ms.len().min(3)]);
+        println!(
+            "{s}: {} materials, e.g. {:?}",
+            ms.len(),
+            &ms[..ms.len().min(3)]
+        );
     }
     Ok(())
 }

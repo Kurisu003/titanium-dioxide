@@ -157,7 +157,12 @@ pub struct Rodeo {
 
 impl Default for Rodeo {
     fn default() -> Self {
-        Self { ride: None, debounce: 0.0, battery: std::env::var_os("TF_BATTERY").is_some(), cam: None }
+        Self {
+            ride: None,
+            debounce: 0.0,
+            battery: std::env::var_os("TF_BATTERY").is_some(),
+            cam: None,
+        }
     }
 }
 
@@ -165,8 +170,14 @@ impl Default for Rodeo {
 /// facing the Titan's way (the bone's own tilt is dropped, like `GetFrontRightDots` does; the
 /// rodeo clips sit a little lower on a leaning Titan than in the game).
 fn hijack_attachment(actors: &Query<&mut Actor>, titan_tf: &Transform, e: &Enemy) -> Transform {
-    let spine = actors.get(e.actor).ok().and_then(|a| a.bone_model_transform("def_c_spineC")).map(|t| t.translation).unwrap_or(Vec3::Z * e.height * 0.75);
-    Transform::from_translation(titan_tf.transform_point(spine)).with_rotation(Quat::from_rotation_z(e.state.yaw))
+    let spine = actors
+        .get(e.actor)
+        .ok()
+        .and_then(|a| a.bone_model_transform("def_c_spineC"))
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::Z * e.height * 0.75);
+    Transform::from_translation(titan_tf.transform_point(spine))
+        .with_rotation(Quat::from_rotation_z(e.state.yaw))
 }
 
 impl Rodeo {
@@ -197,17 +208,25 @@ pub fn rodeo_update(
 ) {
     let dt = time.delta_secs().min(0.1);
     rodeo.debounce = (rodeo.debounce - dt).max(0.0);
-    let Ok(mut pilot) = pilots.single_mut() else { return };
+    let Ok(mut pilot) = pilots.single_mut() else {
+        return;
+    };
     let on_foot = *control == Control::Pilot && *mode != CameraMode::Free;
 
     // --- Attach: airborne and against a living enemy Titan's hull ---
     if rodeo.ride.is_none() {
         // TF_RODEO_TEST: stand the first landed enemy Titan 110 units ahead of the Pilot, held
         // still, so a scripted double jump lands on it. TF_BATTERY=1 starts with a battery.
-        if on_foot && pilot.state.mode == PilotMove::Ground && std::env::var_os("TF_RODEO_TEST").is_some() {
+        if on_foot
+            && pilot.state.mode == PilotMove::Ground
+            && std::env::var_os("TF_RODEO_TEST").is_some()
+        {
             let me = Vec3::from(pilot.state.pos.to_array());
             let fwd = Vec3::new(pilot.state.yaw.cos(), pilot.state.yaw.sin(), 0.0);
-            if let Some((id, mut e)) = enemies.iter_mut().find(|(_, e)| e.alive() && !e.infantry && !e.arriving()) {
+            if let Some((id, mut e)) = enemies
+                .iter_mut()
+                .find(|(_, e)| e.alive() && !e.infantry && !e.arriving())
+            {
                 let p = me + fwd * 110.0;
                 e.pos = p;
                 e.state.pos = SVec3::new(p.x, p.y, p.z);
@@ -238,13 +257,19 @@ pub fn rodeo_update(
             }
             let d = (p - e.pos).truncate().length();
             let dz = p.z - e.pos.z;
-            if (d < e.radius + 30.0 || hold && d < e.radius + 120.0) && dz > e.height * 0.35 && dz < e.height + 70.0 && best.is_none_or(|b| d < b.1) {
+            if (d < e.radius + 30.0 || hold && d < e.radius + 120.0)
+                && dz > e.height * 0.35
+                && dz < e.height + 70.0
+                && best.is_none_or(|b| d < b.1)
+            {
                 best = Some((id, d));
             }
         }
         let Some((id, _)) = best else { return };
         let Ok((_, e)) = enemies.get(id) else { return };
-        let Ok((titan_tf, _)) = tfs.get(id) else { return };
+        let Ok((titan_tf, _)) = tfs.get(id) else {
+            return;
+        };
         let attach = hijack_attachment(&actors, titan_tf, e);
         let spot = attach.translation + Vec3::Z * 40.0;
         if (spot - p).length() > ATTACH_RANGE {
@@ -253,13 +278,18 @@ pub fn rodeo_update(
         }
         let chassis = Chassis::of_model(&kits.0[e.kit].model);
         // GetFrontRightDots: where the rider is, in the Titan's frame (x forward, y left).
-        let rel = (Quat::from_rotation_z(-e.state.yaw) * (p - e.pos)).truncate().normalize_or_zero();
+        let rel = (Quat::from_rotation_z(-e.state.yaw) * (p - e.pos))
+            .truncate()
+            .normalize_or_zero();
         let (forward_dot, right_dot) = (rel.x, -rel.y);
         let vel = Vec3::from(pilot.state.vel.to_array());
         let eye = Vec3::from(pilot.state.eye(&settings.0).to_array());
         let view = view_quat(pilot.state.yaw, pilot.state.pitch) * Vec3::X;
         let to_spot = (spot - eye).normalize_or_zero();
-        let falling = p.z - spot.z >= 40.0 && vel.z <= -120.0 && view.dot(to_spot) >= 0.8 && vel.normalize_or_zero().dot(to_spot) >= 0.8;
+        let falling = p.z - spot.z >= 40.0
+            && vel.z <= -120.0
+            && view.dot(to_spot) >= 0.8
+            && vel.normalize_or_zero().dot(to_spot) >= 0.8;
         let (side, height) = if falling {
             // GetRodeoDirectionFromAbove
             if forward_dot > 0.1 {
@@ -290,10 +320,31 @@ pub fn rodeo_update(
                 ("left", "")
             }
         };
-        let entrance = format!("ptpov_rodeo_move_{}_{side}{height}_entrance", chassis.name());
-        log::info!("rodeo: {} from the {side}{height} ({entrance}; {})", kits.0[e.kit].name, if falling { "falling onto it" } else { "jumped on" });
+        let entrance = format!(
+            "ptpov_rodeo_move_{}_{side}{height}_entrance",
+            chassis.name()
+        );
+        log::info!(
+            "rodeo: {} from the {side}{height} ({entrance}; {})",
+            kits.0[e.kit].name,
+            if falling {
+                "falling onto it"
+            } else {
+                "jumped on"
+            }
+        );
         let from = (eye, view_quat(pilot.state.yaw, pilot.state.pitch));
-        rodeo.ride = Some(Ride { target: id, chassis, phase: Phase::Entrance, t: 0.0, since: 0.0, entrance, from, done_hit: false, holds: false });
+        rodeo.ride = Some(Ride {
+            target: id,
+            chassis,
+            phase: Phase::Entrance,
+            t: 0.0,
+            since: 0.0,
+            entrance,
+            from,
+            done_hit: false,
+            holds: false,
+        });
         if std::env::var_os("TF_RODEO_TEST").is_some() {
             if let Ok((_, mut e)) = enemies.get_mut(id) {
                 e.held = false;
@@ -314,7 +365,9 @@ pub fn rodeo_update(
         return;
     };
     let titan_rot = Quat::from_rotation_z(e.state.yaw);
-    let Ok(titan_tf) = tfs.get(ride.target).map(|(t, _)| *t) else { return };
+    let Ok(titan_tf) = tfs.get(ride.target).map(|(t, _)| *t) else {
+        return;
+    };
     let attach = hijack_attachment(&actors, &titan_tf, &e);
     let anchor_rot = attach.rotation;
     let spot = attach.translation + Vec3::Z * 40.0;
@@ -324,7 +377,15 @@ pub fn rodeo_update(
         detach = Some(titan_vel);
     }
     // Clip timing from the arms actor (the body's twins have the same lengths).
-    let clip_len = |actors: &Query<&mut Actor>, name: &str| arms.and_then(|(_, a)| actors.get(a).ok().and_then(|ac| ac.clip(name).map(|c| ac.clips[c].duration))).unwrap_or(1.2);
+    let clip_len = |actors: &Query<&mut Actor>, name: &str| {
+        arms.and_then(|(_, a)| {
+            actors
+                .get(a)
+                .ok()
+                .and_then(|ac| ac.clip(name).map(|c| ac.clips[c].duration))
+        })
+        .unwrap_or(1.2)
+    };
     let (clip_name, looped): (String, bool) = match ride.phase {
         Phase::Entrance => (ride.entrance.clone(), false),
         Phase::Idle => (ride.chassis.idle_1p().to_string(), true),
@@ -332,16 +393,26 @@ pub fn rodeo_update(
         Phase::Grenade => (ride.chassis.grenade_1p().to_string(), false),
     };
     let len = clip_len(&actors, &clip_name);
-    let cycle = if looped { (ride.t / len.max(1e-3)).rem_euclid(1.0) } else { (ride.t / len.max(1e-3)).min(0.999) };
+    let cycle = if looped {
+        (ride.t / len.max(1e-3)).rem_euclid(1.0)
+    } else {
+        (ride.t / len.max(1e-3)).min(0.999)
+    };
 
     // Jump off (before the point of no return of a hijack).
-    let can_jump = ride.since > JUMP_DEBOUNCE && matches!(ride.phase, Phase::Entrance | Phase::Idle) || (ride.phase == Phase::Hijack && cycle < NO_RETURN_CYCLE);
+    let can_jump = ride.since > JUMP_DEBOUNCE
+        && matches!(ride.phase, Phase::Entrance | Phase::Idle)
+        || (ride.phase == Phase::Hijack && cycle < NO_RETURN_CYCLE);
     if input.jump && can_jump && detach.is_none() {
         let yaw = input.yaw;
         let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
         let right = Vec3::new(yaw.sin(), -yaw.cos(), 0.0);
         let wish = fwd * input.forward + right * input.right;
-        let dir = if wish.length() > 0.1 { wish.normalize() } else { -(titan_rot * Vec3::X) };
+        let dir = if wish.length() > 0.1 {
+            wish.normalize()
+        } else {
+            -(titan_rot * Vec3::X)
+        };
         detach = Some(titan_vel + dir * JUMP_OFF_SPEED + Vec3::Z * JUMP_OFF_UP);
         log::info!("rodeo: jumped off");
     }
@@ -357,11 +428,28 @@ pub fn rodeo_update(
         Phase::Idle => {
             // Straight to work: the battery, or a grenade down the open hatch.
             if ride.t >= 0.3 {
-                ride.phase = if e.battery { Phase::Hijack } else { Phase::Grenade };
+                ride.phase = if e.battery {
+                    Phase::Hijack
+                } else {
+                    Phase::Grenade
+                };
                 ride.t = 0.0;
                 ride.done_hit = false;
-                log::info!("rodeo: {}", if e.battery { "ripping the battery" } else { "grenade in the hatch" });
-                if e.battery && !e.held && ride.chassis.hijack_titan().is_some_and(|c| actors.get(e.actor).is_ok_and(|a| a.clip(c).is_some())) {
+                log::info!(
+                    "rodeo: {}",
+                    if e.battery {
+                        "ripping the battery"
+                    } else {
+                        "grenade in the hatch"
+                    }
+                );
+                if e.battery
+                    && !e.held
+                    && ride
+                        .chassis
+                        .hijack_titan()
+                        .is_some_and(|c| actors.get(e.actor).is_ok_and(|a| a.clip(c).is_some()))
+                {
                     e.held = true;
                     ride.holds = true;
                 }
@@ -369,35 +457,68 @@ pub fn rodeo_update(
         }
         Phase::Hijack | Phase::Grenade => {
             if ride.holds {
-                if let (Some(c), Ok(mut a)) = (ride.chassis.hijack_titan(), actors.get_mut(e.actor)) {
+                if let (Some(c), Ok(mut a)) = (ride.chassis.hijack_titan(), actors.get_mut(e.actor))
+                {
                     if let Some(clip) = a.clip(c) {
                         a.autoplay = false;
-                        a.layers = vec![Layer { clip, cycle, weight: 1.0 }];
+                        a.layers = vec![Layer {
+                            clip,
+                            cycle,
+                            weight: 1.0,
+                        }];
                     }
                 }
             }
-            let hit_at = if ride.phase == Phase::Hijack { RIP_CYCLE } else { GRENADE_CYCLE };
+            let hit_at = if ride.phase == Phase::Hijack {
+                RIP_CYCLE
+            } else {
+                GRENADE_CYCLE
+            };
             if cycle >= hit_at && !ride.done_hit {
                 ride.done_hit = true;
-                let dmg = if e.doomed() { e.v.health + e.v.shield + 1.0 } else { SP_TITAN_SEGMENT_HEALTH };
+                let dmg = if e.doomed() {
+                    e.v.health + e.v.shield + 1.0
+                } else {
+                    SP_TITAN_SEGMENT_HEALTH
+                };
                 e.damage_bypass(dmg);
                 let hatch = e.pos + titan_rot * Vec3::new(0.0, 0.0, e.height * 0.85);
                 if ride.phase == Phase::Hijack {
                     e.battery = false;
                     got_battery = true;
-                    emit(&mut commands, Effect::Impact { at: to_bevy(hatch), normal: Vec3::Y, scale: 3.0, energy: true });
+                    emit(
+                        &mut commands,
+                        Effect::Impact {
+                            at: to_bevy(hatch),
+                            normal: Vec3::Y,
+                            scale: 3.0,
+                            energy: true,
+                        },
+                    );
                     crate::audio::event(&mut commands, "UI_TitanBattery_Pilot_PickUp");
                     log::info!("rodeo: battery ripped, {dmg:.0} damage");
                 } else {
-                    emit(&mut commands, Effect::Explosion { at: to_bevy(hatch), scale: 1.0 });
+                    emit(
+                        &mut commands,
+                        Effect::Explosion {
+                            at: to_bevy(hatch),
+                            scale: 1.0,
+                        },
+                    );
                     crate::audio::event_at(&mut commands, "Explo_FragGrenade_Impact_3P", hatch);
                     log::info!("rodeo: grenade went off in the hatch, {dmg:.0} damage");
                 }
             }
             if ride.t >= len {
                 // Pushed off (CalculateDirectionToThrowOffBatteryThief: away from the Titan).
-                let away = (Vec3::from(pilot.state.pos.to_array()) - e.pos).truncate().normalize_or(Vec2::NEG_X);
-                detach = Some(titan_vel + Vec3::new(away.x, away.y, 0.0) * RIP_PUSH_HORIZONTAL + Vec3::Z * RIP_PUSH_VERTICAL);
+                let away = (Vec3::from(pilot.state.pos.to_array()) - e.pos)
+                    .truncate()
+                    .normalize_or(Vec2::NEG_X);
+                detach = Some(
+                    titan_vel
+                        + Vec3::new(away.x, away.y, 0.0) * RIP_PUSH_HORIZONTAL
+                        + Vec3::Z * RIP_PUSH_VERTICAL,
+                );
             }
         }
     }
@@ -405,7 +526,11 @@ pub fn rodeo_update(
     if e.smoke_charges > 0 && ride.since >= ANTI_RODEO_SMOKE_DELAY && e.alive() {
         e.smoke_charges -= 1;
         crate::titankit::spawn_smoke(&mut commands, e.pos, Vec3::X, true);
-        crate::audio::event_at(&mut commands, "Titan_Offhand_ElectricSmoke_Deploy_3P", e.pos);
+        crate::audio::event_at(
+            &mut commands,
+            "Titan_Offhand_ElectricSmoke_Deploy_3P",
+            e.pos,
+        );
         log::info!("rodeo: the Titan released its Electric Smoke");
     }
     pilot.state.vel = SVec3::new(titan_vel.x, titan_vel.y, titan_vel.z);
@@ -416,14 +541,19 @@ pub fn rodeo_update(
 
     // The first-person arms ride the attachment and play the rodeo clip; the view is their
     // camera bone (the entrance starts from wherever you were).
-    let eye_off = Vec3::from(pilot.state.eye(&settings.0).to_array()) - Vec3::from(pilot.state.pos.to_array());
+    let eye_off = Vec3::from(pilot.state.eye(&settings.0).to_array())
+        - Vec3::from(pilot.state.pos.to_array());
     let mut view = (spot + Vec3::Z * 20.0, view_quat(e.state.yaw, 0.3));
     if let Some((anchor, actor_e)) = arms {
         if let Ok(mut a) = actors.get_mut(actor_e) {
             a.autoplay = false;
             a.aim = None;
             if let Some(c) = a.clip(&clip_name) {
-                a.layers = vec![Layer { clip: c, cycle, weight: 1.0 }];
+                a.layers = vec![Layer {
+                    clip: c,
+                    cycle,
+                    weight: 1.0,
+                }];
             }
             if let Some(c) = a.bone_model_transform("jx_c_camera") {
                 let rot = anchor_rot * c.rotation * attach_frame();
@@ -435,7 +565,11 @@ pub fn rodeo_update(
             if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
                 tf.rotation = anchor_rot;
                 tf.translation = attach.translation;
-                vis.set_if_neq(if detach.is_some() { Visibility::Hidden } else { Visibility::Inherited });
+                vis.set_if_neq(if detach.is_some() {
+                    Visibility::Hidden
+                } else {
+                    Visibility::Inherited
+                });
             }
         }
     }
@@ -473,10 +607,16 @@ pub fn rodeo_update(
 }
 
 /// While riding, the camera is the arms' camera bone (after `pilot_camera`).
-pub fn rodeo_camera(rodeo: Res<Rodeo>, mut cams: Query<&mut Transform, With<crate::player::MainCamera>>) {
+pub fn rodeo_camera(
+    rodeo: Res<Rodeo>,
+    mut cams: Query<&mut Transform, With<crate::player::MainCamera>>,
+) {
     let Some((eye, rot)) = rodeo.cam else { return };
     if let Ok(mut cam) = cams.single_mut() {
-        *cam = Transform::from_translation(to_bevy(eye)).looking_to(to_bevy(rot * Vec3::X).normalize(), to_bevy(rot * Vec3::Z).normalize());
+        *cam = Transform::from_translation(to_bevy(eye)).looking_to(
+            to_bevy(rot * Vec3::X).normalize(),
+            to_bevy(rot * Vec3::Z).normalize(),
+        );
     }
 }
 
@@ -487,20 +627,73 @@ pub struct BatteryHud;
 pub fn spawn_battery_hud(mut commands: Commands, ui: Res<UiAssets>) {
     let vh = Val::Vh;
     let root = commands
-        .spawn((Node { position_type: PositionType::Absolute, left: vh(21.0), bottom: vh(4.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: vh(0.4), ..default() }, Visibility::Hidden, BatteryHud))
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: vh(21.0),
+                bottom: vh(4.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: vh(0.4),
+                ..default()
+            },
+            Visibility::Hidden,
+            BatteryHud,
+        ))
         .id();
     let frame = commands
-        .spawn((Node { width: vh(7.0), height: vh(7.0), border: UiRect::all(Val::Px(1.0)), ..default() }, BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.55)), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4))))
+        .spawn((
+            Node {
+                width: vh(7.0),
+                height: vh(7.0),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.55)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4)),
+        ))
         .id();
-    let icon = commands.spawn((Node::default(), ui.image("rui/menu/boosts/boost_icon_battery").unwrap_or_default(), crate::hud::FitIcon)).id();
+    let icon = commands
+        .spawn((
+            Node::default(),
+            ui.image("rui/menu/boosts/boost_icon_battery")
+                .unwrap_or_default(),
+            crate::hud::FitIcon,
+        ))
+        .id();
     commands.entity(frame).add_child(icon);
-    let label = commands.spawn((Text::new("BATTERY"), TextFont { font: ui.font.clone(), ..default() }, TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55)), crate::ui::VhText(1.0))).id();
+    let label = commands
+        .spawn((
+            Text::new("BATTERY"),
+            TextFont {
+                font: ui.font.clone(),
+                ..default()
+            },
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.55)),
+            crate::ui::VhText(1.0),
+        ))
+        .id();
     commands.entity(root).add_children(&[frame, label]);
 }
 
-pub fn battery_hud(rodeo: Res<Rodeo>, control: Res<Control>, mode: Res<CameraMode>, game: Res<crate::game::Game>, hidden: Res<crate::hud::HudHidden>, mut huds: Query<&mut Visibility, With<BatteryHud>>) {
-    let show = rodeo.battery && *control == Control::Pilot && *mode != CameraMode::Free && game.in_play() && !hidden.0;
+pub fn battery_hud(
+    rodeo: Res<Rodeo>,
+    control: Res<Control>,
+    mode: Res<CameraMode>,
+    game: Res<crate::game::Game>,
+    hidden: Res<crate::hud::HudHidden>,
+    mut huds: Query<&mut Visibility, With<BatteryHud>>,
+) {
+    let show = rodeo.battery
+        && *control == Control::Pilot
+        && *mode != CameraMode::Free
+        && game.in_play()
+        && !hidden.0;
     for mut v in &mut huds {
-        v.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
+        v.set_if_neq(if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
 }

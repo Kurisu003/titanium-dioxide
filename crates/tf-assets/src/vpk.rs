@@ -61,28 +61,43 @@ struct Cursor<'a> {
 
 impl<'a> Cursor<'a> {
     fn u16(&mut self) -> Result<u16> {
-        let v = self.b.get(self.p..self.p + 2).context("vpk tree truncated")?;
+        let v = self
+            .b
+            .get(self.p..self.p + 2)
+            .context("vpk tree truncated")?;
         self.p += 2;
         Ok(u16::from_le_bytes(v.try_into().unwrap()))
     }
     fn u32(&mut self) -> Result<u32> {
-        let v = self.b.get(self.p..self.p + 4).context("vpk tree truncated")?;
+        let v = self
+            .b
+            .get(self.p..self.p + 4)
+            .context("vpk tree truncated")?;
         self.p += 4;
         Ok(u32::from_le_bytes(v.try_into().unwrap()))
     }
     fn u64(&mut self) -> Result<u64> {
-        let v = self.b.get(self.p..self.p + 8).context("vpk tree truncated")?;
+        let v = self
+            .b
+            .get(self.p..self.p + 8)
+            .context("vpk tree truncated")?;
         self.p += 8;
         Ok(u64::from_le_bytes(v.try_into().unwrap()))
     }
     fn cstr(&mut self) -> Result<&'a str> {
         let rest = &self.b[self.p..];
-        let n = rest.iter().position(|&c| c == 0).context("unterminated string")?;
+        let n = rest
+            .iter()
+            .position(|&c| c == 0)
+            .context("unterminated string")?;
         self.p += n + 1;
         Ok(std::str::from_utf8(&rest[..n])?)
     }
     fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
-        let v = self.b.get(self.p..self.p + n).context("vpk tree truncated")?;
+        let v = self
+            .b
+            .get(self.p..self.p + n)
+            .context("vpk tree truncated")?;
         self.p += n;
         Ok(v)
     }
@@ -99,7 +114,10 @@ impl Vpk {
         let version = u32::from_le_bytes(hdr[4..8].try_into().unwrap());
         let tree_size = u32::from_le_bytes(hdr[8..12].try_into().unwrap()) as usize;
         if magic != VPK_MAGIC || version != VPK_VERSION {
-            bail!("{} is not a Respawn VPK (magic {magic:#x}, version {version:#x})", dir_path.display());
+            bail!(
+                "{} is not a Respawn VPK (magic {magic:#x}, version {version:#x})",
+                dir_path.display()
+            );
         }
         let mut tree = vec![0u8; tree_size];
         f.read_exact(&mut tree)?;
@@ -144,7 +162,14 @@ impl Vpk {
                     } else {
                         format!("{path}/{name}.{ext}")
                     };
-                    entries.insert(full.to_ascii_lowercase(), VpkEntry { crc, preload, parts });
+                    entries.insert(
+                        full.to_ascii_lowercase(),
+                        VpkEntry {
+                            crc,
+                            preload,
+                            parts,
+                        },
+                    );
                 }
             }
         }
@@ -171,14 +196,25 @@ impl Vpk {
     /// Read and decompress a whole file (any case, `\` or `/`), checking its CRC.
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
         let key = normalize(path);
-        let e = self.entries.get(&key).with_context(|| format!("{path} not in vpk"))?;
+        let e = self
+            .entries
+            .get(&key)
+            .with_context(|| format!("{path} not in vpk"))?;
         let mut out = Vec::with_capacity(e.size() as usize);
         out.extend_from_slice(&e.preload);
         // Each part is compressed on its own, so entries of more than one part (parts are mostly
         // 1 MB; a map's .bsp is ~200 MB, the larger models a few MB to 24 MB) are read and
         // decompressed on several cores.
         let parts: Vec<&_> = e.parts.iter().filter(|p| p.len_uncompressed != 0).collect();
-        let threads = if parts.len() >= 2 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16).min(parts.len()) } else { 1 };
+        let threads = if parts.len() >= 2 {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(16)
+                .min(parts.len())
+        } else {
+            1
+        };
         let next = std::sync::atomic::AtomicUsize::new(0);
         let mut chunks: Vec<(usize, Result<Vec<u8>>)> = std::thread::scope(|scope| {
             let workers: Vec<_> = (0..threads)
@@ -191,8 +227,15 @@ impl Vpk {
                             let Some(part) = parts.get(i) else { break };
                             let r = (|| -> Result<Vec<u8>> {
                                 if open.as_ref().map(|o| o.0) != Some(part.archive) {
-                                    let p = self.dir.join(format!("{}_{:03}.vpk", self.archive_stem, part.archive));
-                                    open = Some((part.archive, File::open(&p).with_context(|| format!("open {}", p.display()))?));
+                                    let p = self.dir.join(format!(
+                                        "{}_{:03}.vpk",
+                                        self.archive_stem, part.archive
+                                    ));
+                                    open = Some((
+                                        part.archive,
+                                        File::open(&p)
+                                            .with_context(|| format!("open {}", p.display()))?,
+                                    ));
                                 }
                                 let f = &mut open.as_mut().unwrap().1;
                                 f.seek(SeekFrom::Start(part.offset))?;
@@ -210,7 +253,10 @@ impl Vpk {
                     })
                 })
                 .collect();
-            workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+            workers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap_or_default())
+                .collect()
         });
         if chunks.len() != parts.len() {
             bail!("reading {path}: a worker failed");
@@ -227,7 +273,9 @@ impl Vpk {
 }
 
 fn normalize(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches('/').to_ascii_lowercase()
+    path.replace('\\', "/")
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
 }
 
 #[repr(C)]
@@ -267,7 +315,14 @@ fn lzham_decompress(src: &[u8], dst_len: usize) -> Result<Vec<u8>> {
     let mut adler = 0u32;
     // SAFETY: buffers are valid for the given lengths; the decompressor never writes past dst_len.
     let status = unsafe {
-        tf_lzham_decompress_memory(&params, dst.as_mut_ptr(), &mut out_len, src.as_ptr(), src.len(), &mut adler)
+        tf_lzham_decompress_memory(
+            &params,
+            dst.as_mut_ptr(),
+            &mut out_len,
+            src.as_ptr(),
+            src.len(),
+            &mut adler,
+        )
     };
     if status != LZHAM_DECOMP_STATUS_SUCCESS {
         bail!("lzham decompression failed (status {status})");

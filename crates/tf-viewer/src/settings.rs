@@ -121,7 +121,9 @@ impl Command {
     }
 
     fn from_cfg(s: &str) -> Option<Command> {
-        Command::ALL.into_iter().find(|c| c.cfg().eq_ignore_ascii_case(s))
+        Command::ALL
+            .into_iter()
+            .find(|c| c.cfg().eq_ignore_ascii_case(s))
     }
 
     /// This build's default binding.
@@ -167,7 +169,11 @@ impl Bind {
             Bind::Mouse(m) => mouse.pressed(m),
         }
     }
-    pub fn just_pressed(self, keys: &ButtonInput<KeyCode>, mouse: &ButtonInput<MouseButton>) -> bool {
+    pub fn just_pressed(
+        self,
+        keys: &ButtonInput<KeyCode>,
+        mouse: &ButtonInput<MouseButton>,
+    ) -> bool {
         match self {
             Bind::Key(k) => keys.just_pressed(k),
             Bind::Mouse(m) => mouse.just_pressed(m),
@@ -183,7 +189,11 @@ impl Bind {
             Bind::Mouse(MouseButton::Back) => "MOUSE4".into(),
             Bind::Mouse(MouseButton::Forward) => "MOUSE5".into(),
             Bind::Mouse(MouseButton::Other(n)) => format!("MOUSE{}", n + 6),
-            Bind::Key(k) => KEY_NAMES.iter().find(|(_, kk)| *kk == k).map(|(n, _)| n.to_string()).unwrap_or_else(|| format!("{k:?}").to_uppercase()),
+            Bind::Key(k) => KEY_NAMES
+                .iter()
+                .find(|(_, kk)| *kk == k)
+                .map(|(n, _)| n.to_string())
+                .unwrap_or_else(|| format!("{k:?}").to_uppercase()),
         }
     }
 
@@ -200,7 +210,10 @@ impl Bind {
         if let Some(m) = mouse {
             return Some(Bind::Mouse(m));
         }
-        KEY_NAMES.iter().find(|(n, _)| *n == u).map(|(_, k)| Bind::Key(*k))
+        KEY_NAMES
+            .iter()
+            .find(|(n, _)| *n == u)
+            .map(|(_, k)| Bind::Key(*k))
     }
 }
 
@@ -208,23 +221,96 @@ impl Bind {
 pub const KEY_NAMES: &[(&str, KeyCode)] = {
     use KeyCode as K;
     &[
-        ("A", K::KeyA), ("B", K::KeyB), ("C", K::KeyC), ("D", K::KeyD), ("E", K::KeyE), ("F", K::KeyF), ("G", K::KeyG),
-        ("H", K::KeyH), ("I", K::KeyI), ("J", K::KeyJ), ("K", K::KeyK), ("L", K::KeyL), ("M", K::KeyM), ("N", K::KeyN),
-        ("O", K::KeyO), ("P", K::KeyP), ("Q", K::KeyQ), ("R", K::KeyR), ("S", K::KeyS), ("T", K::KeyT), ("U", K::KeyU),
-        ("V", K::KeyV), ("W", K::KeyW), ("X", K::KeyX), ("Y", K::KeyY), ("Z", K::KeyZ),
-        ("0", K::Digit0), ("1", K::Digit1), ("2", K::Digit2), ("3", K::Digit3), ("4", K::Digit4), ("5", K::Digit5),
-        ("6", K::Digit6), ("7", K::Digit7), ("8", K::Digit8), ("9", K::Digit9),
-        ("SPACE", K::Space), ("SHIFT", K::ShiftLeft), ("RSHIFT", K::ShiftRight), ("CTRL", K::ControlLeft),
-        ("RCTRL", K::ControlRight), ("ALT", K::AltLeft), ("RALT", K::AltRight), ("TAB", K::Tab), ("CAPSLOCK", K::CapsLock),
-        ("ENTER", K::Enter), ("BACKSPACE", K::Backspace), ("`", K::Backquote), ("-", K::Minus), ("=", K::Equal),
-        ("[", K::BracketLeft), ("]", K::BracketRight), ("\\", K::Backslash), ("SEMICOLON", K::Semicolon), ("'", K::Quote),
-        (",", K::Comma), (".", K::Period), ("/", K::Slash),
-        ("UPARROW", K::ArrowUp), ("DOWNARROW", K::ArrowDown), ("LEFTARROW", K::ArrowLeft), ("RIGHTARROW", K::ArrowRight),
-        ("INS", K::Insert), ("DEL", K::Delete), ("HOME", K::Home), ("END", K::End), ("PGUP", K::PageUp), ("PGDN", K::PageDown),
-        ("F1", K::F1), ("F2", K::F2), ("F3", K::F3), ("F4", K::F4), ("F5", K::F5), ("F6", K::F6), ("F7", K::F7),
-        ("F8", K::F8), ("F9", K::F9), ("F10", K::F10), ("F11", K::F11), ("F12", K::F12),
-        ("KP_0", K::Numpad0), ("KP_1", K::Numpad1), ("KP_2", K::Numpad2), ("KP_3", K::Numpad3), ("KP_4", K::Numpad4),
-        ("KP_5", K::Numpad5), ("KP_6", K::Numpad6), ("KP_7", K::Numpad7), ("KP_8", K::Numpad8), ("KP_9", K::Numpad9),
+        ("A", K::KeyA),
+        ("B", K::KeyB),
+        ("C", K::KeyC),
+        ("D", K::KeyD),
+        ("E", K::KeyE),
+        ("F", K::KeyF),
+        ("G", K::KeyG),
+        ("H", K::KeyH),
+        ("I", K::KeyI),
+        ("J", K::KeyJ),
+        ("K", K::KeyK),
+        ("L", K::KeyL),
+        ("M", K::KeyM),
+        ("N", K::KeyN),
+        ("O", K::KeyO),
+        ("P", K::KeyP),
+        ("Q", K::KeyQ),
+        ("R", K::KeyR),
+        ("S", K::KeyS),
+        ("T", K::KeyT),
+        ("U", K::KeyU),
+        ("V", K::KeyV),
+        ("W", K::KeyW),
+        ("X", K::KeyX),
+        ("Y", K::KeyY),
+        ("Z", K::KeyZ),
+        ("0", K::Digit0),
+        ("1", K::Digit1),
+        ("2", K::Digit2),
+        ("3", K::Digit3),
+        ("4", K::Digit4),
+        ("5", K::Digit5),
+        ("6", K::Digit6),
+        ("7", K::Digit7),
+        ("8", K::Digit8),
+        ("9", K::Digit9),
+        ("SPACE", K::Space),
+        ("SHIFT", K::ShiftLeft),
+        ("RSHIFT", K::ShiftRight),
+        ("CTRL", K::ControlLeft),
+        ("RCTRL", K::ControlRight),
+        ("ALT", K::AltLeft),
+        ("RALT", K::AltRight),
+        ("TAB", K::Tab),
+        ("CAPSLOCK", K::CapsLock),
+        ("ENTER", K::Enter),
+        ("BACKSPACE", K::Backspace),
+        ("`", K::Backquote),
+        ("-", K::Minus),
+        ("=", K::Equal),
+        ("[", K::BracketLeft),
+        ("]", K::BracketRight),
+        ("\\", K::Backslash),
+        ("SEMICOLON", K::Semicolon),
+        ("'", K::Quote),
+        (",", K::Comma),
+        (".", K::Period),
+        ("/", K::Slash),
+        ("UPARROW", K::ArrowUp),
+        ("DOWNARROW", K::ArrowDown),
+        ("LEFTARROW", K::ArrowLeft),
+        ("RIGHTARROW", K::ArrowRight),
+        ("INS", K::Insert),
+        ("DEL", K::Delete),
+        ("HOME", K::Home),
+        ("END", K::End),
+        ("PGUP", K::PageUp),
+        ("PGDN", K::PageDown),
+        ("F1", K::F1),
+        ("F2", K::F2),
+        ("F3", K::F3),
+        ("F4", K::F4),
+        ("F5", K::F5),
+        ("F6", K::F6),
+        ("F7", K::F7),
+        ("F8", K::F8),
+        ("F9", K::F9),
+        ("F10", K::F10),
+        ("F11", K::F11),
+        ("F12", K::F12),
+        ("KP_0", K::Numpad0),
+        ("KP_1", K::Numpad1),
+        ("KP_2", K::Numpad2),
+        ("KP_3", K::Numpad3),
+        ("KP_4", K::Numpad4),
+        ("KP_5", K::Numpad5),
+        ("KP_6", K::Numpad6),
+        ("KP_7", K::Numpad7),
+        ("KP_8", K::Numpad8),
+        ("KP_9", K::Numpad9),
     ]
 };
 
@@ -269,7 +355,10 @@ impl Default for Settings {
             gamepad_invert_y: false,
             aim_assist: true,
             gamepad_layout: "default".into(),
-            binds: Command::ALL.iter().map(|c| (*c, c.default_bind())).collect(),
+            binds: Command::ALL
+                .iter()
+                .map(|c| (*c, c.default_bind()))
+                .collect(),
         }
     }
 }
@@ -277,11 +366,22 @@ impl Default for Settings {
 /// The game's look-curve names (the comments heading `aimcurve_look_N.txt`).
 pub const LOOK_CURVES: [&str; 5] = ["CLASSIC", "STEADY", "FINE AIM", "HIGH VELOCITY", "LINEAR"];
 /// The game's controller layouts that ship as `gamepad_button_layout_*.cfg`.
-pub const PAD_LAYOUTS: [&str; 6] = ["default", "bumper_jumper", "bumper_jumper_alt", "pogo_stick", "button_kicker", "circle"];
+pub const PAD_LAYOUTS: [&str; 6] = [
+    "default",
+    "bumper_jumper",
+    "bumper_jumper_alt",
+    "pogo_stick",
+    "button_kicker",
+    "circle",
+];
 
 impl Settings {
     pub fn bind(&self, c: Command) -> Bind {
-        self.binds.iter().find(|(cc, _)| *cc == c).map(|(_, b)| *b).unwrap_or(c.default_bind())
+        self.binds
+            .iter()
+            .find(|(cc, _)| *cc == c)
+            .map(|(_, b)| *b)
+            .unwrap_or(c.default_bind())
     }
 
     /// Bind `c` to `b`; whatever else used `b` gets `c`'s old binding (a swap, so no command
@@ -307,14 +407,19 @@ impl Settings {
     }
 
     pub fn path() -> Option<PathBuf> {
-        let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
         Some(base.join("titanium-dioxide").join("settings.cfg"))
     }
 
     pub fn to_cfg(&self) -> String {
         let mut s = String::from("// titanium-dioxide settings (Titanfall 2 convar names)\n");
         s += &format!("mouse_sensitivity \"{}\"\n", self.mouse_sensitivity);
-        s += &format!("mouse_sensitivity_zoomed \"{}\"\n", self.mouse_sensitivity_zoomed);
+        s += &format!(
+            "mouse_sensitivity_zoomed \"{}\"\n",
+            self.mouse_sensitivity_zoomed
+        );
         s += &format!("cl_fovScale \"{}\"\n", self.fov_scale);
         s += &format!("m_invert_pitch \"{}\"\n", self.invert_y as u8);
         s += &format!("toggle_duck \"{}\"\n", self.toggle_crouch as u8);
@@ -342,14 +447,21 @@ impl Settings {
             }
             let f = |i: usize| toks.get(i).and_then(|v| v.parse::<f32>().ok());
             match toks[0].to_ascii_lowercase().as_str() {
-                "mouse_sensitivity" => s.mouse_sensitivity = f(1).unwrap_or(s.mouse_sensitivity).clamp(0.0, 20.0),
-                "mouse_sensitivity_zoomed" => s.mouse_sensitivity_zoomed = f(1).unwrap_or(s.mouse_sensitivity_zoomed).clamp(0.0, 20.0),
+                "mouse_sensitivity" => {
+                    s.mouse_sensitivity = f(1).unwrap_or(s.mouse_sensitivity).clamp(0.0, 20.0)
+                }
+                "mouse_sensitivity_zoomed" => {
+                    s.mouse_sensitivity_zoomed =
+                        f(1).unwrap_or(s.mouse_sensitivity_zoomed).clamp(0.0, 20.0)
+                }
                 "cl_fovscale" => s.fov_scale = f(1).unwrap_or(s.fov_scale).clamp(1.0, 1.55),
                 "m_invert_pitch" => s.invert_y = f(1).unwrap_or(0.0) != 0.0,
                 "toggle_duck" => s.toggle_crouch = f(1).unwrap_or(0.0) != 0.0,
                 "volume" => s.volume = f(1).unwrap_or(s.volume).clamp(0.0, 1.0),
                 "gamepad_aim_speed" => s.gamepad_look = (f(1).unwrap_or(2.0) as usize).min(7),
-                "gamepad_aim_speed_ads" => s.gamepad_look_ads = (f(1).unwrap_or(2.0) as usize).min(7),
+                "gamepad_aim_speed_ads" => {
+                    s.gamepad_look_ads = (f(1).unwrap_or(2.0) as usize).min(7)
+                }
                 "gamepad_look_curve" => s.gamepad_curve = (f(1).unwrap_or(0.0) as usize).min(4),
                 "joy_inverty" => s.gamepad_invert_y = f(1).unwrap_or(0.0) != 0.0,
                 "gamepad_aim_assist" => s.aim_assist = f(1).unwrap_or(1.0) != 0.0,
@@ -359,7 +471,10 @@ impl Settings {
                     }
                 }
                 "bind" => {
-                    if let (Some(b), Some(c)) = (toks.get(1).and_then(|k| Bind::parse(k)), toks.get(2).and_then(|c| Command::from_cfg(c))) {
+                    if let (Some(b), Some(c)) = (
+                        toks.get(1).and_then(|k| Bind::parse(k)),
+                        toks.get(2).and_then(|c| Command::from_cfg(c)),
+                    ) {
                         s.rebind(c, b);
                     }
                 }
@@ -370,7 +485,10 @@ impl Settings {
     }
 
     pub fn load() -> Self {
-        Self::path().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| Self::from_cfg(&t)).unwrap_or_default()
+        Self::path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|t| Self::from_cfg(&t))
+            .unwrap_or_default()
     }
 
     pub fn save(&self) {
@@ -426,15 +544,25 @@ pub fn save_settings(settings: Res<Settings>, mut first: Local<bool>) {
 /// Apply the FOV setting to the main camera. The cameras compute their FOV each frame against
 /// a 60 degree vertical base (with ADS zoom as a ratio of it); this rescales that to the
 /// configured FOV while keeping the zoom ratio.
-pub fn apply_fov(settings: Res<Settings>, mut cams: Query<&mut Projection, With<crate::player::MainCamera>>, mut last: Local<Option<f32>>) {
+pub fn apply_fov(
+    settings: Res<Settings>,
+    mut cams: Query<&mut Projection, With<crate::player::MainCamera>>,
+    mut last: Local<Option<f32>>,
+) {
     let Ok(mut p) = cams.single_mut() else { return };
-    let Projection::Perspective(pp) = p.as_mut() else { return };
+    let Projection::Perspective(pp) = p.as_mut() else {
+        return;
+    };
     // Already rescaled this value (the camera systems didn't touch it since)?
     if last.is_some_and(|l| (l - pp.fov).abs() < 1e-6) && !settings.is_changed() {
         return;
     }
     let base = 60f32.to_radians();
-    let raw = if last.is_some_and(|l| (l - pp.fov).abs() < 1e-6) { pp.fov * base / settings.vertical_fov() } else { pp.fov };
+    let raw = if last.is_some_and(|l| (l - pp.fov).abs() < 1e-6) {
+        pp.fov * base / settings.vertical_fov()
+    } else {
+        pp.fov
+    };
     let ratio = (raw * 0.5).tan() / (base * 0.5).tan();
     pp.fov = 2.0 * ((settings.vertical_fov() * 0.5).tan() * ratio).atan();
     *last = Some(pp.fov);

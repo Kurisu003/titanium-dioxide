@@ -8,7 +8,9 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let map = &a[2];
     let data = vpk.read(&format!("maps/{map}.bsp"))?;
-    let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
+    let bsp = Bsp::parse(map, &data, |i| {
+        vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok()
+    })?;
     let mut sets: [Vec<[[f32; 3]; 3]>; 3] = Default::default();
     for shape in bsp.collision_shapes() {
         let c = shape.contents;
@@ -37,6 +39,11 @@ fn main() -> anyhow::Result<()> {
         }
     }
     std::fs::write(&a[3], out)?;
-    println!("solid {} player clip {} titan clip {}", sets[0].len(), sets[1].len(), sets[2].len());
+    println!(
+        "solid {} player clip {} titan clip {}",
+        sets[0].len(),
+        sets[1].len(),
+        sets[2].len()
+    );
     Ok(())
 }

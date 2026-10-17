@@ -5,9 +5,13 @@ fn main() -> anyhow::Result<()> {
     let vpk = Vpk::open(&a[1])?;
     let map = &a[2];
     let data = vpk.read(&format!("maps/{map}.bsp"))?;
-    let bsp = Bsp::parse(map, &data, |i| vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok())?;
+    let bsp = Bsp::parse(map, &data, |i| {
+        vpk.read(&format!("maps/{map}.bsp.{i:04x}.bsp_lump")).ok()
+    })?;
     for e in tf_assets::bsp::parse_entities(&bsp.entities()) {
-        if e.iter().any(|(k, v)| k == "classname" && v.contains(a[3].as_str())) {
+        if e.iter()
+            .any(|(k, v)| k == "classname" && v.contains(a[3].as_str()))
+        {
             println!("{e:?}");
         }
     }

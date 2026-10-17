@@ -12,8 +12,8 @@ const MAX_DCT_CHANNELS: usize = 6;
 const RLE_LENGTHS: [usize; 16] = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 32, 64];
 
 const CRITICAL_FREQS: [u32; 25] = [
-    100, 200, 300, 400, 510, 630, 770, 920, 1080, 1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300, 6400, 7700, 9500, 12000, 15500,
-    24500,
+    100, 200, 300, 400, 510, 630, 770, 920, 1080, 1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700,
+    4400, 5300, 6400, 7700, 9500, 12000, 15500, 24500,
 ];
 
 /// Decoded audio: interleaved f32 samples.
@@ -58,7 +58,11 @@ impl Bits<'_> {
     fn float(&mut self) -> f32 {
         let power = self.get(5) as i32;
         let f = self.get(23) as f32 * 2f32.powi(power - 23);
-        if self.get(1) == 1 { -f } else { f }
+        if self.get(1) == 1 {
+            -f
+        } else {
+            f
+        }
     }
     fn align32(&mut self) {
         let n = self.pos.wrapping_neg() & 31;
@@ -83,7 +87,13 @@ struct Decoder {
 
 impl Decoder {
     fn new(sample_rate: u32, channels: usize) -> Self {
-        let frame_len_bits = if sample_rate < 22050 { 9 } else if sample_rate < 44100 { 10 } else { 11 };
+        let frame_len_bits = if sample_rate < 22050 {
+            9
+        } else if sample_rate < 44100 {
+            10
+        } else {
+            11
+        };
         let frame_len = 1usize << frame_len_bits;
         let overlap_len = frame_len / 16;
         let half_rate = sample_rate.div_ceil(2);
@@ -101,11 +111,29 @@ impl Decoder {
         bands[num_bands] = frame_len;
         let dct = DctPlanner::new().plan_dct3(frame_len);
         let scratch = vec![0.0; dct.get_scratch_len()];
-        Self { frame_len, overlap_len, num_bands, root, bands, quant_table, previous: vec![vec![0.0; overlap_len]; channels], first: true, dct, coeffs: vec![0.0; frame_len], scratch }
+        Self {
+            frame_len,
+            overlap_len,
+            num_bands,
+            root,
+            bands,
+            quant_table,
+            previous: vec![vec![0.0; overlap_len]; channels],
+            first: true,
+            dct,
+            coeffs: vec![0.0; frame_len],
+            scratch,
+        }
     }
 
     /// One block for `count` channels starting at `offset`; writes frame_len samples each.
-    fn block(&mut self, gb: &mut Bits, out: &mut [Vec<f32>], offset: usize, count: usize) -> Result<()> {
+    fn block(
+        &mut self,
+        gb: &mut Bits,
+        out: &mut [Vec<f32>],
+        offset: usize,
+        count: usize,
+    ) -> Result<()> {
         gb.get(2);
         let n = self.frame_len;
         for ch in 0..count {
@@ -127,7 +155,12 @@ impl Decoder {
             let mut q = quant[0];
             let mut i = 2;
             while i < n {
-                let j = if gb.get(1) == 1 { i + RLE_LENGTHS[gb.get(4) as usize] * 8 } else { i + 8 }.min(n);
+                let j = if gb.get(1) == 1 {
+                    i + RLE_LENGTHS[gb.get(4) as usize] * 8
+                } else {
+                    i + 8
+                }
+                .min(n);
                 let width = gb.get(4);
                 if width == 0 {
                     i = j;
@@ -143,7 +176,11 @@ impl Decoder {
                         }
                         let c = gb.get(width);
                         if c != 0 {
-                            coeffs[i] = if gb.get(1) == 1 { -q * c as f32 } else { q * c as f32 };
+                            coeffs[i] = if gb.get(1) == 1 {
+                                -q * c as f32
+                            } else {
+                                q * c as f32
+                            };
                         }
                         i += 1;
                     }
@@ -154,7 +191,8 @@ impl Decoder {
             coeffs[0] /= 0.5;
             // (`process_dct3` would allocate zeroed scratch space on every call.)
             self.scratch.fill(0.0);
-            self.dct.process_dct3_with_scratch(coeffs, &mut self.scratch);
+            self.dct
+                .process_dct3_with_scratch(coeffs, &mut self.scratch);
             let scale = 2.0 / n as f32;
             let o = &mut out[offset + ch];
             for (dst, c) in o.iter_mut().zip(coeffs.iter()) {
@@ -202,7 +240,10 @@ pub fn decode(file: &[u8]) -> Result<Pcm> {
         let start = pos + 4;
         let end = (start + size).min(file.len());
         pos = start + size;
-        let mut gb = Bits { data: &file[start..end], pos: 0 };
+        let mut gb = Bits {
+            data: &file[start..end],
+            pos: 0,
+        };
         // A packet can hold several frames; each frame is one block per channel pair.
         while gb.left() > 0 {
             let mut offset = 0;
@@ -226,7 +267,11 @@ pub fn decode(file: &[u8]) -> Result<Pcm> {
         }
     }
     samples.truncate(total_samples * channels);
-    Ok(Pcm { channels, sample_rate, samples })
+    Ok(Pcm {
+        channels,
+        sample_rate,
+        samples,
+    })
 }
 
 #[cfg(test)]
@@ -236,7 +281,9 @@ mod tests {
     /// `Bits::get` against reading one bit at a time, for every width, across the end.
     #[test]
     fn bit_reader_matches_bitwise_reads() {
-        let data: Vec<u8> = (0..23u32).map(|i| (i.wrapping_mul(0x9E37_79B9) >> 13) as u8).collect();
+        let data: Vec<u8> = (0..23u32)
+            .map(|i| (i.wrapping_mul(0x9E37_79B9) >> 13) as u8)
+            .collect();
         let bitwise = |pos: usize, n: u32| -> u32 {
             (0..n).fold(0, |v, i| {
                 let p = pos + i as usize;
@@ -246,7 +293,10 @@ mod tests {
         };
         for n in 0..=32 {
             for start in 0..data.len() * 8 + 40 {
-                let mut gb = Bits { data: &data, pos: start };
+                let mut gb = Bits {
+                    data: &data,
+                    pos: start,
+                };
                 assert_eq!(gb.get(n), bitwise(start, n), "n {n} at bit {start}");
                 assert_eq!(gb.pos, start + n as usize);
             }

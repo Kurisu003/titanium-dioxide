@@ -155,7 +155,12 @@ impl bevy::pbr::MaterialExtension for RefractParticle {
     ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
         // The transmissive phase draws opaque-style (no blending, depth writes): these are
         // translucent sprites (`$translucent`, `$nowritez`), blended by their opacity map.
-        if let Some(t) = descriptor.fragment.as_mut().and_then(|f| f.targets.first_mut()).and_then(|t| t.as_mut()) {
+        if let Some(t) = descriptor
+            .fragment
+            .as_mut()
+            .and_then(|f| f.targets.first_mut())
+            .and_then(|t| t.as_mut())
+        {
             t.blend = Some(bevy::render::render_resource::BlendState::ALPHA_BLENDING);
         }
         if let Some(ds) = descriptor.depth_stencil.as_mut() {
@@ -199,13 +204,39 @@ pub enum FxMat {
 /// plain model path draws opaque: swap in unlit materials with the right blend, tinted by the
 /// system's colour (`Entcol*`: the entity colour modulates them).
 #[allow(clippy::too_many_arguments)]
-fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert::Cache, images: &mut Assets<Image>, path: &str, parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>, mats: &mut Assets<StandardMaterial>, uber: &mut Assets<crate::uber::UberMaterial>, fxmats: &mut Assets<crate::fxuber::FxUberMaterial>, mesh_assets: &mut Assets<Mesh>, tint: Vec3, hdr: f32) -> Vec<(Handle<Mesh>, FxMat)> {
-    let plain = |parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>| parts.into_iter().map(|(m, h)| (m, FxMat::Std(h))).collect();
-    let Ok(model) = gd.read_file(path).and_then(|b| tf_assets::mdl::Model::parse(b).map_err(Into::into)) else { return plain(parts) };
-    let Ok(meshes) = model.meshes(&[]) else { return plain(parts) };
+fn fx_model_materials(
+    gd: &crate::gamedata::GameData,
+    cache: &mut crate::convert::Cache,
+    images: &mut Assets<Image>,
+    path: &str,
+    parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>,
+    mats: &mut Assets<StandardMaterial>,
+    uber: &mut Assets<crate::uber::UberMaterial>,
+    fxmats: &mut Assets<crate::fxuber::FxUberMaterial>,
+    mesh_assets: &mut Assets<Mesh>,
+    tint: Vec3,
+    hdr: f32,
+) -> Vec<(Handle<Mesh>, FxMat)> {
+    let plain = |parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>)>| {
+        parts.into_iter().map(|(m, h)| (m, FxMat::Std(h))).collect()
+    };
+    let Ok(model) = gd
+        .read_file(path)
+        .and_then(|b| tf_assets::mdl::Model::parse(b).map_err(Into::into))
+    else {
+        return plain(parts);
+    };
+    let Ok(meshes) = model.meshes(&[]) else {
+        return plain(parts);
+    };
     let mut out = Vec::with_capacity(parts.len());
     for (md, (mesh, mat)) in meshes.iter().zip(parts) {
-        let tex = model.skin_families.first().and_then(|f| f.get(md.material)).copied().unwrap_or(0) as usize;
+        let tex = model
+            .skin_families
+            .first()
+            .and_then(|f| f.get(md.material))
+            .copied()
+            .unwrap_or(0) as usize;
         let name = model.textures.get(tex).cloned().unwrap_or_default();
         // The game's own shader for unlit effect materials (every shield and wall model), with
         // the model's vertex colours (their alpha shapes the domes and walls). TF_OLD_SHIELDS=1
@@ -214,9 +245,17 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
             if let Some(fm) = crate::fxuber::material(gd, cache, images, &name) {
                 if md.colors.len() == md.positions.len() && !md.colors.is_empty() {
                     let a = md.colors.iter().map(|c| c[3]);
-                    log::debug!("particle model {path}: vertex alpha {}..{}, mean {:.0}", a.clone().min().unwrap_or(0), a.clone().max().unwrap_or(0), a.map(|x| x as f32).sum::<f32>() / md.colors.len() as f32);
+                    log::debug!(
+                        "particle model {path}: vertex alpha {}..{}, mean {:.0}",
+                        a.clone().min().unwrap_or(0),
+                        a.clone().max().unwrap_or(0),
+                        a.map(|x| x as f32).sum::<f32>() / md.colors.len() as f32
+                    );
                     if let Some(m) = mesh_assets.get_mut(&mesh) {
-                        m.insert_attribute(Mesh::ATTRIBUTE_COLOR, crate::fxuber::vertex_colors(&md.colors));
+                        m.insert_attribute(
+                            Mesh::ATTRIBUTE_COLOR,
+                            crate::fxuber::vertex_colors(&md.colors),
+                        );
                     }
                 }
                 log::debug!("particle model {path}: {name} via the game's uber shader");
@@ -225,7 +264,10 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
             }
         }
         let found = gd.material(&name);
-        let shader = found.as_ref().and_then(|(pi, m)| tf_assets::material::shader_set_name(&gd.paks[*pi], m.shader_set)).unwrap_or_default();
+        let shader = found
+            .as_ref()
+            .and_then(|(pi, m)| tf_assets::material::shader_set_name(&gd.paks[*pi], m.shader_set))
+            .unwrap_or_default();
         let Some(src) = mats.get(&mat) else {
             out.push((mesh, FxMat::Std(mat)));
             continue;
@@ -240,8 +282,12 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
         let hex = found.as_ref().and_then(|(pi, gm)| {
             gm.textures.iter().filter(|&&g| g != 0).find_map(|&g| {
                 let (tp, ta) = gd.find_texture(*pi, g)?;
-                let n = tf_assets::texture::info(&gd.paks[tp], &gd.paks[tp].assets[ta]).ok()?.name?;
-                n.contains("refract_hex_nml").then(|| hex_edges(gd, cache, images, *pi, g)).flatten()
+                let n = tf_assets::texture::info(&gd.paks[tp], &gd.paks[tp].assets[ta])
+                    .ok()?
+                    .name?;
+                n.contains("refract_hex_nml")
+                    .then(|| hex_edges(gd, cache, images, *pi, g))
+                    .flatten()
             })
         });
         if let Some(img) = hex.filter(|_| shader.contains("Add") || shader.contains("Trans")) {
@@ -267,7 +313,9 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
             // Scrolling or edge-faded additive surfaces (the Thermal Shield's
             // `fx\flame_shield_edge`: a caustic pattern scrolled over the fan, fading toward
             // its edge-on parts) take the effect path; their base texture alone is a flat sheet.
-            if let Some(info) = crate::uber::info_always(gd, &name).filter(|i| i.scroll || i.flags & crate::uber::AEF != 0) {
+            if let Some(info) = crate::uber::info_always(gd, &name)
+                .filter(|i| i.scroll || i.flags & crate::uber::AEF != 0)
+            {
                 m.double_sided = true;
                 m.cull_mode = None;
                 // With the opacity layer keeping the gaps dark, the system's HDR gain (the
@@ -276,14 +324,24 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
                 // out to a pale peach.
                 let l = Color::srgb(tint.x.min(1.0), tint.y.min(1.0), tint.z.min(1.0)).to_linear();
                 m.base_color = Color::linear_rgb(l.red * hdr, l.green * hdr, l.blue * hdr);
-                log::debug!("particle model {path}: {name} via the effect path ({:?})", info.params);
+                log::debug!(
+                    "particle model {path}: {name} via the effect path ({:?})",
+                    info.params
+                );
                 let h = crate::uber::material(&m, &info, uber);
                 // Its other layers: the high-contrast caustic opacity (slot 13, through UV1)
                 // and a cloud offset map (slot 18) scrolled through UV2 warping the pattern.
                 // Which slot rides which transform is read from the shader name loosely, and
                 // the warp amplitude (0.05 of the texture) is by eye.
                 if let (Some((pi, gm)), Some(u)) = (found.as_ref(), uber.get_mut(&h)) {
-                    let tex = |slot: usize, cache: &mut crate::convert::Cache, images: &mut Assets<Image>| gm.textures.get(slot).filter(|&&g| g != 0).and_then(|&g| crate::convert::image(gd, cache, images, *pi, g));
+                    let tex = |slot: usize,
+                               cache: &mut crate::convert::Cache,
+                               images: &mut Assets<Image>| {
+                        gm.textures
+                            .get(slot)
+                            .filter(|&&g| g != 0)
+                            .and_then(|&g| crate::convert::image(gd, cache, images, *pi, g))
+                    };
                     if let Some(img) = tex(13, cache, images) {
                         u.extension.opacity = Some(img);
                         u.extension.params.fade2.y = (info.flags | crate::uber::OPA) as f32;
@@ -292,7 +350,12 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
                         u.extension.distort = Some(img);
                         let uv2 = info.params.uv[1];
                         u.extension.params.uv2 = Vec4::new(uv2[0], uv2[1], uv2[2], uv2[3]);
-                        u.extension.params.uv2_t = Vec4::new(uv2[4], uv2[5], if shader.contains("Uv2at") { 1.0 } else { 0.0 }, 0.05);
+                        u.extension.params.uv2_t = Vec4::new(
+                            uv2[4],
+                            uv2[5],
+                            if shader.contains("Uv2at") { 1.0 } else { 0.0 },
+                            0.05,
+                        );
                         let f = u.extension.params.fade2.y as u32;
                         u.extension.params.fade2.y = (f | crate::uber::DIST) as f32;
                     }
@@ -300,19 +363,30 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
                 out.push((mesh, FxMat::Uber(h)));
                 continue;
             }
-        } else if shader.contains("Trans") && !shader.contains("Unlit") && md.colors.len() == md.positions.len() && !md.colors.is_empty() {
+        } else if shader.contains("Trans")
+            && !shader.contains("Unlit")
+            && md.colors.len() == md.positions.len()
+            && !md.colors.is_empty()
+        {
             // A lit translucent model: Legion's barrel blur sleeve (`predator_titan_barrel_blur`,
             // `uberVcolaoVcolaAoEntcolmdAefTrans...`) samples the gun's own albedo atlas under
             // the mesh's vertex alpha (0 at the ends, up the middle), lit like the gun, faded
             // by the particle's alpha (its 1.5 s wind-up). Its alpha edge fade (exponent 6,
             // 1 to 0: a thin edge-on fringe) is left out.
             if let Some(m) = mesh_assets.get_mut(&mesh) {
-                m.insert_attribute(Mesh::ATTRIBUTE_COLOR, crate::fxuber::vertex_colors(&md.colors));
+                m.insert_attribute(
+                    Mesh::ATTRIBUTE_COLOR,
+                    crate::fxuber::vertex_colors(&md.colors),
+                );
             }
             m.alpha_mode = AlphaMode::Blend;
             m.base_color = Color::WHITE;
             m.double_sided = found.as_ref().is_some_and(|(_, gm)| gm.two_sided());
-            m.cull_mode = if m.double_sided { None } else { Some(bevy::render::render_resource::Face::Back) };
+            m.cull_mode = if m.double_sided {
+                None
+            } else {
+                Some(bevy::render::render_resource::Face::Back)
+            };
             log::debug!("particle model {path}: {name} shader {shader} as a lit translucent model");
             out.push((mesh, FxMat::Lit(mats.add(m))));
             continue;
@@ -354,7 +428,13 @@ fn fx_model_materials(gd: &crate::gamedata::GameData, cache: &mut crate::convert
 
 /// The cell edges of a hex normal map: its slope (|xy| of the decoded normal), as a
 /// brightness texture with mips.
-fn hex_edges(gd: &crate::gamedata::GameData, cache: &mut crate::convert::Cache, images: &mut Assets<Image>, pak_hint: usize, guid: u64) -> Option<Handle<Image>> {
+fn hex_edges(
+    gd: &crate::gamedata::GameData,
+    cache: &mut crate::convert::Cache,
+    images: &mut Assets<Image>,
+    pak_hint: usize,
+    guid: u64,
+) -> Option<Handle<Image>> {
     let key = guid ^ 0x4E58_0000_0000_0001;
     if let Some(h) = cache.images.get(&key) {
         return h.clone();
@@ -372,7 +452,12 @@ fn hex_edges(gd: &crate::gamedata::GameData, cache: &mut crate::convert::Cache, 
             .iter()
             .map(|&[r, g]| {
                 let (x, y) = (r as f32 / 127.5 - 1.0, g as f32 / 127.5 - 1.0);
-                ((0.12 + 0.88 * (((x * x + y * y).sqrt() - 0.1) * 2.5).clamp(0.0, 1.0).powf(0.8)) * 255.0) as u8
+                ((0.12
+                    + 0.88
+                        * (((x * x + y * y).sqrt() - 0.1) * 2.5)
+                            .clamp(0.0, 1.0)
+                            .powf(0.8))
+                    * 255.0) as u8
             })
             .collect();
         let (mut lw, mut lh) = (w, h);
@@ -388,17 +473,24 @@ fn hex_edges(gd: &crate::gamedata::GameData, cache: &mut crate::convert::Cache, 
             }
             let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
             let at = |x: usize, y: usize| level[y.min(lh - 1) * lw + x.min(lw - 1)] as u32;
-            level = (0..nw * nh).map(|i| {
-                let (x, y) = (i % nw * 2, i / nw * 2);
-                ((at(x, y) + at(x + 1, y) + at(x, y + 1) + at(x + 1, y + 1) + 2) / 4) as u8
-            }).collect();
+            level = (0..nw * nh)
+                .map(|i| {
+                    let (x, y) = (i % nw * 2, i / nw * 2);
+                    ((at(x, y) + at(x + 1, y) + at(x, y + 1) + at(x + 1, y + 1) + 2) / 4) as u8
+                })
+                .collect();
             (lw, lh) = (nw, nh);
         }
         let mut img = Image::default();
         img.data = Some(data);
-        img.texture_descriptor.size = bevy::render::render_resource::Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 };
+        img.texture_descriptor.size = bevy::render::render_resource::Extent3d {
+            width: w as u32,
+            height: h as u32,
+            depth_or_array_layers: 1,
+        };
         img.texture_descriptor.mip_level_count = mips;
-        img.texture_descriptor.format = bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb;
+        img.texture_descriptor.format =
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb;
         img.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
         Some(images.add(img))
     })();
@@ -415,12 +507,24 @@ fn hex_tile(images: &mut Assets<Image>) -> Handle<Image> {
         let mut px = Vec::with_capacity((w * h * 4) as usize);
         // Hexagon centres of the lattice in this period (x in 0..1, y in 0..sqrt 3).
         let s3 = 3.0f32.sqrt();
-        let centres = [(0.0, 0.0), (1.0, 0.0), (0.5, s3 * 0.5), (0.0, s3), (1.0, s3)];
+        let centres = [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.5, s3 * 0.5),
+            (0.0, s3),
+            (1.0, s3),
+        ];
         for y in 0..h {
             for x in 0..w {
-                let p = Vec2::new((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32 * s3);
+                let p = Vec2::new(
+                    (x as f32 + 0.5) / w as f32,
+                    (y as f32 + 0.5) / h as f32 * s3,
+                );
                 // Distance to the nearest and second-nearest centre: equal on a cell edge.
-                let mut d: Vec<f32> = centres.iter().map(|&(cx, cy)| p.distance(Vec2::new(cx, cy))).collect();
+                let mut d: Vec<f32> = centres
+                    .iter()
+                    .map(|&(cx, cy)| p.distance(Vec2::new(cx, cy)))
+                    .collect();
                 d.sort_by(f32::total_cmp);
                 let edge = d[1] - d[0];
                 let line = (1.0 - edge / 0.06).clamp(0.0, 1.0);
@@ -430,7 +534,11 @@ fn hex_tile(images: &mut Assets<Image>) -> Handle<Image> {
             }
         }
         let mut img = Image::new(
-            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            bevy::render::render_resource::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             bevy::render::render_resource::TextureDimension::D2,
             px,
             bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
@@ -487,7 +595,12 @@ pub struct Cp {
 
 impl Default for Cp {
     fn default() -> Self {
-        Self { pos: Vec3::ZERO, fwd: Vec3::X, left: Vec3::Y, up: Vec3::Z }
+        Self {
+            pos: Vec3::ZERO,
+            fwd: Vec3::X,
+            left: Vec3::Y,
+            up: Vec3::Z,
+        }
     }
 }
 
@@ -532,17 +645,31 @@ pub struct PfxRequest {
 /// of the camera (TF_PFX_TEST_DIST=units changes that), facing up (for checking an effect in
 /// isolation). The ground is found by a trace down from there, so it works from BT's
 /// cockpit and a free camera too.
-pub fn pfx_test(mut commands: Commands, mut input: ResMut<crate::player::PlayerInput>, cams: Query<&GlobalTransform, With<crate::player::MainCamera>>, world: Option<Res<crate::player::Collision>>) {
+pub fn pfx_test(
+    mut commands: Commands,
+    mut input: ResMut<crate::player::PlayerInput>,
+    cams: Query<&GlobalTransform, With<crate::player::MainCamera>>,
+    world: Option<Res<crate::player::Collision>>,
+) {
     if !std::mem::take(&mut input.pfx_test) {
         return;
     }
-    let Some(name) = std::env::var("TF_PFX_TEST").ok() else { return };
+    let Some(name) = std::env::var("TF_PFX_TEST").ok() else {
+        return;
+    };
     let Ok(cam) = cams.single() else { return };
-    let dist = std::env::var("TF_PFX_TEST_DIST").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(300.0);
+    let dist = std::env::var("TF_PFX_TEST_DIST")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(300.0);
     let mut f = cam.forward().as_vec3();
     f.y = 0.0;
     let above = to_game(cam.translation() + f.normalize_or(Vec3::NEG_Z) * dist * UNIT);
-    let down = world.and_then(|w| w.0.raycast(SVec3::new(above.x, above.y, above.z), SVec3::NEG_Z, 4000.0)).map_or(60.0, |h| h.t);
+    let down = world
+        .and_then(|w| {
+            w.0.raycast(SVec3::new(above.x, above.y, above.z), SVec3::NEG_Z, 4000.0)
+        })
+        .map_or(60.0, |h| h.t);
     let at = to_bevy(above - Vec3::Z * down);
     log::info!("pfx test {name} at {:.0}", above - Vec3::Z * down);
     emit_named(&mut commands, &name, at, Vec3::Y);
@@ -550,14 +677,33 @@ pub fn pfx_test(mut commands: Commands, mut input: ResMut<crate::player::PlayerI
 
 /// Play `name` at `at` looking along `dir` (Bevy space).
 pub fn emit_named(commands: &mut Commands, name: &str, at: Vec3, dir: Vec3) {
-    commands.spawn(PfxRequest { name: name.to_string(), cps: vec![Cp::facing(to_game(at), dir_to_game(dir))], stop_after: None, vm: false });
+    commands.spawn(PfxRequest {
+        name: name.to_string(),
+        cps: vec![Cp::facing(to_game(at), dir_to_game(dir))],
+        stop_after: None,
+        vm: false,
+    });
 }
 
 /// Play a first-person (`_FP`) system at a viewmodel attachment: `rot` is its Bevy-space
 /// rotation of the game frame (X forward, Y left, Z up), as joint globals give it.
 pub fn emit_named_vm_frame(commands: &mut Commands, name: &str, at: Vec3, rot: Quat) {
-    let (fwd, left, up) = (dir_to_game(rot * Vec3::X).normalize_or(Vec3::X), dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y), dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z));
-    commands.spawn(PfxRequest { name: name.to_string(), cps: vec![Cp { pos: to_game(at), fwd, left, up }], stop_after: None, vm: true });
+    let (fwd, left, up) = (
+        dir_to_game(rot * Vec3::X).normalize_or(Vec3::X),
+        dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y),
+        dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z),
+    );
+    commands.spawn(PfxRequest {
+        name: name.to_string(),
+        cps: vec![Cp {
+            pos: to_game(at),
+            fwd,
+            left,
+            up,
+        }],
+        stop_after: None,
+        vm: true,
+    });
 }
 
 /// With a [`PfxTrail`]: the trail entity removes itself after this many seconds (a one-shot
@@ -575,11 +721,21 @@ pub fn emit_on_vm_joint(commands: &mut Commands, name: &str, joint: Entity, loca
     // The trail's control point faces its entity's forward (-Z) with up +Y: the attachment's X
     // and Z.
     let tf = local.mul_transform(Transform::IDENTITY.looking_to(Vec3::X, Vec3::Z));
-    commands.spawn((tf, PfxTrail::oriented(name), PfxVmSpace, PfxOneShot(1.0), ChildOf(joint)));
+    commands.spawn((
+        tf,
+        PfxTrail::oriented(name),
+        PfxVmSpace,
+        PfxOneShot(1.0),
+        ChildOf(joint),
+    ));
 }
 
 /// Remove [`PfxOneShot`] trails whose time is up.
-pub fn tick_pfx_one_shots(mut commands: Commands, time: Res<Time>, mut shots: Query<(Entity, &mut PfxOneShot)>) {
+pub fn tick_pfx_one_shots(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut shots: Query<(Entity, &mut PfxOneShot)>,
+) {
     for (e, mut s) in &mut shots {
         s.0 -= time.delta_secs();
         if s.0 <= 0.0 {
@@ -602,14 +758,39 @@ pub struct PfxScreen;
 
 /// Play a screen effect (see [`PfxScreen`]).
 pub fn emit_screen(commands: &mut Commands, name: &str) {
-    commands.spawn((PfxRequest { name: name.to_string(), cps: vec![Cp::facing(Vec3::ZERO, Vec3::X)], stop_after: None, vm: false }, PfxScreen));
+    commands.spawn((
+        PfxRequest {
+            name: name.to_string(),
+            cps: vec![Cp::facing(Vec3::ZERO, Vec3::X)],
+            stop_after: None,
+            vm: false,
+        },
+        PfxScreen,
+    ));
 }
 
 /// Play a first-person system on the cockpit (as `emit_named_vm_frame`, drawn by the viewmodel
 /// camera so the cockpit model doesn't hide it).
 pub fn emit_named_cockpit(commands: &mut Commands, name: &str, at: Vec3, rot: Quat) {
-    let (fwd, left, up) = (dir_to_game(rot * Vec3::X).normalize_or(Vec3::X), dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y), dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z));
-    commands.spawn((PfxRequest { name: name.to_string(), cps: vec![Cp { pos: to_game(at), fwd, left, up }], stop_after: None, vm: true }, PfxOverlay));
+    let (fwd, left, up) = (
+        dir_to_game(rot * Vec3::X).normalize_or(Vec3::X),
+        dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y),
+        dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z),
+    );
+    commands.spawn((
+        PfxRequest {
+            name: name.to_string(),
+            cps: vec![Cp {
+                pos: to_game(at),
+                fwd,
+                left,
+                up,
+            }],
+            stop_after: None,
+            vm: true,
+        },
+        PfxOverlay,
+    ));
 }
 
 /// Play a system at a control point frame (game space).
@@ -619,20 +800,44 @@ pub fn emit_named_cp(commands: &mut Commands, name: &str, cp: Cp) {
 
 /// Play a system with its control points (game space), stopped after `stop_after` seconds.
 pub fn emit_named_cps(commands: &mut Commands, name: &str, cps: &[Cp], stop_after: Option<f32>) {
-    commands.spawn(PfxRequest { name: name.to_string(), cps: cps.to_vec(), stop_after, vm: false });
+    commands.spawn(PfxRequest {
+        name: name.to_string(),
+        cps: cps.to_vec(),
+        stop_after,
+        vm: false,
+    });
 }
 
 /// Play a system at an attachment frame (as `emit_named_vm_frame`), in the world.
 pub fn emit_named_frame(commands: &mut Commands, name: &str, at: Vec3, rot: Quat) {
-    let (fwd, left, up) = (dir_to_game(rot * Vec3::X).normalize_or(Vec3::X), dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y), dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z));
-    commands.spawn(PfxRequest { name: name.to_string(), cps: vec![Cp { pos: to_game(at), fwd, left, up }], stop_after: None, vm: false });
+    let (fwd, left, up) = (
+        dir_to_game(rot * Vec3::X).normalize_or(Vec3::X),
+        dir_to_game(rot * Vec3::Y).normalize_or(Vec3::Y),
+        dir_to_game(rot * Vec3::Z).normalize_or(Vec3::Z),
+    );
+    commands.spawn(PfxRequest {
+        name: name.to_string(),
+        cps: vec![Cp {
+            pos: to_game(at),
+            fwd,
+            left,
+            up,
+        }],
+        stop_after: None,
+        vm: false,
+    });
 }
 
 /// Play a beam/tracer system from `from` to `to` (CP0 and CP1, Bevy space).
 pub fn emit_beam(commands: &mut Commands, name: &str, from: Vec3, to: Vec3) {
     let (a, b) = (to_game(from), to_game(to));
     let f = Cp::facing(a, b - a);
-    commands.spawn(PfxRequest { name: name.to_string(), cps: vec![f, Cp { pos: b, ..f }], stop_after: None, vm: false });
+    commands.spawn(PfxRequest {
+        name: name.to_string(),
+        cps: vec![f, Cp { pos: b, ..f }],
+        stop_after: None,
+        vm: false,
+    });
 }
 
 #[derive(Component)]
@@ -672,11 +877,21 @@ pub struct PfxColor(pub Vec3);
 
 impl PfxTrail {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string(), effect: None, last: None, oriented: false }
+        Self {
+            name: name.to_string(),
+            effect: None,
+            last: None,
+            oriented: false,
+        }
     }
     /// An effect fixed to an entity's position and rotation (shields, walls).
     pub fn oriented(name: &str) -> Self {
-        Self { name: name.to_string(), effect: None, last: None, oriented: true }
+        Self {
+            name: name.to_string(),
+            effect: None,
+            last: None,
+            oriented: true,
+        }
     }
 }
 
@@ -770,7 +985,13 @@ impl Tint {
     /// the colour it had).
     fn apply(&self, c: Vec3, light: Vec3) -> Option<Vec3> {
         let t = light * self.amp;
-        let overlay = |c: f32, t: f32| if t < 0.5 { 2.0 * c * t } else { 1.0 - 2.0 * (1.0 - c) * (1.0 - t) };
+        let overlay = |c: f32, t: f32| {
+            if t < 0.5 {
+                2.0 * c * t
+            } else {
+                1.0 - 2.0 * (1.0 - c) * (1.0 - t)
+            }
+        };
         let b = match self.mode {
             0 => t,
             1 => Vec3::new(overlay(c.x, t.x), overlay(c.y, t.y), overlay(c.z, t.z)),
@@ -801,7 +1022,13 @@ struct LightSample {
 
 impl LightSample {
     /// No lighting available: the engine's (1, 1, 1).
-    const NONE: LightSample = LightSample { dc: Vec3::ONE, sky_len: 0.0, sun_vis: 0.0, sun: Vec3::ZERO, sky: Vec3::ZERO };
+    const NONE: LightSample = LightSample {
+        dc: Vec3::ONE,
+        sky_len: 0.0,
+        sun_vis: 0.0,
+        sun: Vec3::ZERO,
+        sky: Vec3::ZERO,
+    };
 
     fn at(&self, sky_scale: f32) -> Vec3 {
         let v = self.sky_len * sky_scale;
@@ -830,7 +1057,13 @@ impl ParticleLight {
         let probes: Vec<(Vec3, f32, f32)> = sh
             .iter()
             .zip(&sky)
-            .map(|(p, s)| (Vec3::new(p[0][3] as f32, p[1][3] as f32, p[2][3] as f32) * k, Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32).length() * k, s[3] as f32 * k))
+            .map(|(p, s)| {
+                (
+                    Vec3::new(p[0][3] as f32, p[1][3] as f32, p[2][3] as f32) * k,
+                    Vec3::new(s[0] as f32, s[1] as f32, s[2] as f32).length() * k,
+                    s[3] as f32 * k,
+                )
+            })
             .collect();
         let mut cells: HashMap<(i32, i32, i32), Vec<(Vec3, u32)>> = HashMap::new();
         for (o, i) in bsp.light_probe_refs() {
@@ -842,10 +1075,24 @@ impl ParticleLight {
         // The level's environment lights: the last sun and sky ambient (a map's first set
         // lights its intro skybox, as env.rs picks the last light_environment).
         let lights = bsp.world_lights();
-        let last = |ty: i32| lights.iter().rev().find(|l| l.0 == ty).map_or(Vec3::ZERO, |l| Vec3::from(l.2));
+        let last = |ty: i32| {
+            lights
+                .iter()
+                .rev()
+                .find(|l| l.0 == ty)
+                .map_or(Vec3::ZERO, |l| Vec3::from(l.2))
+        };
         let (sun, sky) = (last(3), last(5));
-        log::info!("particle lighting: {} probes, sun {sun:.2}, sky {sky:.2}", probes.len());
-        ParticleLight { cells, probes, sun, sky }
+        log::info!(
+            "particle lighting: {} probes, sun {sun:.2}, sky {sky:.2}",
+            probes.len()
+        );
+        ParticleLight {
+            cells,
+            probes,
+            sun,
+            sky,
+        }
     }
 
     fn cell(p: Vec3) -> (i32, i32, i32) {
@@ -878,9 +1125,17 @@ impl ParticleLight {
                 break;
             }
         }
-        let Some((_, i)) = best else { return LightSample::NONE };
+        let Some((_, i)) = best else {
+            return LightSample::NONE;
+        };
         let (dc, sky_len, sun_vis) = self.probes[i as usize];
-        LightSample { dc, sky_len, sun_vis, sun: self.sun, sky: self.sky }
+        LightSample {
+            dc,
+            sky_len,
+            sun_vis,
+            sun: self.sun,
+            sky: self.sky,
+        }
     }
 }
 
@@ -892,160 +1147,549 @@ fn to_srgb(v: Vec3) -> Vec3 {
 
 #[derive(Clone, Debug)]
 enum Emit {
-    Instant { count: u32, min: u32, start: f32 },
-    Continuous { rate: f32, duration: f32, start: f32 },
-    Distance { spacing: f32 },
+    Instant {
+        count: u32,
+        min: u32,
+        start: f32,
+    },
+    Continuous {
+        rate: f32,
+        duration: f32,
+        start: f32,
+    },
+    Distance {
+        spacing: f32,
+    },
 }
 
 #[derive(Clone, Debug)]
 enum Init {
-    Lifetime { min: f32, max: f32, exp: f32 },
-    LifetimeFromSequence { fps: f32 },
-    Radius { min: f32, max: f32, exp: f32 },
-    Alpha { min: f32, max: f32, exp: f32 },
-    Color { c1: Vec3, c2: Vec3, tint: Option<Tint> },
-    Sphere { cp: usize, dmin: f32, dmax: f32, bias: Vec3, abs: Vec3, local_bias: bool, smin: f32, smax: f32, sexp: f32, lmin: Vec3, lmax: Vec3 },
-    Box { cp: usize, min: Vec3, max: Vec3 },
-    Ring { cp: usize, radius: f32, thickness: f32, smin: f32, smax: f32, xy: bool },
-    Offset { cp: usize, min: Vec3, max: Vec3, local: bool, prop: bool },
-    Warp { cp: usize, min: Vec3, max: Vec3 },
-    Velocity { cp: usize, lmin: Vec3, lmax: Vec3, rmin: f32, rmax: f32 },
-    VelocityNoise { cp: usize, min: Vec3, max: Vec3, local: bool },
-    InheritCpVelocity { cp: usize, scale: f32 },
-    Rotation { initial: f32, min: f32, max: f32, flip: bool },
-    RotationSpeed { constant: f32, min: f32, max: f32, flip: bool },
-    YawFlip { pct: f32 },
-    Sequence { min: i32, max: i32 },
-    Trail { min: f32, max: f32, exp: f32 },
-    Scalar { field: Field, min: f32, max: f32, exp: f32 },
-    ColorVector { min: Vec3, max: Vec3 },
-    Between { end: usize, smin: f32, smax: f32, spread: f32 },
-    Path { start: usize, end: usize, sequential: bool, count: f32 },
+    Lifetime {
+        min: f32,
+        max: f32,
+        exp: f32,
+    },
+    LifetimeFromSequence {
+        fps: f32,
+    },
+    Radius {
+        min: f32,
+        max: f32,
+        exp: f32,
+    },
+    Alpha {
+        min: f32,
+        max: f32,
+        exp: f32,
+    },
+    Color {
+        c1: Vec3,
+        c2: Vec3,
+        tint: Option<Tint>,
+    },
+    Sphere {
+        cp: usize,
+        dmin: f32,
+        dmax: f32,
+        bias: Vec3,
+        abs: Vec3,
+        local_bias: bool,
+        smin: f32,
+        smax: f32,
+        sexp: f32,
+        lmin: Vec3,
+        lmax: Vec3,
+    },
+    Box {
+        cp: usize,
+        min: Vec3,
+        max: Vec3,
+    },
+    Ring {
+        cp: usize,
+        radius: f32,
+        thickness: f32,
+        smin: f32,
+        smax: f32,
+        xy: bool,
+    },
+    Offset {
+        cp: usize,
+        min: Vec3,
+        max: Vec3,
+        local: bool,
+        prop: bool,
+    },
+    Warp {
+        cp: usize,
+        min: Vec3,
+        max: Vec3,
+    },
+    Velocity {
+        cp: usize,
+        lmin: Vec3,
+        lmax: Vec3,
+        rmin: f32,
+        rmax: f32,
+    },
+    VelocityNoise {
+        cp: usize,
+        min: Vec3,
+        max: Vec3,
+        local: bool,
+    },
+    InheritCpVelocity {
+        cp: usize,
+        scale: f32,
+    },
+    Rotation {
+        initial: f32,
+        min: f32,
+        max: f32,
+        flip: bool,
+    },
+    RotationSpeed {
+        constant: f32,
+        min: f32,
+        max: f32,
+        flip: bool,
+    },
+    YawFlip {
+        pct: f32,
+    },
+    Sequence {
+        min: i32,
+        max: i32,
+    },
+    Trail {
+        min: f32,
+        max: f32,
+        exp: f32,
+    },
+    Scalar {
+        field: Field,
+        min: f32,
+        max: f32,
+        exp: f32,
+    },
+    ColorVector {
+        min: Vec3,
+        max: Vec3,
+    },
+    Between {
+        end: usize,
+        smin: f32,
+        smax: f32,
+        spread: f32,
+    },
+    Path {
+        start: usize,
+        end: usize,
+        sequential: bool,
+        count: f32,
+    },
     /// Position From Parent Particles: born on a random particle of the parent system, with
     /// its velocity scaled (no parent particles: not born).
-    FromParent { scale: f32 },
+    FromParent {
+        scale: f32,
+    },
     /// Remap Initial Scalar: one field's starting value from another's.
-    Remap { inp: Field, out: Field, imin: f32, imax: f32, omin: f32, omax: f32, scale: bool, active: bool },
+    Remap {
+        inp: Field,
+        out: Field,
+        imin: f32,
+        imax: f32,
+        omin: f32,
+        omax: f32,
+        scale: bool,
+        active: bool,
+    },
     /// Rotation Yaw Random (degrees, as Rotation Random).
-    Yaw { initial: f32, min: f32, max: f32, exp: f32, flip: bool },
+    Yaw {
+        initial: f32,
+        min: f32,
+        max: f32,
+        exp: f32,
+        flip: bool,
+    },
     /// Normal Align to CP: the particle normal is the control point's forward axis.
-    NormalAlign { cp: usize },
+    NormalAlign {
+        cp: usize,
+    },
     /// Inherit Initial Value From Parent Particle: a field from the parent system's particle
     /// with the same index (or a random one), times `scale`.
-    InheritParent { field: Field, scale: f32, random: bool },
+    InheritParent {
+        field: Field,
+        scale: f32,
+        random: bool,
+    },
     /// Remap Particle Count to Scalar: the particle's number (its id) remapped to a field.
-    CountRemap { imin: f32, imax: f32, out: Field, omin: f32, omax: f32, scale: bool, active: bool },
+    CountRemap {
+        imin: f32,
+        imax: f32,
+        out: Field,
+        omin: f32,
+        omax: f32,
+        scale: bool,
+        active: bool,
+    },
     /// Set CP Position: a control point placed at an offset in another's frame (run when the
     /// node's control points are set up each frame, like Set Control Point Positions).
-    SetCp { out: usize, base: usize, pos: Vec3, local: bool },
+    SetCp {
+        out: usize,
+        base: usize,
+        pos: Vec3,
+        local: bool,
+    },
     /// Remap Control Point to Scalar (initializer): a component of a control point's value.
-    CpToScalar { cp: usize, comp: usize, imin: f32, imax: f32, out: Field, omin: f32, omax: f32, scale: bool },
+    CpToScalar {
+        cp: usize,
+        comp: usize,
+        imin: f32,
+        imax: f32,
+        out: Field,
+        omin: f32,
+        omax: f32,
+        scale: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
 enum Oper {
-    Move { gravity: Vec3, drag: f32 },
+    Move {
+        gravity: Vec3,
+        drag: f32,
+    },
     Decay,
-    RadiusScale { st: f32, et: f32, ss: f32, es: f32, bias: f32 },
-    FadeAndDecay { sa: f32, ea: f32, sfi: f32, efi: f32, sfo: f32, efo: f32 },
-    FadeOutRandom { min: f32, max: f32, prop: bool },
-    FadeInRandom { min: f32, max: f32, prop: bool },
-    FadeOutSimple { t: f32 },
-    FadeInSimple { t: f32 },
-    ColorFade { to: Vec3, st: f32, et: f32 },
+    RadiusScale {
+        st: f32,
+        et: f32,
+        ss: f32,
+        es: f32,
+        bias: f32,
+    },
+    FadeAndDecay {
+        sa: f32,
+        ea: f32,
+        sfi: f32,
+        efi: f32,
+        sfo: f32,
+        efo: f32,
+    },
+    FadeOutRandom {
+        min: f32,
+        max: f32,
+        prop: bool,
+    },
+    FadeInRandom {
+        min: f32,
+        max: f32,
+        prop: bool,
+    },
+    FadeOutSimple {
+        t: f32,
+    },
+    FadeInSimple {
+        t: f32,
+    },
+    ColorFade {
+        to: Vec3,
+        st: f32,
+        et: f32,
+    },
     /// Rotation Spin Roll: `spin_rate_degrees`, easing to `spin_rate_min` over `spin_stop_time`
     /// seconds of the particle's life (0: no easing).
-    SpinRoll { rate: f32, min: f32, stop: f32 },
+    SpinRoll {
+        rate: f32,
+        min: f32,
+        stop: f32,
+    },
     /// Oscillate Vector on the colour (the default field, 6): like Oscillate Scalar per channel.
-    OscillateColor { rate: (Vec3, Vec3), freq: (Vec3, Vec3), mult: f32, phase: f32 },
+    OscillateColor {
+        rate: (Vec3, Vec3),
+        freq: (Vec3, Vec3),
+        mult: f32,
+        phase: f32,
+    },
     /// Restart Effect after Duration: re-runs the node's emitters every min..max seconds.
-    Restart { min: f32, max: f32, kill: bool },
+    Restart {
+        min: f32,
+        max: f32,
+        kill: bool,
+    },
     /// Roll each particle to point away from a control point, plus an offset (Source's
     /// C_OP_Orient2DRelToCP; Source measures in world XY, this in the point's own XY plane,
     /// which is where the cockpit screen effects ring their particles).
-    OrientToCp { cp: usize, offset: f32, strength: f32 },
+    OrientToCp {
+        cp: usize,
+        offset: f32,
+        strength: f32,
+    },
     /// Remap Scalar: a field from another (creation time reads as the particle's age).
-    Remap { inp: Field, out: Field, imin: f32, imax: f32, omin: f32, omax: f32, scale: bool, abs: bool },
+    Remap {
+        inp: Field,
+        out: Field,
+        imin: f32,
+        imax: f32,
+        omin: f32,
+        omax: f32,
+        scale: bool,
+        abs: bool,
+    },
     /// Oscillate Scalar: a field swings by a per-particle rate and frequency. Source integrates
     /// `rate * cos` each frame; fields reset to their base here, so the closed form is used.
-    Oscillate { field: Field, rate: (f32, f32), freq: (f32, f32), st: (f32, f32), et: (f32, f32), prop: bool, mult: f32, phase: f32 },
+    Oscillate {
+        field: Field,
+        rate: (f32, f32),
+        freq: (f32, f32),
+        st: (f32, f32),
+        et: (f32, f32),
+        prop: bool,
+        mult: f32,
+        phase: f32,
+    },
     /// Remap Distance to Control Point to Scalar.
-    DistToCp { cp: usize, out: Field, dmin: f32, dmax: f32, omin: f32, omax: f32, active: bool, scale_init: bool, scale_cur: bool },
+    DistToCp {
+        cp: usize,
+        out: Field,
+        dmin: f32,
+        dmax: f32,
+        omin: f32,
+        omax: f32,
+        active: bool,
+        scale_init: bool,
+        scale_cur: bool,
+    },
     /// Remap Distance Between Two Control Points to Scalar (the same value for every particle).
-    DistBetweenCps { a: usize, b: usize, out: Field, dmin: f32, dmax: f32, omin: f32, omax: f32, scale_init: bool, scale_cur: bool },
+    DistBetweenCps {
+        a: usize,
+        b: usize,
+        out: Field,
+        dmin: f32,
+        dmax: f32,
+        omin: f32,
+        omax: f32,
+        scale_init: bool,
+        scale_cur: bool,
+    },
     /// Ramp Scalar Linear Simple: a field grows at a rate between two times (closed form).
-    Ramp { field: Field, rate: f32, st: f32, et: f32 },
-    Graph { field: Field, pts: Vec<[f32; 2]>, omin: f32, omax: f32, mul: bool, add: bool, lifespans: bool, time: f32, looped: bool },
-    LerpInitial { field: Field, to: f32, st: f32, et: f32 },
-    LockToCp { cp: usize },
-    MaxVelocity { max: f32 },
-    SetCps { base: usize, sets: Vec<(usize, Vec3)>, world: bool },
+    Ramp {
+        field: Field,
+        rate: f32,
+        st: f32,
+        et: f32,
+    },
+    Graph {
+        field: Field,
+        pts: Vec<[f32; 2]>,
+        omin: f32,
+        omax: f32,
+        mul: bool,
+        add: bool,
+        lifespans: bool,
+        time: f32,
+        looped: bool,
+    },
+    LerpInitial {
+        field: Field,
+        to: f32,
+        st: f32,
+        et: f32,
+    },
+    LockToCp {
+        cp: usize,
+    },
+    MaxVelocity {
+        max: f32,
+    },
+    SetCps {
+        base: usize,
+        sets: Vec<(usize, Vec3)>,
+        world: bool,
+    },
     /// Set Control Point To Player: the control point follows the camera (view origin).
-    CpToPlayer { cp: usize },
+    CpToPlayer {
+        cp: usize,
+    },
     /// Rotation Spin Yaw: as Rotation Spin Roll, on the yaw.
-    SpinYaw { rate: f32, min: f32, stop: f32 },
+    SpinYaw {
+        rate: f32,
+        min: f32,
+        stop: f32,
+    },
     /// Normal Lock to Control Point: the normal turns with the control point.
-    NormalLock { cp: usize },
+    NormalLock {
+        cp: usize,
+    },
     /// Remap Velocity to Vector into the normal (field 21): the normal follows the motion.
     VelToNormal,
     /// Rotation about 3D Axis (model particles): spin about a model-space axis, optionally
     /// easing to `end_rate` over `decay` lifetimes. ("enable modulate by roll speed attribute"
     /// is not applied: what it scales by is unknown.)
-    Axis3D { axis: Vec3, rate: f32, decays: bool, end_rate: f32, decay: f32 },
+    Axis3D {
+        axis: Vec3,
+        rate: f32,
+        decays: bool,
+        end_rate: f32,
+        decay: f32,
+    },
     /// Movement Rotate Particle Around Axis: positions (and velocities) orbit a control point.
-    Orbit { cp: usize, axis: Vec3, rate: f32, local: bool },
+    Orbit {
+        cp: usize,
+        axis: Vec3,
+        rate: f32,
+        local: bool,
+    },
     /// Ramp Scalar Linear Random: Ramp Scalar Linear Simple with per-particle random rates and
     /// times (proportional to the lifetime or in seconds).
-    RampRandom { field: Field, rate: (f32, f32), st: (f32, f32), et: (f32, f32), prop: bool },
+    RampRandom {
+        field: Field,
+        rate: (f32, f32),
+        st: (f32, f32),
+        et: (f32, f32),
+        prop: bool,
+    },
     /// Lerp EndCap Scalar: once the effect is stopped, a field eases to a value over `time`.
-    LerpEndCap { field: Field, to: f32, time: f32 },
+    LerpEndCap {
+        field: Field,
+        to: f32,
+        time: f32,
+    },
     /// Stop Effect after Duration: the node stops emitting (and optionally clears) after it.
     /// `scale_cp`: "Control Point to Scale Duration", whose X multiplies the duration (the
     /// Electric Smoke's arcs run for the lifetime its script puts on control point 1).
-    StopAfter { duration: f32, kill: bool, scale_cp: Option<usize> },
+    StopAfter {
+        duration: f32,
+        kill: bool,
+        scale_cp: Option<usize>,
+    },
     /// Remap Percentage Between Two Control Points to Scalar: where a particle lies along the
     /// line from one point to the other.
-    PctBetweenCps { a: usize, b: usize, out: Field, pmin: f32, pmax: f32, omin: f32, omax: f32, active: bool, scale_init: bool, scale_cur: bool },
+    PctBetweenCps {
+        a: usize,
+        b: usize,
+        out: Field,
+        pmin: f32,
+        pmax: f32,
+        omin: f32,
+        omax: f32,
+        active: bool,
+        scale_init: bool,
+        scale_cur: bool,
+    },
     /// Set (child) control points from particle positions: control points follow particles.
-    CpsFromParticles { first: usize, count: usize, skip: usize, orient: bool },
+    CpsFromParticles {
+        first: usize,
+        count: usize,
+        skip: usize,
+        orient: bool,
+    },
     /// Inherit Attribute From Parent Particle: a field follows the parent's particle.
-    InheritAttr { field: Field, scale: f32 },
+    InheritAttr {
+        field: Field,
+        scale: f32,
+    },
     /// Movement Maintain Position Along Path: particles held on the line between two points
     /// (bulge and cohesion are not applied).
-    KeepOnPath { start: usize, end: usize, count: f32 },
+    KeepOnPath {
+        start: usize,
+        end: usize,
+        count: f32,
+    },
     /// Remap Control Point to Vector into the colour (only for control points that were set).
-    CpToColor { cp: usize, imin: Vec3, imax: Vec3, omin: Vec3, omax: Vec3, scale: bool },
+    CpToColor {
+        cp: usize,
+        imin: Vec3,
+        imax: Vec3,
+        omin: Vec3,
+        omax: Vec3,
+        scale: bool,
+    },
     /// Remap Control Point to Scalar (only for control points that were set).
-    CpToScalar { cp: usize, comp: usize, imin: f32, imax: f32, out: Field, omin: f32, omax: f32, scale_init: bool, scale_cur: bool },
+    CpToScalar {
+        cp: usize,
+        comp: usize,
+        imin: f32,
+        imax: f32,
+        out: Field,
+        omin: f32,
+        omax: f32,
+        scale_init: bool,
+        scale_cur: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
 enum Force {
-    Pull { cp: usize, amount: f32, falloff: f32 },
-    Random { min: Vec3, max: Vec3 },
-    Turbulent { amount: f32 },
-    Twist { cp: usize, amount: f32, axis: Vec3, local: bool },
+    Pull {
+        cp: usize,
+        amount: f32,
+        falloff: f32,
+    },
+    Random {
+        min: Vec3,
+        max: Vec3,
+    },
+    Turbulent {
+        amount: f32,
+    },
+    Twist {
+        cp: usize,
+        amount: f32,
+        axis: Vec3,
+        local: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
 enum Constraint {
-    Collide { bounce: f32, slide: f32, kill_speed: f32 },
-    Distance { cp: usize, min: f32, max: f32 },
+    Collide {
+        bounce: f32,
+        slide: f32,
+        kill_speed: f32,
+    },
+    Distance {
+        cp: usize,
+        min: f32,
+        max: f32,
+    },
 }
 
 #[derive(Clone, Debug)]
 enum Render {
-    Sprites { rate: f32, fit: bool, orient: i32 },
-    Trail { rate: f32, min: f32, max: f32, fade_in: f32, tail: [f32; 4] },
+    Sprites {
+        rate: f32,
+        fit: bool,
+        orient: i32,
+    },
+    Trail {
+        rate: f32,
+        min: f32,
+        max: f32,
+        fade_in: f32,
+        tail: [f32; 4],
+    },
     Rope,
-    Light { scale: f32, radius: f32, by_alpha: bool },
+    Light {
+        scale: f32,
+        radius: f32,
+        by_alpha: bool,
+    },
     /// Render models: each particle draws a model (game shields, bullets, debris), scaled by
     /// its radius, oriented by the control point (or its Z to the normal) plus model-space
     /// pitch/yaw/roll.
-    Models { model: String, pitch: f32, yaw: f32, roll: f32, orient_normal: bool },
+    Models {
+        model: String,
+        pitch: f32,
+        yaw: f32,
+        roll: f32,
+        orient_normal: bool,
+    },
     /// Emit Decal: a bullet hole (one of the materials, chosen at random) on the surface at
     /// control point 0, whose up is the surface normal for impacts.
-    Decal { materials: Vec<String> },
+    Decal {
+        materials: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1087,11 +1731,29 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
     let mut emit = Vec::new();
     for o in &def.emitters {
         match o.function.as_str() {
-            "emit_instantaneously" => emit.push(Emit::Instant { count: o.i("num_to_emit", 100).max(0) as u32, min: o.i("num_to_emit_minimum", -1).max(-1) as u32, start: o.f("emission_start_time", 0.0) }),
-            "emit_continuously" => emit.push(Emit::Continuous { rate: o.f("emission_rate", 100.0), duration: o.f("emission_duration", 0.0), start: o.f("emission_start_time", 0.0) }),
-            "emit noise" => emit.push(Emit::Continuous { rate: (o.f("emission minimum", 0.0) + o.f("emission maximum", 100.0)) * 0.5, duration: o.f("emission_duration", 0.0), start: o.f("emission_start_time", 0.0) }),
-            "emit over distance" => emit.push(Emit::Distance { spacing: o.f("distance between emissions", 100.0).max(1.0) }),
-            "emit_instantaneously by distance" => emit.push(Emit::Instant { count: o.i("minimum count", 1).max(1) as u32, min: u32::MAX, start: o.f("emission_start_time", 0.0) }),
+            "emit_instantaneously" => emit.push(Emit::Instant {
+                count: o.i("num_to_emit", 100).max(0) as u32,
+                min: o.i("num_to_emit_minimum", -1).max(-1) as u32,
+                start: o.f("emission_start_time", 0.0),
+            }),
+            "emit_continuously" => emit.push(Emit::Continuous {
+                rate: o.f("emission_rate", 100.0),
+                duration: o.f("emission_duration", 0.0),
+                start: o.f("emission_start_time", 0.0),
+            }),
+            "emit noise" => emit.push(Emit::Continuous {
+                rate: (o.f("emission minimum", 0.0) + o.f("emission maximum", 100.0)) * 0.5,
+                duration: o.f("emission_duration", 0.0),
+                start: o.f("emission_start_time", 0.0),
+            }),
+            "emit over distance" => emit.push(Emit::Distance {
+                spacing: o.f("distance between emissions", 100.0).max(1.0),
+            }),
+            "emit_instantaneously by distance" => emit.push(Emit::Instant {
+                count: o.i("minimum count", 1).max(1) as u32,
+                min: u32::MAX,
+                start: o.f("emission_start_time", 0.0),
+            }),
             _ => {}
         }
     }
@@ -1099,15 +1761,32 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
     let mut init_cap = Vec::new();
     for o in &def.initializers {
         let i = match o.function.as_str() {
-            "Lifetime Random" => Init::Lifetime { min: o.f("lifetime_min", 0.0), max: o.f("lifetime_max", 0.0), exp: o.f("lifetime_random_exponent", 1.0) },
-            "Lifetime From Sequence" | "lifetime from sequence" => Init::LifetimeFromSequence { fps: o.f("Frames Per Second", 30.0) },
-            "Radius Random" => Init::Radius { min: o.f("radius_min", 1.0), max: o.f("radius_max", 1.0), exp: o.f("radius_random_exponent", 1.0) },
-            "Alpha Random" => Init::Alpha { min: o.f("alpha_min", 255.0) / 255.0, max: o.f("alpha_max", 255.0) / 255.0, exp: o.f("alpha_random_exponent", 1.0) },
+            "Lifetime Random" => Init::Lifetime {
+                min: o.f("lifetime_min", 0.0),
+                max: o.f("lifetime_max", 0.0),
+                exp: o.f("lifetime_random_exponent", 1.0),
+            },
+            "Lifetime From Sequence" | "lifetime from sequence" => Init::LifetimeFromSequence {
+                fps: o.f("Frames Per Second", 30.0),
+            },
+            "Radius Random" => Init::Radius {
+                min: o.f("radius_min", 1.0),
+                max: o.f("radius_max", 1.0),
+                exp: o.f("radius_random_exponent", 1.0),
+            },
+            "Alpha Random" => Init::Alpha {
+                min: o.f("alpha_min", 255.0) / 255.0,
+                max: o.f("alpha_max", 255.0) / 255.0,
+                exp: o.f("alpha_random_exponent", 1.0),
+            },
             // `Color Lit Per Particle` (lit per particle, mostly campaign ambience) keeps its plain colours.
             "Color Random" | "Color Lit Per Particle" => Init::Color {
                 c1: col(o.color("color1", [255; 4])),
                 c2: col(o.color("color2", [255; 4])),
-                tint: (o.function == "Color Random" && o.f("tint_perc", 0.0) != 0.0 && std::env::var_os("TF_PFX_NO_TINT").is_none()).then(|| Tint {
+                tint: (o.function == "Color Random"
+                    && o.f("tint_perc", 0.0) != 0.0
+                    && std::env::var_os("TF_PFX_NO_TINT").is_none())
+                .then(|| Tint {
                     perc: o.f("tint_perc", 0.0),
                     cp: cpn(o, "tint control point"),
                     threshold: o.f("tint update movement threshold", 32.0),
@@ -1129,7 +1808,11 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 lmin: v3(o.v3("speed_in_local_coordinate_system_min", [0.0; 3])),
                 lmax: v3(o.v3("speed_in_local_coordinate_system_max", [0.0; 3])),
             },
-            "Position Within Box Random" => Init::Box { cp: cpn(o, "control point number"), min: v3(o.v3("min", [0.0; 3])), max: v3(o.v3("max", [0.0; 3])) },
+            "Position Within Box Random" => Init::Box {
+                cp: cpn(o, "control point number"),
+                min: v3(o.v3("min", [0.0; 3])),
+                max: v3(o.v3("max", [0.0; 3])),
+            },
             "Position Along Ring" => Init::Ring {
                 cp: cpn(o, "control point number"),
                 radius: o.f("initial radius", 0.0),
@@ -1145,7 +1828,11 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 local: o.b("offset in local space 0/1", false),
                 prop: o.b("offset proportional to radius 0/1", false),
             },
-            "Position Modify Warp Random" => Init::Warp { cp: cpn(o, "control point number"), min: v3(o.v3("warp min", [1.0; 3])), max: v3(o.v3("warp max", [1.0; 3])) },
+            "Position Modify Warp Random" => Init::Warp {
+                cp: cpn(o, "control point number"),
+                min: v3(o.v3("warp min", [1.0; 3])),
+                max: v3(o.v3("warp max", [1.0; 3])),
+            },
             "Velocity Random" => Init::Velocity {
                 cp: cpn(o, "control_point_number"),
                 lmin: v3(o.v3("speed_in_local_coordinate_system_min", [0.0; 3])),
@@ -1159,8 +1846,13 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 max: v3(o.v3("output maximum", [1.0; 3])),
                 local: o.b("Apply Velocity in Local Space (0/1)", false),
             },
-            "Velocity Inherit from Control Point" => Init::InheritCpVelocity { cp: cpn(o, "control point number"), scale: o.f("velocity scale", 1.0) },
-            "Position From Parent Particles" => Init::FromParent { scale: o.f("Inherited Velocity Scale", 0.0) },
+            "Velocity Inherit from Control Point" => Init::InheritCpVelocity {
+                cp: cpn(o, "control point number"),
+                scale: o.f("velocity scale", 1.0),
+            },
+            "Position From Parent Particles" => Init::FromParent {
+                scale: o.f("Inherited Velocity Scale", 0.0),
+            },
             "Remap Initial Scalar" | "remap initial scalar" => Init::Remap {
                 inp: field(o.i("input field", 8)),
                 out: field(o.i("output field", 3)),
@@ -1183,13 +1875,36 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 max: o.f("rotation_speed_random_max", 360.0),
                 flip: o.b("randomly_flip_direction", true),
             },
-            "Rotation Yaw Flip Random" => Init::YawFlip { pct: o.f("Flip Percentage", 0.5) },
-            "Sequence Random" => Init::Sequence { min: o.i("sequence_min", 0), max: o.i("sequence_max", 0) },
-            "Trail Length Random" => Init::Trail { min: o.f("length_min", 0.1), max: o.f("length_max", 0.1), exp: o.f("length_random_exponent", 1.0) },
-            "Scalar Random" => Init::Scalar { field: field(o.i("output field", 3)), min: o.f("min", 0.0), max: o.f("max", 1.0), exp: o.f("exponent", 1.0) },
-            "Remap Noise to Scalar" => Init::Scalar { field: field(o.i("output field", 3)), min: o.f("output minimum", 0.0), max: o.f("output maximum", 1.0), exp: 1.0 },
-            "Vector Random" if o.i("output field", 6) == 6 => Init::ColorVector { min: v3(o.v3("min", [0.0; 3])), max: v3(o.v3("max", [1.0; 3])) },
-            "move particles between 2 control points" | "Move Particles Between 2 Control Points" => Init::Between {
+            "Rotation Yaw Flip Random" => Init::YawFlip {
+                pct: o.f("Flip Percentage", 0.5),
+            },
+            "Sequence Random" => Init::Sequence {
+                min: o.i("sequence_min", 0),
+                max: o.i("sequence_max", 0),
+            },
+            "Trail Length Random" => Init::Trail {
+                min: o.f("length_min", 0.1),
+                max: o.f("length_max", 0.1),
+                exp: o.f("length_random_exponent", 1.0),
+            },
+            "Scalar Random" => Init::Scalar {
+                field: field(o.i("output field", 3)),
+                min: o.f("min", 0.0),
+                max: o.f("max", 1.0),
+                exp: o.f("exponent", 1.0),
+            },
+            "Remap Noise to Scalar" => Init::Scalar {
+                field: field(o.i("output field", 3)),
+                min: o.f("output minimum", 0.0),
+                max: o.f("output maximum", 1.0),
+                exp: 1.0,
+            },
+            "Vector Random" if o.i("output field", 6) == 6 => Init::ColorVector {
+                min: v3(o.v3("min", [0.0; 3])),
+                max: v3(o.v3("max", [1.0; 3])),
+            },
+            "move particles between 2 control points"
+            | "Move Particles Between 2 Control Points" => Init::Between {
                 end: cpn(o, "end control point").max(1),
                 smin: o.f("minimum speed", 1.0),
                 smax: o.f("maximum speed", 1.0),
@@ -1209,8 +1924,14 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 exp: o.f("yaw_random_exponent", 1.0),
                 flip: o.b("randomly_flip_direction", false),
             },
-            "Normal Align to CP" => Init::NormalAlign { cp: cpn(o, "control_point_number") },
-            "Inherit Initial Value From Parent Particle" => Init::InheritParent { field: field(o.i("Inherited Field", 3)), scale: o.f("Scale", 1.0), random: o.b("Random Parent Particle Distribution", false) },
+            "Normal Align to CP" => Init::NormalAlign {
+                cp: cpn(o, "control_point_number"),
+            },
+            "Inherit Initial Value From Parent Particle" => Init::InheritParent {
+                field: field(o.i("Inherited Field", 3)),
+                scale: o.f("Scale", 1.0),
+                random: o.b("Random Parent Particle Distribution", false),
+            },
             "Remap Particle Count to Scalar" => Init::CountRemap {
                 imin: o.f("input minimum", 0.0),
                 imax: o.f("input maximum", 10.0),
@@ -1246,7 +1967,10 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
     let mut decays = false;
     for o in &def.operators {
         let op = match o.function.as_str() {
-            "Movement Basic" => Oper::Move { gravity: v3(o.v3("gravity", [0.0; 3])), drag: o.f("drag", 0.0) },
+            "Movement Basic" => Oper::Move {
+                gravity: v3(o.v3("gravity", [0.0; 3])),
+                drag: o.f("drag", 0.0),
+            },
             "Lifespan Decay" => {
                 decays = true;
                 Oper::Decay
@@ -1269,19 +1993,49 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                     efo: o.f("end_fade_out_time", 1.0),
                 }
             }
-            "Alpha Fade Out Random" => Oper::FadeOutRandom { min: o.f("fade out time min", 0.25), max: o.f("fade out time max", 0.25), prop: o.b("proportional 0/1", true) },
-            "Alpha Fade In Random" => Oper::FadeInRandom { min: o.f("fade in time min", 0.25), max: o.f("fade in time max", 0.25), prop: o.b("proportional 0/1", true) },
-            "Alpha Fade Out Simple" => Oper::FadeOutSimple { t: o.f("proportional fade out time", 0.25) },
-            "Alpha Fade In Simple" => Oper::FadeInSimple { t: o.f("proportional fade in time", 0.25) },
-            "Color Fade" => Oper::ColorFade { to: col(o.color("color_fade", [255; 4])), st: o.f("fade_start_time", 0.0), et: o.f("fade_end_time", 1.0) },
-            "Rotation Spin Roll" => Oper::SpinRoll { rate: o.f("spin_rate_degrees", 0.0).to_radians(), min: o.f("spin_rate_min", 0.0).to_radians(), stop: o.f("spin_stop_time", 0.0) },
+            "Alpha Fade Out Random" => Oper::FadeOutRandom {
+                min: o.f("fade out time min", 0.25),
+                max: o.f("fade out time max", 0.25),
+                prop: o.b("proportional 0/1", true),
+            },
+            "Alpha Fade In Random" => Oper::FadeInRandom {
+                min: o.f("fade in time min", 0.25),
+                max: o.f("fade in time max", 0.25),
+                prop: o.b("proportional 0/1", true),
+            },
+            "Alpha Fade Out Simple" => Oper::FadeOutSimple {
+                t: o.f("proportional fade out time", 0.25),
+            },
+            "Alpha Fade In Simple" => Oper::FadeInSimple {
+                t: o.f("proportional fade in time", 0.25),
+            },
+            "Color Fade" => Oper::ColorFade {
+                to: col(o.color("color_fade", [255; 4])),
+                st: o.f("fade_start_time", 0.0),
+                et: o.f("fade_end_time", 1.0),
+            },
+            "Rotation Spin Roll" => Oper::SpinRoll {
+                rate: o.f("spin_rate_degrees", 0.0).to_radians(),
+                min: o.f("spin_rate_min", 0.0).to_radians(),
+                stop: o.f("spin_stop_time", 0.0),
+            },
             "Oscillate Vector" if o.i("oscillation field", 6) == 6 => Oper::OscillateColor {
-                rate: (v3(o.v3("oscillation rate min", [0.0; 3])), v3(o.v3("oscillation rate max", [0.0; 3]))),
-                freq: (v3(o.v3("oscillation frequency min", [1.0; 3])), v3(o.v3("oscillation frequency max", [1.0; 3]))),
+                rate: (
+                    v3(o.v3("oscillation rate min", [0.0; 3])),
+                    v3(o.v3("oscillation rate max", [0.0; 3])),
+                ),
+                freq: (
+                    v3(o.v3("oscillation frequency min", [1.0; 3])),
+                    v3(o.v3("oscillation frequency max", [1.0; 3])),
+                ),
                 mult: o.f("oscillation multiplier", 2.0),
                 phase: o.f("oscillation start phase", 0.5),
             },
-            "Restart Effect after Duration" => Oper::Restart { min: o.f("Minimum Restart Time", 0.0), max: o.f("Maximum Restart Time", 1.0), kill: o.b("Kill particles on restart", false) },
+            "Restart Effect after Duration" => Oper::Restart {
+                min: o.f("Minimum Restart Time", 0.0),
+                max: o.f("Maximum Restart Time", 1.0),
+                kill: o.b("Kill particles on restart", false),
+            },
             "Remap Scalar" => Oper::Remap {
                 inp: field(o.i("input field", 8)),
                 out: field(o.i("output field", 3)),
@@ -1294,8 +2048,14 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
             },
             "Oscillate Scalar" => Oper::Oscillate {
                 field: field(o.i("oscillation field", 7)),
-                rate: (o.f("oscillation rate min", 0.0), o.f("oscillation rate max", 0.0)),
-                freq: (o.f("oscillation frequency min", 1.0), o.f("oscillation frequency max", 1.0)),
+                rate: (
+                    o.f("oscillation rate min", 0.0),
+                    o.f("oscillation rate max", 0.0),
+                ),
+                freq: (
+                    o.f("oscillation frequency min", 1.0),
+                    o.f("oscillation frequency max", 1.0),
+                ),
                 st: (o.f("start time min", 0.0), o.f("start time max", 0.0)),
                 et: (o.f("end time min", 1.0), o.f("end time max", 1.0)),
                 prop: o.b("proportional 0/1", true),
@@ -1324,8 +2084,17 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 scale_init: o.b("output is scalar of initial random range", false),
                 scale_cur: o.b("output is scalar of current value", false),
             },
-            "Ramp Scalar Linear Simple" => Oper::Ramp { field: field(o.i("ramp field", 3)), rate: o.f("ramp rate", 0.0), st: o.f("start time", 0.0), et: o.f("end time", 1.0e9) },
-            "Rotation Orient Relative to CP" => Oper::OrientToCp { cp: cpn(o, "Control Point"), offset: o.f("Rotation Offset", 0.0).to_radians(), strength: o.f("Spin Strength", 1.0) },
+            "Ramp Scalar Linear Simple" => Oper::Ramp {
+                field: field(o.i("ramp field", 3)),
+                rate: o.f("ramp rate", 0.0),
+                st: o.f("start time", 0.0),
+                et: o.f("end time", 1.0e9),
+            },
+            "Rotation Orient Relative to CP" => Oper::OrientToCp {
+                cp: cpn(o, "Control Point"),
+                offset: o.f("Rotation Offset", 0.0).to_radians(),
+                strength: o.f("Spin Strength", 1.0),
+            },
             "Graph Scalar" => Oper::Graph {
                 field: field(o.i("output field", 3)),
                 pts: o.points("graph"),
@@ -1343,33 +2112,73 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 time: o.f("graph time", 1.0).max(1e-3),
                 looped: o.b("graph loop", false),
             },
-            "Lerp Initial Scalar" => Oper::LerpInitial { field: field(o.i("output field", 3)), to: o.f("value to lerp to", 1.0), st: o.f("start time", 0.0), et: o.f("end time", 1.0) },
-            "Movement Lock to Control Point" => Oper::LockToCp { cp: cpn(o, "control_point_number") },
-            "Movement Max Velocity" => Oper::MaxVelocity { max: o.f("Maximum Velocity", 0.0) },
+            "Lerp Initial Scalar" => Oper::LerpInitial {
+                field: field(o.i("output field", 3)),
+                to: o.f("value to lerp to", 1.0),
+                st: o.f("start time", 0.0),
+                et: o.f("end time", 1.0),
+            },
+            "Movement Lock to Control Point" => Oper::LockToCp {
+                cp: cpn(o, "control_point_number"),
+            },
+            "Movement Max Velocity" => Oper::MaxVelocity {
+                max: o.f("Maximum Velocity", 0.0),
+            },
             // Source's default for this one is control point 1 (the heat shield's refraction
             // child fades by the distance between CP 1 = the player and the shield).
-            "Set Control Point To Player" => Oper::CpToPlayer { cp: o.i("Control Point Number", 1).clamp(0, NCP as i32 - 1) as usize },
+            "Set Control Point To Player" => Oper::CpToPlayer {
+                cp: o.i("Control Point Number", 1).clamp(0, NCP as i32 - 1) as usize,
+            },
             "Set Control Point Positions" => {
                 let mut sets = Vec::new();
                 for (num, loc, d) in [
-                    ("First Control Point Number", "First Control Point Location", 1),
-                    ("Second Control Point Number", "Second Control Point Location", 2),
-                    ("Third Control Point Number", "Third Control Point Location", 3),
-                    ("Fourth Control Point Number", "Fourth Control Point Location", 4),
+                    (
+                        "First Control Point Number",
+                        "First Control Point Location",
+                        1,
+                    ),
+                    (
+                        "Second Control Point Number",
+                        "Second Control Point Location",
+                        2,
+                    ),
+                    (
+                        "Third Control Point Number",
+                        "Third Control Point Location",
+                        3,
+                    ),
+                    (
+                        "Fourth Control Point Number",
+                        "Fourth Control Point Location",
+                        4,
+                    ),
                 ] {
                     let n = o.i(num, d).clamp(0, NCP as i32 - 1) as usize;
                     sets.push((n, v3(o.v3(loc, [128.0 * d as f32, 0.0, 0.0]))));
                 }
-                Oper::SetCps { base: cpn(o, "Control Point to offset positions from"), sets, world: o.b("Set positions in world space", false) }
+                Oper::SetCps {
+                    base: cpn(o, "Control Point to offset positions from"),
+                    sets,
+                    world: o.b("Set positions in world space", false),
+                }
             }
-            "Rotation Spin Yaw" => Oper::SpinYaw { rate: o.f("yaw_rate_degrees", 0.0).to_radians(), min: o.f("yaw_rate_min", 0.0).to_radians(), stop: o.f("yaw_stop_time", 0.0) },
-            "Normal Lock to Control Point" => Oper::NormalLock { cp: cpn(o, "control_point_number") },
+            "Rotation Spin Yaw" => Oper::SpinYaw {
+                rate: o.f("yaw_rate_degrees", 0.0).to_radians(),
+                min: o.f("yaw_rate_min", 0.0).to_radians(),
+                stop: o.f("yaw_stop_time", 0.0),
+            },
+            "Normal Lock to Control Point" => Oper::NormalLock {
+                cp: cpn(o, "control_point_number"),
+            },
             "Remap Velocity to Vector" if o.i("output field", 0) == 21 => Oper::VelToNormal,
             // Respawn's operator. Never-written values are taken as its defaults: the Z axis
             // (no system names it) and 360 degrees/s (a guess; 0 is written out 21 times).
             "Rotation about 3D Axis" => Oper::Axis3D {
-                axis: v3(o.v3("model-space axis of rotation", [0.0, 0.0, 1.0])).normalize_or(Vec3::Z),
-                rate: o.f("starting spin rate in degrees per second", 360.0).to_radians(),
+                axis: v3(o.v3("model-space axis of rotation", [0.0, 0.0, 1.0]))
+                    .normalize_or(Vec3::Z),
+                rate: o
+                    .f("starting spin rate in degrees per second", 360.0)
+                    .to_radians(),
                 decays: o.b("enable decay over time", false),
                 end_rate: o.f("fully decayed spin rate", 0.0).to_radians(),
                 decay: o.f("decay time in lifetimes", 1.0).max(1e-3),
@@ -1387,11 +2196,17 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 et: (o.f("end time min", 1.0), o.f("end time max", 1.0)),
                 prop: o.b("start/end proportional", true),
             },
-            "Lerp EndCap Scalar" => Oper::LerpEndCap { field: field(o.i("output field", 3)), to: o.f("value to lerp to", 1.0), time: o.f("lerp time", 1.0).max(1e-3) },
+            "Lerp EndCap Scalar" => Oper::LerpEndCap {
+                field: field(o.i("output field", 3)),
+                to: o.f("value to lerp to", 1.0),
+                time: o.f("lerp time", 1.0).max(1e-3),
+            },
             "Stop Effect after Duration" => Oper::StopAfter {
                 duration: o.f("Duration at which to Stop", 1.0),
                 kill: o.b("Destroy All Particles Immediately", false),
-                scale_cp: usize::try_from(o.i("Control Point to Scale Duration", -1)).ok().filter(|&c| c < NCP),
+                scale_cp: usize::try_from(o.i("Control Point to Scale Duration", -1))
+                    .ok()
+                    .filter(|&c| c < NCP),
             },
             "Remap Percentage Between Two Control Points to Scalar" => Oper::PctBetweenCps {
                 a: cpn(o, "starting control point"),
@@ -1405,13 +2220,18 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 scale_init: o.b("output is scalar of initial random range", false),
                 scale_cur: o.b("output is scalar of current value", false),
             },
-            "Set child control points from particle positions" | "Set control points from particle positions" | "Set per child control point from particle positions" => Oper::CpsFromParticles {
+            "Set child control points from particle positions"
+            | "Set control points from particle positions"
+            | "Set per child control point from particle positions" => Oper::CpsFromParticles {
                 first: cpn(o, "First control point to set"),
                 count: o.i("# of control points to set", 1).clamp(1, NCP as i32) as usize,
                 skip: o.i("first particle to copy", 0).max(0) as usize,
                 orient: o.b("set orientation", false),
             },
-            "Inherit Attribute From Parent Particle" => Oper::InheritAttr { field: field(o.i("Inherited Field", 3)), scale: o.f("Scale", 1.0) },
+            "Inherit Attribute From Parent Particle" => Oper::InheritAttr {
+                field: field(o.i("Inherited Field", 3)),
+                scale: o.f("Scale", 1.0),
+            },
             "Movement Maintain Position Along Path" => Oper::KeepOnPath {
                 start: cpn(o, "start control point number"),
                 end: cpn(o, "end control point number"),
@@ -1439,8 +2259,20 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
             // Source integrates against the system's clock; the per-particle closed form of
             // Oscillate Scalar is used here.
             "Oscillate Scalar Simple" => {
-                let (rate, freq) = (o.f("oscillation rate", 0.0), o.f("oscillation frequency", 1.0));
-                Oper::Oscillate { field: field(o.i("oscillation field", 7)), rate: (rate, rate), freq: (freq, freq), st: (0.0, 0.0), et: (1.0e9, 1.0e9), prop: false, mult: o.f("oscillation multiplier", 2.0), phase: o.f("oscillation start phase", 0.5) }
+                let (rate, freq) = (
+                    o.f("oscillation rate", 0.0),
+                    o.f("oscillation frequency", 1.0),
+                );
+                Oper::Oscillate {
+                    field: field(o.i("oscillation field", 7)),
+                    rate: (rate, rate),
+                    freq: (freq, freq),
+                    st: (0.0, 0.0),
+                    et: (1.0e9, 1.0e9),
+                    prop: false,
+                    mult: o.f("oscillation multiplier", 2.0),
+                    phase: o.f("oscillation start phase", 0.5),
+                }
             }
             _ => continue,
         };
@@ -1450,37 +2282,78 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
     let mut force = Vec::new();
     for o in &def.forces {
         force.push(match o.function.as_str() {
-            "Pull towards control point" => Force::Pull { cp: cpn(o, "control point number"), amount: o.f("amount of force", 100.0), falloff: o.f("falloff power", 2.0) },
-            "random force" => Force::Random { min: v3(o.v3("min force", [0.0; 3])), max: v3(o.v3("max force", [0.0; 3])) },
-            "turbulent force" => Force::Turbulent { amount: o.f("Noise amount 0", 1.0) + o.f("Noise amount 1", 0.5) + o.f("Noise amount 2", 0.25) + o.f("Noise amount 3", 0.125) },
-            "twist around axis" => Force::Twist { cp: cpn(o, "control point"), amount: o.f("amount of force", 0.0), axis: v3(o.v3("twist axis", [0.0, 0.0, 1.0])), local: o.b("object local space axis 0/1", false) },
+            "Pull towards control point" => Force::Pull {
+                cp: cpn(o, "control point number"),
+                amount: o.f("amount of force", 100.0),
+                falloff: o.f("falloff power", 2.0),
+            },
+            "random force" => Force::Random {
+                min: v3(o.v3("min force", [0.0; 3])),
+                max: v3(o.v3("max force", [0.0; 3])),
+            },
+            "turbulent force" => Force::Turbulent {
+                amount: o.f("Noise amount 0", 1.0)
+                    + o.f("Noise amount 1", 0.5)
+                    + o.f("Noise amount 2", 0.25)
+                    + o.f("Noise amount 3", 0.125),
+            },
+            "twist around axis" => Force::Twist {
+                cp: cpn(o, "control point"),
+                amount: o.f("amount of force", 0.0),
+                axis: v3(o.v3("twist axis", [0.0, 0.0, 1.0])),
+                local: o.b("object local space axis 0/1", false),
+            },
             _ => continue,
         });
     }
     let mut cons = Vec::new();
     for o in &def.constraints {
         cons.push(match o.function.as_str() {
-            "Collision via traces" => Constraint::Collide { bounce: o.f("amount of bounce", 0.0), slide: o.f("amount of slide", 0.0), kill_speed: o.f("minimum speed to kill on collision", -1.0) },
-            "Constrain distance to control point" => Constraint::Distance { cp: cpn(o, "control point number"), min: o.f("minimum distance", 0.0), max: o.f("maximum distance", 100.0) },
+            "Collision via traces" => Constraint::Collide {
+                bounce: o.f("amount of bounce", 0.0),
+                slide: o.f("amount of slide", 0.0),
+                kill_speed: o.f("minimum speed to kill on collision", -1.0),
+            },
+            "Constrain distance to control point" => Constraint::Distance {
+                cp: cpn(o, "control point number"),
+                min: o.f("minimum distance", 0.0),
+                max: o.f("maximum distance", 100.0),
+            },
             _ => continue,
         });
     }
     let mut render = Vec::new();
     for o in &def.renderers {
         render.push(match o.function.as_str() {
-            "render_animated_sprites" | "render_screen_velocity_rotate" => Render::Sprites { rate: o.f("animation rate", 0.1), fit: o.b("animation_fit_lifetime", false), orient: o.i("orientation_type", -1) },
+            "render_animated_sprites" | "render_screen_velocity_rotate" => Render::Sprites {
+                rate: o.f("animation rate", 0.1),
+                fit: o.b("animation_fit_lifetime", false),
+                orient: o.i("orientation_type", -1),
+            },
             "render_sprite_trail" => {
                 let t = o.v3("tail color and alpha scale factor", [1.0; 3]);
                 let tail = match o.params.get("tail color and alpha scale factor") {
                     Some(tf_assets::pcf::Value::Vec4(v)) => *v,
                     _ => [t[0], t[1], t[2], 1.0],
                 };
-                Render::Trail { rate: o.f("animation rate", 0.1), min: o.f("min length", 0.0), max: o.f("max length", 2000.0), fade_in: o.f("length fade in time", 0.0), tail }
+                Render::Trail {
+                    rate: o.f("animation rate", 0.1),
+                    min: o.f("min length", 0.0),
+                    max: o.f("max length", 2000.0),
+                    fade_in: o.f("length fade in time", 0.0),
+                    tail,
+                }
             }
             "render_rope" => Render::Rope,
-            "Render light source" => Render::Light { scale: o.f("color scale", 1.0), radius: o.f("radius scale", 1.0), by_alpha: o.b("color scale by alpha", true) },
+            "Render light source" => Render::Light {
+                scale: o.f("color scale", 1.0),
+                radius: o.f("radius scale", 1.0),
+                by_alpha: o.b("color scale by alpha", true),
+            },
             "Render models" => {
-                let Some(m) = o.s("sequence 0 model").filter(|m| !m.is_empty()) else { continue };
+                let Some(m) = o.s("sequence 0 model").filter(|m| !m.is_empty()) else {
+                    continue;
+                };
                 Render::Models {
                     model: format!("models/{}", m.replace('\\', "/").to_ascii_lowercase()),
                     pitch: o.f("Model-space pitch degrees", 0.0).to_radians(),
@@ -1494,7 +2367,11 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 let materials: Vec<String> = (0..4)
                     .filter_map(|i| o.s(&format!("material {i}")))
                     .filter(|m| !m.is_empty())
-                    .map(|m| m.trim_end_matches(".vmt").trim_end_matches("_subrect").to_string())
+                    .map(|m| {
+                        m.trim_end_matches(".vmt")
+                            .trim_end_matches("_subrect")
+                            .to_string()
+                    })
                     .collect();
                 if materials.is_empty() {
                     continue;
@@ -1504,7 +2381,15 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
             _ => continue,
         });
     }
-    let children = def.children.iter().filter_map(|c| by_name.get(&c.name.to_ascii_lowercase()).map(|&i| (i, c.delay, c.end_cap))).collect();
+    let children = def
+        .children
+        .iter()
+        .filter_map(|c| {
+            by_name
+                .get(&c.name.to_ascii_lowercase())
+                .map(|&i| (i, c.delay, c.end_cap))
+        })
+        .collect();
     let hdr = def.hdr_scale.max(0.0);
     Compiled {
         material: def.material.clone(),
@@ -1545,21 +2430,49 @@ impl Library {
             Ok(v) => Arc::new(v),
             Err(e) => {
                 log::warn!("particles: {}: {e:#}", path.display());
-                return Library { defs: Vec::new(), by_name: HashMap::new(), compiled: Vec::new(), frontend: None };
+                return Library {
+                    defs: Vec::new(),
+                    by_name: HashMap::new(),
+                    compiled: Vec::new(),
+                    frontend: None,
+                };
             }
         };
-        let mut files: Vec<String> = vpk.entries.keys().filter(|p| p.ends_with(".pcf")).cloned().collect();
+        let mut files: Vec<String> = vpk
+            .entries
+            .keys()
+            .filter(|p| p.ends_with(".pcf"))
+            .cloned()
+            .collect();
         files.sort();
-        let parsed = crate::world::parallel_map(&files, |f| vpk.read(f).ok().and_then(|b| tf_assets::pcf::parse_pcf(&b).map_err(|e| log::warn!("{f}: {e:#}")).ok()));
+        let parsed = crate::world::parallel_map(&files, |f| {
+            vpk.read(f).ok().and_then(|b| {
+                tf_assets::pcf::parse_pcf(&b)
+                    .map_err(|e| log::warn!("{f}: {e:#}"))
+                    .ok()
+            })
+        });
         let mut defs = Vec::new();
         let mut by_name = HashMap::new();
         for d in parsed.into_iter().flatten().flatten().flatten() {
-            by_name.entry(d.name.to_ascii_lowercase()).or_insert(defs.len());
+            by_name
+                .entry(d.name.to_ascii_lowercase())
+                .or_insert(defs.len());
             defs.push(d);
         }
-        log::info!("particles: {} systems from {} files in {:?}", defs.len(), files.len(), t.elapsed());
+        log::info!(
+            "particles: {} systems from {} files in {:?}",
+            defs.len(),
+            files.len(),
+            t.elapsed()
+        );
         let n = defs.len();
-        Library { defs, by_name, compiled: vec![None; n], frontend: Some(vpk) }
+        Library {
+            defs,
+            by_name,
+            compiled: vec![None; n],
+            frontend: Some(vpk),
+        }
     }
     pub fn find(&self, name: &str) -> Option<usize> {
         self.by_name.get(&name.to_ascii_lowercase()).copied()
@@ -1666,19 +2579,55 @@ struct Effect {
 
 fn new_node(sys: Arc<Compiled>, delay: f32) -> Node {
     let n = sys.emit.len();
-    Node { sys, delay, age: 0.0, started: false, instant_done: vec![false; n], acc: vec![0.0; n], dist_acc: 0.0, particles: Vec::new(), next_id: 0, layer: None, models: Vec::new(), model_mats: Vec::new(), model_lit: Vec::new(), decal_done: false, parent: None, op_stopped: false, restart_at: 0.0 }
+    Node {
+        sys,
+        delay,
+        age: 0.0,
+        started: false,
+        instant_done: vec![false; n],
+        acc: vec![0.0; n],
+        dist_acc: 0.0,
+        particles: Vec::new(),
+        next_id: 0,
+        layer: None,
+        models: Vec::new(),
+        model_mats: Vec::new(),
+        model_lit: Vec::new(),
+        decal_done: false,
+        parent: None,
+        op_stopped: false,
+        restart_at: 0.0,
+    }
 }
 
 /// The system tree under `root`, with each child's delay added to its parent's.
-fn collect_nodes(lib: &mut Library, root: usize, delay: f32, depth: u32, out: &mut Vec<Node>, end_caps: &mut Vec<(usize, f32)>) {
+fn collect_nodes(
+    lib: &mut Library,
+    root: usize,
+    delay: f32,
+    depth: u32,
+    out: &mut Vec<Node>,
+    end_caps: &mut Vec<(usize, f32)>,
+) {
     collect_under(lib, root, delay, depth, None, out, end_caps);
 }
 
-fn collect_under(lib: &mut Library, root: usize, delay: f32, depth: u32, parent: Option<usize>, out: &mut Vec<Node>, end_caps: &mut Vec<(usize, f32)>) {
+fn collect_under(
+    lib: &mut Library,
+    root: usize,
+    delay: f32,
+    depth: u32,
+    parent: Option<usize>,
+    out: &mut Vec<Node>,
+    end_caps: &mut Vec<(usize, f32)>,
+) {
     let sys = lib.compiled(root);
     let children = sys.children.clone();
     let me = out.len();
-    out.push(Node { parent, ..new_node(sys, delay) });
+    out.push(Node {
+        parent,
+        ..new_node(sys, delay)
+    });
     if depth > 6 {
         return;
     }
@@ -1687,7 +2636,10 @@ fn collect_under(lib: &mut Library, root: usize, delay: f32, depth: u32, parent:
         // finding which child of an effect draws something).
         if let Ok(skip) = std::env::var("TF_PFX_SKIP") {
             let name = lib.defs[c].name.to_ascii_lowercase();
-            if skip.split(',').any(|s| !s.is_empty() && name.contains(&s.to_ascii_lowercase())) {
+            if skip
+                .split(',')
+                .any(|s| !s.is_empty() && name.contains(&s.to_ascii_lowercase()))
+            {
                 continue;
             }
         }
@@ -1719,10 +2671,23 @@ enum LayerMat {
 }
 
 impl LayerMat {
-    fn swap(&self, soft: &mut Assets<SoftMaterial>, refract: &mut Assets<RefractMaterial>, soft_events: &mut MessageWriter<AssetEvent<SoftMaterial>>, refract_events: &mut MessageWriter<AssetEvent<RefractMaterial>>, grown: bevy::render::render_resource::Buffer) {
+    fn swap(
+        &self,
+        soft: &mut Assets<SoftMaterial>,
+        refract: &mut Assets<RefractMaterial>,
+        soft_events: &mut MessageWriter<AssetEvent<SoftMaterial>>,
+        refract_events: &mut MessageWriter<AssetEvent<RefractMaterial>>,
+        grown: bevy::render::render_resource::Buffer,
+    ) {
         match self {
-            LayerMat::Soft(h) => crate::spritebuf::swap_buffer(soft, soft_events, h, grown, |m| &mut m.extension.verts),
-            LayerMat::Refract(h) => crate::spritebuf::swap_buffer(refract, refract_events, h, grown, |m| &mut m.extension.verts),
+            LayerMat::Soft(h) => crate::spritebuf::swap_buffer(soft, soft_events, h, grown, |m| {
+                &mut m.extension.verts
+            }),
+            LayerMat::Refract(h) => {
+                crate::spritebuf::swap_buffer(refract, refract_events, h, grown, |m| {
+                    &mut m.extension.verts
+                })
+            }
         }
     }
 }
@@ -1780,7 +2745,8 @@ pub struct Pfx {
     lib: Option<Library>,
     rx: Mutex<Option<mpsc::Receiver<Library>>>,
     /// Materials precached by the loader thread (see `precache`).
-    pre_rx: Mutex<Option<mpsc::Receiver<Vec<(String, Option<(vtf::Vtf, HashMap<String, String>)>)>>>>,
+    pre_rx:
+        Mutex<Option<mpsc::Receiver<Vec<(String, Option<(vtf::Vtf, HashMap<String, String>)>)>>>>,
     effects: Vec<Effect>,
     layers: Vec<Layer>,
     layer_of: HashMap<String, Option<usize>>,
@@ -1805,7 +2771,13 @@ impl Pfx {
     pub fn ready(&self) -> bool {
         self.lib.as_ref().is_some_and(|l| !l.defs.is_empty())
     }
-    fn spawn(&mut self, name: &str, cps: &[Cp], stop_after: Option<f32>, attached: Option<Entity>) -> Option<u64> {
+    fn spawn(
+        &mut self,
+        name: &str,
+        cps: &[Cp],
+        stop_after: Option<f32>,
+        attached: Option<Entity>,
+    ) -> Option<u64> {
         let lib = self.lib.as_mut()?;
         let root = lib.find(name)?;
         let mut nodes = Vec::new();
@@ -1813,26 +2785,62 @@ impl Pfx {
         collect_nodes(lib, root, 0.0, 0, &mut nodes, &mut end_caps);
         let mut all = [Cp::default(); NCP];
         for (i, c) in all.iter_mut().enumerate() {
-            *c = cps.get(i).copied().unwrap_or_else(|| cps.first().copied().unwrap_or_default());
+            *c = cps
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| cps.first().copied().unwrap_or_default());
         }
         self.next_id += 1;
         let id = self.next_id;
-        let stop_at = stop_after.unwrap_or(if attached.is_some() { f32::INFINITY } else { DEFAULT_STOP });
+        let stop_at = stop_after.unwrap_or(if attached.is_some() {
+            f32::INFINITY
+        } else {
+            DEFAULT_STOP
+        });
         let cp_set = (1u32 << cps.len().clamp(1, NCP)) - 1;
-        self.effects.push(Effect { id, nodes, cps: all, cp_prev: all.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], light: [None; NCP], cp_frame_prev: all, cp_set, age: 0.0, stop_at, stopped: false, stopped_at: f32::INFINITY, capped: false, attached, end_caps, vm: false, overlay: false, screen: false });
+        self.effects.push(Effect {
+            id,
+            nodes,
+            cps: all,
+            cp_prev: all.map(|c| c.pos),
+            cp_vel: [Vec3::ZERO; NCP],
+            light: [None; NCP],
+            cp_frame_prev: all,
+            cp_set,
+            age: 0.0,
+            stop_at,
+            stopped: false,
+            stopped_at: f32::INFINITY,
+            capped: false,
+            attached,
+            end_caps,
+            vm: false,
+            overlay: false,
+            screen: false,
+        });
         Some(id)
     }
 
     /// The effect names of an impact table for a surface (concrete when the table has none for
     /// it), one per FX block.
-    fn impact_names(&mut self, gd: &crate::gamedata::GameData, table: &str, surface: &str) -> Vec<String> {
+    fn impact_names(
+        &mut self,
+        gd: &crate::gamedata::GameData,
+        table: &str,
+        surface: &str,
+    ) -> Vec<String> {
         let key = table.to_ascii_lowercase();
         if !self.impacts.contains_key(&key) {
             let path = format!("scripts/impacts/{key}.txt");
             let text = gd
                 .read_file(&path)
                 .ok()
-                .or_else(|| self.lib.as_ref().and_then(|l| l.frontend.as_ref()).and_then(|v| v.read(&path).ok()))
+                .or_else(|| {
+                    self.lib
+                        .as_ref()
+                        .and_then(|l| l.frontend.as_ref())
+                        .and_then(|v| v.read(&path).ok())
+                })
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .unwrap_or_default();
             self.impacts.insert(key.clone(), parse_impact_table(&text));
@@ -1840,7 +2848,13 @@ impl Pfx {
         self.impacts[&key]
             .fx
             .iter()
-            .filter_map(|block| block.get(surface).or_else(|| block.get("C")).or_else(|| block.get("M")).cloned())
+            .filter_map(|block| {
+                block
+                    .get(surface)
+                    .or_else(|| block.get("C"))
+                    .or_else(|| block.get("M"))
+                    .cloned()
+            })
             .filter(|n| !n.eq_ignore_ascii_case("none") && !n.is_empty())
             .collect()
     }
@@ -1848,7 +2862,13 @@ impl Pfx {
     /// The effect names of an impact table for what a round struck: each FX block's most
     /// specific entry for the surface; a hit on the player takes the FX_victim entry for the
     /// exact surface instead when the table has one.
-    fn hit_names(&mut self, gd: &crate::gamedata::GameData, table: &str, surface: crate::particles::Surface, victim: bool) -> Vec<String> {
+    fn hit_names(
+        &mut self,
+        gd: &crate::gamedata::GameData,
+        table: &str,
+        surface: crate::particles::Surface,
+        victim: bool,
+    ) -> Vec<String> {
         let _ = self.impact_names(gd, table, "C");
         let t = &self.impacts[&table.to_ascii_lowercase()];
         let keys = surface.keys();
@@ -1872,10 +2892,19 @@ impl Pfx {
     }
 
     /// Play a generic effect with the game's systems; false if they aren't available.
-    fn spawn_generic(&mut self, gd: &crate::gamedata::GameData, e: crate::particles::Effect) -> bool {
+    fn spawn_generic(
+        &mut self,
+        gd: &crate::gamedata::GameData,
+        e: crate::particles::Effect,
+    ) -> bool {
         use crate::particles::Effect as E;
         match e {
-            E::Muzzle { at, dir, scale, energy } => {
+            E::Muzzle {
+                at,
+                dir,
+                scale,
+                energy,
+            } => {
                 let name = match (scale >= 1.5, scale < 2.5, energy) {
                     (true, _, true) => "P_muz_TPA",
                     (true, true, false) => "wpn_muzzleflash_xo_FP",
@@ -1883,9 +2912,20 @@ impl Pfx {
                     (false, _, true) => "wpn_muzzleflash_smg_elec_FP",
                     (false, _, false) => "wpn_muzzleflash_smg_FP",
                 };
-                self.spawn(name, &[Cp::facing(to_game(at), dir_to_game(dir))], None, None).is_some()
+                self.spawn(
+                    name,
+                    &[Cp::facing(to_game(at), dir_to_game(dir))],
+                    None,
+                    None,
+                )
+                .is_some()
             }
-            E::Tracer { from, to, width, color } => {
+            E::Tracer {
+                from,
+                to,
+                width,
+                color,
+            } => {
                 let name = if color.z > color.x * 1.2 {
                     "P_wpn_tracer_xo16_elec"
                 } else if width >= 0.1 {
@@ -1895,9 +2935,15 @@ impl Pfx {
                 };
                 let (a, b) = (to_game(from), to_game(to));
                 let f = Cp::facing(a, b - a);
-                self.spawn(name, &[f, Cp { pos: b, ..f }], None, None).is_some()
+                self.spawn(name, &[f, Cp { pos: b, ..f }], None, None)
+                    .is_some()
             }
-            E::Impact { at, normal, scale, energy } => {
+            E::Impact {
+                at,
+                normal,
+                scale,
+                energy,
+            } => {
                 let table = if energy {
                     "titan_particle_accelerator"
                 } else if scale >= 1.5 {
@@ -1905,9 +2951,21 @@ impl Pfx {
                 } else {
                     "default"
                 };
-                self.spawn_table(gd, table, "C", Cp::on_surface(to_game(at), dir_to_game(normal)))
+                self.spawn_table(
+                    gd,
+                    table,
+                    "C",
+                    Cp::on_surface(to_game(at), dir_to_game(normal)),
+                )
             }
-            E::Hit { at, normal, table, surface, victim, .. } => {
+            E::Hit {
+                at,
+                normal,
+                table,
+                surface,
+                victim,
+                ..
+            } => {
                 let cp = Cp::on_surface(to_game(at), dir_to_game(normal));
                 let names = self.hit_names(gd, table, surface, victim);
                 log::debug!("hit {table} {surface:?} victim {victim}: {names:?}");
@@ -1935,13 +2993,31 @@ impl Pfx {
                 };
                 self.spawn_table(gd, table, "C", Cp::on_surface(to_game(at), Vec3::Z))
             }
-            E::TitanDeath { at } => self.spawn("xo_exp_death", &[Cp::on_surface(to_game(at), Vec3::Z)], None, None).is_some(),
-            E::DustRing { at, .. } => self.spawn_table(gd, "titan_landing", "D", Cp::on_surface(to_game(at), Vec3::Z)),
+            E::TitanDeath { at } => self
+                .spawn(
+                    "xo_exp_death",
+                    &[Cp::on_surface(to_game(at), Vec3::Z)],
+                    None,
+                    None,
+                )
+                .is_some(),
+            E::DustRing { at, .. } => self.spawn_table(
+                gd,
+                "titan_landing",
+                "D",
+                Cp::on_surface(to_game(at), Vec3::Z),
+            ),
             E::TrailPuff { .. } => false,
         }
     }
 
-    fn spawn_table(&mut self, gd: &crate::gamedata::GameData, table: &str, surface: &str, cp: Cp) -> bool {
+    fn spawn_table(
+        &mut self,
+        gd: &crate::gamedata::GameData,
+        table: &str,
+        surface: &str,
+        cp: Cp,
+    ) -> bool {
         let names = self.impact_names(gd, table, surface);
         let mut any = false;
         for n in names {
@@ -2020,17 +3096,29 @@ fn rand(rng: &mut u64) -> f32 {
 
 fn rexp(rng: &mut u64, a: f32, b: f32, exp: f32) -> f32 {
     let r = rand(rng);
-    let r = if (exp - 1.0).abs() > 1e-4 && exp > 0.0 { r.powf(exp) } else { r };
+    let r = if (exp - 1.0).abs() > 1e-4 && exp > 0.0 {
+        r.powf(exp)
+    } else {
+        r
+    };
     a + (b - a) * r
 }
 
 fn rvec(rng: &mut u64, a: Vec3, b: Vec3) -> Vec3 {
-    Vec3::new(a.x + (b.x - a.x) * rand(rng), a.y + (b.y - a.y) * rand(rng), a.z + (b.z - a.z) * rand(rng))
+    Vec3::new(
+        a.x + (b.x - a.x) * rand(rng),
+        a.y + (b.y - a.y) * rand(rng),
+        a.z + (b.z - a.z) * rand(rng),
+    )
 }
 
 fn unit(rng: &mut u64) -> Vec3 {
     for _ in 0..16 {
-        let v = Vec3::new(rand(rng) * 2.0 - 1.0, rand(rng) * 2.0 - 1.0, rand(rng) * 2.0 - 1.0);
+        let v = Vec3::new(
+            rand(rng) * 2.0 - 1.0,
+            rand(rng) * 2.0 - 1.0,
+            rand(rng) * 2.0 - 1.0,
+        );
         let l = v.length_squared();
         if l > 1e-4 && l <= 1.0 {
             return v / l.sqrt();
@@ -2090,10 +3178,27 @@ fn cap_active(cap: i8, emitting: bool) -> bool {
 /// (state 1) on a living particle when its effect is stopped, the way the gun shield picks up
 /// its 5 s lifetime and fade only once it is dropped.
 #[allow(clippy::too_many_arguments)]
-fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], light: &[LightSample; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool, recap: bool) {
+fn apply_inits(
+    sys: &Compiled,
+    p: &mut P,
+    cps: &[Cp; NCP],
+    cp_vel: &[Vec3; NCP],
+    light: &[LightSample; NCP],
+    cp_set: u32,
+    parent: &[P],
+    sheet_len: &dyn Fn(u16) -> f32,
+    rng: &mut u64,
+    index: u32,
+    emitting: bool,
+    recap: bool,
+) {
     let mut had_life = false;
     for (i, cap) in sys.init.iter().zip(&sys.init_cap) {
-        if if recap { *cap != 1 } else { !cap_active(*cap, emitting) } {
+        if if recap {
+            *cap != 1
+        } else {
+            !cap_active(*cap, emitting)
+        } {
             continue;
         }
         match *i {
@@ -2113,7 +3218,19 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                     p.base_color = c * sys.hdr;
                 }
             }
-            Init::Sphere { cp, dmin, dmax, bias, abs, local_bias, smin, smax, sexp, lmin, lmax } => {
+            Init::Sphere {
+                cp,
+                dmin,
+                dmax,
+                bias,
+                abs,
+                local_bias,
+                smin,
+                smax,
+                sexp,
+                lmin,
+                lmax,
+            } => {
                 let c = &cps[cp];
                 let mut d = unit(rng) * bias;
                 for k in 0..3 {
@@ -2128,16 +3245,33 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 p.vel = d.normalize_or_zero() * speed + c.local(rvec(rng, lmin, lmax));
             }
             Init::Box { cp, min, max } => p.pos = cps[cp].pos + rvec(rng, min, max),
-            Init::Ring { cp, radius, thickness, smin, smax, xy } => {
+            Init::Ring {
+                cp,
+                radius,
+                thickness,
+                smin,
+                smax,
+                xy,
+            } => {
                 let c = &cps[cp];
                 let a = rand(rng) * std::f32::consts::TAU;
                 let r = radius + (rand(rng) - 0.5) * thickness;
                 let out = c.fwd * a.cos() + c.left * a.sin();
                 p.pos = c.pos + out * r;
                 let s = smin + (smax - smin) * rand(rng);
-                p.vel = if xy { out * s } else { (out + c.up * (rand(rng) - 0.5)).normalize_or_zero() * s };
+                p.vel = if xy {
+                    out * s
+                } else {
+                    (out + c.up * (rand(rng) - 0.5)).normalize_or_zero() * s
+                };
             }
-            Init::Offset { cp, min, max, local, prop } => {
+            Init::Offset {
+                cp,
+                min,
+                max,
+                local,
+                prop,
+            } => {
                 let mut o = rvec(rng, min, max);
                 if prop {
                     o *= p.base_radius;
@@ -2151,22 +3285,44 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 let (x, y, z) = (d.dot(c.fwd) * k.x, d.dot(c.left) * k.y, d.dot(c.up) * k.z);
                 p.pos = c.pos + c.fwd * x + c.left * y + c.up * z;
             }
-            Init::Velocity { cp, lmin, lmax, rmin, rmax } => {
-                p.vel += cps[cp].local(rvec(rng, lmin, lmax)) + unit(rng) * (rmin + (rmax - rmin) * rand(rng));
+            Init::Velocity {
+                cp,
+                lmin,
+                lmax,
+                rmin,
+                rmax,
+            } => {
+                p.vel += cps[cp].local(rvec(rng, lmin, lmax))
+                    + unit(rng) * (rmin + (rmax - rmin) * rand(rng));
             }
-            Init::VelocityNoise { cp, min, max, local } => {
+            Init::VelocityNoise {
+                cp,
+                min,
+                max,
+                local,
+            } => {
                 let v = rvec(rng, min, max);
                 p.vel += if local { cps[cp].local(v) } else { v };
             }
             Init::InheritCpVelocity { cp, scale } => p.vel += cp_vel[cp] * scale,
-            Init::Rotation { initial, min, max, flip } => {
+            Init::Rotation {
+                initial,
+                min,
+                max,
+                flip,
+            } => {
                 let mut r = (initial + min + (max - min) * rand(rng)).to_radians();
                 if flip && rand(rng) < 0.5 {
                     r = -r;
                 }
                 p.rot = r;
             }
-            Init::RotationSpeed { constant, min, max, flip } => {
+            Init::RotationSpeed {
+                constant,
+                min,
+                max,
+                flip,
+            } => {
                 let mut s = (constant + min + (max - min) * rand(rng)).to_radians();
                 if flip && rand(rng) < 0.5 {
                     s = -s;
@@ -2183,12 +3339,22 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 if parent.is_empty() {
                     p.dead = true;
                 } else {
-                    let q = &parent[((rand(rng) * parent.len() as f32) as usize).min(parent.len() - 1)];
+                    let q =
+                        &parent[((rand(rng) * parent.len() as f32) as usize).min(parent.len() - 1)];
                     p.pos = q.pos;
                     p.vel += q.vel * scale;
                 }
             }
-            Init::Remap { inp, out, imin, imax, omin, omax, scale, active } => {
+            Init::Remap {
+                inp,
+                out,
+                imin,
+                imax,
+                omin,
+                omax,
+                scale,
+                active,
+            } => {
                 let x = match inp {
                     Field::Radius => p.base_radius,
                     Field::Alpha => p.base_alpha,
@@ -2218,7 +3384,12 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                     }
                 }
             }
-            Init::Scalar { field: f, min, max, exp } => {
+            Init::Scalar {
+                field: f,
+                min,
+                max,
+                exp,
+            } => {
                 let v = rexp(rng, min, max, exp);
                 match f {
                     Field::Radius => p.base_radius = v,
@@ -2235,7 +3406,12 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 }
             }
             Init::ColorVector { min, max } => p.base_color = rvec(rng, min, max) * sys.hdr,
-            Init::Between { end, smin, smax, spread } => {
+            Init::Between {
+                end,
+                smin,
+                smax,
+                spread,
+            } => {
                 let target = cps[end].pos + unit(rng) * spread;
                 let d = target - p.pos;
                 let s = (smin + (smax - smin) * rand(rng)).max(1.0);
@@ -2243,12 +3419,27 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 p.life = d.length() / s;
                 had_life = true;
             }
-            Init::Path { start, end, sequential, count } => {
+            Init::Path {
+                start,
+                end,
+                sequential,
+                count,
+            } => {
                 // Source steps 1 / (count - 1), so the sequence runs from start to end inclusive.
-                let k = if sequential { path_frac(index as f32, count) } else { rand(rng) };
+                let k = if sequential {
+                    path_frac(index as f32, count)
+                } else {
+                    rand(rng)
+                };
                 p.pos = cps[start].pos.lerp(cps[end].pos, k);
             }
-            Init::Yaw { initial, min, max, exp, flip } => {
+            Init::Yaw {
+                initial,
+                min,
+                max,
+                exp,
+                flip,
+            } => {
                 let mut y = (initial + rexp(rng, min, max, exp)).to_radians();
                 if flip && rand(rng) < 0.5 {
                     y = -y;
@@ -2256,9 +3447,17 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                 p.yaw = y;
             }
             Init::NormalAlign { cp } => p.normal = cps[cp].fwd,
-            Init::InheritParent { field: f, scale, random } => {
+            Init::InheritParent {
+                field: f,
+                scale,
+                random,
+            } => {
                 if !parent.is_empty() {
-                    let k = if random { (rand(rng) * parent.len() as f32) as usize } else { index as usize };
+                    let k = if random {
+                        (rand(rng) * parent.len() as f32) as usize
+                    } else {
+                        index as usize
+                    };
                     let q = &parent[k % parent.len()];
                     match f {
                         Field::Position => p.pos = q.pos,
@@ -2276,7 +3475,15 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                     }
                 }
             }
-            Init::CountRemap { imin, imax, out, omin, omax, scale, active } => {
+            Init::CountRemap {
+                imin,
+                imax,
+                out,
+                omin,
+                omax,
+                scale,
+                active,
+            } => {
                 let x = index as f32;
                 let (lo, hi) = (imin.min(imax), imin.max(imax));
                 if !(active && (x < lo || x > hi)) {
@@ -2284,7 +3491,16 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
                     write_init(p, out, v, scale, &mut had_life);
                 }
             }
-            Init::CpToScalar { cp, comp, imin, imax, out, omin, omax, scale } => {
+            Init::CpToScalar {
+                cp,
+                comp,
+                imin,
+                imax,
+                out,
+                omin,
+                omax,
+                scale,
+            } => {
                 if cp_set & (1 << cp) != 0 {
                     let v = angle_out(out, remap(cps[cp].pos[comp], imin, imax, omin, omax));
                     write_init(p, out, v, scale, &mut had_life);
@@ -2297,7 +3513,18 @@ fn apply_inits(sys: &Compiled, p: &mut P, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP],
 }
 
 #[allow(clippy::too_many_arguments)]
-fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], light: &[LightSample; NCP], cp_set: u32, parent: &[P], sheet_len: &dyn Fn(u16) -> f32, rng: &mut u64, index: u32, emitting: bool) -> P {
+fn init_particle(
+    sys: &Compiled,
+    cps: &[Cp; NCP],
+    cp_vel: &[Vec3; NCP],
+    light: &[LightSample; NCP],
+    cp_set: u32,
+    parent: &[P],
+    sheet_len: &dyn Fn(u16) -> f32,
+    rng: &mut u64,
+    index: u32,
+    emitting: bool,
+) -> P {
     let mut p = P {
         pos: cps[0].pos,
         radius: sys.radius,
@@ -2313,7 +3540,9 @@ fn init_particle(sys: &Compiled, cps: &[Cp; NCP], cp_vel: &[Vec3; NCP], light: &
         id: index,
         ..Default::default()
     };
-    apply_inits(sys, &mut p, cps, cp_vel, light, cp_set, parent, sheet_len, rng, index, emitting, false);
+    apply_inits(
+        sys, &mut p, cps, cp_vel, light, cp_set, parent, sheet_len, rng, index, emitting, false,
+    );
     p.radius = p.base_radius;
     p.alpha = p.base_alpha;
     p.color = p.base_color;
@@ -2368,7 +3597,9 @@ fn set_field(p: &mut P, f: Field, v: f32, mul: bool) {
 fn normal_basis(n: Vec3) -> Quat {
     let z = n.normalize_or(Vec3::Z);
     let down = -Vec3::Z;
-    let x = (down - z * down.dot(z)).try_normalize().unwrap_or_else(|| (Vec3::X - z * Vec3::X.dot(z)).normalize());
+    let x = (down - z * down.dot(z))
+        .try_normalize()
+        .unwrap_or_else(|| (Vec3::X - z * Vec3::X.dot(z)).normalize());
     Quat::from_mat3(&Mat3::from_cols(x, z.cross(x), z)).normalize()
 }
 
@@ -2410,7 +3641,15 @@ fn no_alpha2() -> bool {
 
 /// Source's RemapValClamped.
 fn remap(v: f32, imin: f32, imax: f32, omin: f32, omax: f32) -> f32 {
-    let k = if (imax - imin).abs() < 1e-6 { if v >= imax { 1.0 } else { 0.0 } } else { ((v - imin) / (imax - imin)).clamp(0.0, 1.0) };
+    let k = if (imax - imin).abs() < 1e-6 {
+        if v >= imax {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        ((v - imin) / (imax - imin)).clamp(0.0, 1.0)
+    };
     omin + (omax - omin) * k
 }
 
@@ -2444,8 +3683,19 @@ struct StepCtx<'a> {
 
 /// Advance one node by `dt`.
 #[allow(clippy::too_many_arguments)]
-fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: bool, dt: f32, rng: &mut u64, world: Option<&crate::player::Collision>, budget: &mut usize, sheet_len: &dyn Fn(u16) -> f32) {
-    let (cp_delta, cp_vel, light, player, parent) = (ctx.cp_delta, ctx.cp_vel, ctx.light, ctx.player, ctx.parent);
+fn step_node(
+    n: &mut Node,
+    cps: &mut [Cp; NCP],
+    ctx: &mut StepCtx,
+    emitting: bool,
+    dt: f32,
+    rng: &mut u64,
+    world: Option<&crate::player::Collision>,
+    budget: &mut usize,
+    sheet_len: &dyn Fn(u16) -> f32,
+) {
+    let (cp_delta, cp_vel, light, player, parent) =
+        (ctx.cp_delta, ctx.cp_vel, ctx.light, ctx.player, ctx.parent);
     if n.delay > 0.0 {
         n.delay -= dt;
         return;
@@ -2455,7 +3705,12 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
     // Stop Effect after Duration: the node stops emitting (and may clear) once it is reached.
     let mut emitting = emitting;
     for o in &sys.oper {
-        if let Oper::StopAfter { duration, kill, scale_cp } = *o {
+        if let Oper::StopAfter {
+            duration,
+            kill,
+            scale_cp,
+        } = *o
+        {
             // Scaled only by a control point that holds a value.
             let duration = match scale_cp {
                 Some(c) if ctx.cp_set & (1 << c) != 0 => duration * cps[c].pos.x,
@@ -2498,17 +3753,29 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
             let b = cps[*base];
             for &(i, off) in sets {
                 if i != *base {
-                    cps[i] = Cp { pos: if *world { off } else { b.pos + b.local(off) }, ..b };
+                    cps[i] = Cp {
+                        pos: if *world { off } else { b.pos + b.local(off) },
+                        ..b
+                    };
                     ctx.cp_set |= 1 << i;
                 }
             }
         }
     }
     for i in &sys.init {
-        if let Init::SetCp { out, base, pos, local } = *i {
+        if let Init::SetCp {
+            out,
+            base,
+            pos,
+            local,
+        } = *i
+        {
             if out != base {
                 let b = cps[base];
-                cps[out] = Cp { pos: b.pos + if local { b.local(pos) } else { pos }, ..b };
+                cps[out] = Cp {
+                    pos: b.pos + if local { b.local(pos) } else { pos },
+                    ..b
+                };
                 ctx.cp_set |= 1 << out;
             }
         }
@@ -2526,12 +3793,24 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                 Emit::Instant { count, min, start } => {
                     if !n.instant_done[k] && n.age >= start {
                         n.instant_done[k] = true;
-                        let c = if min != u32::MAX && min < count { min + (rand(rng) * (count - min + 1) as f32) as u32 } else { count };
+                        let c = if min != u32::MAX && min < count {
+                            min + (rand(rng) * (count - min + 1) as f32) as u32
+                        } else {
+                            count
+                        };
                         new += c;
                     }
                 }
-                Emit::Continuous { rate, duration, start } => {
-                    let end = if duration > 0.0 { start + duration } else { f32::INFINITY };
+                Emit::Continuous {
+                    rate,
+                    duration,
+                    start,
+                } => {
+                    let end = if duration > 0.0 {
+                        start + duration
+                    } else {
+                        f32::INFINITY
+                    };
                     let a = t0.max(start);
                     let b = n.age.min(end);
                     if b > a {
@@ -2556,7 +3835,9 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
     for _ in 0..new {
         let id = n.next_id;
         n.next_id += 1;
-        let p = init_particle(&sys, cps, cp_vel, light, cp_set, parent, sheet_len, rng, id, emitting);
+        let p = init_particle(
+            &sys, cps, cp_vel, light, cp_set, parent, sheet_len, rng, id, emitting,
+        );
         n.particles.push(p);
     }
     // Simulate.
@@ -2565,7 +3846,11 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
         // the frame's control-point delta is not theirs to follow.
         let newborn = pi >= old_len;
         p.age += dt;
-        let t = if p.life > 0.0 { (p.age / p.life).clamp(0.0, 1.0) } else { 0.0 };
+        let t = if p.life > 0.0 {
+            (p.age / p.life).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         p.radius = p.base_radius;
         p.alpha = p.base_alpha;
         p.color = p.base_color;
@@ -2573,14 +3858,23 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
         let mut accel = Vec3::ZERO;
         for f in &sys.force {
             match *f {
-                Force::Pull { cp, amount, falloff } => {
+                Force::Pull {
+                    cp,
+                    amount,
+                    falloff,
+                } => {
                     let d = cps[cp].pos - p.pos;
                     let l = d.length().max(1.0);
                     accel += d / l * amount / l.powf(falloff).max(1e-3);
                 }
                 Force::Random { min, max } => accel += rvec(rng, min, max),
                 Force::Turbulent { amount } => accel += unit(rng) * amount * 100.0,
-                Force::Twist { cp, amount, axis, local } => {
+                Force::Twist {
+                    cp,
+                    amount,
+                    axis,
+                    local,
+                } => {
                     let ax = if local { cps[cp].local(axis) } else { axis }.normalize_or(Vec3::Z);
                     let r = p.pos - cps[cp].pos;
                     accel += ax.cross(r).normalize_or_zero() * amount;
@@ -2604,11 +3898,24 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                         p.dead = true;
                     }
                 }
-                Oper::RadiusScale { st, et, ss, es, bias: b } => {
+                Oper::RadiusScale {
+                    st,
+                    et,
+                    ss,
+                    es,
+                    bias: b,
+                } => {
                     let k = bias(frac(t, st, et), b);
                     p.radius *= ss + (es - ss) * k;
                 }
-                Oper::FadeAndDecay { sa, ea, sfi, efi, sfo, efo } => {
+                Oper::FadeAndDecay {
+                    sa,
+                    ea,
+                    sfi,
+                    efi,
+                    sfo,
+                    efo,
+                } => {
                     let a = if t < efi {
                         sa + (1.0 - sa) * frac(t, sfi, efi)
                     } else if t >= sfo {
@@ -2650,74 +3957,188 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                     p.color = p.color.lerp(to * sys.hdr, k);
                 }
                 Oper::SpinRoll { rate, min, stop } => {
-                    let r = if stop > 0.0 { min + (rate - min) * (1.0 - p.age / stop).max(0.0) } else { rate };
+                    let r = if stop > 0.0 {
+                        min + (rate - min) * (1.0 - p.age / stop).max(0.0)
+                    } else {
+                        rate
+                    };
                     p.rot += r * dt;
                 }
-                Oper::OscillateColor { rate, freq, mult, phase } => {
-                    let h = |k: u32| ((p.id.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503))) >> 8) as f32 / (1u32 << 24) as f32;
+                Oper::OscillateColor {
+                    rate,
+                    freq,
+                    mult,
+                    phase,
+                } => {
+                    let h = |k: u32| {
+                        ((p.id
+                            .wrapping_mul(2654435761)
+                            .wrapping_add(k.wrapping_mul(40503)))
+                            >> 8) as f32
+                            / (1u32 << 24) as f32
+                    };
                     let ph = phase * std::f32::consts::PI;
                     let mut c = p.color;
                     for i in 0..3 {
                         let r = rate.0[i] + (rate.1[i] - rate.0[i]) * h(11 + i as u32);
-                        let w = (mult * (freq.0[i] + (freq.1[i] - freq.0[i]) * h(21 + i as u32))).max(1e-3) * std::f32::consts::PI;
+                        let w = (mult * (freq.0[i] + (freq.1[i] - freq.0[i]) * h(21 + i as u32)))
+                            .max(1e-3)
+                            * std::f32::consts::PI;
                         c[i] = (c[i] + r * ((w * p.age + ph).sin() - ph.sin()) / w).max(0.0);
                     }
                     p.color = c;
                 }
-                Oper::Remap { inp, out, imin, imax, omin, omax, scale, abs } => {
+                Oper::Remap {
+                    inp,
+                    out,
+                    imin,
+                    imax,
+                    omin,
+                    omax,
+                    scale,
+                    abs,
+                } => {
                     let mut x = get_field(p, inp);
                     if abs {
                         x = x.abs();
                     }
                     put(p, out, remap(x, imin, imax, omin, omax), scale, false);
                 }
-                Oper::Oscillate { field: f, rate, freq, st, et, prop, mult, phase } => {
+                Oper::Oscillate {
+                    field: f,
+                    rate,
+                    freq,
+                    st,
+                    et,
+                    prop,
+                    mult,
+                    phase,
+                } => {
                     // Per-particle randoms from the particle's id.
-                    let h = |k: u32| ((p.id.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503))) >> 8) as f32 / (1u32 << 24) as f32;
+                    let h = |k: u32| {
+                        ((p.id
+                            .wrapping_mul(2654435761)
+                            .wrapping_add(k.wrapping_mul(40503)))
+                            >> 8) as f32
+                            / (1u32 << 24) as f32
+                    };
                     let r = rate.0 + (rate.1 - rate.0) * h(1);
                     let fq = (freq.0 + (freq.1 - freq.0) * h(2)).max(1e-3);
                     let (s0, e0) = (st.0 + (st.1 - st.0) * h(3), et.0 + (et.1 - et.0) * h(4));
                     let now = if prop { t } else { p.age };
                     if now >= s0 && now <= e0 {
                         let w = mult * fq * std::f32::consts::PI;
-                        let v = get_field(p, f) + r * ((w * p.age + phase * std::f32::consts::PI).sin() - (phase * std::f32::consts::PI).sin()) / w;
-                        let v = if matches!(f, Field::Alpha) { v.clamp(0.0, 1.0) } else if matches!(f, Field::Radius) { v.max(0.0) } else { v };
+                        let v = get_field(p, f)
+                            + r * ((w * p.age + phase * std::f32::consts::PI).sin()
+                                - (phase * std::f32::consts::PI).sin())
+                                / w;
+                        let v = if matches!(f, Field::Alpha) {
+                            v.clamp(0.0, 1.0)
+                        } else if matches!(f, Field::Radius) {
+                            v.max(0.0)
+                        } else {
+                            v
+                        };
                         if matches!(f, Field::Alpha2) {
-                            p.alpha *= (1.0 + r * ((w * p.age + phase * std::f32::consts::PI).sin() - (phase * std::f32::consts::PI).sin()) / w).clamp(0.0, 1.0);
+                            p.alpha *= (1.0
+                                + r * ((w * p.age + phase * std::f32::consts::PI).sin()
+                                    - (phase * std::f32::consts::PI).sin())
+                                    / w)
+                                .clamp(0.0, 1.0);
                         } else {
                             set_field(p, f, v, false);
                         }
                     }
                 }
-                Oper::DistToCp { cp, out, dmin, dmax, omin, omax, active, scale_init, scale_cur } => {
+                Oper::DistToCp {
+                    cp,
+                    out,
+                    dmin,
+                    dmax,
+                    omin,
+                    omax,
+                    active,
+                    scale_init,
+                    scale_cur,
+                } => {
                     let d = p.pos.distance(cps[cp].pos);
                     let (lo, hi) = (dmin.min(dmax), dmin.max(dmax));
                     if !(active && (d < lo || d > hi)) {
-                        put(p, out, remap(d, dmin, dmax, omin, omax), scale_init, scale_cur);
+                        put(
+                            p,
+                            out,
+                            remap(d, dmin, dmax, omin, omax),
+                            scale_init,
+                            scale_cur,
+                        );
                     }
                 }
-                Oper::DistBetweenCps { a, b, out, dmin, dmax, omin, omax, scale_init, scale_cur } => {
+                Oper::DistBetweenCps {
+                    a,
+                    b,
+                    out,
+                    dmin,
+                    dmax,
+                    omin,
+                    omax,
+                    scale_init,
+                    scale_cur,
+                } => {
                     let d = cps[a].pos.distance(cps[b].pos);
-                    put(p, out, remap(d, dmin, dmax, omin, omax), scale_init, scale_cur);
+                    put(
+                        p,
+                        out,
+                        remap(d, dmin, dmax, omin, omax),
+                        scale_init,
+                        scale_cur,
+                    );
                 }
-                Oper::Ramp { field: f, rate, st, et } => {
+                Oper::Ramp {
+                    field: f,
+                    rate,
+                    st,
+                    et,
+                } => {
                     let k = (p.age.min(et) - st).max(0.0);
                     if k > 0.0 {
                         let v = get_field(p, f) + rate * k;
                         if matches!(f, Field::Alpha2) {
                             p.alpha *= (1.0 + rate * k).clamp(0.0, 1.0);
                         } else {
-                            set_field(p, f, if matches!(f, Field::Alpha) { v.clamp(0.0, 1.0) } else { v }, false);
+                            set_field(
+                                p,
+                                f,
+                                if matches!(f, Field::Alpha) {
+                                    v.clamp(0.0, 1.0)
+                                } else {
+                                    v
+                                },
+                                false,
+                            );
                         }
                     }
                 }
-                Oper::OrientToCp { cp, offset, strength } => {
+                Oper::OrientToCp {
+                    cp,
+                    offset,
+                    strength,
+                } => {
                     let c = &cps[cp];
                     let d = p.pos - c.pos;
                     let r = d.dot(c.left).atan2(d.dot(c.fwd)) + std::f32::consts::PI + offset;
                     p.rot += (r - p.rot) * strength;
                 }
-                Oper::Graph { field: f, ref pts, omin, omax, mul, add, lifespans, time, looped } => {
+                Oper::Graph {
+                    field: f,
+                    ref pts,
+                    omin,
+                    omax,
+                    mul,
+                    add,
+                    lifespans,
+                    time,
+                    looped,
+                } => {
                     let mut x = if lifespans { t } else { p.age / time };
                     if looped {
                         x = x.fract();
@@ -2729,7 +4150,12 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                         set_field(p, f, v, mul);
                     }
                 }
-                Oper::LerpInitial { field: f, to, st, et } => {
+                Oper::LerpInitial {
+                    field: f,
+                    to,
+                    st,
+                    et,
+                } => {
                     let k = frac(t, st, et);
                     let b = get_base(p, f);
                     set_field(p, f, b + (to - b) * k, false);
@@ -2745,13 +4171,21 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                     }
                 }
                 Oper::SpinYaw { rate, min, stop } => {
-                    let r = if stop > 0.0 { min + (rate - min) * (1.0 - p.age / stop).max(0.0) } else { rate };
+                    let r = if stop > 0.0 {
+                        min + (rate - min) * (1.0 - p.age / stop).max(0.0)
+                    } else {
+                        rate
+                    };
                     p.yaw += r * dt;
                 }
                 Oper::NormalLock { cp } => {
                     if !newborn && p.normal != Vec3::ZERO {
                         let (a, b) = (&ctx.cp_prev[cp], &cps[cp]);
-                        p.normal = b.local(Vec3::new(p.normal.dot(a.fwd), p.normal.dot(a.left), p.normal.dot(a.up)));
+                        p.normal = b.local(Vec3::new(
+                            p.normal.dot(a.fwd),
+                            p.normal.dot(a.left),
+                            p.normal.dot(a.up),
+                        ));
                     }
                 }
                 Oper::VelToNormal => {
@@ -2759,29 +4193,68 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                         p.normal = p.vel.normalize();
                     }
                 }
-                Oper::Axis3D { axis, rate, decays, end_rate, decay } => {
-                    let r = if decays { rate + (end_rate - rate) * (t / decay).min(1.0) } else { rate };
+                Oper::Axis3D {
+                    axis,
+                    rate,
+                    decays,
+                    end_rate,
+                    decay,
+                } => {
+                    let r = if decays {
+                        rate + (end_rate - rate) * (t / decay).min(1.0)
+                    } else {
+                        rate
+                    };
                     p.orient = (p.orient * Quat::from_axis_angle(axis, r * dt)).normalize();
                 }
-                Oper::Orbit { cp, axis, rate, local } => {
+                Oper::Orbit {
+                    cp,
+                    axis,
+                    rate,
+                    local,
+                } => {
                     let c = &cps[cp];
                     let ax = if local { c.local(axis) } else { axis }.normalize_or(Vec3::Z);
                     let q = Quat::from_axis_angle(ax, rate * dt);
                     p.pos = c.pos + q * (p.pos - c.pos);
                     p.vel = q * p.vel;
                 }
-                Oper::RampRandom { field: f, rate, st, et, prop } => {
-                    let h = |k: u32| ((p.id.wrapping_mul(2654435761).wrapping_add(k.wrapping_mul(40503))) >> 8) as f32 / (1u32 << 24) as f32;
+                Oper::RampRandom {
+                    field: f,
+                    rate,
+                    st,
+                    et,
+                    prop,
+                } => {
+                    let h = |k: u32| {
+                        ((p.id
+                            .wrapping_mul(2654435761)
+                            .wrapping_add(k.wrapping_mul(40503)))
+                            >> 8) as f32
+                            / (1u32 << 24) as f32
+                    };
                     let r = angle_out(f, rate.0 + (rate.1 - rate.0) * h(5));
                     let span = if prop { p.life.max(0.0) } else { 1.0 };
-                    let (s0, e0) = ((st.0 + (st.1 - st.0) * h(6)) * span, (et.0 + (et.1 - et.0) * h(7)) * span);
+                    let (s0, e0) = (
+                        (st.0 + (st.1 - st.0) * h(6)) * span,
+                        (et.0 + (et.1 - et.0) * h(7)) * span,
+                    );
                     let k = (p.age.min(e0) - s0).max(0.0);
                     if k > 0.0 {
                         if matches!(f, Field::Alpha2) {
                             p.alpha *= (1.0 + r * k).clamp(0.0, 1.0);
                         } else {
                             let v = get_field(p, f) + r * k;
-                            set_field(p, f, if matches!(f, Field::Alpha) { v.clamp(0.0, 1.0) } else { v }, false);
+                            set_field(
+                                p,
+                                f,
+                                if matches!(f, Field::Alpha) {
+                                    v.clamp(0.0, 1.0)
+                                } else {
+                                    v
+                                },
+                                false,
+                            );
                         }
                     }
                 }
@@ -2796,12 +4269,29 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                         }
                     }
                 }
-                Oper::PctBetweenCps { a, b, out, pmin, pmax, omin, omax, active, scale_init, scale_cur } => {
+                Oper::PctBetweenCps {
+                    a,
+                    b,
+                    out,
+                    pmin,
+                    pmax,
+                    omin,
+                    omax,
+                    active,
+                    scale_init,
+                    scale_cur,
+                } => {
                     let (pa, d) = (cps[a].pos, cps[b].pos - cps[a].pos);
                     let pct = (p.pos - pa).dot(d) / d.length_squared().max(1e-6);
                     let (lo, hi) = (pmin.min(pmax), pmin.max(pmax));
                     if !(active && (pct < lo || pct > hi)) {
-                        put(p, out, angle_out(out, remap(pct, pmin, pmax, omin, omax)), scale_init, scale_cur);
+                        put(
+                            p,
+                            out,
+                            angle_out(out, remap(pct, pmin, pmax, omin, omax)),
+                            scale_init,
+                            scale_cur,
+                        );
                     }
                 }
                 Oper::InheritAttr { field: f, scale } => {
@@ -2823,19 +4313,50 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                     let k = path_frac(p.id as f32, count);
                     p.pos = cps[start].pos.lerp(cps[end].pos, k);
                 }
-                Oper::CpToColor { cp, imin, imax, omin, omax, scale } => {
+                Oper::CpToColor {
+                    cp,
+                    imin,
+                    imax,
+                    omin,
+                    omax,
+                    scale,
+                } => {
                     if cp_set & (1 << cp) != 0 {
                         let x = cps[cp].pos;
-                        let v = Vec3::new(remap(x.x, imin.x, imax.x, omin.x, omax.x), remap(x.y, imin.y, imax.y, omin.y, omax.y), remap(x.z, imin.z, imax.z, omin.z, omax.z));
+                        let v = Vec3::new(
+                            remap(x.x, imin.x, imax.x, omin.x, omax.x),
+                            remap(x.y, imin.y, imax.y, omin.y, omax.y),
+                            remap(x.z, imin.z, imax.z, omin.z, omax.z),
+                        );
                         p.color = if scale { p.color * v } else { v * sys.hdr };
                     }
                 }
-                Oper::CpToScalar { cp, comp, imin, imax, out, omin, omax, scale_init, scale_cur } => {
+                Oper::CpToScalar {
+                    cp,
+                    comp,
+                    imin,
+                    imax,
+                    out,
+                    omin,
+                    omax,
+                    scale_init,
+                    scale_cur,
+                } => {
                     if cp_set & (1 << cp) != 0 {
-                        put(p, out, angle_out(out, remap(cps[cp].pos[comp], imin, imax, omin, omax)), scale_init, scale_cur);
+                        put(
+                            p,
+                            out,
+                            angle_out(out, remap(cps[cp].pos[comp], imin, imax, omin, omax)),
+                            scale_init,
+                            scale_cur,
+                        );
                     }
                 }
-                Oper::SetCps { .. } | Oper::CpToPlayer { .. } | Oper::Restart { .. } | Oper::StopAfter { .. } | Oper::CpsFromParticles { .. } => {}
+                Oper::SetCps { .. }
+                | Oper::CpToPlayer { .. }
+                | Oper::Restart { .. }
+                | Oper::StopAfter { .. }
+                | Oper::CpsFromParticles { .. } => {}
             }
         }
         if !sys.decays && p.life > 0.0 && p.age >= p.life {
@@ -2843,7 +4364,11 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
         }
         for c in &sys.cons {
             match *c {
-                Constraint::Collide { bounce, slide, kill_speed } => {
+                Constraint::Collide {
+                    bounce,
+                    slide,
+                    kill_speed,
+                } => {
                     let Some(w) = world else { continue };
                     let step = p.vel * dt;
                     let len = step.length();
@@ -2851,7 +4376,11 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
                         continue;
                     }
                     let from = p.pos - step;
-                    if let Some(h) = w.0.raycast(SVec3::from(from.to_array()), SVec3::from((step / len).to_array()), len + p.radius * 0.5) {
+                    if let Some(h) = w.0.raycast(
+                        SVec3::from(from.to_array()),
+                        SVec3::from((step / len).to_array()),
+                        len + p.radius * 0.5,
+                    ) {
                         let nrm = Vec3::from(h.normal.to_array());
                         p.pos = Vec3::from(h.point.to_array()) + nrm * 0.5;
                         let vn = nrm * p.vel.dot(nrm);
@@ -2881,17 +4410,37 @@ fn step_node(n: &mut Node, cps: &mut [Cp; NCP], ctx: &mut StepCtx, emitting: boo
     // Set (child) control points from particle positions: the node's first particles carry
     // control points (the shell ejects' resting child lands where the flying shell is).
     for o in &sys.oper {
-        if let Oper::CpsFromParticles { first, count, skip, orient } = *o {
+        if let Oper::CpsFromParticles {
+            first,
+            count,
+            skip,
+            orient,
+        } = *o
+        {
             for (k, p) in n.particles.iter().skip(skip).take(count).enumerate() {
                 let i = first + k;
                 if i >= NCP {
                     break;
                 }
                 cps[i] = if orient {
-                    let dir = if p.normal != Vec3::ZERO { p.normal } else { p.vel };
-                    Cp::facing(p.pos, if dir.length_squared() > 1e-6 { dir } else { cps[i].fwd })
+                    let dir = if p.normal != Vec3::ZERO {
+                        p.normal
+                    } else {
+                        p.vel
+                    };
+                    Cp::facing(
+                        p.pos,
+                        if dir.length_squared() > 1e-6 {
+                            dir
+                        } else {
+                            cps[i].fwd
+                        },
+                    )
                 } else {
-                    Cp { pos: p.pos, ..cps[i] }
+                    Cp {
+                        pos: p.pos,
+                        ..cps[i]
+                    }
                 };
                 ctx.cp_set |= 1 << i;
             }
@@ -2908,7 +4457,9 @@ impl Node {
         let more = emitting
             && self.sys.emit.iter().enumerate().any(|(k, e)| match *e {
                 Emit::Instant { .. } => !self.instant_done[k],
-                Emit::Continuous { duration, start, .. } => duration <= 0.0 || self.age < start + duration,
+                Emit::Continuous {
+                    duration, start, ..
+                } => duration <= 0.0 || self.age < start + duration,
                 Emit::Distance { .. } => true,
             });
         !more && self.particles.is_empty() && self.started
@@ -2916,15 +4467,26 @@ impl Node {
 }
 
 /// Start loading the particle library on a worker thread once the game data is open.
-pub fn start_pfx(mut commands: Commands, gd: Option<Res<crate::gamedata::GameData>>, existing: Option<Res<Pfx>>, mut materials: ResMut<Assets<StandardMaterial>>) {
-    let (Some(gd), None) = (gd, existing) else { return };
+pub fn start_pfx(
+    mut commands: Commands,
+    gd: Option<Res<crate::gamedata::GameData>>,
+    existing: Option<Res<Pfx>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let (Some(gd), None) = (gd, existing) else {
+        return;
+    };
     let (tx, rx) = mpsc::channel();
     let (pre_tx, pre_rx) = mpsc::channel();
     let root = gd.root.clone();
     let vpk_paths = gd.vpk_paths.clone();
     std::thread::spawn(move || {
         let mut lib = Library::load(root);
-        let keys = if std::env::var_os("TF_PFX_NO_PRECACHE").is_some() { Vec::new() } else { precache_keys(&mut lib, &vpk_paths) };
+        let keys = if std::env::var_os("TF_PFX_NO_PRECACHE").is_some() {
+            Vec::new()
+        } else {
+            precache_keys(&mut lib, &vpk_paths)
+        };
         let frontend = lib.frontend.clone();
         let _ = tx.send(lib);
         if !keys.is_empty() {
@@ -2935,11 +4497,24 @@ pub fn start_pfx(mut commands: Commands, gd: Option<Res<crate::gamedata::GameDat
     // Light-source particles are off by default: with the map's irradiance volume present,
     // any visible point light makes Bevy 0.18 draw BT in the wrong pose, unlit (not seen on
     // the arms or with TF_NO_PROBES). TF_PFX_LIGHTS=1 turns the pool on.
-    let n = if std::env::var_os("TF_PFX_LIGHTS").is_some_and(|v| v == "1") { LIGHTS } else { 0 };
+    let n = if std::env::var_os("TF_PFX_LIGHTS").is_some_and(|v| v == "1") {
+        LIGHTS
+    } else {
+        0
+    };
     for _ in 0..n {
         lights.push(
             commands
-                .spawn((PointLight { intensity: 0.0, range: 1.0, shadows_enabled: false, ..default() }, Transform::default(), Visibility::Visible))
+                .spawn((
+                    PointLight {
+                        intensity: 0.0,
+                        range: 1.0,
+                        shadows_enabled: false,
+                        ..default()
+                    },
+                    Transform::default(),
+                    Visibility::Visible,
+                ))
                 .id(),
         );
     }
@@ -2989,25 +4564,42 @@ const CODE_SYSTEMS: &[&str] = &[
 fn precache_keys(lib: &mut Library, vpk_paths: &[std::path::PathBuf]) -> Vec<String> {
     let t = std::time::Instant::now();
     let vpks: Vec<Vpk> = vpk_paths.iter().filter_map(|p| Vpk::open(p).ok()).collect();
-    let read = |p: &str| vpks.iter().find(|v| v.contains(p)).and_then(|v| v.read(p).ok()).map(|b| String::from_utf8_lossy(&b).into_owned());
+    let read = |p: &str| {
+        vpks.iter()
+            .find(|v| v.contains(p))
+            .and_then(|v| v.read(p).ok())
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+    };
     let mut names: Vec<String> = Vec::new();
     let mut tables = std::collections::BTreeSet::from(["default".to_string()]);
-    let scripts: Vec<String> = vpks.iter().flat_map(|v| v.entries.keys()).filter(|k| k.starts_with("scripts/weapons/") && k.ends_with(".txt")).cloned().collect();
+    let scripts: Vec<String> = vpks
+        .iter()
+        .flat_map(|v| v.entries.keys())
+        .filter(|k| k.starts_with("scripts/weapons/") && k.ends_with(".txt"))
+        .cloned()
+        .collect();
     for f in &scripts {
         let Some(text) = read(f) else { continue };
         for line in text.lines() {
             let mut q = line.split('"').skip(1).step_by(2);
-            let (Some(k), Some(v)) = (q.next(), q.next()) else { continue };
+            let (Some(k), Some(v)) = (q.next(), q.next()) else {
+                continue;
+            };
             let k = k.to_ascii_lowercase();
             if k == "impact_effect_table" {
                 tables.insert(v.to_ascii_lowercase());
-            } else if k.starts_with("fx_") || k.starts_with("tracer_effect") || k.starts_with("projectile_trail_effect") {
+            } else if k.starts_with("fx_")
+                || k.starts_with("tracer_effect")
+                || k.starts_with("projectile_trail_effect")
+            {
                 names.push(v.to_string());
             }
         }
     }
     for t in &tables {
-        let Some(text) = read(&format!("scripts/impacts/{t}.txt")) else { continue };
+        let Some(text) = read(&format!("scripts/impacts/{t}.txt")) else {
+            continue;
+        };
         for line in text.lines() {
             let mut q = line.split('"').skip(1).step_by(2);
             if let (Some(_), Some(v)) = (q.next(), q.next()) {
@@ -3034,39 +4626,83 @@ fn precache_keys(lib: &mut Library, vpk_paths: &[std::path::PathBuf]) -> Vec<Str
 }
 
 /// Decode `keys` on every core with the loader thread's own VPK handles.
-fn precache(keys: &[String], vpk_paths: &[std::path::PathBuf], frontend: Option<Arc<Vpk>>) -> Vec<(String, Option<(vtf::Vtf, HashMap<String, String>)>)> {
+fn precache(
+    keys: &[String],
+    vpk_paths: &[std::path::PathBuf],
+    frontend: Option<Arc<Vpk>>,
+) -> Vec<(String, Option<(vtf::Vtf, HashMap<String, String>)>)> {
     let t = std::time::Instant::now();
     let vpks: Vec<Vpk> = vpk_paths.iter().filter_map(|p| Vpk::open(p).ok()).collect();
-    let read = |p: &str| vpks.iter().find(|v| v.contains(p)).and_then(|v| v.read(p).ok()).or_else(|| frontend.as_ref().and_then(|v| v.read(p).ok()));
+    let read = |p: &str| {
+        vpks.iter()
+            .find(|v| v.contains(p))
+            .and_then(|v| v.read(p).ok())
+            .or_else(|| frontend.as_ref().and_then(|v| v.read(p).ok()))
+    };
     let out = crate::world::parallel_map(keys, |k| decode_material(k, &read));
-    log::info!("particles: precached {} materials in {:?}", keys.len(), t.elapsed());
-    keys.iter().cloned().zip(out.into_iter().map(Option::flatten)).collect()
+    log::info!(
+        "particles: precached {} materials in {:?}",
+        keys.len(),
+        t.elapsed()
+    );
+    keys.iter()
+        .cloned()
+        .zip(out.into_iter().map(Option::flatten))
+        .collect()
 }
 
 /// Read a particle material's .vmt and decode its base texture (with `$texcolorfromalpha`'s
 /// ramp applied), or a refracting material's packed normal map (`decode_refract`); None if
 /// it can't be drawn (missing). Pure, so new effects' materials decode in parallel.
-fn decode_material(key: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Option<(vtf::Vtf, HashMap<String, String>)> {
-    let vmt_path = format!("materials/{}", if key.ends_with(".vmt") { key.to_string() } else { format!("{key}.vmt") });
+fn decode_material(
+    key: &str,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Option<(vtf::Vtf, HashMap<String, String>)> {
+    let vmt_path = format!(
+        "materials/{}",
+        if key.ends_with(".vmt") {
+            key.to_string()
+        } else {
+            format!("{key}.vmt")
+        }
+    );
     let text = String::from_utf8_lossy(&read(&vmt_path)?).into_owned();
     let (shader, kv) = parse_vmt(&text);
-    if shader.contains("refract") || kv.contains_key("$refractamount") || kv.contains_key("$forcerefract") {
+    if shader.contains("refract")
+        || kv.contains_key("$refractamount")
+        || kv.contains_key("$forcerefract")
+    {
         // TF_NO_REFRACT=1 leaves refraction out (for comparing).
-        return if std::env::var_os("TF_NO_REFRACT").is_some() { None } else { decode_refract(kv, read) };
+        return if std::env::var_os("TF_NO_REFRACT").is_some() {
+            None
+        } else {
+            decode_refract(kv, read)
+        };
     }
-    let tex = kv.get("$basetexture")?.replace('\\', "/").to_ascii_lowercase();
+    let tex = kv
+        .get("$basetexture")?
+        .replace('\\', "/")
+        .to_ascii_lowercase();
     // Some name the source art (`dirt_burst_full.tga`): the compiled texture is the .vtf.
-    let tex = tex.trim_end_matches(".vtf").trim_end_matches(".tga").trim_end_matches(".psd");
+    let tex = tex
+        .trim_end_matches(".vtf")
+        .trim_end_matches(".tga")
+        .trim_end_matches(".psd");
     let mut v = vtf::decode(&read(&format!("materials/{tex}.vtf"))?, 512).ok()?;
     let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
-    if let Some(r) = kv.get("$ramptexture").filter(|_| flag("$texcolorfromalpha")) {
+    if let Some(r) = kv
+        .get("$ramptexture")
+        .filter(|_| flag("$texcolorfromalpha"))
+    {
         let r = r.replace('\\', "/").to_ascii_lowercase();
-        if let Some(r) = read(&format!("materials/{}.vtf", r.trim_end_matches(".vtf"))).and_then(|b| vtf::decode(&b, 256).ok()) {
-        let row = (r.height / 2) as usize * r.width as usize;
-        for px in v.rgba.chunks_exact_mut(4) {
-            let x = (px[3] as usize * (r.width as usize - 1)) / 255;
-            px[..3].copy_from_slice(&r.rgba[(row + x) * 4..][..3]);
-        }
+        if let Some(r) = read(&format!("materials/{}.vtf", r.trim_end_matches(".vtf")))
+            .and_then(|b| vtf::decode(&b, 256).ok())
+        {
+            let row = (r.height / 2) as usize * r.width as usize;
+            for px in v.rgba.chunks_exact_mut(4) {
+                let x = (px[3] as usize * (r.width as usize - 1)) / 255;
+                px[..3].copy_from_slice(&r.rgba[(row + x) * 4..][..3]);
+            }
         }
     }
     Some((v, kv))
@@ -3075,19 +4711,39 @@ fn decode_material(key: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Option<
 /// A `Refract` material's textures packed into one linear image: RG the normal map's XY, B
 /// its `$opacitymap` (white without one) and A the normal map's alpha (the refraction mask
 /// in Source's Refract shader). The kv gains `%refract`.
-fn decode_refract(mut kv: HashMap<String, String>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Option<(vtf::Vtf, HashMap<String, String>)> {
-    let path = |k: &str| kv.get(k).map(|t| format!("materials/{}.vtf", t.replace('\\', "/").to_ascii_lowercase().trim_end_matches(".vtf")));
+fn decode_refract(
+    mut kv: HashMap<String, String>,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Option<(vtf::Vtf, HashMap<String, String>)> {
+    let path = |k: &str| {
+        kv.get(k).map(|t| {
+            format!(
+                "materials/{}.vtf",
+                t.replace('\\', "/")
+                    .to_ascii_lowercase()
+                    .trim_end_matches(".vtf")
+            )
+        })
+    };
     let mut v = vtf::decode(&read(&path("$normalmap")?)?, 512).ok()?;
-    let opa = path("$opacitymap").and_then(|p| read(&p)).and_then(|b| vtf::decode(&b, 512).ok());
+    let opa = path("$opacitymap")
+        .and_then(|p| read(&p))
+        .and_then(|b| vtf::decode(&b, 512).ok());
     // An opacity map's value: its alpha if it has one, else its grey level.
-    let opa_alpha = opa.as_ref().is_some_and(|o| o.rgba.chunks_exact(4).any(|px| px[3] != 255));
+    let opa_alpha = opa
+        .as_ref()
+        .is_some_and(|o| o.rgba.chunks_exact(4).any(|px| px[3] != 255));
     let (w, h) = (v.width as usize, v.height as usize);
     for y in 0..h {
         for x in 0..w {
             let o = opa.as_ref().map_or(255, |o| {
                 let (ow, oh) = (o.width as usize, o.height as usize);
                 let px = &o.rgba[((y * oh / h) * ow + x * ow / w) * 4..][..4];
-                if opa_alpha { px[3] } else { px[0] }
+                if opa_alpha {
+                    px[3]
+                } else {
+                    px[0]
+                }
             });
             v.rgba[(y * w + x) * 4 + 2] = o;
         }
@@ -3110,12 +4766,20 @@ fn layer_for(
     sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes),
 ) -> Option<usize> {
     let key = material.replace('\\', "/").to_ascii_lowercase();
-    let layer_key = if overlay { format!("{key}#overlay") } else { key.clone() };
+    let layer_key = if overlay {
+        format!("{key}#overlay")
+    } else {
+        key.clone()
+    };
     if let Some(l) = pfx.layer_of.get(&layer_key) {
         return *l;
     }
     let frontend = pfx.lib.as_ref().and_then(|l| l.frontend.clone());
-    let read = |p: &str| gd.read_file(p).ok().or_else(|| frontend.as_ref().and_then(|v| v.read(p).ok()));
+    let read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .or_else(|| frontend.as_ref().and_then(|v| v.read(p).ok()))
+    };
     let result = (|| {
         let (mut v, kv) = match pfx.decoded.remove(&key) {
             Some(d) => d?,
@@ -3127,13 +4791,32 @@ fn layer_for(
             if overlay {
                 return None;
             }
-            return Some(refract_layer(v, &kv, commands, images, meshes, refract_mats, sprites));
+            return Some(refract_layer(
+                v,
+                &kv,
+                commands,
+                images,
+                meshes,
+                refract_mats,
+                sprites,
+            ));
         }
         let additive = flag("$additive") || flag("$addself");
-        let overbright = kv.get("$overbrightfactor").and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0).max(0.1);
-        let orient = kv.get("$orientation").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+        let overbright = kv
+            .get("$overbrightfactor")
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(1.0)
+            .max(0.1);
+        let orient = kv
+            .get("$orientation")
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(0);
         let mut img = Image::new(
-            Extent3d { width: v.width, height: v.height, depth_or_array_layers: 1 },
+            Extent3d {
+                width: v.width,
+                height: v.height,
+                depth_or_array_layers: 1,
+            },
             TextureDimension::D2,
             std::mem::take(&mut v.rgba),
             TextureFormat::Rgba8UnormSrgb,
@@ -3142,8 +4825,19 @@ fn layer_for(
         img.sampler = bevy::image::ImageSampler::linear();
         // TF_NO_DEPTHBLEND=1 turns the soft-particle fade off; TF_DEPTHBLEND_SCALE=k
         // multiplies the fade distance (both for checking it).
-        let depth_scale = std::env::var("TF_DEPTHBLEND_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
-        let depth_blend = if flag("$depthblend") && std::env::var_os("TF_NO_DEPTHBLEND").is_none() { kv.get("$depthblendscale").and_then(|s| s.parse::<f32>().ok()).unwrap_or(DEPTH_BLEND_DEFAULT) * UNIT * depth_scale } else { 0.0 };
+        let depth_scale = std::env::var("TF_DEPTHBLEND_SCALE")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(1.0);
+        let depth_blend = if flag("$depthblend") && std::env::var_os("TF_NO_DEPTHBLEND").is_none() {
+            kv.get("$depthblendscale")
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(DEPTH_BLEND_DEFAULT)
+                * UNIT
+                * depth_scale
+        } else {
+            0.0
+        };
         let ignorez = flag("$ignorez");
         let buf = crate::spritebuf::SpriteBuf::new(sprites.0, false);
         let material = mats.add(SoftMaterial {
@@ -3151,26 +4845,54 @@ fn layer_for(
                 base_color: Color::WHITE,
                 base_color_texture: Some(images.add(img)),
                 unlit: true,
-                alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend },
+                alpha_mode: if additive {
+                    AlphaMode::Add
+                } else {
+                    AlphaMode::Blend
+                },
                 cull_mode: None,
                 double_sided: true,
                 fog_enabled: !additive,
                 ..default()
             },
-            extension: SoftParticle { params: Vec4::new(depth_blend, 0.0, 0.0, 0.0), verts: buf.buffer.clone(), ignorez },
+            extension: SoftParticle {
+                params: Vec4::new(depth_blend, 0.0, 0.0, 0.0),
+                verts: buf.buffer.clone(),
+                ignorez,
+            },
         });
         let entity = commands
-            .spawn((Mesh3d(sprites.1.first(meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
+            .spawn((
+                Mesh3d(sprites.1.first(meshes)),
+                MeshMaterial3d(material.clone()),
+                Transform::default(),
+                Visibility::Hidden,
+                NoFrustumCulling,
+                NotShadowCaster,
+                NotShadowReceiver,
+            ))
             .id();
         if overlay {
-            commands.entity(entity).insert(bevy::camera::visibility::RenderLayers::layer(crate::vmcam::VM_LAYER));
+            commands
+                .entity(entity)
+                .insert(bevy::camera::visibility::RenderLayers::layer(
+                    crate::vmcam::VM_LAYER,
+                ));
         }
         // `$overbrightfactor` runs up to 30 on the glows (`_15ob`, `_30ob`); applied in full
         // under this tonemapper every glow is a flat white disc, so it is compressed to its
         // square root (15 -> 3.9) and the camera's bloom carries the rest. An approximation of
         // the game's HDR pipeline, not its numbers.
         let gain = if additive { ADD_GAIN } else { BLEND_GAIN } * overbright.sqrt();
-        Some(Layer { additive, gain, orient, sheet: v.sheet, buf, mat: LayerMat::Soft(material), entity })
+        Some(Layer {
+            additive,
+            gain,
+            orient,
+            sheet: v.sheet,
+            buf,
+            mat: LayerMat::Soft(material),
+            entity,
+        })
     })();
     let idx = result.map(|l| {
         pfx.layers.push(l);
@@ -3184,11 +4906,23 @@ fn layer_for(
 }
 
 /// A refracting material's layer: its sprites take the transmissive phase (refract.wgsl).
-fn refract_layer(mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut Commands, images: &mut Assets<Image>, meshes: &mut Assets<Mesh>, mats: &mut Assets<RefractMaterial>, sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes)) -> Layer {
+fn refract_layer(
+    mut v: vtf::Vtf,
+    kv: &HashMap<String, String>,
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    mats: &mut Assets<RefractMaterial>,
+    sprites: (&RenderDevice, &mut crate::spritebuf::SpriteMeshes),
+) -> Layer {
     let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
     let num = |k: &str| kv.get(k).and_then(|s| s.trim().parse::<f32>().ok());
     let mut img = Image::new(
-        Extent3d { width: v.width, height: v.height, depth_or_array_layers: 1 },
+        Extent3d {
+            width: v.width,
+            height: v.height,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         std::mem::take(&mut v.rgba),
         TextureFormat::Rgba8Unorm,
@@ -3196,7 +4930,10 @@ fn refract_layer(mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut C
     );
     img.sampler = bevy::image::ImageSampler::linear();
     // TF_REFRACT_SCALE=k multiplies every material's amount (for checking it).
-    let scale = std::env::var("TF_REFRACT_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+    let scale = std::env::var("TF_REFRACT_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(1.0);
     let buf = crate::spritebuf::SpriteBuf::new(sprites.0, false);
     let material = mats.add(RefractMaterial {
         base: StandardMaterial {
@@ -3211,14 +4948,41 @@ fn refract_layer(mut v: vtf::Vtf, kv: &HashMap<String, String>, commands: &mut C
             ..default()
         },
         extension: RefractParticle {
-            params: Vec4::new(num("$refractamount").unwrap_or(0.0) * scale, num("$bluramount").unwrap_or(0.0), if flag("$vertexcolormodulate") { 1.0 } else { 0.0 }, 0.0),
+            params: Vec4::new(
+                num("$refractamount").unwrap_or(0.0) * scale,
+                num("$bluramount").unwrap_or(0.0),
+                if flag("$vertexcolormodulate") {
+                    1.0
+                } else {
+                    0.0
+                },
+                0.0,
+            ),
             normal: Some(images.add(img)),
             verts: buf.buffer.clone(),
             ignorez: flag("$ignorez"),
         },
     });
-    let entity = commands.spawn((Mesh3d(sprites.1.first(meshes)), MeshMaterial3d(material.clone()), Transform::default(), Visibility::Hidden, NoFrustumCulling, NotShadowCaster, NotShadowReceiver)).id();
-    Layer { additive: false, gain: 1.0, orient: num("$orientation").map_or(0, |o| o as i32), sheet: v.sheet, buf, mat: LayerMat::Refract(material), entity }
+    let entity = commands
+        .spawn((
+            Mesh3d(sprites.1.first(meshes)),
+            MeshMaterial3d(material.clone()),
+            Transform::default(),
+            Visibility::Hidden,
+            NoFrustumCulling,
+            NotShadowCaster,
+            NotShadowReceiver,
+        ))
+        .id();
+    Layer {
+        additive: false,
+        gain: 1.0,
+        orient: num("$orientation").map_or(0, |o| o as i32),
+        sheet: v.sheet,
+        buf,
+        mat: LayerMat::Refract(material),
+        entity,
+    }
 }
 
 #[derive(Default)]
@@ -3258,7 +5022,9 @@ pub fn sync_fx_model_globals(
     locals: Query<&Transform, Without<FxModelInstance>>,
 ) {
     let Some(root) = root else { return };
-    let Ok(root_gt) = globals.get(root.0).copied() else { return };
+    let Ok(root_gt) = globals.get(root.0).copied() else {
+        return;
+    };
     for (e, tf, children) in &models {
         let gt = root_gt.mul_transform(*tf);
         if let Ok(mut g) = globals.get_mut(e) {
@@ -3280,14 +5046,38 @@ pub fn update_pfx(
     world: Option<Res<crate::player::Collision>>,
     requests: Query<(Entity, &PfxRequest, Has<PfxOverlay>, Has<PfxScreen>)>,
     impacts: Query<(Entity, &ImpactRequest)>,
-    mut trails: Query<(Entity, &GlobalTransform, &mut PfxTrail, Option<&PfxBeamEnd>, Has<PfxScreen>, Has<PfxVmSpace>, Has<PfxOverlay>, Option<&PfxColor>)>,
+    mut trails: Query<(
+        Entity,
+        &GlobalTransform,
+        &mut PfxTrail,
+        Option<&PfxBeamEnd>,
+        Has<PfxScreen>,
+        Has<PfxVmSpace>,
+        Has<PfxOverlay>,
+        Option<&PfxColor>,
+    )>,
     camera: Query<&GlobalTransform, With<MainCamera>>,
-    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<Image>>, ResMut<Assets<SoftMaterial>>, ResMut<Assets<StandardMaterial>>, ResMut<Assets<crate::uber::UberMaterial>>, ResMut<Assets<RefractMaterial>>, ResMut<Assets<crate::fxuber::FxUberMaterial>>),
-    mut model_res: (Option<ResMut<crate::convert::Cache>>, Option<Res<crate::pilotweapon::WorldRoot>>, Option<Res<ParticleLight>>),
+    mut assets: (
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<Image>>,
+        ResMut<Assets<SoftMaterial>>,
+        ResMut<Assets<StandardMaterial>>,
+        ResMut<Assets<crate::uber::UberMaterial>>,
+        ResMut<Assets<RefractMaterial>>,
+        ResMut<Assets<crate::fxuber::FxUberMaterial>>,
+    ),
+    mut model_res: (
+        Option<ResMut<crate::convert::Cache>>,
+        Option<Res<crate::pilotweapon::WorldRoot>>,
+        Option<Res<ParticleLight>>,
+    ),
     mut vis: Query<&mut Visibility>,
     mut lights: Query<(&mut PointLight, &mut Transform)>,
     old: Option<ResMut<crate::particles::Particles>>,
-    lenses: Query<(&Projection, Has<crate::vmcam::ViewmodelCamera>), Or<(With<MainCamera>, With<crate::vmcam::ViewmodelCamera>)>>,
+    lenses: Query<
+        (&Projection, Has<crate::vmcam::ViewmodelCamera>),
+        Or<(With<MainCamera>, With<crate::vmcam::ViewmodelCamera>)>,
+    >,
     mut gpu: (
         Res<RenderDevice>,
         ResMut<crate::spritebuf::SpriteMeshes>,
@@ -3299,7 +5089,10 @@ pub fn update_pfx(
 ) {
     // Set Control Point To Player: Source's C_OP_SetControlPointToPlayer uses the view origin
     // (the camera), so screen-space systems such as the FX_victim glows sit at the eye.
-    let player = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
+    let player = camera
+        .single()
+        .map(|c| to_game(c.translation()))
+        .unwrap_or(Vec3::ZERO);
     let (Some(mut pfx), Some(gd)) = (pfx, gd) else {
         for (e, ..) in &requests {
             commands.entity(e).despawn();
@@ -3310,12 +5103,20 @@ pub fn update_pfx(
         return;
     };
     if pfx.lib.is_none() {
-        let got = pfx.rx.lock().ok().and_then(|g| g.as_ref().and_then(|rx| rx.try_recv().ok()));
+        let got = pfx
+            .rx
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|rx| rx.try_recv().ok()));
         if let Some(lib) = got {
             pfx.lib = Some(lib);
         }
     }
-    let pre = pfx.pre_rx.lock().ok().and_then(|g| g.as_ref().and_then(|rx| rx.try_recv().ok()));
+    let pre = pfx
+        .pre_rx
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|rx| rx.try_recv().ok()));
     if let Some(list) = pre {
         for (k, d) in list {
             if !pfx.layer_of.contains_key(&k) {
@@ -3328,8 +5129,21 @@ pub fn update_pfx(
     let (meshes, images, mats) = (&mut *assets.0, &mut *assets.1, &mut *assets.2);
 
     // Requests.
-    let fov = |vm: bool| lenses.iter().find(|(_, v)| *v == vm).and_then(|(p, _)| if let Projection::Perspective(pp) = p { Some(pp.fov) } else { None });
-    let fp_lens = camera.single().ok().zip(fov(false)).zip(fov(true)).map(|((c, w), v)| (*c, w, v));
+    let fov = |vm: bool| {
+        lenses.iter().find(|(_, v)| *v == vm).and_then(|(p, _)| {
+            if let Projection::Perspective(pp) = p {
+                Some(pp.fov)
+            } else {
+                None
+            }
+        })
+    };
+    let fp_lens = camera
+        .single()
+        .ok()
+        .zip(fov(false))
+        .zip(fov(true))
+        .map(|((c, w), v)| (*c, w, v));
     for (e, r, overlay, screen) in &requests {
         commands.entity(e).despawn();
         if ready {
@@ -3339,7 +5153,12 @@ pub fn update_pfx(
             let mut cps = r.cps.clone();
             if let (true, false, Some((cam, w, v))) = (r.vm, overlay, fp_lens) {
                 for c in &mut cps {
-                    c.pos = to_game(crate::vmcam::fx_to_world(crate::player::to_bevy(c.pos), &cam, w, v));
+                    c.pos = to_game(crate::vmcam::fx_to_world(
+                        crate::player::to_bevy(c.pos),
+                        &cam,
+                        w,
+                        v,
+                    ));
                 }
             }
             let spawned = pfx.spawn(&r.name, &cps, r.stop_after, None);
@@ -3381,17 +5200,31 @@ pub fn update_pfx(
         // it is an overlay: then the viewmodel camera draws it in place, over and behind the
         // gun as its depth says (Legion's barrel blur sleeve wraps the barrels).
         let at = match (vm_space && !overlay, fp_lens) {
-            (true, Some((cam, w, v))) => to_game(crate::vmcam::fx_to_world(gt.translation(), &cam, w, v)),
+            (true, Some((cam, w, v))) => {
+                to_game(crate::vmcam::fx_to_world(gt.translation(), &cam, w, v))
+            }
             _ => to_game(gt.translation()),
         };
-        let dir = tr.last.map(|l| at - l).filter(|d| d.length() > 1e-3).unwrap_or(Vec3::X);
+        let dir = tr
+            .last
+            .map(|l| at - l)
+            .filter(|d| d.length() > 1e-3)
+            .unwrap_or(Vec3::X);
         tr.last = Some(at);
         let end = end.map(|e| to_game(e.0));
         let cp = if let Some(e) = end {
             Cp::facing(at, (e - at).normalize_or(Vec3::X))
         } else if tr.oriented {
-            let (fwd, up) = (dir_to_game(gt.forward().as_vec3()), dir_to_game(gt.up().as_vec3()));
-            Cp { pos: at, fwd, left: up.cross(fwd), up }
+            let (fwd, up) = (
+                dir_to_game(gt.forward().as_vec3()),
+                dir_to_game(gt.up().as_vec3()),
+            );
+            Cp {
+                pos: at,
+                fwd,
+                left: up.cross(fwd),
+                up,
+            }
         } else {
             Cp::facing(at, dir)
         };
@@ -3431,7 +5264,12 @@ pub fn update_pfx(
     for fx in pfx.effects.iter_mut() {
         if fx.attached.is_some() && !alive_trails.contains(&fx.id) && !fx.stopped {
             fx.stopped = true;
-            caps.push((fx.cps, fx.cp_set, std::mem::take(&mut fx.end_caps), fx.screen));
+            caps.push((
+                fx.cps,
+                fx.cp_set,
+                std::mem::take(&mut fx.end_caps),
+                fx.screen,
+            ));
         }
     }
     for (cps, cp_set, list, screen) in caps {
@@ -3442,7 +5280,26 @@ pub fn update_pfx(
                 collect_nodes(lib, sys, delay, 0, &mut nodes, &mut more);
                 pfx.next_id += 1;
                 let id = pfx.next_id;
-                pfx.effects.push(Effect { id, nodes, cps, cp_prev: cps.map(|c| c.pos), cp_vel: [Vec3::ZERO; NCP], light: [None; NCP], cp_frame_prev: cps, cp_set, age: 0.0, stop_at: DEFAULT_STOP, stopped: false, stopped_at: f32::INFINITY, capped: false, attached: None, end_caps: Vec::new(), vm: false, overlay: false, screen });
+                pfx.effects.push(Effect {
+                    id,
+                    nodes,
+                    cps,
+                    cp_prev: cps.map(|c| c.pos),
+                    cp_vel: [Vec3::ZERO; NCP],
+                    light: [None; NCP],
+                    cp_frame_prev: cps,
+                    cp_set,
+                    age: 0.0,
+                    stop_at: DEFAULT_STOP,
+                    stopped: false,
+                    stopped_at: f32::INFINITY,
+                    capped: false,
+                    attached: None,
+                    end_caps: Vec::new(),
+                    vm: false,
+                    overlay: false,
+                    screen,
+                });
             }
         }
     }
@@ -3461,13 +5318,25 @@ pub fn update_pfx(
     // Decode the new materials' textures on every core first: one at a time, the first frag
     // explosion stalled the frame for 350 ms.
     {
-        let mut keys: Vec<String> = needed.iter().map(|(_, _, m, _)| m.replace('\\', "/").to_ascii_lowercase()).filter(|k| !pfx.decoded.contains_key(k) && !pfx.layer_of.contains_key(k) && !pfx.layer_of.contains_key(&format!("{k}#overlay"))).collect();
+        let mut keys: Vec<String> = needed
+            .iter()
+            .map(|(_, _, m, _)| m.replace('\\', "/").to_ascii_lowercase())
+            .filter(|k| {
+                !pfx.decoded.contains_key(k)
+                    && !pfx.layer_of.contains_key(k)
+                    && !pfx.layer_of.contains_key(&format!("{k}#overlay"))
+            })
+            .collect();
         keys.sort();
         keys.dedup();
         if keys.len() > 1 {
             let frontend = pfx.lib.as_ref().and_then(|l| l.frontend.clone());
             let gdr: &crate::gamedata::GameData = &gd;
-            let read = |p: &str| gdr.read_file(p).ok().or_else(|| frontend.as_ref().and_then(|v| v.read(p).ok()));
+            let read = |p: &str| {
+                gdr.read_file(p)
+                    .ok()
+                    .or_else(|| frontend.as_ref().and_then(|v| v.read(p).ok()))
+            };
             let out = crate::world::parallel_map(&keys, |k| {
                 let t = std::time::Instant::now();
                 let d = decode_material(k, &read);
@@ -3481,7 +5350,18 @@ pub fn update_pfx(
         }
     }
     for (fi, ni, m, overlay) in needed {
-        let l = layer_for(&mut pfx, &m, overlay, &gd, &mut commands, images, meshes, mats, &mut assets.5, (&gpu.0, &mut gpu.1));
+        let l = layer_for(
+            &mut pfx,
+            &m,
+            overlay,
+            &gd,
+            &mut commands,
+            images,
+            meshes,
+            mats,
+            &mut assets.5,
+            (&gpu.0, &mut gpu.1),
+        );
         pfx.effects[fi].nodes[ni].layer = l.or(Some(usize::MAX));
     }
     if loads > 0 {
@@ -3501,7 +5381,11 @@ pub fn update_pfx(
         if fx.stopped && fx.stopped_at.is_infinite() {
             fx.stopped_at = fx.age;
         }
-        let since_stop = if fx.stopped { fx.age - fx.stopped_at } else { -1.0 };
+        let since_stop = if fx.stopped {
+            fx.age - fx.stopped_at
+        } else {
+            -1.0
+        };
         // Set Control Point To Player moves its point before the deltas are taken, so locked
         // particles follow the camera from the first frame.
         for n in &fx.nodes {
@@ -3523,7 +5407,13 @@ pub fn update_pfx(
                 if let Init::Color { tint: Some(t), .. } = i {
                     let at = fx.cps[t.cp].pos;
                     if !fx.light[t.cp].is_some_and(|(was, _)| was.distance(at) < t.threshold) {
-                        fx.light[t.cp] = Some((at, model_res.2.as_ref().map_or(LightSample::NONE, |l| l.sample(at))));
+                        fx.light[t.cp] = Some((
+                            at,
+                            model_res
+                                .2
+                                .as_ref()
+                                .map_or(LightSample::NONE, |l| l.sample(at)),
+                        ));
                     }
                 }
             }
@@ -3539,17 +5429,53 @@ pub fn update_pfx(
         let mut stopped_by_op: Vec<bool> = fx.nodes.iter().map(|n| n.op_stopped).collect();
         for ni in 0..fx.nodes.len() {
             let parent: Vec<P> = match fx.nodes[ni].parent {
-                Some(pi) if fx.nodes[ni].sys.init.iter().any(|i| matches!(i, Init::FromParent { .. } | Init::InheritParent { .. })) || fx.nodes[ni].sys.oper.iter().any(|o| matches!(o, Oper::InheritAttr { .. })) => fx.nodes[pi].particles.iter().filter(|p| !p.dead).copied().collect(),
+                Some(pi)
+                    if fx.nodes[ni].sys.init.iter().any(|i| {
+                        matches!(i, Init::FromParent { .. } | Init::InheritParent { .. })
+                    }) || fx.nodes[ni]
+                        .sys
+                        .oper
+                        .iter()
+                        .any(|o| matches!(o, Oper::InheritAttr { .. })) =>
+                {
+                    fx.nodes[pi]
+                        .particles
+                        .iter()
+                        .filter(|p| !p.dead)
+                        .copied()
+                        .collect()
+                }
                 _ => Vec::new(),
             };
             let n = &mut fx.nodes[ni];
-            let sheet: &[Sequence] = n.layer.and_then(|l| layers.get(l)).map_or(&[], |l| &l.sheet[..]);
-            let sheet_len = |s: u16| sheet.get(s as usize).map(|q| q.frames.len() as f32).unwrap_or(1.0);
+            let sheet: &[Sequence] = n
+                .layer
+                .and_then(|l| layers.get(l))
+                .map_or(&[], |l| &l.sheet[..]);
+            let sheet_len = |s: u16| {
+                sheet
+                    .get(s as usize)
+                    .map(|q| q.frames.len() as f32)
+                    .unwrap_or(1.0)
+            };
             if recap {
                 let sys = n.sys.clone();
                 for p in n.particles.iter_mut() {
                     let id = p.id;
-                    apply_inits(&sys, p, &fx.cps, &cp_vel, &light, fx.cp_set, &[], &sheet_len, &mut rng, id, false, true);
+                    apply_inits(
+                        &sys,
+                        p,
+                        &fx.cps,
+                        &cp_vel,
+                        &light,
+                        fx.cp_set,
+                        &[],
+                        &sheet_len,
+                        &mut rng,
+                        id,
+                        false,
+                        true,
+                    );
                 }
             }
             // A Stop Effect after Duration on a system stops its children's emission as well
@@ -3563,8 +5489,27 @@ pub fn update_pfx(
                 }
                 stopped
             };
-            let mut ctx = StepCtx { cp_delta: &delta, cp_vel: &cp_vel, light: &light, cp_prev: &cp_frame_prev, cp_set: fx.cp_set, since_stop, player, parent: &parent };
-            step_node(n, &mut fx.cps, &mut ctx, emitting && !parent_stopped, dt, &mut rng, world, &mut budget, &sheet_len);
+            let mut ctx = StepCtx {
+                cp_delta: &delta,
+                cp_vel: &cp_vel,
+                light: &light,
+                cp_prev: &cp_frame_prev,
+                cp_set: fx.cp_set,
+                since_stop,
+                player,
+                parent: &parent,
+            };
+            step_node(
+                n,
+                &mut fx.cps,
+                &mut ctx,
+                emitting && !parent_stopped,
+                dt,
+                &mut rng,
+                world,
+                &mut budget,
+                &sheet_len,
+            );
             stopped_by_op[ni] = n.op_stopped;
             fx.cp_set = ctx.cp_set;
         }
@@ -3575,16 +5520,36 @@ pub fn update_pfx(
     // game units, the oldest removed past MAX_DECALS.
     {
         let (cache, root) = (&mut model_res.0, model_res.1.as_deref());
-        let Pfx { effects, decal_mats, decals, decal_mesh, rng: prng, .. } = &mut *pfx;
+        let Pfx {
+            effects,
+            decal_mats,
+            decals,
+            decal_mesh,
+            rng: prng,
+            ..
+        } = &mut *pfx;
         for fx in effects.iter_mut() {
             let cp = fx.cps[0];
-            for n in fx.nodes.iter_mut().filter(|n| !n.decal_done && !n.particles.is_empty()) {
-                let Some(Render::Decal { materials }) = n.sys.render.iter().find(|r| matches!(r, Render::Decal { .. })) else { continue };
+            for n in fx
+                .nodes
+                .iter_mut()
+                .filter(|n| !n.decal_done && !n.particles.is_empty())
+            {
+                let Some(Render::Decal { materials }) = n
+                    .sys
+                    .render
+                    .iter()
+                    .find(|r| matches!(r, Render::Decal { .. }))
+                else {
+                    continue;
+                };
                 n.decal_done = true;
                 if std::env::var_os("TF_NO_DECALS").is_some() {
                     continue;
                 }
-                let (Some(cache), Some(root)) = (cache.as_deref_mut(), root) else { continue };
+                let (Some(cache), Some(root)) = (cache.as_deref_mut(), root) else {
+                    continue;
+                };
                 *prng ^= *prng << 13;
                 *prng ^= *prng >> 7;
                 *prng ^= *prng << 17;
@@ -3605,16 +5570,27 @@ pub fn update_pfx(
                     })
                     .clone();
                 let Some(mat) = mat else { continue };
-                let mesh = decal_mesh.get_or_insert_with(|| meshes.add(Rectangle::new(1.0, 1.0))).clone();
+                let mesh = decal_mesh
+                    .get_or_insert_with(|| meshes.add(Rectangle::new(1.0, 1.0)))
+                    .clone();
                 let spin = (*prng >> 20) as f32 / (1u64 << 44) as f32 * std::f32::consts::TAU;
                 let normal = cp.up.normalize_or(Vec3::Z);
                 let tf = Transform {
                     translation: cp.pos + normal * 0.25,
-                    rotation: Quat::from_rotation_arc(Vec3::Z, normal) * Quat::from_rotation_z(spin),
+                    rotation: Quat::from_rotation_arc(Vec3::Z, normal)
+                        * Quat::from_rotation_z(spin),
                     scale: Vec3::splat(DECAL_SIZE),
                 };
                 // Drawn with the world's translucent surfaces, before the effects.
-                let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), tf, NotShadowCaster, crate::convert::TransparentOrder::WORLD)).id();
+                let e = commands
+                    .spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(mat),
+                        tf,
+                        NotShadowCaster,
+                        crate::convert::TransparentOrder::WORLD,
+                    ))
+                    .id();
                 commands.entity(root.0).add_child(e);
                 decals.push_back(e);
                 while decals.len() > MAX_DECALS {
@@ -3630,25 +5606,64 @@ pub fn update_pfx(
     {
         let (mut cache, root, _) = model_res;
         let model_tfs = &mut gpu.3;
-        let Pfx { effects, model_cache, .. } = &mut *pfx;
-        let eye_game = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
+        let Pfx {
+            effects,
+            model_cache,
+            ..
+        } = &mut *pfx;
+        let eye_game = camera
+            .single()
+            .map(|c| to_game(c.translation()))
+            .unwrap_or(Vec3::ZERO);
         for fx in effects.iter_mut() {
             let cps = fx.cps;
             for n in fx.nodes.iter_mut() {
-                let renders: Vec<Render> = n.sys.render.iter().filter(|r| matches!(r, Render::Models { .. })).cloned().collect();
+                let renders: Vec<Render> = n
+                    .sys
+                    .render
+                    .iter()
+                    .filter(|r| matches!(r, Render::Models { .. }))
+                    .cloned()
+                    .collect();
                 if renders.is_empty() {
                     continue;
                 }
                 let want = n.particles.len() * renders.len();
                 while n.models.len() < want {
-                    let Render::Models { model, .. } = &renders[n.models.len() % renders.len()] else { unreachable!() };
+                    let Render::Models { model, .. } = &renders[n.models.len() % renders.len()]
+                    else {
+                        unreachable!()
+                    };
                     let parts = model_cache
                         .entry(model.clone())
                         .or_insert_with(|| match cache.as_deref_mut() {
-                            Some(cache) => match crate::world::build_static_model(&gd, model, cache, meshes, images, &mut assets.3) {
+                            Some(cache) => match crate::world::build_static_model(
+                                &gd,
+                                model,
+                                cache,
+                                meshes,
+                                images,
+                                &mut assets.3,
+                            ) {
                                 // The tint without the system's HDR gain: additive fans
                                 // (heat shield, hdr 5) blow out to white with it.
-                                Ok((parts, _)) => Some(Arc::new(fx_model_materials(&gd, cache, images, model, parts, &mut assets.3, &mut assets.4, &mut assets.6, meshes, if std::env::var_os("TF_PFX_GAMMA_COLORS").is_some() { n.sys.color / n.sys.hdr.max(1.0) } else { to_srgb(n.sys.color / n.sys.hdr.max(1.0)) }, n.sys.hdr.max(1.0)))),
+                                Ok((parts, _)) => Some(Arc::new(fx_model_materials(
+                                    &gd,
+                                    cache,
+                                    images,
+                                    model,
+                                    parts,
+                                    &mut assets.3,
+                                    &mut assets.4,
+                                    &mut assets.6,
+                                    meshes,
+                                    if std::env::var_os("TF_PFX_GAMMA_COLORS").is_some() {
+                                        n.sys.color / n.sys.hdr.max(1.0)
+                                    } else {
+                                        to_srgb(n.sys.color / n.sys.hdr.max(1.0))
+                                    },
+                                    n.sys.hdr.max(1.0),
+                                ))),
                                 Err(e) => {
                                     log::warn!("particle model {model}: {e:#}");
                                     None
@@ -3657,30 +5672,64 @@ pub fn update_pfx(
                             None => None,
                         })
                         .clone();
-                    let e = commands.spawn((Transform::default(), Visibility::Hidden, FxModelInstance)).id();
+                    let e = commands
+                        .spawn((Transform::default(), Visibility::Hidden, FxModelInstance))
+                        .id();
                     let mut own = Vec::new();
                     let mut own_lit = Vec::new();
                     if let Some(parts) = parts {
                         for (m, mat) in parts.iter() {
-                            if let Some(aabb) = meshes.get(m).and_then(|m| bevy::camera::primitives::MeshAabb::compute_aabb(m)) {
-                                log::debug!("model instance mesh {model}: aabb {:?}..{:?}", aabb.min(), aabb.max());
+                            if let Some(aabb) = meshes
+                                .get(m)
+                                .and_then(|m| bevy::camera::primitives::MeshAabb::compute_aabb(m))
+                            {
+                                log::debug!(
+                                    "model instance mesh {model}: aabb {:?}..{:?}",
+                                    aabb.min(),
+                                    aabb.max()
+                                );
                             }
-                            let c = commands.spawn((Mesh3d(m.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver)).id();
+                            let c = commands
+                                .spawn((
+                                    Mesh3d(m.clone()),
+                                    Transform::IDENTITY,
+                                    NotShadowCaster,
+                                    NotShadowReceiver,
+                                ))
+                                .id();
                             // An overlay effect's models are the viewmodel camera's (render
                             // layers don't reach children on their own).
                             if fx.overlay {
-                                commands.entity(c).insert(bevy::camera::visibility::RenderLayers::layer(crate::vmcam::VM_LAYER));
+                                commands.entity(c).insert(
+                                    bevy::camera::visibility::RenderLayers::layer(
+                                        crate::vmcam::VM_LAYER,
+                                    ),
+                                );
                             }
                             match mat {
-                                FxMat::Std(h) => commands.entity(c).insert(MeshMaterial3d(h.clone())),
-                                FxMat::Uber(h) => commands.entity(c).insert(MeshMaterial3d(h.clone())),
+                                FxMat::Std(h) => {
+                                    commands.entity(c).insert(MeshMaterial3d(h.clone()))
+                                }
+                                FxMat::Uber(h) => {
+                                    commands.entity(c).insert(MeshMaterial3d(h.clone()))
+                                }
                                 FxMat::Fx(h) => {
-                                    let copy = assets.6.get(h).cloned().map(|m| assets.6.add(m)).unwrap_or_else(|| h.clone());
+                                    let copy = assets
+                                        .6
+                                        .get(h)
+                                        .cloned()
+                                        .map(|m| assets.6.add(m))
+                                        .unwrap_or_else(|| h.clone());
                                     own.push(copy.clone());
                                     commands.entity(c).insert(MeshMaterial3d(copy))
                                 }
                                 FxMat::Lit(h) => {
-                                    let copy = assets.3.get(h).cloned().map(|m| assets.3.add(m)).unwrap_or_else(|| h.clone());
+                                    let copy = assets
+                                        .3
+                                        .get(h)
+                                        .cloned()
+                                        .map(|m| assets.3.add(m))
+                                        .unwrap_or_else(|| h.clone());
                                     own_lit.push(copy.clone());
                                     commands.entity(c).insert(MeshMaterial3d(copy))
                                 }
@@ -3700,13 +5749,26 @@ pub fn update_pfx(
                 let mut used = 0;
                 for p in &n.particles {
                     for r in &renders {
-                        let Render::Models { pitch, yaw, roll, orient_normal, .. } = r else { unreachable!() };
+                        let Render::Models {
+                            pitch,
+                            yaw,
+                            roll,
+                            orient_normal,
+                            ..
+                        } = r
+                        else {
+                            unreachable!()
+                        };
                         let e = n.models[used];
                         used += 1;
                         // First-person models (shell casings) launch from beside the eye; hide
                         // them until they are clear of it, or the first frames fill the view.
                         let at_eye = fx.vm && p.pos.distance(eye_game) < FP_MODEL_CLEARANCE;
-                        if at_eye || p.alpha <= 0.01 || p.radius <= 0.0 || std::env::var_os("TF_NO_FX_MODELS").is_some() {
+                        if at_eye
+                            || p.alpha <= 0.01
+                            || p.radius <= 0.0
+                            || std::env::var_os("TF_NO_FX_MODELS").is_some()
+                        {
                             match vis.get_mut(e) {
                                 Ok(mut v) => {
                                     v.set_if_neq(Visibility::Hidden);
@@ -3723,18 +5785,41 @@ pub fn update_pfx(
                         // their heads facing one way and buried them the other).
                         // Model Z on the particle's normal (Normal Align to CP, Remap Velocity to
                         // Vector) or, with none, on control point 0's forward axis.
-                        let base = if *orient_normal { normal_basis(if p.normal != Vec3::ZERO { p.normal } else { cp.fwd }) } else { basis };
+                        let base = if *orient_normal {
+                            normal_basis(if p.normal != Vec3::ZERO {
+                                p.normal
+                            } else {
+                                cp.fwd
+                            })
+                        } else {
+                            basis
+                        };
                         // Then the particle's own yaw and roll (as AngleMatrix with pitch 0: yaw
                         // about Z, roll about X; debris and shell casings tumble by these), the
                         // model-space angles and the Rotation about 3D Axis spin.
                         let own = Quat::from_rotation_z(p.yaw) * Quat::from_rotation_x(p.rot);
-                        let rot = base * own * Quat::from_rotation_z(*yaw) * Quat::from_rotation_y(*pitch) * Quat::from_rotation_x(*roll) * p.orient;
+                        let rot = base
+                            * own
+                            * Quat::from_rotation_z(*yaw)
+                            * Quat::from_rotation_y(*pitch)
+                            * Quat::from_rotation_x(*roll)
+                            * p.orient;
                         if fx.age.rem_euclid(0.5) < 0.02 {
-                            let cam_game = camera.single().map(|c| to_game(c.translation())).unwrap_or(Vec3::ZERO);
+                            let cam_game = camera
+                                .single()
+                                .map(|c| to_game(c.translation()))
+                                .unwrap_or(Vec3::ZERO);
                             log::trace!("model instance {} age {:.1} at {:?} radius {} alpha {} cp0 {:?} fwd {:?} camera {:?} dist {:.0} model -x/+z goes to {:?} / {:?}", n.sys.material, fx.age, p.pos, p.radius, p.alpha, cp.pos, cp.fwd, cam_game, p.pos.distance(cam_game), rot * Vec3::NEG_X, rot * Vec3::Z);
                         }
-                        let k = std::env::var("TF_FX_MODEL_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
-                        let tf = Transform { translation: p.pos, rotation: rot, scale: Vec3::splat(p.radius * k) };
+                        let k = std::env::var("TF_FX_MODEL_SCALE")
+                            .ok()
+                            .and_then(|v| v.parse::<f32>().ok())
+                            .unwrap_or(1.0);
+                        let tf = Transform {
+                            translation: p.pos,
+                            rotation: rot,
+                            scale: Vec3::splat(p.radius * k),
+                        };
                         // Written in place (re-inserting them every frame marked every live
                         // instance changed); instances spawned this frame aren't there yet.
                         match (model_tfs.get_mut(e), vis.get_mut(e)) {
@@ -3751,17 +5836,32 @@ pub fn update_pfx(
                         // are the particle's: a shield's health colour reaches its dome this way.
                         // C_OP_RenderModels' own mapping (client.dll vtable 0x1809bb018) wasn't
                         // traced; colour and alpha passed straight through is a guess.
-                        let modulation = Vec4::new(p.color.x, p.color.y, p.color.z, p.alpha.min(1.0));
+                        let modulation =
+                            Vec4::new(p.color.x, p.color.y, p.color.z, p.alpha.min(1.0));
                         for h in &n.model_mats[used - 1] {
-                            if assets.6.get(h).is_some_and(|m| (m.params.modulation - modulation).abs().max_element() > 1e-4) {
+                            if assets.6.get(h).is_some_and(|m| {
+                                (m.params.modulation - modulation).abs().max_element() > 1e-4
+                            }) {
                                 if let Some(m) = assets.6.get_mut(h) {
                                     m.params.modulation = modulation;
                                 }
                             }
                         }
                         for h in &n.model_lit[used - 1] {
-                            let want = Color::linear_rgba(modulation.x.min(1.0), modulation.y.min(1.0), modulation.z.min(1.0), modulation.w);
-                            if assets.3.get(h).is_some_and(|m| m.base_color.to_linear().to_f32_array().iter().zip(want.to_linear().to_f32_array()).any(|(a, b)| (a - b).abs() > 1e-3)) {
+                            let want = Color::linear_rgba(
+                                modulation.x.min(1.0),
+                                modulation.y.min(1.0),
+                                modulation.z.min(1.0),
+                                modulation.w,
+                            );
+                            if assets.3.get(h).is_some_and(|m| {
+                                m.base_color
+                                    .to_linear()
+                                    .to_f32_array()
+                                    .iter()
+                                    .zip(want.to_linear().to_f32_array())
+                                    .any(|(a, b)| (a - b).abs() > 1e-3)
+                            }) {
                                 if let Some(m) = assets.3.get_mut(h) {
                                     m.base_color = want;
                                 }
@@ -3786,7 +5886,13 @@ pub fn update_pfx(
     }
     let keep = |fx: &Effect| {
         let emitting = !fx.stopped;
-        fx.age < HARD_LIMIT.max(if fx.attached.is_some() { f32::INFINITY } else { 0.0 }) && !fx.nodes.iter().all(|n| n.finished(emitting))
+        fx.age
+            < HARD_LIMIT.max(if fx.attached.is_some() {
+                f32::INFINITY
+            } else {
+                0.0
+            })
+            && !fx.nodes.iter().all(|n| n.finished(emitting))
     };
     for fx in pfx.effects.iter().filter(|fx| !keep(fx)) {
         for n in &fx.nodes {
@@ -3796,43 +5902,85 @@ pub fn update_pfx(
         }
     }
     pfx.effects.retain(keep);
-    pfx.total = pfx.effects.iter().flat_map(|f| f.nodes.iter()).map(|n| n.particles.len()).sum();
+    pfx.total = pfx
+        .effects
+        .iter()
+        .flat_map(|f| f.nodes.iter())
+        .map(|n| n.particles.len())
+        .sum();
 
     // Draw.
     let Ok(cam) = camera.single() else {
         // No layer was written (their buffers still take what the meshes would have).
         let (device, buckets, uploads, _, soft_events, refract_events) = &mut gpu;
-        let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes: &mut assets.0, commands: &mut commands };
+        let mut ctx = crate::spritebuf::SpriteCtx {
+            device,
+            uploads,
+            buckets,
+            meshes: &mut assets.0,
+            commands: &mut commands,
+        };
         for layer in &mut pfx.layers {
             if let Some(grown) = layer.buf.idle(layer.entity, &mut ctx) {
-                layer.mat.swap(&mut assets.2, &mut assets.5, soft_events, refract_events, grown);
+                layer.mat.swap(
+                    &mut assets.2,
+                    &mut assets.5,
+                    soft_events,
+                    refract_events,
+                    grown,
+                );
             }
         }
         return;
     };
     let eye = to_game(cam.translation());
-    let (right, up, fwd) = (dir_to_game(cam.right().as_vec3()), dir_to_game(cam.up().as_vec3()), dir_to_game(cam.forward().as_vec3()));
+    let (right, up, fwd) = (
+        dir_to_game(cam.right().as_vec3()),
+        dir_to_game(cam.up().as_vec3()),
+        dir_to_game(cam.forward().as_vec3()),
+    );
     let mut batches: Vec<Batch> = (0..pfx.layers.len()).map(|_| Batch::default()).collect();
     // Sprites fade out as they reach the eye (the game's sprite cards fade against the near
     // plane too; without it rounds and smoke arriving at the camera white the screen out).
-    let near_fade = |pos: Vec3| ((pos - eye).dot(fwd) - NEAR_FADE_START) / (NEAR_FADE_END - NEAR_FADE_START);
+    let near_fade =
+        |pos: Vec3| ((pos - eye).dot(fwd) - NEAR_FADE_START) / (NEAR_FADE_END - NEAR_FADE_START);
     let near_fade = move |pos: Vec3| near_fade(pos).clamp(0.0, 1.0);
     // First-person effects sit close to the eye on purpose (muzzle flashes), so they fade by
     // size instead: out as a sprite grows to cover the view (radius near its distance), as
     // first-person smoke drifting over the camera would otherwise fill the screen.
-    let vm_fade = move |pos: Vec3, radius: f32| (((pos - eye).dot(fwd) / radius.max(0.01) - 1.0) * 0.5).clamp(0.0, 1.0);
+    let vm_fade = move |pos: Vec3, radius: f32| {
+        (((pos - eye).dot(fwd) / radius.max(0.01) - 1.0) * 0.5).clamp(0.0, 1.0)
+    };
     // Screen-space systems ("screen space effect": Phase Shift's shimmer, screen flashes) run
     // in screen units around control point 0, x across (±100 spans the width) and y up, and
     // draw on a plane just in front of the eye through the world camera (so refraction works).
-    let screen = lenses.iter().find(|(_, v)| !*v).and_then(|(p, _)| if let Projection::Perspective(pp) = p { Some(pp) } else { None }).map(|pp| {
-        let half_w = SCREEN_FX_DIST * (pp.fov * 0.5).tan() * pp.aspect_ratio;
-        half_w / 100.0
-    });
+    let screen = lenses
+        .iter()
+        .find(|(_, v)| !*v)
+        .and_then(|(p, _)| {
+            if let Projection::Perspective(pp) = p {
+                Some(pp)
+            } else {
+                None
+            }
+        })
+        .map(|pp| {
+            let half_w = SCREEN_FX_DIST * (pp.fov * 0.5).tan() * pp.aspect_ratio;
+            half_w / 100.0
+        });
     let mut light_cands: Vec<(f32, Vec3, Vec3, f32)> = Vec::new();
     for fx in &pfx.effects {
         for n in &fx.nodes {
             for r in &n.sys.render {
-                if let (&Render::Light { scale, radius, by_alpha }, false) = (r, fx.screen) {
+                if let (
+                    &Render::Light {
+                        scale,
+                        radius,
+                        by_alpha,
+                    },
+                    false,
+                ) = (r, fx.screen)
+                {
                     for p in &n.particles {
                         let a = if by_alpha { p.alpha } else { 1.0 };
                         let c = p.color * scale * a;
@@ -3841,14 +5989,20 @@ pub fn update_pfx(
                     }
                 }
             }
-            let Some(li) = n.layer.filter(|&l| l != usize::MAX) else { continue };
+            let Some(li) = n.layer.filter(|&l| l != usize::MAX) else {
+                continue;
+            };
             let layer = &pfx.layers[li];
             let batch = &mut batches[li];
             for r in &n.sys.render {
                 match *r {
                     Render::Sprites { rate, fit, .. } if fx.screen => {
                         // TF_NO_SCREEN_FX=1 leaves them out (for comparing).
-                        let Some(scale) = screen.filter(|_| std::env::var_os("TF_NO_SCREEN_FX").is_none()) else { continue };
+                        let Some(scale) =
+                            screen.filter(|_| std::env::var_os("TF_NO_SCREEN_FX").is_none())
+                        else {
+                            continue;
+                        };
                         let cp = fx.cps[0];
                         let centre = eye + fwd * SCREEN_FX_DIST;
                         for p in &n.particles {
@@ -3864,11 +6018,29 @@ pub fn update_pfx(
                             let r = p.radius * scale;
                             let rx = (right * sc + up * sr) * r;
                             let ry = (up * sc - right * sr) * r;
-                            let (u0, u1) = if p.flip { (rect[2], rect[0]) } else { (rect[0], rect[2]) };
-                            batch.quad([at - rx + ry, at + rx + ry, at + rx - ry, at - rx - ry], [[u0, rect[1]], [u1, rect[1]], [u1, rect[3]], [u0, rect[3]]], [c; 4], SCREEN_FX_DIST);
+                            let (u0, u1) = if p.flip {
+                                (rect[2], rect[0])
+                            } else {
+                                (rect[0], rect[2])
+                            };
+                            batch.quad(
+                                [at - rx + ry, at + rx + ry, at + rx - ry, at - rx - ry],
+                                [[u0, rect[1]], [u1, rect[1]], [u1, rect[3]], [u0, rect[3]]],
+                                [c; 4],
+                                SCREEN_FX_DIST,
+                            );
                         }
                         if fx.age.rem_euclid(0.5) < 0.02 {
-                            log::debug!("screen effect {}: {} particles, scale {scale:.4}, layer {li} ({})", n.sys.material, n.particles.len(), if layer.additive { "additive" } else { "blended/refract" });
+                            log::debug!(
+                                "screen effect {}: {} particles, scale {scale:.4}, layer {li} ({})",
+                                n.sys.material,
+                                n.particles.len(),
+                                if layer.additive {
+                                    "additive"
+                                } else {
+                                    "blended/refract"
+                                }
+                            );
                         }
                     }
                     // Screen effects draw only their sprites (anything else would sit at the origin).
@@ -3876,7 +6048,12 @@ pub fn update_pfx(
                     Render::Sprites { rate, fit, orient } => {
                         let orient = if orient >= 0 { orient } else { layer.orient };
                         for p in &n.particles {
-                            let alpha = p.alpha * if fx.vm { vm_fade(p.pos, p.radius) } else { near_fade(p.pos) };
+                            let alpha = p.alpha
+                                * if fx.vm {
+                                    vm_fade(p.pos, p.radius)
+                                } else {
+                                    near_fade(p.pos)
+                                };
                             if alpha <= 0.002 || p.radius <= 0.0 {
                                 continue;
                             }
@@ -3898,23 +6075,47 @@ pub fn update_pfx(
                             };
                             let rx = (ax * sc + ay * sr) * p.radius;
                             let ry = (ay * sc - ax * sr) * p.radius;
-                            let (u0, u1) = if p.flip { (rect[2], rect[0]) } else { (rect[0], rect[2]) };
+                            let (u0, u1) = if p.flip {
+                                (rect[2], rect[0])
+                            } else {
+                                (rect[0], rect[2])
+                            };
                             batch.quad(
-                                [p.pos - rx + ry, p.pos + rx + ry, p.pos + rx - ry, p.pos - rx - ry],
+                                [
+                                    p.pos - rx + ry,
+                                    p.pos + rx + ry,
+                                    p.pos + rx - ry,
+                                    p.pos - rx - ry,
+                                ],
                                 [[u0, rect[1]], [u1, rect[1]], [u1, rect[3]], [u0, rect[3]]],
                                 [c; 4],
                                 (p.pos - eye).dot(fwd),
                             );
                         }
                     }
-                    Render::Trail { rate, min, max, fade_in, tail } => {
+                    Render::Trail {
+                        rate,
+                        min,
+                        max,
+                        fade_in,
+                        tail,
+                    } => {
                         for p in &n.particles {
-                            let alpha = p.alpha * if fx.vm { vm_fade(p.pos, p.radius) } else { near_fade(p.pos) };
+                            let alpha = p.alpha
+                                * if fx.vm {
+                                    vm_fade(p.pos, p.radius)
+                                } else {
+                                    near_fade(p.pos)
+                                };
                             if alpha <= 0.002 || p.radius <= 0.0 {
                                 continue;
                             }
                             let speed = p.vel.length();
-                            let dir = if speed > 1e-3 { p.vel / speed } else { fx.cps[0].fwd };
+                            let dir = if speed > 1e-3 {
+                                p.vel / speed
+                            } else {
+                                fx.cps[0].fwd
+                            };
                             let mut len = (speed * p.trail).clamp(min, max.max(min));
                             if fade_in > 0.0 && p.age < fade_in {
                                 len *= p.age / fade_in;
@@ -3923,21 +6124,36 @@ pub fn update_pfx(
                             let rect = sheet_rect(&layer.sheet, p, rate, false);
                             let to_eye = (eye - p.pos).normalize_or(Vec3::Z);
                             let cr = dir.cross(to_eye);
-                            let side = if cr.length() > 0.05 { cr.normalize() } else { right } * p.radius;
+                            let side = if cr.length() > 0.05 {
+                                cr.normalize()
+                            } else {
+                                right
+                            } * p.radius;
                             let c = p.color * layer.gain;
                             let head = [c.x, c.y, c.z, alpha.min(1.0)];
-                            let tl = [c.x * tail[0], c.y * tail[1], c.z * tail[2], (alpha * tail[3]).min(1.0)];
+                            let tl = [
+                                c.x * tail[0],
+                                c.y * tail[1],
+                                c.z * tail[2],
+                                (alpha * tail[3]).min(1.0),
+                            ];
                             let back = p.pos - dir * len;
                             batch.quad(
                                 [p.pos - side, p.pos + side, back + side, back - side],
-                                [[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]],
+                                [
+                                    [rect[0], rect[1]],
+                                    [rect[2], rect[1]],
+                                    [rect[2], rect[3]],
+                                    [rect[0], rect[3]],
+                                ],
                                 [head, head, tl, tl],
                                 (p.pos - eye).dot(fwd),
                             );
                         }
                     }
                     Render::Rope => {
-                        let mut ps: Vec<&P> = n.particles.iter().filter(|p| p.alpha > 0.002).collect();
+                        let mut ps: Vec<&P> =
+                            n.particles.iter().filter(|p| p.alpha > 0.002).collect();
                         ps.sort_by_key(|p| p.id);
                         let total = ps.len().max(2) as f32 - 1.0;
                         for (k, w) in ps.windows(2).enumerate() {
@@ -3945,7 +6161,11 @@ pub fn update_pfx(
                             let d = (b.pos - a.pos).normalize_or(Vec3::X);
                             let side = |p: &P| {
                                 let cr = d.cross((eye - p.pos).normalize_or(Vec3::Z));
-                                (if cr.length() > 0.05 { cr.normalize() } else { right }) * p.radius
+                                (if cr.length() > 0.05 {
+                                    cr.normalize()
+                                } else {
+                                    right
+                                }) * p.radius
                             };
                             let (sa, sb) = (side(a), side(b));
                             let ca = a.color * layer.gain;
@@ -3954,7 +6174,12 @@ pub fn update_pfx(
                             batch.quad(
                                 [a.pos - sa, a.pos + sa, b.pos + sb, b.pos - sb],
                                 [[0.0, v0], [1.0, v0], [1.0, v1], [0.0, v1]],
-                                [[ca.x, ca.y, ca.z, a.alpha.min(1.0)], [ca.x, ca.y, ca.z, a.alpha.min(1.0)], [cb.x, cb.y, cb.z, b.alpha.min(1.0)], [cb.x, cb.y, cb.z, b.alpha.min(1.0)]],
+                                [
+                                    [ca.x, ca.y, ca.z, a.alpha.min(1.0)],
+                                    [ca.x, ca.y, ca.z, a.alpha.min(1.0)],
+                                    [cb.x, cb.y, cb.z, b.alpha.min(1.0)],
+                                    [cb.x, cb.y, cb.z, b.alpha.min(1.0)],
+                                ],
                                 (a.pos - eye).dot(fwd),
                             );
                         }
@@ -3965,13 +6190,23 @@ pub fn update_pfx(
         }
     }
     let (device, buckets, uploads, _, soft_events, refract_events) = &mut gpu;
-    let mut ctx = crate::spritebuf::SpriteCtx { device, uploads, buckets, meshes, commands: &mut commands };
+    let mut ctx = crate::spritebuf::SpriteCtx {
+        device,
+        uploads,
+        buckets,
+        meshes,
+        commands: &mut commands,
+    };
     let normal = (-cam.forward().as_vec3()).to_array();
     let Pfx { layers, .. } = &mut *pfx;
     for (li, mut b) in batches.into_iter().enumerate() {
         let layer = &mut layers[li];
         if let Ok(mut v) = vis.get_mut(layer.entity) {
-            let want = if b.quads.is_empty() { Visibility::Hidden } else { Visibility::Visible };
+            let want = if b.quads.is_empty() {
+                Visibility::Hidden
+            } else {
+                Visibility::Visible
+            };
             if *v != want {
                 *v = want;
             }
@@ -3983,18 +6218,28 @@ pub fn update_pfx(
         let mut v = crate::spritebuf::SpriteBuf::begin(b.quads.len());
         for &(_, base) in &b.quads {
             for i in base as usize..base as usize + 4 {
-                crate::spritebuf::SpriteBuf::push(&mut v, to_bevy(Vec3::from(b.pos[i])).to_array(), normal, b.uv[i], b.col[i]);
+                crate::spritebuf::SpriteBuf::push(
+                    &mut v,
+                    to_bevy(Vec3::from(b.pos[i])).to_array(),
+                    normal,
+                    b.uv[i],
+                    b.col[i],
+                );
             }
         }
         if let Some(grown) = layer.buf.frame(b.quads.len(), v, layer.entity, &mut ctx) {
-            layer.mat.swap(mats, &mut assets.5, soft_events, refract_events, grown);
+            layer
+                .mat
+                .swap(mats, &mut assets.5, soft_events, refract_events, grown);
         }
     }
     // Lights: the strongest few light-source particles.
     light_cands.sort_by(|a, b| b.0.total_cmp(&a.0));
     let ents = pfx.lights.clone();
     for (k, e) in ents.into_iter().enumerate() {
-        let Ok((mut l, mut tf)) = lights.get_mut(e) else { continue };
+        let Ok((mut l, mut tf)) = lights.get_mut(e) else {
+            continue;
+        };
         match light_cands.get(k) {
             // Off is intensity 0 (the entity stays visible).
             Some(&(_, pos, c, range)) if c.max_element() > 0.01 => {
@@ -4014,7 +6259,9 @@ pub fn update_pfx(
 }
 
 fn sheet_rect(sheet: &[Sequence], p: &P, rate: f32, fit: bool) -> [f32; 4] {
-    let Some(s) = sheet.get(p.seq as usize).or_else(|| sheet.first()) else { return [0.0, 0.0, 1.0, 1.0] };
+    let Some(s) = sheet.get(p.seq as usize).or_else(|| sheet.first()) else {
+        return [0.0, 0.0, 1.0, 1.0];
+    };
     if s.frames.len() <= 1 {
         return s.rect_at(0.0);
     }
@@ -4051,9 +6298,19 @@ mod tests {
     #[test]
     fn tint_modes() {
         // Kodai's dash dust: 0.25 grey, twice the light at 50% multiply.
-        let t = |mode| Tint { perc: 0.5, cp: 0, threshold: 32.0, mode, amp: 2.0, sky: 1.0 };
+        let t = |mode| Tint {
+            perc: 0.5,
+            cp: 0,
+            threshold: 32.0,
+            mode,
+            amp: 2.0,
+            sky: 1.0,
+        };
         let c = Vec3::splat(0.25);
-        assert!((t(4).apply(c, Vec3::splat(1.5)).unwrap() - Vec3::splat(0.25 * (0.5 + 1.5))).length() < 1e-5);
+        assert!(
+            (t(4).apply(c, Vec3::splat(1.5)).unwrap() - Vec3::splat(0.25 * (0.5 + 1.5))).length()
+                < 1e-5
+        );
         assert!((t(0).apply(c, Vec3::splat(0.5)).unwrap() - Vec3::splat(0.625)).length() < 1e-5);
         assert!((t(2).apply(c, Vec3::splat(0.05)).unwrap() - Vec3::splat(0.175)).length() < 1e-5);
         assert!(t(5).apply(c, Vec3::ONE).is_none());
@@ -4071,7 +6328,9 @@ mod tests {
 
     #[test]
     fn vmt_keys() {
-        let (s, kv) = parse_vmt("\"SpriteCard\"\n{\n\t$basetexture \"particle/x\"\n\t\"$additive\" \"1\" // y\n}\n");
+        let (s, kv) = parse_vmt(
+            "\"SpriteCard\"\n{\n\t$basetexture \"particle/x\"\n\t\"$additive\" \"1\" // y\n}\n",
+        );
         assert_eq!(s, "spritecard");
         assert_eq!(kv["$basetexture"], "particle/x");
         assert_eq!(kv["$additive"], "1");

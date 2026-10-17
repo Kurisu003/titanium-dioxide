@@ -64,17 +64,35 @@ pub struct Offhands {
 }
 
 fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> {
-    let mut read = |p: &str| gd.read_file(p).ok().map(|b| String::from_utf8_lossy(&b).to_string());
-    let s = tf_assets::settings::PlayerSettings::load(&format!("scripts/weapons/{script}.txt"), true, &mut read)?;
-    let f = |k: &str, d: f32| s.get(&format!(".{k}")).and_then(|v| v.trim().parse().ok()).unwrap_or(d);
+    let mut read = |p: &str| {
+        gd.read_file(p)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+    };
+    let s = tf_assets::settings::PlayerSettings::load(
+        &format!("scripts/weapons/{script}.txt"),
+        true,
+        &mut read,
+    )?;
+    let f = |k: &str, d: f32| {
+        s.get(&format!(".{k}"))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(d)
+    };
     // (A path with a doubled slash, the Laser Core's `models//weapons/...`, reads as a comment;
     // take the quoted value from the file then.)
     let raw = || {
         let text = read(&format!("scripts/weapons/{script}.txt"))?;
-        let line = text.lines().find(|l| l.trim_start().starts_with("\"viewmodel\""))?;
+        let line = text
+            .lines()
+            .find(|l| l.trim_start().starts_with("\"viewmodel\""))?;
         line.split('"').nth(3).map(str::to_string)
     };
-    let path = s.get(".viewmodel").map(|v| v.trim().to_string()).filter(|v| v.ends_with(".mdl")).or_else(raw);
+    let path = s
+        .get(".viewmodel")
+        .map(|v| v.trim().to_string())
+        .filter(|v| v.ends_with(".mdl"))
+        .or_else(raw);
     let path = path.map(|v| v.replace("//", "/")).filter(|v| !v.is_empty());
     let path = match path {
         Some(p) => p,
@@ -83,7 +101,13 @@ fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> 
         None => return None,
     };
     let empty_hand = path.contains("/empty_handed/");
-    Some(OffhandDef { path, deploy: f("deploy_time", 0.2), holster: f("holster_time", 0.2), keep_primary: f("offhand_keep_primary_in_hand", 0.0) > 0.5, empty_hand })
+    Some(OffhandDef {
+        path,
+        deploy: f("deploy_time", 0.2),
+        holster: f("holster_time", 0.2),
+        keep_primary: f("offhand_keep_primary_in_hand", 0.0) > 0.5,
+        empty_hand,
+    })
 }
 
 /// Spawn, animate and place the current kit's offhand viewmodels, on the gun viewmodel's eye
@@ -117,13 +141,44 @@ pub fn spawn_offhand_viewmodels(
         if o.insts.iter().any(|i| i.script == script) {
             continue;
         }
-        let def = o.defs.entry(script).or_insert_with(|| load_def(&gd, script)).clone();
+        let def = o
+            .defs
+            .entry(script)
+            .or_insert_with(|| load_def(&gd, script))
+            .clone();
         let Some(def) = def else { continue };
-        let (cache, meshes, images, materials, bindposes) = (&mut *assets.0, &mut *assets.1, &mut *assets.2, &mut *assets.3, &mut *assets.4);
-        let anchor = commands.spawn((Transform::IDENTITY, Visibility::Hidden, crate::vmcam::Viewmodel)).id();
+        let (cache, meshes, images, materials, bindposes) = (
+            &mut *assets.0,
+            &mut *assets.1,
+            &mut *assets.2,
+            &mut *assets.3,
+            &mut *assets.4,
+        );
+        let anchor = commands
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Hidden,
+                crate::vmcam::Viewmodel,
+            ))
+            .id();
         commands.entity(root.0).add_child(anchor);
-        let spec = ActorSpec { path: &def.path, sequences: &["?draw_seq", "?charge_seq", "?attack_seq", "?holster_seq"], grids: &[], body: &[] };
-        let vm = match crate::actor::spawn_actor(&mut commands, anchor, &gd, &spec, cache, meshes, images, materials, bindposes) {
+        let spec = ActorSpec {
+            path: &def.path,
+            sequences: &["?draw_seq", "?charge_seq", "?attack_seq", "?holster_seq"],
+            grids: &[],
+            body: &[],
+        };
+        let vm = match crate::actor::spawn_actor(
+            &mut commands,
+            anchor,
+            &gd,
+            &spec,
+            cache,
+            meshes,
+            images,
+            materials,
+            bindposes,
+        ) {
             Ok(vm) => vm,
             Err(e) => {
                 log::warn!("offhand viewmodel {}: {e:#}", def.path);
@@ -131,8 +186,23 @@ pub fn spawn_offhand_viewmodels(
                 continue;
             }
         };
-        let arms = ActorSpec { path: "models/weapons/arms/buddypov.mdl", sequences: &[], grids: &[], body: &[] };
-        let arms = match crate::actor::spawn_actor(&mut commands, anchor, &gd, &arms, cache, meshes, images, materials, bindposes) {
+        let arms = ActorSpec {
+            path: "models/weapons/arms/buddypov.mdl",
+            sequences: &[],
+            grids: &[],
+            body: &[],
+        };
+        let arms = match crate::actor::spawn_actor(
+            &mut commands,
+            anchor,
+            &gd,
+            &arms,
+            cache,
+            meshes,
+            images,
+            materials,
+            bindposes,
+        ) {
             Ok(a) => {
                 commands.entity(a.entity).insert(BoneMergeTo(vm.entity));
                 Some(a.entity)
@@ -143,7 +213,15 @@ pub fn spawn_offhand_viewmodels(
             }
         };
         log::info!("offhand viewmodel for {script}: {def:?}");
-        o.insts.push(Inst { script, def, anchor, actor: vm.entity, arms, phase: Phase::Hidden, t: 0.0 });
+        o.insts.push(Inst {
+            script,
+            def,
+            anchor,
+            actor: vm.entity,
+            arms,
+            phase: Phase::Hidden,
+            t: 0.0,
+        });
     }
 }
 
@@ -155,13 +233,24 @@ pub fn offhand_viewmodels(
     kit: Res<crate::titankit::ActiveKit>,
     mut offhands: ResMut<Offhands>,
     root: Option<Res<crate::pilotweapon::WorldRoot>>,
-    mut titans: Query<(&mut Weapon, &crate::combat::Vortex, &crate::abilities::Ordnance, &crate::abilities::TitanCore, &crate::titankit::KitState), With<PlayerTitan>>,
+    mut titans: Query<
+        (
+            &mut Weapon,
+            &crate::combat::Vortex,
+            &crate::abilities::Ordnance,
+            &crate::abilities::TitanCore,
+            &crate::titankit::KitState,
+        ),
+        With<PlayerTitan>,
+    >,
     mut actors: Query<&mut Actor>,
     mut tfs: Query<(&mut Transform, &mut Visibility), Without<PlayerTitan>>,
     merges: Query<(Entity, &BoneMergeTo, Has<BoneMergeSplit>)>,
 ) {
     use crate::titankit::{DefKind, OrdKind};
-    let Ok((mut w, vortex, ord, core, st)) = titans.single_mut() else { return };
+    let Ok((mut w, vortex, ord, core, st)) = titans.single_mut() else {
+        return;
+    };
     let scripts = crate::titankit::kit_scripts(&kit);
     if root.is_none() {
         return;
@@ -173,11 +262,14 @@ pub fn offhand_viewmodels(
     // missiles keep firing while it is active.
     let building = matches!(core.state, crate::abilities::CoreState::Building);
     let pending = st.ord_pending.is_some();
-    let (p_ord, p_def, p_util, p_build, p_pending) = o.prev.unwrap_or((st.ord_cd, st.def_cd, st.util_charges, building, pending));
+    let (p_ord, p_def, p_util, p_build, p_pending) =
+        o.prev
+            .unwrap_or((st.ord_cd, st.def_cd, st.util_charges, building, pending));
     o.prev = Some((st.ord_cd, st.def_cd, st.util_charges, building, pending));
     // Ordnance that waits for its deploy starts its draw on the press; Tracker Rockets when
     // they fire.
-    let ord_used = (pending && !p_pending) || (kit.ord == OrdKind::Tracker && st.ord_cd > p_ord + 1e-3);
+    let ord_used =
+        (pending && !p_pending) || (kit.ord == OrdKind::Tracker && st.ord_cd > p_ord + 1e-3);
     let ord_held = kit.ord == OrdKind::Missiles && ord.charging;
     let def_held = match kit.def {
         DefKind::Vortex | DefKind::IonVortex | DefKind::HeatShield => vortex.active,
@@ -185,7 +277,10 @@ pub fn offhand_viewmodels(
         _ => false,
     };
     let core_charging = matches!(core.state, crate::abilities::CoreState::Charging(_));
-    let core_firing = matches!(kit.core, crate::titankit::CoreKind::Laser | crate::titankit::CoreKind::Salvo) && matches!(core.state, crate::abilities::CoreState::Active(_));
+    let core_firing = matches!(
+        kit.core,
+        crate::titankit::CoreKind::Laser | crate::titankit::CoreKind::Salvo
+    ) && matches!(core.state, crate::abilities::CoreState::Active(_));
     let signals = [
         (ord_held, ord_used, false),
         (def_held, st.def_cd > p_def + 1e-3, false),
@@ -195,7 +290,11 @@ pub fn offhand_viewmodels(
 
     // The gun viewmodel's eye frame: its anchor plus its camera bone.
     let eye_frame = w.viewmodel.and_then(|(xa, xv)| {
-        let off = actors.get(xv).ok()?.bone_model_transform("jx_c_camera")?.translation;
+        let off = actors
+            .get(xv)
+            .ok()?
+            .bone_model_transform("jx_c_camera")?
+            .translation;
         let tf = tfs.get(xa).ok()?.0;
         Some((tf.translation + tf.rotation * off, tf.rotation))
     });
@@ -210,16 +309,27 @@ pub fn offhand_viewmodels(
         if slot.is_none() {
             inst.phase = Phase::Hidden;
         }
-        let Ok(mut actor) = actors.get_mut(inst.actor) else { continue };
+        let Ok(mut actor) = actors.get_mut(inst.actor) else {
+            continue;
+        };
         actor.autoplay = false;
         // The abilities cue their own sounds (the draws' events repeat them).
         actor.event_sounds = false;
-        let (draw, charge, attack, holster) = (actor.clip("draw_seq"), actor.clip("charge_seq"), actor.clip("attack_seq"), actor.clip("holster_seq"));
+        let (draw, charge, attack, holster) = (
+            actor.clip("draw_seq"),
+            actor.clip("charge_seq"),
+            actor.clip("attack_seq"),
+            actor.clip("holster_seq"),
+        );
         let dur = |c: Option<usize>| c.map(|c| actor.clips[c].duration).unwrap_or(0.0);
         let delta = |c: Option<usize>| c.is_some_and(|c| actor.clips[c].delta);
         let (deploy, holster_time) = (inst.def.deploy.max(0.05), inst.def.holster.max(0.05));
         let was_held = inst.phase == Phase::Hold || (inst.phase == Phase::Draw && held);
-        if used || (held && !was_held && matches!(inst.phase, Phase::Hidden | Phase::Attack | Phase::Holster)) {
+        if used
+            || (held
+                && !was_held
+                && matches!(inst.phase, Phase::Hidden | Phase::Attack | Phase::Holster))
+        {
             inst.phase = Phase::Draw;
             inst.t = 0.0;
         }
@@ -234,7 +344,11 @@ pub fn offhand_viewmodels(
                 inst.t = 0.0;
             }
             Phase::Attack if inst.t >= dur(attack) && !firing => {
-                inst.phase = if delta(attack) || holster.is_none() { Phase::Hidden } else { Phase::Holster };
+                inst.phase = if delta(attack) || holster.is_none() {
+                    Phase::Hidden
+                } else {
+                    Phase::Holster
+                };
                 inst.t = 0.0;
                 if inst.phase == Phase::Hidden && inst.def.empty_hand {
                     redeploy = true;
@@ -251,31 +365,62 @@ pub fn offhand_viewmodels(
         let once = |c: usize| (t / actor.clips[c].duration.max(1e-3)).min(0.999);
         let mut layers = Vec::new();
         let mut additive = Vec::new();
-        let draw_end = draw.map(|c| Layer { clip: c, cycle: 0.999, weight: 1.0 });
+        let draw_end = draw.map(|c| Layer {
+            clip: c,
+            cycle: 0.999,
+            weight: 1.0,
+        });
         match inst.phase {
-            Phase::Draw => layers.extend(draw.map(|c| Layer { clip: c, cycle: (t / deploy).min(0.999), weight: 1.0 })),
+            Phase::Draw => layers.extend(draw.map(|c| Layer {
+                clip: c,
+                cycle: (t / deploy).min(0.999),
+                weight: 1.0,
+            })),
             Phase::Hold => match charge {
                 Some(c) if actor.clips[c].delta => {
                     layers.extend(draw_end);
-                    additive.push(Layer { clip: c, cycle: looped(c), weight: 1.0 });
+                    additive.push(Layer {
+                        clip: c,
+                        cycle: looped(c),
+                        weight: 1.0,
+                    });
                 }
-                Some(c) => layers.push(Layer { clip: c, cycle: looped(c), weight: 1.0 }),
+                Some(c) => layers.push(Layer {
+                    clip: c,
+                    cycle: looped(c),
+                    weight: 1.0,
+                }),
                 None => layers.extend(draw_end),
             },
             Phase::Attack => match attack {
                 Some(c) if actor.clips[c].delta => {
                     layers.extend(draw_end);
-                    additive.push(Layer { clip: c, cycle: once(c), weight: 1.0 });
+                    additive.push(Layer {
+                        clip: c,
+                        cycle: once(c),
+                        weight: 1.0,
+                    });
                 }
-                Some(c) => layers.push(Layer { clip: c, cycle: once(c), weight: 1.0 }),
+                Some(c) => layers.push(Layer {
+                    clip: c,
+                    cycle: once(c),
+                    weight: 1.0,
+                }),
                 None => layers.extend(draw_end),
             },
-            Phase::Holster => layers.extend(holster.map(|c| Layer { clip: c, cycle: (t / holster_time).min(0.999), weight: 1.0 })),
+            Phase::Holster => layers.extend(holster.map(|c| Layer {
+                clip: c,
+                cycle: (t / holster_time).min(0.999),
+                weight: 1.0,
+            })),
             Phase::Hidden => {}
         }
         actor.layers = layers;
         actor.additive = additive;
-        let offset = actor.bone_model_transform("jx_c_camera").map(|t| t.translation).unwrap_or(Vec3::ZERO);
+        let offset = actor
+            .bone_model_transform("jx_c_camera")
+            .map(|t| t.translation)
+            .unwrap_or(Vec3::ZERO);
         let show = inst.phase != Phase::Hidden && cockpit && eye_frame.is_some();
         if show && (!inst.def.keep_primary || inst.def.empty_hand) {
             hide_gun = true;
@@ -290,10 +435,18 @@ pub fn offhand_viewmodels(
             left_arm = Some(inst.actor);
         }
         if let Some((_, mut vis)) = inst.arms.and_then(|a| tfs.get_mut(a).ok()) {
-            vis.set_if_neq(if split { Visibility::Hidden } else { Visibility::Inherited });
+            vis.set_if_neq(if split {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            });
         }
         if let Ok((mut tf, mut vis)) = tfs.get_mut(inst.anchor) {
-            vis.set_if_neq(if show { Visibility::Inherited } else { Visibility::Hidden });
+            vis.set_if_neq(if show {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
             if let Some((eye, rot)) = eye_frame {
                 tf.rotation = rot;
                 tf.translation = eye - rot * offset;
@@ -311,7 +464,10 @@ pub fn offhand_viewmodels(
             }
             match left_arm {
                 Some(leader) => {
-                    commands.entity(e).insert(BoneMergeSplit { leader, root: "def_l_clav" });
+                    commands.entity(e).insert(BoneMergeSplit {
+                        leader,
+                        root: "def_l_clav",
+                    });
                 }
                 None if has => {
                     commands.entity(e).remove::<BoneMergeSplit>();

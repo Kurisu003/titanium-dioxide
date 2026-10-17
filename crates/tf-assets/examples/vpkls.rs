@@ -8,7 +8,11 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let filter = args.get(2).cloned().unwrap_or_default();
-    let mut names: Vec<_> = vpk.entries.iter().filter(|(k, _)| k.contains(&filter)).collect();
+    let mut names: Vec<_> = vpk
+        .entries
+        .iter()
+        .filter(|(k, _)| k.contains(&filter))
+        .collect();
     names.sort_by(|a, b| a.0.cmp(b.0));
     for (k, e) in names {
         println!("{:>10} {}", e.size(), k);

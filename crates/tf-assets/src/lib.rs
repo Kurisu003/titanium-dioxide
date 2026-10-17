@@ -1,23 +1,23 @@
 //! Readers for Titanfall 2 asset formats, working directly on a game install.
 
-mod bytes;
-mod guid;
 pub mod bc6h;
 pub mod binka;
-pub mod cubemap;
 pub mod bsp;
+mod bytes;
+pub mod cubemap;
+pub mod datatable;
+mod guid;
 pub mod material;
-pub mod miles;
-pub mod pcf;
 pub mod mdl;
+pub mod miles;
 pub mod navmesh;
+pub mod pcf;
 pub mod rpak;
-pub mod settings;
 mod rpak_decompress;
 mod rpak_lut;
+pub mod settings;
 pub mod texture;
 pub mod uimg;
-pub mod datatable;
 pub mod vfont;
 pub mod vpk;
 pub mod vtf;

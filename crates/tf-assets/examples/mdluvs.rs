@@ -12,7 +12,11 @@ fn main() -> anyhow::Result<()> {
                 hi[k] = hi[k].max(uv[k]);
             }
         }
-        println!("mesh {i}: {} verts, {} tris, uv {lo:?}..{hi:?}", m.positions.len(), m.indices.len() / 3);
+        println!(
+            "mesh {i}: {} verts, {} tris, uv {lo:?}..{hi:?}",
+            m.positions.len(),
+            m.indices.len() / 3
+        );
         for j in (0..m.positions.len()).step_by((m.positions.len() / 12).max(1)) {
             println!("  pos {:?} uv {:?}", m.positions[j], m.uvs[j]);
         }

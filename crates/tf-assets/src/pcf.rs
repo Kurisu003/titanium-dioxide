@@ -83,7 +83,10 @@ impl Reader<'_> {
         Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
     fn cstr(&mut self) -> Result<String> {
-        let end = self.b[self.i..].iter().position(|&c| c == 0).context("DMX unterminated string")?;
+        let end = self.b[self.i..]
+            .iter()
+            .position(|&c| c == 0)
+            .context("DMX unterminated string")?;
         let s = String::from_utf8_lossy(&self.b[self.i..self.i + end]).into_owned();
         self.i += end + 1;
         Ok(s)
@@ -104,7 +107,10 @@ pub fn parse_dmx(b: &[u8]) -> Result<Vec<Element>> {
     if !header.contains("dmx encoding binary") {
         bail!("not binary DMX: {header}");
     }
-    let mut r = Reader { b, i: header_end + 1 };
+    let mut r = Reader {
+        b,
+        i: header_end + 1,
+    };
     let ns = r.i32()?.max(0) as usize;
     let mut strings = Vec::with_capacity(ns);
     for _ in 0..ns {
@@ -117,7 +123,11 @@ pub fn parse_dmx(b: &[u8]) -> Result<Vec<Element>> {
         let t = r.i32()?;
         let n = r.i32()?;
         r.take(16)?;
-        elems.push(Element { type_name: s(t), name: s(n), attrs: Vec::new() });
+        elems.push(Element {
+            type_name: s(t),
+            name: s(n),
+            attrs: Vec::new(),
+        });
     }
     fn value(r: &mut Reader, t: u8, strings: &[String]) -> Result<Value> {
         Ok(match t {
@@ -149,7 +159,11 @@ pub fn parse_dmx(b: &[u8]) -> Result<Vec<Element>> {
                 let et = t - 14;
                 let mut items = Vec::with_capacity(n);
                 for _ in 0..n {
-                    items.push(if et == 5 { Value::Str(r.cstr()?) } else { value(&mut r, et, &strings)? });
+                    items.push(if et == 5 {
+                        Value::Str(r.cstr()?)
+                    } else {
+                        value(&mut r, et, &strings)?
+                    });
                 }
                 Value::Array(items)
             } else {
@@ -177,11 +191,19 @@ impl Op {
     }
     /// Parameter `k` as an integer (truncated), or `d`.
     pub fn i(&self, k: &str, d: i32) -> i32 {
-        self.params.get(k).and_then(Value::as_f32).map(|v| v as i32).unwrap_or(d)
+        self.params
+            .get(k)
+            .and_then(Value::as_f32)
+            .map(|v| v as i32)
+            .unwrap_or(d)
     }
     /// Parameter `k` as a flag (non-zero), or `d`.
     pub fn b(&self, k: &str, d: bool) -> bool {
-        self.params.get(k).and_then(Value::as_f32).map(|v| v != 0.0).unwrap_or(d)
+        self.params
+            .get(k)
+            .and_then(Value::as_f32)
+            .map(|v| v != 0.0)
+            .unwrap_or(d)
     }
     /// Parameter `k` as a vector (the first three components of a vector4), or `d`.
     pub fn v3(&self, k: &str, d: [f32; 3]) -> [f32; 3] {
@@ -270,8 +292,22 @@ pub fn parse_pcf(b: &[u8]) -> Result<Vec<SystemDef>> {
                 .iter()
                 .filter_map(&elem)
                 .map(|o| Op {
-                    function: o.get("functionName").and_then(|v| if let Value::Str(s) = v { Some(s.clone()) } else { None }).unwrap_or_else(|| o.name.clone()),
-                    params: o.attrs.iter().filter(|(n, _)| n != "functionName").cloned().collect(),
+                    function: o
+                        .get("functionName")
+                        .and_then(|v| {
+                            if let Value::Str(s) = v {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| o.name.clone()),
+                    params: o
+                        .attrs
+                        .iter()
+                        .filter(|(n, _)| n != "functionName")
+                        .cloned()
+                        .collect(),
                 })
                 .filter(|o| o.f("mute", 0.0) == 0.0)
                 .collect(),
@@ -279,7 +315,10 @@ pub fn parse_pcf(b: &[u8]) -> Result<Vec<SystemDef>> {
         }
     };
     let mut out = Vec::new();
-    for e in els.iter().filter(|e| e.type_name == "DmeParticleSystemDefinition") {
+    for e in els
+        .iter()
+        .filter(|e| e.type_name == "DmeParticleSystemDefinition")
+    {
         let num = |k: &str, d: f32| e.get(k).and_then(Value::as_f32).unwrap_or(d);
         let children = match e.get("children") {
             Some(Value::Array(a)) => a
@@ -291,7 +330,11 @@ pub fn parse_pcf(b: &[u8]) -> Result<Vec<SystemDef>> {
                     Some(Child {
                         name: child.name.clone(),
                         delay: c.get("delay").and_then(Value::as_f32).unwrap_or(0.0),
-                        end_cap: c.get("end cap effect").and_then(Value::as_f32).unwrap_or(0.0) != 0.0,
+                        end_cap: c
+                            .get("end cap effect")
+                            .and_then(Value::as_f32)
+                            .unwrap_or(0.0)
+                            != 0.0,
                     })
                 })
                 .collect(),
@@ -331,7 +374,26 @@ mod tests {
 
     /// A hand-built DMX binary 5 file with one system, one emitter and one child.
     fn sample() -> Vec<u8> {
-        let strings = ["DmElement", "root", "particleSystemDefinitions", "DmeParticleSystemDefinition", "sys", "material", "m.vmt", "emitters", "DmeParticleOperator", "emit_instantaneously", "functionName", "num_to_emit", "children", "DmeParticleChild", "ch", "child", "delay", "max_particles"];
+        let strings = [
+            "DmElement",
+            "root",
+            "particleSystemDefinitions",
+            "DmeParticleSystemDefinition",
+            "sys",
+            "material",
+            "m.vmt",
+            "emitters",
+            "DmeParticleOperator",
+            "emit_instantaneously",
+            "functionName",
+            "num_to_emit",
+            "children",
+            "DmeParticleChild",
+            "ch",
+            "child",
+            "delay",
+            "max_particles",
+        ];
         let idx = |s: &str| strings.iter().position(|x| *x == s).unwrap() as i32;
         let mut b = b"<!-- dmx encoding binary 5 format pcf 2 -->\n\0".to_vec();
         b.extend((strings.len() as i32).to_le_bytes());
@@ -339,7 +401,12 @@ mod tests {
             b.extend(s.as_bytes());
             b.push(0);
         }
-        let elems = [("DmElement", "root"), ("DmeParticleSystemDefinition", "sys"), ("DmeParticleOperator", "emit_instantaneously"), ("DmeParticleChild", "ch")];
+        let elems = [
+            ("DmElement", "root"),
+            ("DmeParticleSystemDefinition", "sys"),
+            ("DmeParticleOperator", "emit_instantaneously"),
+            ("DmeParticleChild", "ch"),
+        ];
         b.extend((elems.len() as i32).to_le_bytes());
         for (t, n) in elems {
             b.extend(idx(t).to_le_bytes());

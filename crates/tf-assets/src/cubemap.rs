@@ -55,8 +55,16 @@ impl CubemapSet {
             }
         }
         let total: usize = (0..mips).map(|m| face_bytes(w, m) * 6 * frames).sum();
-        let data = vtf.get(offset..offset + total).context("cubemap VTF is truncated")?.to_vec();
-        Ok(Self { size: w, mips, count: frames, data })
+        let data = vtf
+            .get(offset..offset + total)
+            .context("cubemap VTF is truncated")?
+            .to_vec();
+        Ok(Self {
+            size: w,
+            mips,
+            count: frames,
+            data,
+        })
     }
 
     /// One face of one cubemap at `mip` (0 = largest), as half-float RGB texels, row-major.

@@ -5,7 +5,13 @@ fn main() -> anyhow::Result<()> {
     let d = Vpk::open(&a[1])?.read(&a[2])?;
     let i32_at = |o: usize| i32::from_le_bytes(d[o..o + 4].try_into().unwrap());
     let f32_at = |o: usize| f32::from_le_bytes(d[o..o + 4].try_into().unwrap());
-    let cstr = |o: usize| d[o..].iter().take_while(|&&c| c != 0).map(|&c| c as char).collect::<String>();
+    let cstr = |o: usize| {
+        d[o..]
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as char)
+            .collect::<String>()
+    };
     let (n, idx) = (i32_at(0xB0) as usize, i32_at(0xB4) as usize);
     let stride: usize = a.get(3).and_then(|v| v.parse().ok()).unwrap_or(68);
     println!("{n} hitbox sets at {idx:#x}");
