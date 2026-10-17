@@ -43,6 +43,9 @@ pub struct FpActive {
     pub from: Option<(Vec3, Quat)>,
     pub blend: f32,
     pub len: f32,
+    /// The view rides the head bone instead of the camera bone (set once the camera bone
+    /// strays from the head, see `fp_seq_update`).
+    pub head_eye: bool,
 }
 
 #[derive(Resource, Default)]
@@ -69,6 +72,7 @@ impl FpSeq {
             from,
             blend: if from.is_some() { 0.35 } else { 0.0 },
             len: 1.0,
+            head_eye: false,
         });
     }
     pub fn stop(&mut self) {
@@ -124,6 +128,11 @@ fn sequences() -> Vec<String> {
         "ptpov_mount_buddy_kneel_behind",
         "ptpov_mount_buddy_kneel_left",
         "ptpov_mount_buddy_kneel_right",
+        "ptpov_mount_buddy_kneel_above_left",
+        "ptpov_mount_buddy_kneel_above_right",
+        "ptpov_mount_buddy_above_left",
+        "ptpov_mount_buddy_above_right",
+        "ptpov_mount_buddy_stand_airgrab",
         "ptpov_dismount_buddy_stand",
         "ptpov_dismount_buddy_crouch",
         "ptpov_dismount_atlas_stand",
@@ -286,6 +295,41 @@ pub fn fp_seq_update(
             root_pos + root_rot * c.translation,
             root_rot * c.rotation * attach_frame(),
         );
+    }
+    // The eye. In the right/front/behind/airgrab mounts and the dismounts the camera bone
+    // stays within ~20 units of def_c_head, but every Titan's above_left / kneel_above_left
+    // clip (checked in the VPK data: buddy, atlas, Ogre, Stryder) puts it 25-60 units behind
+    // and beside the head, aimed at it, and the Ogre/Stryder ones orbit 200 units out. The
+    // game's view code (client.dll FUN_1804ec260: the ref, camera and camera_base
+    // attachments) places the camera bone relative to the ref exactly as above, so what the
+    // game shows for those clips stays unexplained. When a clip starts with its camera bone
+    // over 30 units from the head (the honest ones start within 23; the dismount's camera
+    // legitimately pulls ahead later, as the Pilot drops off) the view rides the head instead,
+    // at the honest clips' mean camera offset (head space: position (0.4, -6, 3.6), rotation
+    // (0.1535, 0.0301, -0.0349, 0.9871)).
+    if let Some(h) = actor.bone_model_transform("def_c_head") {
+        let head = (root_pos + root_rot * h.translation, root_rot * h.rotation);
+        if !a.head_eye && a.t < 0.05 && (view.0 - head.0).length() > 30.0 {
+            a.head_eye = true;
+            log::info!(
+                "{}: camera bone {:.0} units from the head, the view rides the head",
+                a.clip,
+                (view.0 - head.0).length()
+            );
+        }
+        if a.head_eye {
+            view = (
+                head.0 + head.1 * Vec3::new(0.4, -6.0, 3.6),
+                head.1 * Quat::from_xyzw(0.1535, 0.0301, -0.0349, 0.9871) * attach_frame(),
+            );
+        }
+    }
+    if std::env::var_os("TF_VM_LOG").is_some() {
+        let head = actor
+            .bone_model_transform("def_c_head")
+            .map(|t| root_pos + root_rot * t.translation);
+        let f = view.1 * Vec3::X;
+        log::info!(target: "vm_log", "fpseq {} t {:.2} frame {:.1?} root {:.1?} eye {:.1?} fwd {:.2?} head {:.1?}", a.clip, a.t, frame_pos, root_pos, view.0, f, head);
     }
     if let Ok((mut tf, mut vis)) = tfs.get_mut(arms.anchor) {
         tf.translation = root_pos;

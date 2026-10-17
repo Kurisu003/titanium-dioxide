@@ -28,6 +28,15 @@ const EMBARK_KNEEL_FRONT: &str = "at_mount_kneel_front";
 const EMBARK_KNEEL_BEHIND: &str = "at_mount_kneel_behind";
 const EMBARK_KNEEL_LEFT: &str = "at_mount_kneel_left";
 const EMBARK_KNEEL_RIGHT: &str = "at_mount_kneel_right";
+/// From above (sh_titan_embark.gnut's `above_close` action): BT takes the pilot off his
+/// hull, by the side they are on; `at_mount_kneel_above` serves both sides kneeling.
+const EMBARK_ABOVE_LEFT: &str = "at_mount_above_left";
+const EMBARK_ABOVE_RIGHT: &str = "at_mount_above_right";
+const EMBARK_KNEEL_ABOVE: &str = "at_mount_kneel_above";
+/// From the air near his shoulders (`above_grab`): BT catches the pilot. The kneeling grab has
+/// no first-person clip on the arms (the game shows it from a third-person camera), so the
+/// standing pair plays whether BT is in combat or not.
+const EMBARK_AIRGRAB: &str = "at_mount_stand_airgrab";
 /// BT counts as in combat (regular, standing embark) with a live enemy this close: the
 /// XO-16's npc_min_engage_titan, the range at which the NPC would engage it.
 const EMBARK_COMBAT_RANGE: f32 = 1500.0;
@@ -40,7 +49,11 @@ const EMBARK_SECS: f32 = 2.77;
 const EJECT_ANIM: &str = "at_MP_eject_stand_start";
 const EJECT_SECS: f32 = 0.15 + 0.8;
 const EJECT_SPEED: (f32, f32) = (1500.0, 1700.0);
+/// The embark actions' reach (sh_titan_embark.gnut): the ground ones 260 units from BT's
+/// origin, `above_close` 350 and `above_grab` 275.
 const EMBARK_RANGE: f32 = 260.0;
+const EMBARK_ABOVE_RANGE: f32 = 350.0;
+const EMBARK_AIRGRAB_RANGE: f32 = 275.0;
 /// The player's Titanfall (_titan_hotdrop.gnut): BT rides this sequence's root motion down
 /// from the sky, then stands with the quickstand.
 const DROP_ANIM: &str = "at_hotdrop_drop_2knee_turbo";
@@ -90,39 +103,84 @@ impl PlayerPilot {
     }
 }
 
-/// The mount sequence for a pilot at `to_pilot` from a Titan facing `yaw` (game space), and
-/// its first-person twin on the arms.
-fn embark_anim_for(yaw: f32, to_pilot: SVec3, kneel: bool) -> (&'static str, &'static str) {
-    let rel = (to_pilot.y.atan2(to_pilot.x) - yaw + std::f32::consts::PI)
-        .rem_euclid(std::f32::consts::TAU)
-        - std::f32::consts::PI;
-    let q = std::f32::consts::FRAC_PI_4;
-    let side = if rel.abs() <= q {
-        0
-    } else if rel.abs() >= 3.0 * q {
-        1
-    } else if rel > 0.0 {
-        2
+/// The mount sequence for a pilot at `to_pilot` (BT's origin to the pilot's feet, game space)
+/// from a Titan facing `yaw`, and its first-person twin on the arms; None when no embark
+/// action reaches.
+///
+/// sh_titan_embark.gnut's action table, scored like FindBestEmbark: the direction from BT to
+/// the pilot in BT's frame turned 30 degrees to the right (CalculateTitanToPlayerDir's
+/// AnglesCompose with yaw -30 for a standing Titan), then by priority: `above_close` (straight
+/// up, dot 0.88, within 350; the side set by which way the pilot is off the centre line) and
+/// `above_grab` (dot 0.3, within 275) first, then `front`, `left`, `right` and `behind`
+/// (dot 0.4, within 260), then `front` for anything else within 260. Among a priority's
+/// candidates the best dot wins.
+fn embark_anim_for(yaw: f32, to_pilot: SVec3, kneel: bool) -> Option<(&'static str, &'static str)> {
+    let dist = to_pilot.length();
+    let dir = if dist > 1e-3 {
+        to_pilot / dist
     } else {
-        3
+        SVec3::X
     };
-    if kneel {
-        match side {
-            0 => (EMBARK_KNEEL_FRONT, "ptpov_mount_buddy_kneel_front"),
-            1 => (EMBARK_KNEEL_BEHIND, "ptpov_mount_buddy_kneel_behind"),
-            2 => (EMBARK_KNEEL_LEFT, "ptpov_mount_buddy_kneel_left"),
-            _ => (EMBARK_KNEEL_RIGHT, "ptpov_mount_buddy_kneel_right"),
-        }
-    } else {
+    let yaw = yaw - 30f32.to_radians();
+    let rel = SVec3::new(
+        dir.x * yaw.cos() + dir.y * yaw.sin(),
+        -dir.x * yaw.sin() + dir.y * yaw.cos(),
+        dir.z,
+    );
+    // (name, direction dot, min dot, reach)
+    let above = [
+        ("above_close", rel.z, 0.88, EMBARK_ABOVE_RANGE),
+        ("above_grab", rel.z, 0.3, EMBARK_AIRGRAB_RANGE),
+    ];
+    let sides = [
+        ("front", rel.x, 0.4, EMBARK_RANGE),
+        ("left", rel.y, 0.4, EMBARK_RANGE),
+        ("right", -rel.y, 0.4, EMBARK_RANGE),
+        ("behind", -rel.x, 0.4, EMBARK_RANGE),
+    ];
+    let any = [("front", rel.x, -1.0, EMBARK_RANGE)];
+    let best = [&above[..], &sides[..], &any[..]]
+        .into_iter()
+        .find_map(|actions| {
+            actions
+                .iter()
+                .filter(|&&(_, dot, min, reach)| dist <= reach && dot >= min)
+                .fold(None, |best: Option<(&str, f32)>, &(name, dot, _, _)| {
+                    if best.is_none_or(|(_, b)| dot > b) {
+                        Some((name, dot))
+                    } else {
+                        best
+                    }
+                })
+        })?;
+    log::info!(
+        "embark action {} (BT to pilot {dist:.0} away, in his frame {:.2} fwd {:.2} left {:.2} up)",
+        best.0,
+        rel.x,
+        rel.y,
+        rel.z
+    );
+    // The above set's side: the pilot off to BT's right (rel.y below zero) or left; a tie
+    // goes to the right (the first set checked).
+    let left = rel.y > 0.0;
+    Some(match (best.0, kneel) {
+        ("above_close", true) if left => (EMBARK_KNEEL_ABOVE, "ptpov_mount_buddy_kneel_above_left"),
+        ("above_close", true) => (EMBARK_KNEEL_ABOVE, "ptpov_mount_buddy_kneel_above_right"),
+        ("above_close", false) if left => (EMBARK_ABOVE_LEFT, "ptpov_mount_buddy_above_left"),
+        ("above_close", false) => (EMBARK_ABOVE_RIGHT, "ptpov_mount_buddy_above_right"),
+        ("above_grab", _) => (EMBARK_AIRGRAB, "ptpov_mount_buddy_stand_airgrab"),
+        ("front", true) => (EMBARK_KNEEL_FRONT, "ptpov_mount_buddy_kneel_front"),
+        ("behind", true) => (EMBARK_KNEEL_BEHIND, "ptpov_mount_buddy_kneel_behind"),
+        ("left", true) => (EMBARK_KNEEL_LEFT, "ptpov_mount_buddy_kneel_left"),
+        ("right", true) => (EMBARK_KNEEL_RIGHT, "ptpov_mount_buddy_kneel_right"),
         // The standing left/right climbs use the front first-person clip, like the embark
         // actions' firstPersonStandingAlias.
-        match side {
-            0 => (EMBARK_FRONT, "ptpov_mount_buddy_stand_front"),
-            1 => (EMBARK_BEHIND, "ptpov_mount_buddy_stand_behind"),
-            2 => (EMBARK_LEFT, "ptpov_mount_buddy_stand_front"),
-            _ => (EMBARK_RIGHT, "ptpov_mount_buddy_stand_front"),
-        }
-    }
+        ("front", false) => (EMBARK_FRONT, "ptpov_mount_buddy_stand_front"),
+        ("behind", false) => (EMBARK_BEHIND, "ptpov_mount_buddy_stand_behind"),
+        ("left", false) => (EMBARK_LEFT, "ptpov_mount_buddy_stand_front"),
+        (_, false) => (EMBARK_RIGHT, "ptpov_mount_buddy_stand_front"),
+        (_, true) => (EMBARK_KNEEL_FRONT, "ptpov_mount_buddy_kneel_front"),
+    })
 }
 
 /// Put the pilot above BT's cockpit and launch them (TitanEjectPlayer).
@@ -565,8 +623,20 @@ pub fn control_transitions(
                     pilot.state.mode
                 );
             }
-            let near = to_bt.truncate().length() < EMBARK_RANGE && to_bt.z.abs() < 300.0;
-            if interact && !(near && !tf.busy() && bt_health.dead_for.is_none()) {
+            // BT reaches for the pilot wherever they are (from his hull or the air too); out
+            // of combat he kneels for them (ShouldDoRegularEmbark: BT's NPC state
+            // combat/alert).
+            let bt_pos = Vec3::from(titan.state.pos.to_array());
+            let nearest = dummies
+                .iter()
+                .filter(|e| e.active && e.alive() && !e.arriving())
+                .map(|e| e.pos.distance(bt_pos))
+                .fold(f32::INFINITY, f32::min);
+            let combat = nearest < EMBARK_COMBAT_RANGE;
+            let embark = interact
+                .then(|| embark_anim_for(titan.state.yaw, -to_bt, !combat))
+                .flatten();
+            if interact && !(embark.is_some() && !tf.busy() && bt_health.dead_for.is_none()) {
                 log::info!(
                     "embark refused: BT {:.0} away ({:.0} up), busy {}",
                     to_bt.truncate().length(),
@@ -574,19 +644,11 @@ pub fn control_transitions(
                     tf.busy()
                 );
             }
-            if interact && near && !tf.busy() && bt_health.dead_for.is_none() {
+            if let Some((anim, clip)) =
+                embark.filter(|_| interact && !tf.busy() && bt_health.dead_for.is_none())
+            {
                 let eye = Vec3::from(pilot.state.eye(&pilot_settings.0).to_array());
                 pilot.embark_from = Some((eye, view_quat(pilot.state.yaw, pilot.state.pitch)));
-                // BT reaches for the pilot on whichever side they are; out of combat he
-                // kneels for them (ShouldDoRegularEmbark: BT's NPC state combat/alert).
-                let bt_pos = Vec3::from(titan.state.pos.to_array());
-                let nearest = dummies
-                    .iter()
-                    .filter(|e| e.active && e.alive() && !e.arriving())
-                    .map(|e| e.pos.distance(bt_pos))
-                    .fold(f32::INFINITY, f32::min);
-                let combat = nearest < EMBARK_COMBAT_RANGE;
-                let (anim, clip) = embark_anim_for(titan.state.yaw, -to_bt, !combat);
                 pilot.embark_anim = anim;
                 tf.recover = None;
                 // BT stands still for the embark (its animation drives him, not his movement).
@@ -596,12 +658,10 @@ pub fn control_transitions(
                     "embarking ({}, {clip}; nearest enemy {nearest:.0})",
                     pilot.embark_anim
                 );
-                fpseq.start(
-                    clip,
-                    hijack_frame(&titan),
-                    Some((eye, view_quat(pilot.state.yaw, pilot.state.pitch))),
-                    false,
-                );
+                // A cut, not a blend: FirstPersonSequence teleports the player onto the
+                // ref attachment and the clip's camera takes over at once. Blending the view
+                // in from where he stood swept it through his own body on the top mounts.
+                fpseq.start(clip, hijack_frame(&titan), None, false);
             }
             if call && bt_health.dead_for.is_none() && !tf.busy() {
                 // The Titan command: BT guards the spot you're looking at, or follows again.
@@ -661,7 +721,16 @@ pub fn control_transitions(
             let t = t + dt;
             titan.override_anim = Some((pilot.embark_anim.into(), t));
             fpseq.set_frame(hijack_frame(&titan));
-            if t >= embark_secs {
+            // The embark ends with the Pilot's first-person clip (the game waits for the
+            // player's mount sequence; BT's is shorter and holds its last frame), or with
+            // BT's when there is no first-person clip.
+            let fp_done = fpseq.active.as_ref().is_some_and(|a| a.t >= a.len);
+            let done = if fpseq.playing() {
+                fp_done
+            } else {
+                t >= embark_secs
+            };
+            if done {
                 titan.override_anim = None;
                 fpseq.stop();
                 input.yaw = titan.state.yaw;
@@ -1448,33 +1517,57 @@ pub struct CamFeel {
 /// exposure compensation snaps to -6 stops, and 0.1 s later goes back to 0 while auto-exposure
 /// brings the view up. Bevy has no auto-exposure here, so the recovery is an ease-out over about
 /// a second (TitanCockpit_IsBooting counts 1.3 s); every camera dims together.
+///
+/// Before it, the end of the embark fades to black (Embark_DelayedFadeOut: ScreenFadeToBlack
+/// over EMBARK_FADE_TIME, 0.3 s in the campaign, ending with the mount sequence), so the cut
+/// from the climb to the cockpit view is never seen.
 pub fn cockpit_boot(
     time: Res<Time>,
     control: Res<Control>,
+    fpseq: Res<crate::fparms::FpSeq>,
     mut cams: Query<(Entity, &mut bevy::camera::Exposure)>,
     mut state: Local<(Option<f32>, bool, std::collections::HashMap<Entity, f32>)>,
 ) {
+    const FADE: f32 = 0.3;
     let (boot, was_embarking, base) = &mut *state;
     let embarking = matches!(*control, Control::Embark(_));
     if *was_embarking && *control == Control::Titan {
         *boot = Some(0.0);
     }
     *was_embarking = embarking;
-    let Some(t) = boot.as_mut() else { return };
-    *t += time.delta_secs();
-    let stops = if *t < 0.1 {
-        6.0
-    } else {
-        6.0 * (-(*t - 0.1) / 0.3).exp()
+    // The fade out at the end of the climb, from the first-person clip's time left.
+    let fade_out = fpseq
+        .active
+        .as_ref()
+        .filter(|_| embarking)
+        .map(|a| 6.0 * (1.0 - ((a.len - a.t) / FADE).clamp(0.0, 1.0)))
+        .filter(|&s| s > 0.0);
+    let stops = match (fade_out, boot.as_mut()) {
+        (Some(s), _) => Some(s),
+        (None, Some(t)) => {
+            *t += time.delta_secs();
+            let s = if *t < 0.1 {
+                6.0
+            } else {
+                6.0 * (-(*t - 0.1) / 0.3).exp()
+            };
+            let over = *t > 1.6 || *control != Control::Titan;
+            if over {
+                *boot = None;
+            }
+            (!over).then_some(s)
+        }
+        (None, None) => None,
     };
-    let done = *t > 1.6 || *control != Control::Titan;
+    if stops.is_none() && base.is_empty() {
+        return;
+    }
     for (e, mut ex) in &mut cams {
         let b = *base.entry(e).or_insert(ex.ev100);
         // A higher EV100 is a darker picture.
-        ex.ev100 = if done { b } else { b + stops };
+        ex.ev100 = b + stops.unwrap_or(0.0);
     }
-    if done {
-        *boot = None;
+    if stops.is_none() {
         base.clear();
     }
 }
