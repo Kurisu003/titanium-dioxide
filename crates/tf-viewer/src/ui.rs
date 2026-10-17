@@ -5,10 +5,10 @@
 //!
 //! Screens: loading, main menu, pause (Esc) and game over.
 
+use crate::audio::MasterVolume;
 use crate::game::{Game, GameState};
 use crate::player::{CameraMode, PlayerInput};
 use crate::vitals::Difficulty;
-use crate::audio::MasterVolume;
 use bevy::audio::Volume;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
@@ -25,13 +25,21 @@ pub struct UiAssets {
     pub loadscreen: Option<Handle<Image>>,
     /// Weapon id -> its loadout icon (the script's `menu_icon` UI image path).
     pub weapon_icons: HashMap<String, String>,
+    /// Frontier Defense's blue triangle badge and the harvester glyph on it (drawn here: the
+    /// game's are compiled into its RUI).
+    pub triangle: Handle<Image>,
+    pub harvester: Handle<Image>,
 }
 
 impl UiAssets {
     /// An atlas image by its RUI path, e.g. "rui/menu/common/keyart".
     pub fn image(&self, path: &str) -> Option<ImageNode> {
         let (h, r) = self.images.get(&tf_assets::uimg::path_hash(path))?;
-        Some(ImageNode { image: h.clone(), rect: Some(*r), ..default() })
+        Some(ImageNode {
+            image: h.clone(),
+            rect: Some(*r),
+            ..default()
+        })
     }
 }
 
@@ -58,7 +66,14 @@ pub fn log_hitches(loaded: Option<Res<LoadedAt>>, mut last: Local<Option<std::ti
     if let (Some(l), Some(prev)) = (loaded, *last) {
         let dt = now - prev;
         static LIMIT: std::sync::OnceLock<u128> = std::sync::OnceLock::new();
-        if dt.as_millis() > *LIMIT.get_or_init(|| std::env::var("TF_HITCH_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(60)) {
+        if dt.as_millis()
+            > *LIMIT.get_or_init(|| {
+                std::env::var("TF_HITCH_MS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(60)
+            })
+        {
             log::debug!("hitch: {:?} frame at {:.2} s", dt, l.secs());
         }
     }
@@ -68,7 +83,9 @@ pub fn log_hitches(loaded: Option<Res<LoadedAt>>, mut last: Local<Option<std::ti
 impl LoadedAt {
     pub fn secs(&self) -> f32 {
         match fixed_dt() {
-            Some(dt) => (FIXED_FRAMES.load(std::sync::atomic::Ordering::Relaxed) as f64 * dt) as f32,
+            Some(dt) => {
+                (FIXED_FRAMES.load(std::sync::atomic::Ordering::Relaxed) as f64 * dt) as f32
+            }
             None => self.0.elapsed().as_secs_f32(),
         }
     }
@@ -80,18 +97,29 @@ impl LoadedAt {
 /// out the same frame by frame whatever the frame rate (comparing `TF_RECORD` logs).
 pub fn fixed_dt() -> Option<f64> {
     static DT: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
-    *DT.get_or_init(|| std::env::var("TF_FIXED_DT").ok().and_then(|v| v.parse::<f64>().ok()).filter(|n| *n > 0.0).map(|n| 1.0 / n))
+    *DT.get_or_init(|| {
+        std::env::var("TF_FIXED_DT")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|n| *n > 0.0)
+            .map(|n| 1.0 / n)
+    })
 }
 
 /// Frames since loading finished (the TF_FIXED_DT clock).
 static FIXED_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Count a frame of the TF_FIXED_DT clock, and start the game clock once loading is done.
-pub fn fixed_clock(loaded: Option<Res<LoadedAt>>, mut step: ResMut<bevy::time::TimeUpdateStrategy>) {
+pub fn fixed_clock(
+    loaded: Option<Res<LoadedAt>>,
+    mut step: ResMut<bevy::time::TimeUpdateStrategy>,
+) {
     if loaded.is_some() {
         if FIXED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
             let dt = fixed_dt().unwrap_or(0.0);
-            *step = bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_secs_f64(dt));
+            *step = bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(dt),
+            );
         }
     }
 }
@@ -124,13 +152,47 @@ pub struct VhText(pub f32);
 /// level is decoded and rewritten with alpha' = max(a, max(rgb)) and rgb' = rgb / alpha',
 /// which gives the same result wherever the texel isn't brighter than its alpha, and solid
 /// colour where it is.
-fn atlas_image(pak: &Rpak, guid: u64) -> Option<Image> {
+fn atlas_image(pak: &Rpak, guid: u64, rects: &[(u32, u32, u32, u32)]) -> Option<Image> {
     use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
     let a = pak.asset(guid)?;
     let tex = tf_assets::texture::load(pak, a).ok()?;
-    let px = tf_assets::texture::decode_rgba(tex.info.format, &tex.data, tex.width as usize, tex.height as usize)?;
+    let px = tf_assets::texture::decode_rgba(
+        tex.info.format,
+        &tex.data,
+        tex.width as usize,
+        tex.height as usize,
+    )?;
+    // Straight-alpha masks (white everywhere, the shape in alpha: the scoreboard status
+    // icons) share atlases with premultiplied art, so each image's rect is judged on its
+    // own: colour where the alpha is zero means straight alpha, and the rect is kept as is.
+    let (w, h) = (tex.width as usize, tex.height as usize);
+    let mut keep = vec![false; px.len()];
+    for &(x, y, rw, rh) in rects {
+        let (x, y, rw, rh) = (x as usize, y as usize, rw as usize, rh as usize);
+        if rw == 0 || rh == 0 || x + rw > w || y + rh > h {
+            continue;
+        }
+        let mut coloured = 0;
+        for j in y..y + rh {
+            for i in x..x + rw {
+                let p = px[j * w + i];
+                if p[3] < 16 && p[0].max(p[1]).max(p[2]) > 128 {
+                    coloured += 1;
+                }
+            }
+        }
+        if coloured * 100 > rw * rh {
+            for j in y..y + rh {
+                keep[j * w + x..j * w + x + rw].fill(true);
+            }
+        }
+    }
     let mut data = Vec::with_capacity(px.len() * 4);
-    for p in px {
+    for (k, p) in px.into_iter().enumerate() {
+        if keep[k] {
+            data.extend_from_slice(&p);
+            continue;
+        }
         let m = p[0].max(p[1]).max(p[2]).max(p[3]);
         if m == 0 {
             data.extend_from_slice(&[0, 0, 0, 0]);
@@ -141,7 +203,11 @@ fn atlas_image(pak: &Rpak, guid: u64) -> Option<Image> {
     }
     let mut img = Image::default();
     img.data = Some(data);
-    img.texture_descriptor.size = Extent3d { width: tex.width, height: tex.height, depth_or_array_layers: 1 };
+    img.texture_descriptor.size = Extent3d {
+        width: tex.width,
+        height: tex.height,
+        depth_or_array_layers: 1,
+    };
     img.texture_descriptor.mip_level_count = 1;
     img.texture_descriptor.format = TextureFormat::Rgba8UnormSrgb;
     img.texture_descriptor.dimension = TextureDimension::D2;
@@ -158,7 +224,11 @@ fn upload(images: &mut Assets<Image>, pak: &Rpak, guid: u64) -> Option<Handle<Im
     let format = crate::convert::wgpu_format(tex.info.format)?;
     let mut img = Image::default();
     img.data = Some(tex.data);
-    img.texture_descriptor.size = Extent3d { width: tex.width, height: tex.height, depth_or_array_layers: 1 };
+    img.texture_descriptor.size = Extent3d {
+        width: tex.width,
+        height: tex.height,
+        depth_or_array_layers: 1,
+    };
     img.texture_descriptor.mip_level_count = tex.mips;
     img.texture_descriptor.format = format;
     img.texture_descriptor.dimension = TextureDimension::D2;
@@ -168,18 +238,52 @@ fn upload(images: &mut Assets<Image>, pak: &Rpak, guid: u64) -> Option<Handle<Im
 }
 
 /// Read fonts, atlases and the load screen (fast: well under a second).
-pub fn load_ui_assets(mut commands: Commands, args: Res<crate::Args>, mut images: ResMut<Assets<Image>>, mut fonts: ResMut<Assets<Font>>) {
+pub fn load_ui_assets(
+    mut commands: Commands,
+    args: Res<crate::Args>,
+    mut images: ResMut<Assets<Image>>,
+    mut fonts: ResMut<Assets<Font>>,
+) {
     let t = std::time::Instant::now();
     let root = std::path::Path::new(&args.game);
     let mut ui = UiAssets::default();
+    ui.triangle = images.add(shape_image_shaded(
+        96,
+        |x, y| (y - 0.04) >= (x - 0.5).abs() * 2.0 * 0.96,
+        |_, y| {
+            // Lighter at the apex, the game's blue at the base.
+            let t = y.clamp(0.0, 1.0);
+            let l = |a: f32, b: f32| (a + (b - a) * t) as u8;
+            [l(190.0, 100.0), l(235.0, 185.0), 255, 255]
+        },
+    ));
+    ui.harvester = images.add(shape_image(
+        96,
+        |x, y| {
+            // The harvester: a tall rounded spire with two sloping shoulders on a base plate.
+            let dx = (x - 0.5).abs();
+            let spire = dx < 0.09 && y > 0.04 + (dx / 0.09).powi(2) * 0.1 && y < 0.96;
+            let shoulder = y > 0.42 && y < 0.96 && dx < 0.09 + (y - 0.42) / 0.54 * 0.34;
+            let base = dx < 0.46 && y > 0.86 && y < 0.96;
+            spire || shoulder || base
+        },
+        [255, 255, 255, 255],
+    ));
     // Fonts: Titanfall (titles) and Metronic Pro (everything else).
     let vpks: Vec<tf_assets::vpk::Vpk> = ["englishclient_frontend", "englishclient_mp_common"]
         .iter()
-        .filter_map(|v| tf_assets::vpk::Vpk::open(root.join(format!("vpk/{v}.bsp.pak000_dir.vpk"))).ok())
+        .filter_map(|v| {
+            tf_assets::vpk::Vpk::open(root.join(format!("vpk/{v}.bsp.pak000_dir.vpk"))).ok()
+        })
         .collect();
     let mut font = |name: &str| -> Handle<Font> {
-        let data = vpks.iter().find_map(|v| v.read(&format!("resource/{name}.vfont")).ok());
-        match data.and_then(|d| tf_assets::vfont::decode(&d).ok()).and_then(|ttf| Font::try_from_bytes(ttf).ok()) {
+        let data = vpks
+            .iter()
+            .find_map(|v| v.read(&format!("resource/{name}.vfont")).ok());
+        match data
+            .and_then(|d| tf_assets::vfont::decode(&d).ok())
+            .and_then(|ttf| Font::try_from_bytes(ttf).ok())
+        {
             Some(f) => fonts.add(f),
             None => {
                 log::warn!("font {name} unavailable");
@@ -189,8 +293,14 @@ pub fn load_ui_assets(mut commands: Commands, args: Res<crate::Args>, mut images
     };
     // Localised strings (UTF-16 keyvalues): "KEY" "Text".
     let mut strings = std::collections::HashMap::new();
-    if let Some(raw) = vpks.iter().find_map(|v| v.read("resource/r1_english.txt").ok()) {
-        let units: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    if let Some(raw) = vpks
+        .iter()
+        .find_map(|v| v.read("resource/r1_english.txt").ok())
+    {
+        let units: Vec<u16> = raw
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
         let text = String::from_utf16_lossy(&units);
         for line in text.lines() {
             let q: Vec<&str> = line.split('"').collect();
@@ -201,12 +311,28 @@ pub fn load_ui_assets(mut commands: Commands, args: Res<crate::Args>, mut images
     }
     // Each arsenal weapon's display name, by weapon id, from its script's printname, and its
     // loadout icon (menu_icon).
-    for id in crate::pilotweapon::ARSENAL.iter().map(|e| e.id).chain(crate::weapons::TITAN_ARSENAL.iter().map(|g| g.id)) {
-        let text = vpks.iter().find_map(|v| v.read(&format!("scripts/weapons/{id}.txt")).ok()).map(|b| String::from_utf8_lossy(&b).to_string());
-        if let Some(icon) = text.as_deref().and_then(|t| t.lines().find(|l| l.contains("\"menu_icon\"")).and_then(|l| l.split('"').nth(3))) {
+    for id in crate::pilotweapon::ARSENAL
+        .iter()
+        .map(|e| e.id)
+        .chain(crate::weapons::TITAN_ARSENAL.iter().map(|g| g.id))
+    {
+        let text = vpks
+            .iter()
+            .find_map(|v| v.read(&format!("scripts/weapons/{id}.txt")).ok())
+            .map(|b| String::from_utf8_lossy(&b).to_string());
+        if let Some(icon) = text.as_deref().and_then(|t| {
+            t.lines()
+                .find(|l| l.contains("\"menu_icon\""))
+                .and_then(|l| l.split('"').nth(3))
+        }) {
             ui.weapon_icons.insert(id.to_string(), icon.to_string());
         }
-        let key = text.as_deref().and_then(|t| t.lines().find(|l| l.contains("\"printname\"")).and_then(|l| l.split('"').nth(3)).map(|k| k.trim_start_matches('#').to_string()));
+        let key = text.as_deref().and_then(|t| {
+            t.lines()
+                .find(|l| l.contains("\"printname\""))
+                .and_then(|l| l.split('"').nth(3))
+                .map(|k| k.trim_start_matches('#').to_string())
+        });
         if let Some(name) = key.and_then(|k| strings.get(&k).cloned()) {
             strings.entry(id.to_string()).or_insert(name);
         }
@@ -218,37 +344,91 @@ pub fn load_ui_assets(mut commands: Commands, args: Res<crate::Args>, mut images
     ui.bold_font = font("metronicpro-semibold");
     // UI atlases: every image, keyed by path hash.
     let paks = root.join("r2/paks/Win64");
-    match Rpak::open(paks.join("ui.rpak")) {
-        Ok(pak) => {
-            let atlases: Vec<_> = pak.assets.iter().filter(|a| a.kind_str() == "uimg").filter_map(|a| tf_assets::uimg::load(&pak, a).ok()).collect();
-            // The atlases are decoded (see `atlas_image`) on all cores: seven 4k textures.
-            let mut guids: Vec<u64> = atlases.iter().map(|a| a.texture).collect();
-            guids.sort_unstable();
-            guids.dedup();
-            let decoded: Vec<(u64, Option<Image>)> = std::thread::scope(|sc| {
-                let pak = &pak;
-                let hs: Vec<_> = guids.iter().map(|&g| sc.spawn(move || (g, atlas_image(pak, g)))).collect();
-                hs.into_iter().map(|h| h.join().unwrap()).collect()
-            });
-            let textures: HashMap<u64, Option<Handle<Image>>> = decoded.into_iter().map(|(g, img)| (g, img.map(|i| images.add(i)))).collect();
-            for atlas in atlases {
-                let tex = textures.get(&atlas.texture).cloned().flatten();
-                let Some(tex) = tex else { continue };
-                for i in atlas.images {
-                    let r = Rect::new(i.x as f32, i.y as f32, (i.x + i.w) as f32, (i.y + i.h) as f32);
-                    ui.images.insert(i.hash, (tex.clone(), r));
+    // ui.rpak and the multiplayer UI patch paks (the Frontier Defense art lives in ui_mp(11)).
+    let mut ui_paks = vec![paks.join("ui.rpak")];
+    for n in 1..=20 {
+        let p = paks.join(format!("ui_mp({n:02}).rpak"));
+        if p.exists() {
+            ui_paks.push(p);
+        }
+    }
+    for path in ui_paks {
+        match Rpak::open(&path) {
+            Ok(pak) => {
+                let atlases: Vec<_> = pak
+                    .assets
+                    .iter()
+                    .filter(|a| a.kind_str() == "uimg")
+                    .filter_map(|a| tf_assets::uimg::load(&pak, a).ok())
+                    .collect();
+                // The atlases are decoded (see `atlas_image`) on all cores: seven 4k textures.
+                let mut guids: Vec<u64> = atlases.iter().map(|a| a.texture).collect();
+                guids.sort_unstable();
+                guids.dedup();
+                let mut rects: HashMap<u64, Vec<(u32, u32, u32, u32)>> = HashMap::new();
+                for a in &atlases {
+                    let list = rects.entry(a.texture).or_default();
+                    for i in &a.images {
+                        list.push((i.x as u32, i.y as u32, i.w as u32, i.h as u32));
+                    }
+                }
+                let decoded: Vec<(u64, Option<Image>)> = std::thread::scope(|sc| {
+                    let pak = &pak;
+                    let rects = &rects;
+                    let hs: Vec<_> = guids
+                        .iter()
+                        .map(|&g| {
+                            sc.spawn(move || {
+                                let r = rects.get(&g).map(Vec::as_slice).unwrap_or(&[]);
+                                (g, atlas_image(pak, g, r))
+                            })
+                        })
+                        .collect();
+                    hs.into_iter().map(|h| h.join().unwrap()).collect()
+                });
+                let textures: HashMap<u64, Option<Handle<Image>>> = decoded
+                    .into_iter()
+                    .map(|(g, img)| (g, img.map(|i| images.add(i))))
+                    .collect();
+                for atlas in atlases {
+                    let tex = textures.get(&atlas.texture).cloned().flatten();
+                    let Some(tex) = tex else { continue };
+                    for i in atlas.images {
+                        let r = Rect::new(
+                            i.x as f32,
+                            i.y as f32,
+                            (i.x + i.w) as f32,
+                            (i.y + i.h) as f32,
+                        );
+                        ui.images.insert(i.hash, (tex.clone(), r));
+                    }
                 }
             }
+            Err(e) => log::warn!("{}: {e:#}", path.display()),
         }
-        Err(e) => log::warn!("ui.rpak: {e:#}"),
     }
     // The map's load screen.
     let loadscreen = tf_assets::rpak::resolve(&paks, &format!("{}_loadscreen.rpak", args.map));
     if let Some(Ok(pak)) = loadscreen.map(Rpak::open) {
-        ui.loadscreen = pak.assets.iter().find(|a| a.kind_str() == "txtr").and_then(|a| upload(&mut images, &pak, a.guid));
+        ui.loadscreen = pak
+            .assets
+            .iter()
+            .find(|a| a.kind_str() == "txtr")
+            .and_then(|a| upload(&mut images, &pak, a.guid));
     }
-    let icons_found = ui.weapon_icons.values().filter(|p| ui.image(p).is_some()).count();
-    log::info!("ui: {} atlas images, load screen {}, weapon icons {}/{} in the atlases, in {:?}", ui.images.len(), ui.loadscreen.is_some(), icons_found, ui.weapon_icons.len(), t.elapsed());
+    let icons_found = ui
+        .weapon_icons
+        .values()
+        .filter(|p| ui.image(p).is_some())
+        .count();
+    log::info!(
+        "ui: {} atlas images, load screen {}, weapon icons {}/{} in the atlases, in {:?}",
+        ui.images.len(),
+        ui.loadscreen.is_some(),
+        icons_found,
+        ui.weapon_icons.len(),
+        t.elapsed()
+    );
     commands.insert_resource(ui);
 }
 
@@ -262,11 +442,20 @@ pub struct LoadingScreen;
 #[derive(Component)]
 pub struct CoverImage(pub f32);
 
-pub fn spawn_loading_screen(mut commands: Commands, ui: Res<UiAssets>, args: Res<crate::Args>, strings: Res<crate::pilotweapon::Strings>) {
+pub fn spawn_loading_screen(
+    mut commands: Commands,
+    ui: Res<UiAssets>,
+    args: Res<crate::Args>,
+    strings: Res<crate::pilotweapon::Strings>,
+) {
     commands.spawn((
         Camera2d,
         // Last, over the world and viewmodel cameras that spawn while loading.
-        Camera { order: 10, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() },
+        Camera {
+            order: 10,
+            clear_color: ClearColorConfig::Custom(Color::BLACK),
+            ..default()
+        },
         IsDefaultUiCamera,
         UiCamera,
         // UI only: no render layers, so Bevy's visibility pass doesn't test the 3D world against
@@ -275,7 +464,13 @@ pub fn spawn_loading_screen(mut commands: Commands, ui: Res<UiAssets>, args: Res
     ));
     let root = commands
         .spawn((
-            Node { position_type: PositionType::Absolute, width: percent(100), height: percent(100), overflow: Overflow::clip(), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                overflow: Overflow::clip(),
+                ..default()
+            },
             BackgroundColor(Color::BLACK),
             GlobalZIndex(100),
             LoadingScreen,
@@ -283,7 +478,14 @@ pub fn spawn_loading_screen(mut commands: Commands, ui: Res<UiAssets>, args: Res
         .id();
     if let Some(img) = &ui.loadscreen {
         let bg = commands
-            .spawn((ImageNode::new(img.clone()), Node { position_type: PositionType::Absolute, ..default() }, CoverImage(16.0 / 9.0)))
+            .spawn((
+                ImageNode::new(img.clone()),
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                CoverImage(16.0 / 9.0),
+            ))
             .id();
         commands.entity(root).add_child(bg);
     }
@@ -303,19 +505,55 @@ pub fn spawn_loading_screen(mut commands: Commands, ui: Res<UiAssets>, args: Res
         ))
         .id();
     let title = text(&mut commands, &map_name, &ui.title_font, 5.2, Color::WHITE);
-    let sub = text(&mut commands, "LOADING", &ui.bold_font, 2.0, Color::srgba(1.0, 1.0, 1.0, 0.7));
+    let sub = text(
+        &mut commands,
+        "LOADING",
+        &ui.bold_font,
+        2.0,
+        Color::srgba(1.0, 1.0, 1.0, 0.7),
+    );
     commands.entity(panel).add_children(&[title, sub]);
     commands.entity(root).add_child(panel);
 }
 
 /// The multiplayer maps (all of them ship with the game).
 pub const MAPS: &[&str] = &[
-    "mp_forwardbase_kodai", "mp_angel_city", "mp_black_water_canal", "mp_colony02", "mp_complex3", "mp_crashsite3", "mp_drydock", "mp_eden",
-    "mp_glitch", "mp_grave", "mp_homestead", "mp_relic02", "mp_rise", "mp_thaw", "mp_wargames", "mp_lf_deck", "mp_lf_meadow", "mp_lf_stacks",
-    "mp_lf_township", "mp_lf_traffic", "mp_lf_uma", "mp_coliseum", "mp_coliseum_column",
+    "mp_forwardbase_kodai",
+    "mp_angel_city",
+    "mp_black_water_canal",
+    "mp_colony02",
+    "mp_complex3",
+    "mp_crashsite3",
+    "mp_drydock",
+    "mp_eden",
+    "mp_glitch",
+    "mp_grave",
+    "mp_homestead",
+    "mp_relic02",
+    "mp_rise",
+    "mp_thaw",
+    "mp_wargames",
+    "mp_lf_deck",
+    "mp_lf_meadow",
+    "mp_lf_stacks",
+    "mp_lf_township",
+    "mp_lf_traffic",
+    "mp_lf_uma",
+    "mp_coliseum",
+    "mp_coliseum_column",
     // The campaign, in mission order (not The Ark, sp_s2s: its ships are script-moved entities).
-    "sp_training", "sp_crashsite", "sp_sewers1", "sp_boomtown_start", "sp_boomtown", "sp_boomtown_end", "sp_hub_timeshift",
-    "sp_timeshift_spoke02", "sp_beacon", "sp_beacon_spoke0", "sp_tday", "sp_skyway_v1",
+    "sp_training",
+    "sp_crashsite",
+    "sp_sewers1",
+    "sp_boomtown_start",
+    "sp_boomtown",
+    "sp_boomtown_end",
+    "sp_hub_timeshift",
+    "sp_timeshift_spoke02",
+    "sp_beacon",
+    "sp_beacon_spoke0",
+    "sp_tday",
+    "sp_skyway_v1",
     crate::flatmap::NAME,
 ];
 
@@ -328,9 +566,17 @@ pub struct MapChoice(pub String);
 /// spans several maps.
 pub fn map_name(strings: &crate::pilotweapon::Strings, map: &str) -> String {
     if map.starts_with("sp_") {
-        let mission = |m: &str| strings.0.get(&format!("{}_CAMPAIGN_NAME", m.to_uppercase())).cloned();
+        let mission = |m: &str| {
+            strings
+                .0
+                .get(&format!("{}_CAMPAIGN_NAME", m.to_uppercase()))
+                .cloned()
+        };
         if let Some(name) = mission(map) {
-            let parts: Vec<&&str> = MAPS.iter().filter(|m| mission(m).as_ref() == Some(&name)).collect();
+            let parts: Vec<&&str> = MAPS
+                .iter()
+                .filter(|m| mission(m).as_ref() == Some(&name))
+                .collect();
             let name = name.to_uppercase();
             return match parts.iter().position(|m| **m == map) {
                 Some(i) if parts.len() > 1 => format!("{name} {}", i + 1),
@@ -338,16 +584,49 @@ pub fn map_name(strings: &crate::pilotweapon::Strings, map: &str) -> String {
             };
         }
     }
-    strings.0.get(&format!("{}_ALLCAPS", map.to_uppercase())).cloned().unwrap_or_else(|| map.trim_start_matches("mp_").trim_start_matches("sp_").replace('_', " ").to_uppercase())
+    strings
+        .0
+        .get(&format!("{}_ALLCAPS", map.to_uppercase()))
+        .cloned()
+        .unwrap_or_else(|| {
+            map.trim_start_matches("mp_")
+                .trim_start_matches("sp_")
+                .replace('_', " ")
+                .to_uppercase()
+        })
 }
 
 /// Start the game again on another map with the same settings, then quit this one.
-fn relaunch(args: &crate::Args, map: &str, difficulty: Difficulty, volume: f32, loadout: &crate::pilotweapon::LoadoutChoice, titan: usize) {
+fn relaunch(
+    args: &crate::Args,
+    map: &str,
+    difficulty: Difficulty,
+    volume: f32,
+    loadout: &crate::pilotweapon::LoadoutChoice,
+    titan: usize,
+) {
     use crate::pilotweapon::{Slot, ARSENAL};
-    let Ok(exe) = std::env::current_exe() else { return };
-    let ids = [Slot::Primary, Slot::Sidearm, Slot::AntiTitan].map(|s| ARSENAL[loadout.get(s)].id).join(",");
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let ids = [Slot::Primary, Slot::Sidearm, Slot::AntiTitan]
+        .map(|s| ARSENAL[loadout.get(s)].id)
+        .join(",");
     let r = std::process::Command::new(exe)
-        .args(["--game", &args.game, "--map", map, "--difficulty", &difficulty.name().to_lowercase(), "--volume", &format!("{volume:.2}"), "--loadout", &ids, "--titan", &titan.to_string()])
+        .args([
+            "--game",
+            &args.game,
+            "--map",
+            map,
+            "--difficulty",
+            &difficulty.name().to_lowercase(),
+            "--volume",
+            &format!("{volume:.2}"),
+            "--loadout",
+            &ids,
+            "--titan",
+            &titan.to_string(),
+        ])
         .spawn();
     log::info!("relaunching on {map}: {:?}", r.map(|c| c.id()));
 }
@@ -356,8 +635,25 @@ fn vh(v: f32) -> Val {
     Val::Vh(v)
 }
 
-fn text(commands: &mut Commands, s: &str, font: &Handle<Font>, size_vh: f32, color: Color) -> Entity {
-    commands.spawn((Text::new(s), TextFont { font: font.clone(), font_size: 20.0, ..default() }, TextColor(color), VhText(size_vh))).id()
+fn text(
+    commands: &mut Commands,
+    s: &str,
+    font: &Handle<Font>,
+    size_vh: f32,
+    color: Color,
+) -> Entity {
+    commands
+        .spawn((
+            Text::new(s),
+            TextFont {
+                font: font.clone(),
+                font_size: 20.0,
+                ..default()
+            },
+            TextColor(color),
+            VhText(size_vh),
+        ))
+        .id()
 }
 
 /// Count drawn frames, then let the world load; when it has, drop the loading screen.
@@ -373,13 +669,22 @@ impl Plugin for PipelineWatchPlugin {
         let pending = PendingPipelines::default();
         app.insert_resource(pending.clone());
         if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
-            render.insert_resource(pending).add_systems(bevy::render::Render, count_pending_pipelines.in_set(bevy::render::RenderSystems::Cleanup));
+            render.insert_resource(pending).add_systems(
+                bevy::render::Render,
+                count_pending_pipelines.in_set(bevy::render::RenderSystems::Cleanup),
+            );
         }
     }
 }
 
-fn count_pending_pipelines(cache: Res<bevy::render::render_resource::PipelineCache>, pending: Res<PendingPipelines>) {
-    pending.0.store(cache.waiting_pipelines().count(), std::sync::atomic::Ordering::Relaxed);
+fn count_pending_pipelines(
+    cache: Res<bevy::render::render_resource::PipelineCache>,
+    pending: Res<PendingPipelines>,
+) {
+    pending.0.store(
+        cache.waiting_pipelines().count(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 /// Frames the world warms up under the loading screen: at least `WARM_MIN`, then until no
@@ -454,7 +759,11 @@ pub fn scale_ui(
     }
     for (c, mut n) in &mut covers {
         // Cover: scale to the larger of the two fits, centred.
-        let (iw, ih) = if ww / wh > c.0 { (ww, ww / c.0) } else { (wh * c.0, wh) };
+        let (iw, ih) = if ww / wh > c.0 {
+            (ww, ww / c.0)
+        } else {
+            (wh * c.0, wh)
+        };
         n.width = px(iw);
         n.height = px(ih);
         n.left = px((ww - iw) * 0.5);
@@ -550,7 +859,11 @@ impl Action {
 }
 
 /// Sliders: the value as a fraction of its range, read from and written to the settings.
-fn slider_get(a: Action, settings: &crate::settings::Settings, volume: &MasterVolume) -> Option<f32> {
+fn slider_get(
+    a: Action,
+    settings: &crate::settings::Settings,
+    volume: &MasterVolume,
+) -> Option<f32> {
     Some(match a {
         Action::Volume => volume.volume.to_linear(),
         Action::MouseSens => settings.mouse_sensitivity / 20.0,
@@ -560,7 +873,12 @@ fn slider_get(a: Action, settings: &crate::settings::Settings, volume: &MasterVo
     })
 }
 
-fn slider_set(a: Action, f: f32, settings: &mut crate::settings::Settings, volume: &mut MasterVolume) {
+fn slider_set(
+    a: Action,
+    f: f32,
+    settings: &mut crate::settings::Settings,
+    volume: &mut MasterVolume,
+) {
     let f = f.clamp(0.0, 1.0);
     match a {
         Action::Volume => volume.volume = Volume::Linear((f * 100.0).round() / 100.0),
@@ -595,7 +913,11 @@ fn on_off(b: bool) -> &'static str {
 pub fn missions(strings: &crate::pilotweapon::Strings) -> Vec<(String, &'static str)> {
     let mut out: Vec<(String, &'static str)> = Vec::new();
     for m in MAPS.iter().filter(|m| m.starts_with("sp_")) {
-        let name = strings.0.get(&format!("{}_CAMPAIGN_NAME", m.to_uppercase())).cloned().unwrap_or_else(|| map_name(strings, m));
+        let name = strings
+            .0
+            .get(&format!("{}_CAMPAIGN_NAME", m.to_uppercase()))
+            .cloned()
+            .unwrap_or_else(|| map_name(strings, m));
         if out.last().is_none_or(|(n, _)| *n != name) {
             out.push((name, m));
         }
@@ -623,7 +945,17 @@ pub struct Menu {
 
 impl Default for Menu {
     fn default() -> Self {
-        Self { page: Page::None, focus: 0, paused: false, root: None, stack: Vec::new(), capture: None, missions: 0, restore: None, dragging: None }
+        Self {
+            page: Page::None,
+            focus: 0,
+            paused: false,
+            root: None,
+            stack: Vec::new(),
+            capture: None,
+            missions: 0,
+            restore: None,
+            dragging: None,
+        }
     }
 }
 
@@ -655,11 +987,27 @@ fn actions(page: Page, missions: usize) -> Vec<Action> {
     use Action::*;
     match page {
         Page::Main => vec![Play, Campaign, Map, Loadout, Difficulty, Settings, Quit],
-        Page::Pause => vec![Resume, Restart, Loadout, Difficulty, Settings, MainMenu, Quit],
+        Page::Pause => vec![
+            Resume, Restart, Loadout, Difficulty, Settings, MainMenu, Quit,
+        ],
         Page::GameOver => vec![Restart, Loadout, Difficulty, MainMenu, Quit],
-        Page::Loadout => vec![Primary, Sidearm, AntiTitan, Tactical, Ordnance, TitanLoadout, Back],
-        Page::Settings => vec![MouseSens, AdsSens, InvertY, CrouchMode, Fov, Volume, Graphics, Bindings, PadLook, PadLookAds, PadCurve, PadInvert, AimAssist, PadLayout, Back],
-        Page::Bindings => (0..crate::settings::Command::ALL.len()).map(Bind).chain([ResetBinds, Back]).collect(),
+        Page::Loadout => vec![
+            Primary,
+            Sidearm,
+            AntiTitan,
+            Tactical,
+            Ordnance,
+            TitanLoadout,
+            Back,
+        ],
+        Page::Settings => vec![
+            MouseSens, AdsSens, InvertY, CrouchMode, Fov, Volume, Graphics, Bindings, PadLook,
+            PadLookAds, PadCurve, PadInvert, AimAssist, PadLayout, Back,
+        ],
+        Page::Bindings => (0..crate::settings::Command::ALL.len())
+            .map(Bind)
+            .chain([ResetBinds, Back])
+            .collect(),
         Page::Missions => (0..missions).map(Mission).chain([Back]).collect(),
         Page::None => vec![],
     }
@@ -701,36 +1049,80 @@ pub fn sync_menu(
             c.grab_mode = CursorGrabMode::None;
             c.visible = true;
         }
-        menu.root = Some(build_page(&mut commands, &ui, want, &game, &settings, menu.missions));
+        menu.root = Some(build_page(
+            &mut commands,
+            &ui,
+            want,
+            &game,
+            &settings,
+            menu.missions,
+        ));
     }
 }
 
-fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, settings: &crate::settings::Settings, missions: usize) -> Entity {
+fn build_page(
+    commands: &mut Commands,
+    ui: &UiAssets,
+    page: Page,
+    game: &Game,
+    settings: &crate::settings::Settings,
+    missions: usize,
+) -> Entity {
     let root = commands
         .spawn((
-            Node { position_type: PositionType::Absolute, width: percent(100), height: percent(100), overflow: Overflow::clip(), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                overflow: Overflow::clip(),
+                ..default()
+            },
             GlobalZIndex(50),
         ))
         .id();
     // Background: the title key art on the main menu and its sub-pages before play, a dark
     // veil over the game otherwise.
-    let over_title = matches!(page, Page::Main) || (game.state == GameState::Title && page != Page::None);
+    let over_title =
+        matches!(page, Page::Main) || (game.state == GameState::Title && page != Page::None);
     if over_title {
         commands.entity(root).insert(BackgroundColor(Color::BLACK));
         if let Some(img) = ui.image("rui/menu/common/keyart") {
-            let bg = commands.spawn((img, Node { position_type: PositionType::Absolute, ..default() }, CoverImage(1919.0 / 1079.0))).id();
+            let bg = commands
+                .spawn((
+                    img,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        ..default()
+                    },
+                    CoverImage(1919.0 / 1079.0),
+                ))
+                .id();
             commands.entity(root).add_child(bg);
         }
     } else {
-        commands.entity(root).insert(BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)));
+        commands
+            .entity(root)
+            .insert(BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)));
     }
     // Shade the lower half so the buttons read well over the art.
     let shade = commands
         .spawn((
-            Node { position_type: PositionType::Absolute, left: px(0), right: px(0), bottom: px(0), height: percent(if page == Page::Main { 55.0 } else { 100.0 }), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(0),
+                bottom: px(0),
+                height: percent(if page == Page::Main { 55.0 } else { 100.0 }),
+                ..default()
+            },
             BackgroundGradient::from(LinearGradient::to_top(vec![
                 ColorStop::auto(Color::srgba(0.0, 0.0, 0.0, 0.85)),
-                ColorStop::auto(Color::srgba(0.0, 0.0, 0.0, if page == Page::Main { 0.0 } else { 0.45 })),
+                ColorStop::auto(Color::srgba(
+                    0.0,
+                    0.0,
+                    0.0,
+                    if page == Page::Main { 0.0 } else { 0.45 },
+                )),
             ])),
         ))
         .id();
@@ -751,7 +1143,10 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
     // Header: the logo on the main menu, a title elsewhere.
     let title = |commands: &mut Commands, s: &str| {
         let t = text(commands, s, &ui.title_font, 6.0, Color::WHITE);
-        commands.entity(t).insert(Node { margin: UiRect::bottom(vh(3.5)), ..default() });
+        commands.entity(t).insert(Node {
+            margin: UiRect::bottom(vh(3.5)),
+            ..default()
+        });
         t
     };
     match page {
@@ -759,7 +1154,18 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
             if let Some(mut logo) = ui.image("rui/hud/wilds/TF2_Logo") {
                 logo.color = Color::WHITE;
                 // TitleRui: 1408 x 288 at 1080p, 160 above centre.
-                let l = commands.spawn((logo, Node { width: vh(130.4), max_width: Val::Vw(90.0), aspect_ratio: Some(2988.0 / 288.0), margin: UiRect::bottom(vh(9.0)), ..default() })).id();
+                let l = commands
+                    .spawn((
+                        logo,
+                        Node {
+                            width: vh(130.4),
+                            max_width: Val::Vw(90.0),
+                            aspect_ratio: Some(2988.0 / 288.0),
+                            margin: UiRect::bottom(vh(9.0)),
+                            ..default()
+                        },
+                    ))
+                    .id();
                 commands.entity(column).add_child(l);
             }
         }
@@ -784,15 +1190,27 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
             commands.entity(column).add_child(t);
         }
         Page::GameOver => {
-            let t = text(commands, "PILOT DOWN", &ui.title_font, 8.0, Color::srgb(1.0, 0.42, 0.25));
+            let t = text(
+                commands,
+                "PILOT DOWN",
+                &ui.title_font,
+                8.0,
+                Color::srgb(1.0, 0.42, 0.25),
+            );
             let s = text(
                 commands,
-                &format!("WAVE {}    TITAN KILLS {}    BEST WAVE {}", game.wave, game.kills, game.best_wave),
+                &format!(
+                    "WAVE {}    TITAN KILLS {}    BEST WAVE {}",
+                    game.wave, game.kills, game.best_wave
+                ),
                 &ui.bold_font,
                 2.4,
                 Color::srgba(1.0, 1.0, 1.0, 0.85),
             );
-            commands.entity(s).insert(Node { margin: UiRect::bottom(vh(5.0)), ..default() });
+            commands.entity(s).insert(Node {
+                margin: UiRect::bottom(vh(5.0)),
+                ..default()
+            });
             commands.entity(column).add_children(&[t, s]);
         }
         Page::None => {}
@@ -801,50 +1219,127 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
     // that sits under the title. Long lists (settings, bindings) use smaller rows.
     let list_actions = actions(page, missions);
     let long = list_actions.len() > 10;
-    let (row_h, font_vh, list_w) = if long { (3.6, 1.9, 62.0) } else { (5.2, 2.5, 58.0) };
+    let (row_h, font_vh, list_w) = if long {
+        (3.6, 1.9, 62.0)
+    } else {
+        (5.2, 2.5, 58.0)
+    };
     let frame = commands
-        .spawn(Node { width: vh(123.0), max_width: Val::Vw(92.0), flex_direction: FlexDirection::Row, column_gap: vh(4.0), align_items: AlignItems::FlexStart, ..default() })
+        .spawn(Node {
+            width: vh(123.0),
+            max_width: Val::Vw(92.0),
+            flex_direction: FlexDirection::Row,
+            column_gap: vh(4.0),
+            align_items: AlignItems::FlexStart,
+            ..default()
+        })
         .id();
-    let list = commands.spawn(Node { flex_direction: FlexDirection::Column, row_gap: vh(if long { 0.35 } else { 0.6 }), width: vh(list_w), max_width: Val::Vw(86.0), ..default() }).id();
+    let list = commands
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: vh(if long { 0.35 } else { 0.6 }),
+            width: vh(list_w),
+            max_width: Val::Vw(86.0),
+            ..default()
+        })
+        .id();
     commands.entity(frame).add_child(list);
     commands.entity(column).add_child(frame);
     for (i, a) in list_actions.iter().enumerate() {
         let b = commands
             .spawn((
                 Button,
-                Node { height: vh(row_h), align_items: AlignItems::Center, padding: UiRect::horizontal(vh(2.4)), column_gap: vh(1.6), ..default() },
+                Node {
+                    height: vh(row_h),
+                    align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(vh(2.4)),
+                    column_gap: vh(1.6),
+                    ..default()
+                },
                 BackgroundColor(Color::NONE),
-                MenuButton { action: *a, index: i },
+                MenuButton {
+                    action: *a,
+                    index: i,
+                },
             ))
             .id();
         let bar = commands
-            .spawn((Node { position_type: PositionType::Absolute, left: px(0), top: px(0), bottom: px(0), width: vh(0.5), ..default() }, BackgroundColor(Color::NONE), FocusBar))
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    top: px(0),
+                    bottom: px(0),
+                    width: vh(0.5),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                FocusBar,
+            ))
             .id();
         commands.entity(b).add_child(bar);
         // Loadout rows show the chosen item's icon from the game's loadout art.
         if page == Page::Loadout && *a != Action::Back {
             let icon = commands
-                .spawn((ImageNode::default(), Node { width: vh(row_h * 1.9), height: vh(row_h * 0.85), ..default() }, MenuIcon))
+                .spawn((
+                    ImageNode::default(),
+                    Node {
+                        width: vh(row_h * 1.9),
+                        height: vh(row_h * 0.85),
+                        ..default()
+                    },
+                    MenuIcon,
+                ))
                 .id();
             commands.entity(b).add_child(icon);
         }
-        let label = text(commands, "", &ui.bold_font, font_vh, Color::srgba(1.0, 1.0, 1.0, 0.7));
+        let label = text(
+            commands,
+            "",
+            &ui.bold_font,
+            font_vh,
+            Color::srgba(1.0, 1.0, 1.0, 0.7),
+        );
         commands.entity(label).insert(MenuLabel);
         commands.entity(b).add_child(label);
-        if matches!(a, Action::Volume | Action::MouseSens | Action::AdsSens | Action::Fov) {
+        if matches!(
+            a,
+            Action::Volume | Action::MouseSens | Action::AdsSens | Action::Fov
+        ) {
             // The track is the full row height so it is easy to hit; the bar is drawn inside.
             let track = commands
                 .spawn((
-                    Node { width: vh(18.0), height: vh(row_h), margin: UiRect::left(Val::Auto), align_items: AlignItems::Center, ..default() },
+                    Node {
+                        width: vh(18.0),
+                        height: vh(row_h),
+                        margin: UiRect::left(Val::Auto),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
                     bevy::ui::RelativeCursorPosition::default(),
                     SliderTrack(*a),
                 ))
                 .id();
             let bar = commands
-                .spawn((Node { width: percent(100), height: vh(0.7), ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.18))))
+                .spawn((
+                    Node {
+                        width: percent(100),
+                        height: vh(0.7),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.18)),
+                ))
                 .id();
             let fill = commands
-                .spawn((Node { width: percent(0), height: percent(100), ..default() }, BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.85)), SliderFill(*a)))
+                .spawn((
+                    Node {
+                        width: percent(0),
+                        height: percent(100),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.85)),
+                    SliderFill(*a),
+                ))
                 .id();
             commands.entity(bar).add_child(fill);
             commands.entity(track).add_child(bar);
@@ -855,7 +1350,16 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
     // The focused mission's load screen beside the mission list.
     if page == Page::Missions {
         let img = commands
-            .spawn((ImageNode::default(), Node { width: vh(56.0), height: vh(31.5), ..default() }, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)), MissionImage))
+            .spawn((
+                ImageNode::default(),
+                Node {
+                    width: vh(56.0),
+                    height: vh(31.5),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+                MissionImage,
+            ))
             .id();
         commands.entity(frame).add_child(img);
     }
@@ -877,11 +1381,26 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
             ))
             .id();
-        let head = text(commands, "CONTROLS", &ui.bold_font, 2.0, Color::srgb(1.0, 0.62, 0.15));
+        let head = text(
+            commands,
+            "CONTROLS",
+            &ui.bold_font,
+            2.0,
+            Color::srgb(1.0, 0.62, 0.15),
+        );
         commands.entity(panel).add_child(head);
         let k = |c: C| settings.bind(c).name();
         let rows = [
-            (format!("{}{}{}{}", k(C::Forward), k(C::Left), k(C::Back), k(C::Right)), "Move"),
+            (
+                format!(
+                    "{}{}{}{}",
+                    k(C::Forward),
+                    k(C::Left),
+                    k(C::Back),
+                    k(C::Right)
+                ),
+                "Move",
+            ),
             (k(C::Sprint), "Sprint"),
             (k(C::Jump), "Dash / Jump"),
             (k(C::Crouch), "Crouch / Slide"),
@@ -898,22 +1417,58 @@ fn build_page(commands: &mut Commands, ui: &UiAssets, page: Page, game: &Game, s
             ("- / =".to_string(), "Volume"),
         ];
         for (kk, v) in rows {
-            let row = commands.spawn(Node { column_gap: vh(2.0), ..default() }).id();
+            let row = commands
+                .spawn(Node {
+                    column_gap: vh(2.0),
+                    ..default()
+                })
+                .id();
             let kt = text(commands, &kk, &ui.bold_font, 1.55, Color::WHITE);
-            commands.entity(kt).insert(Node { width: vh(13.0), ..default() });
-            let vt = text(commands, v, &ui.font, 1.55, Color::srgba(1.0, 1.0, 1.0, 0.75));
+            commands.entity(kt).insert(Node {
+                width: vh(13.0),
+                ..default()
+            });
+            let vt = text(
+                commands,
+                v,
+                &ui.font,
+                1.55,
+                Color::srgba(1.0, 1.0, 1.0, 0.75),
+            );
             commands.entity(row).add_children(&[kt, vt]);
             commands.entity(panel).add_child(row);
         }
         commands.entity(root).add_child(panel);
     }
     // Footer hints, bottom right like the game's footer buttons.
-    let hint = text(commands, "[W/S] SELECT    [A/D] CHANGE    [ENTER] CONFIRM    [ESC] BACK", &ui.font, 1.6, Color::srgba(1.0, 1.0, 1.0, 0.55));
-    commands.entity(hint).insert(Node { position_type: PositionType::Absolute, right: vh(5.0), bottom: vh(4.0), ..default() });
+    let hint = text(
+        commands,
+        "[W/S] SELECT    [A/D] CHANGE    [ENTER] CONFIRM    [ESC] BACK",
+        &ui.font,
+        1.6,
+        Color::srgba(1.0, 1.0, 1.0, 0.55),
+    );
+    commands.entity(hint).insert(Node {
+        position_type: PositionType::Absolute,
+        right: vh(5.0),
+        bottom: vh(4.0),
+        ..default()
+    });
     commands.entity(root).add_child(hint);
     if page == Page::Main {
-        let note = text(commands, "TITANFALL-RS  ·  RUNS FROM YOUR TITANFALL 2 INSTALL", &ui.font, 1.4, Color::srgba(1.0, 1.0, 1.0, 0.4));
-        commands.entity(note).insert(Node { position_type: PositionType::Absolute, left: vh(5.0), bottom: vh(4.0), ..default() });
+        let note = text(
+            commands,
+            "TITANFALL-RS  ·  RUNS FROM YOUR TITANFALL 2 INSTALL",
+            &ui.font,
+            1.4,
+            Color::srgba(1.0, 1.0, 1.0, 0.4),
+        );
+        commands.entity(note).insert(Node {
+            position_type: PositionType::Absolute,
+            left: vh(5.0),
+            bottom: vh(4.0),
+            ..default()
+        });
         commands.entity(root).add_child(note);
     }
     root
@@ -938,7 +1493,16 @@ pub fn menu_input(
     mode: Res<CameraMode>,
     buttons: Query<(&MenuButton, &Interaction), Changed<Interaction>>,
     mut enemies: Query<&mut crate::targets::Enemy>,
-    (mut exit, mut pilot_status, ability_defs, mut settings, mut titan_kit, gamepads, strings, tracks): (
+    (
+        mut exit,
+        mut pilot_status,
+        ability_defs,
+        mut settings,
+        mut titan_kit,
+        gamepads,
+        strings,
+        tracks,
+    ): (
         MessageWriter<AppExit>,
         ResMut<crate::pilotability::PilotStatus>,
         Option<Res<crate::pilotability::PilotAbilityDefs>>,
@@ -960,8 +1524,14 @@ pub fn menu_input(
             menu.capture = None;
             return;
         }
-        let key = keys.get_just_pressed().next().map(|k| crate::settings::Bind::Key(*k));
-        let btn = mouse.get_just_pressed().next().map(|m| crate::settings::Bind::Mouse(*m));
+        let key = keys
+            .get_just_pressed()
+            .next()
+            .map(|k| crate::settings::Bind::Key(*k));
+        let btn = mouse
+            .get_just_pressed()
+            .next()
+            .map(|m| crate::settings::Bind::Mouse(*m));
         if let Some(b) = key.or(btn) {
             settings.rebind(cmd, b);
             menu.capture = None;
@@ -971,7 +1541,8 @@ pub fn menu_input(
     let pad = gamepads.iter().next();
     let pad_hit = |b: GamepadButton| pad.is_some_and(|g| g.just_pressed(b));
     let nav = std::mem::take(&mut input.menu_nav);
-    let back_key = keys.just_pressed(KeyCode::Escape) || pad_hit(GamepadButton::East) || nav == Some(5);
+    let back_key =
+        keys.just_pressed(KeyCode::Escape) || pad_hit(GamepadButton::East) || nav == Some(5);
     // Esc closes an open sub-page first.
     if back_key && !menu.stack.is_empty() {
         if let Some((_, focus)) = menu.stack.pop() {
@@ -981,10 +1552,16 @@ pub fn menu_input(
         return;
     }
     // Esc toggles the pause menu while playing (the free camera keeps Esc for the cursor).
-    let pause_key = (keys.just_pressed(KeyCode::Escape) && *mode != CameraMode::Free) || pad_hit(GamepadButton::Start) || std::mem::take(&mut input.pause);
+    let pause_key = (keys.just_pressed(KeyCode::Escape) && *mode != CameraMode::Free)
+        || pad_hit(GamepadButton::Start)
+        || std::mem::take(&mut input.pause);
     if pause_key && game.in_play() {
         menu.paused = !menu.paused;
-        if menu.paused { time.pause() } else { time.unpause() }
+        if menu.paused {
+            time.pause()
+        } else {
+            time.unpause()
+        }
         return;
     }
     let list = actions(menu.page, menu.missions);
@@ -993,19 +1570,39 @@ pub fn menu_input(
     }
     let mut activate = None;
     let mut change = 0i32;
-    if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) || pad_hit(GamepadButton::DPadUp) || nav == Some(0) {
+    if keys.just_pressed(KeyCode::KeyW)
+        || keys.just_pressed(KeyCode::ArrowUp)
+        || pad_hit(GamepadButton::DPadUp)
+        || nav == Some(0)
+    {
         menu.focus = (menu.focus + list.len() - 1) % list.len();
     }
-    if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) || pad_hit(GamepadButton::DPadDown) || nav == Some(1) {
+    if keys.just_pressed(KeyCode::KeyS)
+        || keys.just_pressed(KeyCode::ArrowDown)
+        || pad_hit(GamepadButton::DPadDown)
+        || nav == Some(1)
+    {
         menu.focus = (menu.focus + 1) % list.len();
     }
-    if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) || pad_hit(GamepadButton::DPadLeft) || nav == Some(2) {
+    if keys.just_pressed(KeyCode::KeyA)
+        || keys.just_pressed(KeyCode::ArrowLeft)
+        || pad_hit(GamepadButton::DPadLeft)
+        || nav == Some(2)
+    {
         change = -1;
     }
-    if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) || pad_hit(GamepadButton::DPadRight) || nav == Some(3) {
+    if keys.just_pressed(KeyCode::KeyD)
+        || keys.just_pressed(KeyCode::ArrowRight)
+        || pad_hit(GamepadButton::DPadRight)
+        || nav == Some(3)
+    {
         change = 1;
     }
-    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) || pad_hit(GamepadButton::South) || nav == Some(4) {
+    if keys.just_pressed(KeyCode::Enter)
+        || keys.just_pressed(KeyCode::Space)
+        || pad_hit(GamepadButton::South)
+        || nav == Some(4)
+    {
         activate = Some(list[menu.focus.min(list.len() - 1)]);
     }
     for (b, i) in &buttons {
@@ -1041,19 +1638,30 @@ pub fn menu_input(
         change = if slider || on_track { 0 } else { 1 };
         activate = None;
     }
-    if change == 0 && mouse.just_pressed(MouseButton::Right) && focused.is_option() && slider_get(focused, &settings, &volume).is_none() {
+    if change == 0
+        && mouse.just_pressed(MouseButton::Right)
+        && focused.is_option()
+        && slider_get(focused, &settings, &volume).is_none()
+    {
         change = -1;
     }
     if change != 0 {
         let step = |v: usize, n: usize| (v as i32 + change).rem_euclid(n as i32) as usize;
         match focused {
             Action::Difficulty => {
-                let all = [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Master];
+                let all = [
+                    Difficulty::Easy,
+                    Difficulty::Normal,
+                    Difficulty::Hard,
+                    Difficulty::Master,
+                ];
                 let i = all.iter().position(|d| *d == *difficulty).unwrap_or(1);
                 *difficulty = all[step(i, 4)];
             }
             Action::Volume => {
-                let v = ((volume.volume.to_linear() * 20.0).round() + change as f32).clamp(0.0, 20.0) / 20.0;
+                let v = ((volume.volume.to_linear() * 20.0).round() + change as f32)
+                    .clamp(0.0, 20.0)
+                    / 20.0;
                 volume.volume = Volume::Linear(v);
             }
             Action::Map => {
@@ -1064,38 +1672,66 @@ pub fn menu_input(
             Action::Sidearm => loadout.cycle(crate::pilotweapon::Slot::Sidearm, change),
             Action::AntiTitan => loadout.cycle(crate::pilotweapon::Slot::AntiTitan, change),
             Action::Tactical => {
-                pilot_status.tactical = step(pilot_status.tactical, crate::pilotability::TACTICALS.len());
+                pilot_status.tactical =
+                    step(pilot_status.tactical, crate::pilotability::TACTICALS.len());
                 if let Some(d) = ability_defs.as_ref() {
                     pilot_status.refill(d);
                 }
             }
             Action::Ordnance => {
-                pilot_status.ordnance = step(pilot_status.ordnance, crate::pilotability::ORDNANCE.len());
+                pilot_status.ordnance =
+                    step(pilot_status.ordnance, crate::pilotability::ORDNANCE.len());
                 pilot_status.satchels = 0;
                 if let Some(d) = ability_defs.as_ref() {
                     pilot_status.refill(d);
                 }
             }
-            Action::TitanLoadout => titan_kit.0 = step(titan_kit.0, crate::weapons::TITAN_ARSENAL.len()),
+            Action::TitanLoadout => {
+                titan_kit.0 = step(titan_kit.0, crate::weapons::TITAN_ARSENAL.len())
+            }
             Action::Graphics => {
                 let all = [Quality::Low, Quality::Medium, Quality::High];
                 let i = all.iter().position(|q| *q == *quality).unwrap_or(2);
                 *quality = all[step(i, 3)];
             }
             // The game's slider steps (controls.menu, video.menu).
-            Action::MouseSens => settings.mouse_sensitivity = ((settings.mouse_sensitivity + 0.2 * change as f32) * 5.0).round().clamp(0.0, 100.0) / 5.0,
-            Action::AdsSens => settings.mouse_sensitivity_zoomed = ((settings.mouse_sensitivity_zoomed + 0.2 * change as f32) * 5.0).round().clamp(0.0, 100.0) / 5.0,
-            Action::Fov => settings.fov_scale = (1.0 + (((settings.fov_scale - 1.0) / 0.0275).round() + change as f32).clamp(0.0, 20.0) * 0.0275).min(1.55),
+            Action::MouseSens => {
+                settings.mouse_sensitivity = ((settings.mouse_sensitivity + 0.2 * change as f32)
+                    * 5.0)
+                    .round()
+                    .clamp(0.0, 100.0)
+                    / 5.0
+            }
+            Action::AdsSens => {
+                settings.mouse_sensitivity_zoomed =
+                    ((settings.mouse_sensitivity_zoomed + 0.2 * change as f32) * 5.0)
+                        .round()
+                        .clamp(0.0, 100.0)
+                        / 5.0
+            }
+            Action::Fov => {
+                settings.fov_scale = (1.0
+                    + (((settings.fov_scale - 1.0) / 0.0275).round() + change as f32)
+                        .clamp(0.0, 20.0)
+                        * 0.0275)
+                    .min(1.55)
+            }
             Action::InvertY => settings.invert_y = !settings.invert_y,
             Action::CrouchMode => settings.toggle_crouch = !settings.toggle_crouch,
             Action::PadLook => settings.gamepad_look = step(settings.gamepad_look, 8),
             Action::PadLookAds => settings.gamepad_look_ads = step(settings.gamepad_look_ads, 8),
-            Action::PadCurve => settings.gamepad_curve = step(settings.gamepad_curve, crate::settings::LOOK_CURVES.len()),
+            Action::PadCurve => {
+                settings.gamepad_curve =
+                    step(settings.gamepad_curve, crate::settings::LOOK_CURVES.len())
+            }
             Action::PadInvert => settings.gamepad_invert_y = !settings.gamepad_invert_y,
             Action::AimAssist => settings.aim_assist = !settings.aim_assist,
             Action::PadLayout => {
                 let all = crate::settings::PAD_LAYOUTS;
-                let i = all.iter().position(|l| *l == settings.gamepad_layout).unwrap_or(0);
+                let i = all
+                    .iter()
+                    .position(|l| *l == settings.gamepad_layout)
+                    .unwrap_or(0);
                 settings.gamepad_layout = all[step(i, all.len())].to_string();
             }
             _ => {}
@@ -1109,12 +1745,26 @@ pub fn menu_input(
     };
     match a {
         Action::Play if map.0 != args.map => {
-            relaunch(&args, &map.0, *difficulty, volume.volume.to_linear(), &loadout, titan_kit.0);
+            relaunch(
+                &args,
+                &map.0,
+                *difficulty,
+                volume.volume.to_linear(),
+                &loadout,
+                titan_kit.0,
+            );
             exit.write(AppExit::Success);
         }
         Action::Mission(i) => {
             if let Some((_, m)) = missions(&strings).get(i) {
-                relaunch(&args, m, *difficulty, volume.volume.to_linear(), &loadout, titan_kit.0);
+                relaunch(
+                    &args,
+                    m,
+                    *difficulty,
+                    volume.volume.to_linear(),
+                    &loadout,
+                    titan_kit.0,
+                );
                 exit.write(AppExit::Success);
             }
         }
@@ -1174,7 +1824,11 @@ pub fn menu_visuals(
     strings: Res<crate::pilotweapon::Strings>,
     map: Res<MapChoice>,
     pilot_status: Res<crate::pilotability::PilotStatus>,
-    (settings, titan_kit, ui): (Res<crate::settings::Settings>, Res<crate::weapons::TitanKit>, Res<UiAssets>),
+    (settings, titan_kit, ui): (
+        Res<crate::settings::Settings>,
+        Res<crate::weapons::TitanKit>,
+        Res<UiAssets>,
+    ),
     mut buttons: Query<(&MenuButton, &Children, &mut BackgroundColor)>,
     mut bars: Query<&mut BackgroundColor, (With<FocusBar>, Without<MenuButton>)>,
     mut labels: Query<(&mut Text, &mut TextColor), With<MenuLabel>>,
@@ -1183,7 +1837,12 @@ pub fn menu_visuals(
 ) {
     use crate::pilotweapon::{Slot, ARSENAL};
     for (f, mut node) in &mut fills {
-        let w = percent(slider_get(f.0, &settings, &volume).unwrap_or(0.0).clamp(0.0, 1.0) * 100.0);
+        let w = percent(
+            slider_get(f.0, &settings, &volume)
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0)
+                * 100.0,
+        );
         if node.width != w {
             node.width = w;
         }
@@ -1191,27 +1850,49 @@ pub fn menu_visuals(
     let mission_list = missions(&strings);
     for (b, children, mut bg) in &mut buttons {
         let focused = b.index == menu.focus;
-        bg.0 = if focused { Color::srgba(1.0, 1.0, 1.0, 0.14) } else { Color::srgba(0.0, 0.0, 0.0, 0.25) };
+        bg.0 = if focused {
+            Color::srgba(1.0, 1.0, 1.0, 0.14)
+        } else {
+            Color::srgba(0.0, 0.0, 0.0, 0.25)
+        };
         let gun_id = |slot: Slot| ARSENAL[loadout.get(slot)].id;
         let gun = |slot: Slot, title: &str| {
             let id = gun_id(slot);
-            let name = strings.0.get(id).cloned().unwrap_or_else(|| id.trim_start_matches("mp_weapon_").to_uppercase());
+            let name = strings
+                .0
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| id.trim_start_matches("mp_weapon_").to_uppercase());
             opt(title, name.to_uppercase())
         };
-        let titan = &crate::weapons::TITAN_ARSENAL[titan_kit.0.min(crate::weapons::TITAN_ARSENAL.len() - 1)];
+        let titan = &crate::weapons::TITAN_ARSENAL
+            [titan_kit.0.min(crate::weapons::TITAN_ARSENAL.len() - 1)];
         let icon_path: Option<String> = match b.action {
             Action::Primary => ui.weapon_icons.get(gun_id(Slot::Primary)).cloned(),
             Action::Sidearm => ui.weapon_icons.get(gun_id(Slot::Sidearm)).cloned(),
             Action::AntiTitan => ui.weapon_icons.get(gun_id(Slot::AntiTitan)).cloned(),
-            Action::Tactical => Some(crate::pilotability::TACTICALS[pilot_status.tactical].2.to_string()),
-            Action::Ordnance => Some(crate::pilotability::ORDNANCE[pilot_status.ordnance].2.to_string()),
+            Action::Tactical => Some(
+                crate::pilotability::TACTICALS[pilot_status.tactical]
+                    .2
+                    .to_string(),
+            ),
+            Action::Ordnance => Some(
+                crate::pilotability::ORDNANCE[pilot_status.ordnance]
+                    .2
+                    .to_string(),
+            ),
             Action::TitanLoadout => ui.weapon_icons.get(titan.id).cloned(),
             _ => None,
         };
-        let capturing = menu.capture.is_some() && matches!(b.action, Action::Bind(i) if menu.capture.map(|c| c.0) == crate::settings::Command::ALL.get(i).copied());
+        let capturing = menu.capture.is_some()
+            && matches!(b.action, Action::Bind(i) if menu.capture.map(|c| c.0) == crate::settings::Command::ALL.get(i).copied());
         for c in children.iter() {
             if let Ok(mut bar) = bars.get_mut(c) {
-                bar.0 = if focused { Color::srgb(1.0, 0.62, 0.15) } else { Color::NONE };
+                bar.0 = if focused {
+                    Color::srgb(1.0, 0.62, 0.15)
+                } else {
+                    Color::NONE
+                };
             }
             if let (Ok(mut img), Some(path)) = (icons.get_mut(c), icon_path.as_ref()) {
                 if let Some(new) = ui.image(path) {
@@ -1234,37 +1915,85 @@ pub fn menu_visuals(
                     Action::MainMenu => "QUIT TO MAIN MENU".into(),
                     Action::Quit => "QUIT GAME".into(),
                     Action::Difficulty => opt("DIFFICULTY", difficulty.name()),
-                    Action::Volume => opt("MASTER VOLUME", format!("{:.0}%", volume.volume.to_linear() * 100.0)),
+                    Action::Volume => opt(
+                        "MASTER VOLUME",
+                        format!("{:.0}%", volume.volume.to_linear() * 100.0),
+                    ),
                     Action::Graphics => opt("GRAPHICS", quality.name()),
                     Action::Primary => gun(Slot::Primary, "PRIMARY"),
                     Action::Sidearm => gun(Slot::Sidearm, "SIDEARM"),
                     Action::AntiTitan => gun(Slot::AntiTitan, "ANTI-TITAN"),
-                    Action::Tactical => opt("TACTICAL", crate::pilotability::TACTICALS[pilot_status.tactical].3),
-                    Action::Ordnance => opt("ORDNANCE", crate::pilotability::ORDNANCE[pilot_status.ordnance].3),
+                    Action::Tactical => opt(
+                        "TACTICAL",
+                        crate::pilotability::TACTICALS[pilot_status.tactical].3,
+                    ),
+                    Action::Ordnance => opt(
+                        "ORDNANCE",
+                        crate::pilotability::ORDNANCE[pilot_status.ordnance].3,
+                    ),
                     Action::TitanLoadout => opt("TITAN LOADOUT", titan.kit.to_uppercase()),
                     Action::Map => opt("MAP", map_name(&strings, &map.0)),
-                    Action::Mission(i) => mission_list.get(i).map(|(n, _)| n.to_uppercase()).unwrap_or_default(),
+                    Action::Mission(i) => mission_list
+                        .get(i)
+                        .map(|(n, _)| n.to_uppercase())
+                        .unwrap_or_default(),
                     Action::Bind(i) => {
                         let c = crate::settings::Command::ALL[i];
-                        let key = if capturing { "PRESS A KEY".to_string() } else { settings.bind(c).name() };
+                        let key = if capturing {
+                            "PRESS A KEY".to_string()
+                        } else {
+                            settings.bind(c).name()
+                        };
                         format!("{:<28}{key}", c.label())
                     }
-                    Action::MouseSens => opt("MOUSE SENSITIVITY", format!("{:.1}", settings.mouse_sensitivity)),
-                    Action::AdsSens => opt("ADS MOUSE SENSITIVITY", format!("{:.1}", settings.mouse_sensitivity_zoomed)),
+                    Action::MouseSens => opt(
+                        "MOUSE SENSITIVITY",
+                        format!("{:.1}", settings.mouse_sensitivity),
+                    ),
+                    Action::AdsSens => opt(
+                        "ADS MOUSE SENSITIVITY",
+                        format!("{:.1}", settings.mouse_sensitivity_zoomed),
+                    ),
                     Action::InvertY => opt("INVERT MOUSE", on_off(settings.invert_y)),
-                    Action::CrouchMode => opt("CROUCH", if settings.toggle_crouch { "TOGGLE" } else { "HOLD" }),
-                    Action::Fov => opt("FIELD OF VIEW", format!("{:.0}", crate::settings::BASE_FOV_DEG * settings.fov_scale)),
-                    Action::PadLook => opt("CONTROLLER LOOK SENSITIVITY", settings.gamepad_look + 1),
-                    Action::PadLookAds => opt("CONTROLLER ADS SENSITIVITY", settings.gamepad_look_ads + 1),
-                    Action::PadCurve => opt("CONTROLLER LOOK CURVE", crate::settings::LOOK_CURVES[settings.gamepad_curve.min(4)]),
-                    Action::PadInvert => opt("CONTROLLER INVERT LOOK", on_off(settings.gamepad_invert_y)),
+                    Action::CrouchMode => opt(
+                        "CROUCH",
+                        if settings.toggle_crouch {
+                            "TOGGLE"
+                        } else {
+                            "HOLD"
+                        },
+                    ),
+                    Action::Fov => opt(
+                        "FIELD OF VIEW",
+                        format!("{:.0}", crate::settings::BASE_FOV_DEG * settings.fov_scale),
+                    ),
+                    Action::PadLook => {
+                        opt("CONTROLLER LOOK SENSITIVITY", settings.gamepad_look + 1)
+                    }
+                    Action::PadLookAds => {
+                        opt("CONTROLLER ADS SENSITIVITY", settings.gamepad_look_ads + 1)
+                    }
+                    Action::PadCurve => opt(
+                        "CONTROLLER LOOK CURVE",
+                        crate::settings::LOOK_CURVES[settings.gamepad_curve.min(4)],
+                    ),
+                    Action::PadInvert => {
+                        opt("CONTROLLER INVERT LOOK", on_off(settings.gamepad_invert_y))
+                    }
                     Action::AimAssist => opt("AIM ASSIST", on_off(settings.aim_assist)),
-                    Action::PadLayout => opt("BUTTON LAYOUT", settings.gamepad_layout.replace('_', " ").to_uppercase()),
+                    Action::PadLayout => opt(
+                        "BUTTON LAYOUT",
+                        settings.gamepad_layout.replace('_', " ").to_uppercase(),
+                    ),
                 };
                 if t.0 != s {
                     t.0 = s;
                 }
-                col.0 = if focused { Color::WHITE } else { Color::srgba(1.0, 1.0, 1.0, 0.7) };
+                col.0 = if focused {
+                    Color::WHITE
+                } else {
+                    Color::srgba(1.0, 1.0, 1.0, 0.7)
+                };
             }
         }
     }
@@ -1282,13 +2011,16 @@ pub fn mission_images(
     if menu.page != Page::Missions {
         return;
     }
-    let Some((_, m)) = missions(&strings).get(menu.focus).cloned() else { return };
+    let Some((_, m)) = missions(&strings).get(menu.focus).cloned() else {
+        return;
+    };
     let paks = std::path::Path::new(&args.game).join("r2/paks/Win64");
     let handle = cache
         .0
         .entry(m.to_string())
         .or_insert_with(|| {
-            let pak = tf_assets::rpak::resolve(&paks, &format!("{m}_loadscreen.rpak")).and_then(|p| Rpak::open(p).ok())?;
+            let pak = tf_assets::rpak::resolve(&paks, &format!("{m}_loadscreen.rpak"))
+                .and_then(|p| Rpak::open(p).ok())?;
             let guid = pak.assets.iter().find(|a| a.kind_str() == "txtr")?.guid;
             upload(&mut images, &pak, guid)
         })
@@ -1304,7 +2036,12 @@ pub fn mission_images(
 
 /// Keep the saved master volume in step with the game's (menu or - / = keys), except in
 /// scripted test runs or when `--volume` was given.
-pub fn sync_volume_setting(volume: Res<MasterVolume>, args: Res<crate::Args>, script: Res<crate::player::Script>, mut settings: ResMut<crate::settings::Settings>) {
+pub fn sync_volume_setting(
+    volume: Res<MasterVolume>,
+    args: Res<crate::Args>,
+    script: Res<crate::player::Script>,
+    mut settings: ResMut<crate::settings::Settings>,
+) {
     if !volume.is_changed() || args.volume.is_some() || script.enabled {
         return;
     }
@@ -1330,7 +2067,8 @@ impl Subtitles {
     /// Show `text` (said by `speaker`, may be empty) for `secs` seconds.
     pub fn push(&mut self, speaker: &str, text: &str, secs: f32) {
         self.lines.retain(|l| l.1 != text);
-        self.lines.push((speaker.to_uppercase(), text.to_string(), secs));
+        self.lines
+            .push((speaker.to_uppercase(), text.to_string(), secs));
         if self.lines.len() > 3 {
             self.lines.remove(0);
         }
@@ -1340,7 +2078,14 @@ impl Subtitles {
 #[derive(Component)]
 pub struct SubtitleText;
 
-pub fn update_subtitles(mut commands: Commands, time: Res<Time>, ui: Res<UiAssets>, mut subs: ResMut<Subtitles>, mut texts: Query<&mut Text, With<SubtitleText>>, mut vis: Query<&mut Visibility>) {
+pub fn update_subtitles(
+    mut commands: Commands,
+    time: Res<Time>,
+    ui: Res<UiAssets>,
+    mut subs: ResMut<Subtitles>,
+    mut texts: Query<&mut Text, With<SubtitleText>>,
+    mut vis: Query<&mut Visibility>,
+) {
     let dt = time.delta_secs();
     subs.lines.retain_mut(|l| {
         l.2 -= dt;
@@ -1367,20 +2112,46 @@ pub fn update_subtitles(mut commands: Commands, time: Res<Time>, ui: Res<UiAsset
                 ))
                 .id();
             let t = commands
-                .spawn((Text::new(""), TextFont { font: ui.font.clone(), font_size: 20.0, ..default() }, TextColor(Color::WHITE), TextLayout::new_with_justify(Justify::Center), VhText(2.0), SubtitleText))
+                .spawn((
+                    Text::new(""),
+                    TextFont {
+                        font: ui.font.clone(),
+                        font_size: 20.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    TextLayout::new_with_justify(Justify::Center),
+                    VhText(2.0),
+                    SubtitleText,
+                ))
                 .id();
             commands.entity(r).add_child(t);
             subs.root = Some(r);
             return;
         }
     };
-    let want: String = subs.lines.iter().map(|(s, t, _)| if s.is_empty() { t.clone() } else { format!("{s}: {t}") }).collect::<Vec<_>>().join("\n");
+    let want: String = subs
+        .lines
+        .iter()
+        .map(|(s, t, _)| {
+            if s.is_empty() {
+                t.clone()
+            } else {
+                format!("{s}: {t}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     if want != subs.shown {
         for mut t in &mut texts {
             t.0 = want.clone();
         }
         if let Ok(mut v) = vis.get_mut(root) {
-            *v = if want.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
+            *v = if want.is_empty() {
+                Visibility::Hidden
+            } else {
+                Visibility::Inherited
+            };
         }
         subs.shown = want;
     }
@@ -1430,7 +2201,10 @@ pub fn apply_quality(
                 e.remove::<bevy::post_process::bloom::Bloom>();
             }
             _ => {
-                e.insert(bevy::post_process::bloom::Bloom { intensity: 0.05, ..bevy::post_process::bloom::Bloom::NATURAL });
+                e.insert(bevy::post_process::bloom::Bloom {
+                    intensity: 0.05,
+                    ..bevy::post_process::bloom::Bloom::NATURAL
+                });
             }
         }
     }
@@ -1440,4 +2214,46 @@ pub fn apply_quality(
         Quality::Low => 1024,
     };
     log::info!("graphics quality {:?}", *quality);
+}
+
+/// A square RGBA image of `n` texels filled where `inside(x, y)` holds (x, y in 0..1, y down),
+/// with a 2x2 supersampled edge.
+fn shape_image(n: u32, inside: impl Fn(f32, f32) -> bool, rgba: [u8; 4]) -> Image {
+    shape_image_shaded(n, inside, |_, _| rgba)
+}
+
+/// [`shape_image`] with the colour chosen per texel by `shade(x, y)`.
+fn shape_image_shaded(
+    n: u32,
+    inside: impl Fn(f32, f32) -> bool,
+    shade: impl Fn(f32, f32) -> [u8; 4],
+) -> Image {
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let mut data = Vec::with_capacity((n * n * 4) as usize);
+    for j in 0..n {
+        for i in 0..n {
+            let mut hits = 0;
+            for (dx, dy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                if inside((i as f32 + dx) / n as f32, (j as f32 + dy) / n as f32) {
+                    hits += 1;
+                }
+            }
+            let rgba = shade((i as f32 + 0.5) / n as f32, (j as f32 + 0.5) / n as f32);
+            let a = (rgba[3] as u32 * hits / 4) as u8;
+            data.extend_from_slice(&[rgba[0], rgba[1], rgba[2], a]);
+        }
+    }
+    let mut img = Image::default();
+    img.data = Some(data);
+    img.texture_descriptor.size = Extent3d {
+        width: n,
+        height: n,
+        depth_or_array_layers: 1,
+    };
+    img.texture_descriptor.mip_level_count = 1;
+    img.texture_descriptor.format = TextureFormat::Rgba8UnormSrgb;
+    img.texture_descriptor.dimension = TextureDimension::D2;
+    img.sampler = bevy::image::ImageSampler::linear();
+    img.asset_usage = bevy::asset::RenderAssetUsages::RENDER_WORLD;
+    img
 }

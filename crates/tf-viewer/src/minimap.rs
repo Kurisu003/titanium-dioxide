@@ -34,7 +34,12 @@ pub struct Minimap {
 
 impl Minimap {
     /// The map's overview, if it has one (the flat map has none).
-    pub fn load(gd: &GameData, map: &str, cache: &mut crate::convert::Cache, images: &mut Assets<Image>) -> Option<Self> {
+    pub fn load(
+        gd: &GameData,
+        map: &str,
+        cache: &mut crate::convert::Cache,
+        images: &mut Assets<Image>,
+    ) -> Option<Self> {
         let text = match gd.read_file(&format!("resource/overviews/{map}.txt")) {
             Ok(t) => t,
             Err(e) => {
@@ -43,7 +48,14 @@ impl Minimap {
             }
         };
         let text = String::from_utf8_lossy(&text);
-        let key = |k: &str| text.lines().find_map(|l| l.trim().strip_prefix(k).filter(|r| r.starts_with(char::is_whitespace)).map(|r| r.trim().to_string()));
+        let key = |k: &str| {
+            text.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix(k)
+                    .filter(|r| r.starts_with(char::is_whitespace))
+                    .map(|r| r.trim().to_string())
+            })
+        };
         let num = |k: &str| key(k).and_then(|v| v.parse::<f32>().ok());
         let image_name = key("minimap")?;
         let Some((pi, guid)) = gd.texture_by_name(&image_name) else {
@@ -54,11 +66,23 @@ impl Minimap {
             log::warn!("minimap image {image_name} failed to load");
             return None;
         };
-        let size = images.get(&image).map(|i| i.width() as f32).unwrap_or(1024.0);
+        let size = images
+            .get(&image)
+            .map(|i| i.width() as f32)
+            .unwrap_or(1024.0);
         let scale = num("scale").unwrap_or(10.0);
         let radius = num("threatMaxDist").unwrap_or(1400.0).max(MIN_RADIUS);
-        log::info!("minimap {image_name}: corner ({}, {}), {scale} units/px, radius {radius}", num("pos_x").unwrap_or(0.0), num("pos_y").unwrap_or(0.0));
-        Some(Self { image, corner: Vec2::new(num("pos_x").unwrap_or(0.0), num("pos_y").unwrap_or(0.0)), extent: scale * size, radius })
+        log::info!(
+            "minimap {image_name}: corner ({}, {}), {scale} units/px, radius {radius}",
+            num("pos_x").unwrap_or(0.0),
+            num("pos_y").unwrap_or(0.0)
+        );
+        Some(Self {
+            image,
+            corner: Vec2::new(num("pos_x").unwrap_or(0.0), num("pos_y").unwrap_or(0.0)),
+            extent: scale * size,
+            radius,
+        })
     }
 }
 
@@ -96,6 +120,10 @@ pub enum Icon {
     You,
     Titan,
     Enemy(usize),
+    /// An enemy beyond the map's edge: the white triangle at the rim.
+    EnemyClamped(usize),
+    /// The red arc on the rim behind an [`Icon::EnemyClamped`].
+    Wedge(usize),
 }
 
 pub struct MinimapPlugin;
@@ -124,10 +152,25 @@ pub fn update_minimap(
     camera: Query<&GlobalTransform, With<MainCamera>>,
     titans: Query<(&PlayerTitan, &crate::combat::TitanHealth)>,
     enemies: Query<&Enemy>,
-    mut nodes: Query<(&MaterialNode<MinimapMaterial>, &mut Visibility), (With<MinimapNode>, Without<Icon>, Without<MinimapRim>)>,
+    mut nodes: Query<
+        (&MaterialNode<MinimapMaterial>, &mut Visibility),
+        (With<MinimapNode>, Without<Icon>, Without<MinimapRim>),
+    >,
     mut rims: Query<&mut Visibility, (With<MinimapRim>, Without<MinimapNode>, Without<Icon>)>,
-    mut icons: Query<(&Icon, &mut Node, &mut Visibility, &mut UiTransform), (Without<MinimapNode>, Without<MinimapRim>)>,
-    mut letters: Query<(&Compass, &mut Node), (Without<Icon>, Without<MinimapNode>, Without<MinimapRim>)>,
+    mut icons: Query<
+        (
+            &Icon,
+            &mut Node,
+            &mut Visibility,
+            &mut UiTransform,
+            Option<&mut BorderGradient>,
+        ),
+        (Without<MinimapNode>, Without<MinimapRim>),
+    >,
+    mut letters: Query<
+        (&Compass, &mut Node),
+        (Without<Icon>, Without<MinimapNode>, Without<MinimapRim>),
+    >,
 ) {
     let Some(minimap) = minimap else { return };
     let Ok(hud) = hud.single() else { return };
@@ -142,7 +185,11 @@ pub fn update_minimap(
                     height: vh(DIAMETER),
                     ..default()
                 },
-                MaterialNode(materials.add(MinimapMaterial { params: Vec4::new(0.5, 0.5, 1.0, 0.0), extent: Vec4::new(minimap.radius / minimap.extent, 1.0, 0.0, 0.0), map: minimap.image.clone() })),
+                MaterialNode(materials.add(MinimapMaterial {
+                    params: Vec4::new(0.5, 0.5, 1.0, 0.0),
+                    extent: Vec4::new(minimap.radius / minimap.extent, 1.0, 0.0, 0.0),
+                    map: minimap.image.clone(),
+                })),
                 MinimapNode,
             ))
             .id();
@@ -166,13 +213,25 @@ pub fn update_minimap(
             ))
             .id();
         commands.entity(hud).add_child(rim);
-        for (i, name) in ["E", "NE", "N", "NW", "W", "SW", "S", "SE"].into_iter().enumerate() {
+        for (i, name) in ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
+            .into_iter()
+            .enumerate()
+        {
             let big = i % 2 == 0;
             let e = commands
                 .spawn((
-                    Node { position_type: PositionType::Absolute, left: percent(50), top: percent(50), ..default() },
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(50),
+                        top: percent(50),
+                        ..default()
+                    },
                     Text::new(name),
-                    TextFont { font: ui.bold_font.clone(), font_size: 16.0, ..default() },
+                    TextFont {
+                        font: ui.bold_font.clone(),
+                        font_size: 16.0,
+                        ..default()
+                    },
                     TextColor(Color::srgba(1.0, 1.0, 1.0, if big { 0.9 } else { 0.6 })),
                     crate::ui::VhText(if big { 1.7 } else { 1.1 }),
                     Compass(i as f32 * std::f32::consts::FRAC_PI_4, big),
@@ -180,12 +239,42 @@ pub fn update_minimap(
                 .id();
             commands.entity(circle).add_child(e);
         }
-        let mut icon = |kind: Icon, path: &str, color: Color| {
+        // Threat wedges: a red arc on the rim for each enemy beyond the map's edge.
+        for i in 0..ENEMY_ICONS {
+            let e = commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        top: px(0),
+                        width: vh(DIAMETER),
+                        height: vh(DIAMETER),
+                        border: UiRect::all(vh(0.5)),
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BorderGradient::from(wedge_gradient(0.0)),
+                    UiTransform::IDENTITY,
+                    Visibility::Hidden,
+                    Icon::Wedge(i),
+                ))
+                .id();
+            commands.entity(circle).add_child(e);
+        }
+        let mut icon = |kind: Icon, path: &str, color: Color, w: f32, h: f32| {
             let mut img = ui.image(path).unwrap_or_default();
             img.color = color;
             let e = commands
                 .spawn((
-                    Node { position_type: PositionType::Absolute, left: percent(50), top: percent(50), width: vh(ICON), height: vh(ICON), margin: UiRect::all(vh(-ICON * 0.5)), ..default() },
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(50),
+                        top: percent(50),
+                        width: vh(w),
+                        height: vh(h),
+                        margin: UiRect::axes(vh(-w * 0.5), vh(-h * 0.5)),
+                        ..default()
+                    },
                     img,
                     UiTransform::IDENTITY,
                     Visibility::Hidden,
@@ -195,25 +284,61 @@ pub fn update_minimap(
             commands.entity(circle).add_child(e);
         };
         for i in 0..ENEMY_ICONS {
-            icon(Icon::Enemy(i), "rui/hud/minimap/compass_icon_enemy_titan", Color::srgb(1.0, 0.3, 0.2));
+            icon(
+                Icon::EnemyClamped(i),
+                "rui/hud/minimap/compass_icon_enemy_titan_clamped",
+                Color::WHITE,
+                1.5,
+                0.8,
+            );
         }
-        icon(Icon::Titan, "rui/hud/minimap/compass_icon_your_titan", Color::srgb(0.45, 0.8, 1.0));
-        icon(Icon::You, "rui/hud/minimap/compass_icon_you", Color::WHITE);
+        for i in 0..ENEMY_ICONS {
+            icon(
+                Icon::Enemy(i),
+                "rui/hud/minimap/compass_icon_enemy_titan",
+                Color::srgb(1.0, 0.3, 0.2),
+                ICON,
+                ICON,
+            );
+        }
+        icon(
+            Icon::Titan,
+            "rui/hud/minimap/compass_icon_your_titan",
+            Color::srgb(0.45, 0.8, 1.0),
+            ICON,
+            ICON,
+        );
+        icon(
+            Icon::You,
+            "rui/hud/minimap/compass_icon_you",
+            Color::WHITE,
+            ICON,
+            ICON,
+        );
         return;
     }
     let Ok(cam) = camera.single() else { return };
     let pos = crate::player::from_bevy(cam.translation());
-    let fwd = crate::player::from_bevy(cam.forward().as_vec3()).truncate().normalize_or(Vec2::X);
+    let fwd = crate::player::from_bevy(cam.forward().as_vec3())
+        .truncate()
+        .normalize_or(Vec2::X);
     let right = Vec2::new(fwd.y, -fwd.x);
     // The cockpit has no minimap.
-    let shown = if *control == Control::Titan { Visibility::Hidden } else { Visibility::Inherited };
+    let shown = if *control == Control::Titan {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
     for mut vis in &mut rims {
         vis.set_if_neq(shown);
     }
     for (node, mut vis) in &mut nodes {
         vis.set_if_neq(shown);
         if let Some(m) = materials.get_mut(&node.0) {
-            let uv = Vec2::new((pos.x - minimap.corner.x) / minimap.extent, (minimap.corner.y - pos.y) / minimap.extent);
+            let uv = Vec2::new(
+                (pos.x - minimap.corner.x) / minimap.extent,
+                (minimap.corner.y - pos.y) / minimap.extent,
+            );
             let params = Vec4::new(uv.x, uv.y, fwd.x, fwd.y);
             if m.params != params {
                 m.params = params;
@@ -247,8 +372,37 @@ pub fn update_minimap(
         crate::hud::set(&mut node, |n| &mut n.top, vh(DIAMETER * 0.5 + y - half));
     }
     let titan = titans.single().ok();
-    let enemies: Vec<&Enemy> = enemies.iter().filter(|e| e.alive() && !e.infantry).collect();
-    for (icon, mut node, mut vis, mut tf) in &mut icons {
+    let enemies: Vec<&Enemy> = enemies
+        .iter()
+        .filter(|e| e.alive() && !e.infantry)
+        .collect();
+    for (icon, mut node, mut vis, mut tf, grad) in &mut icons {
+        // Enemies beyond the edge show as the white triangle on a red rim arc instead.
+        if let Icon::EnemyClamped(i) | Icon::Wedge(i) = icon {
+            let clamped = enemies.get(*i).map(|e| place(e.pos)).filter(|p| p.2);
+            vis.set_if_neq(if clamped.is_some() {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            });
+            let Some((x, y, _)) = clamped else { continue };
+            // Screen angle clockwise from up.
+            let a = x.atan2(-y);
+            if let Icon::Wedge(_) = icon {
+                if let Some(mut g) = grad {
+                    g.0 = vec![wedge_gradient(a).into()];
+                }
+            } else {
+                let r = DIAMETER * 0.5 * 0.93;
+                crate::hud::set(&mut node, |n| &mut n.left, vh(DIAMETER * 0.5 + a.sin() * r));
+                crate::hud::set(&mut node, |n| &mut n.top, vh(DIAMETER * 0.5 - a.cos() * r));
+                let rot = Rot2::radians(a);
+                if tf.rotation != rot {
+                    tf.rotation = rot;
+                }
+            }
+            continue;
+        }
         let (shown, x, y, yaw) = match icon {
             Icon::You => (true, 0.0, 0.0, 0.0),
             Icon::Titan => match titan {
@@ -260,13 +414,18 @@ pub fn update_minimap(
             },
             Icon::Enemy(i) => match enemies.get(*i) {
                 Some(e) => {
-                    let (x, y, _) = place(e.pos);
-                    (true, x, y, e.state.yaw)
+                    let (x, y, clamped) = place(e.pos);
+                    (!clamped, x, y, e.state.yaw)
                 }
                 None => (false, 0.0, 0.0, 0.0),
             },
+            Icon::EnemyClamped(_) | Icon::Wedge(_) => unreachable!(),
         };
-        vis.set_if_neq(if shown { Visibility::Inherited } else { Visibility::Hidden });
+        vis.set_if_neq(if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
         if !shown {
             continue;
         }
@@ -275,9 +434,38 @@ pub fn update_minimap(
         // Icons point the way their owner faces (yaw in radians), relative to the player's
         // heading (up).
         let heading = fwd.y.atan2(fwd.x);
-        let rot = if matches!(icon, Icon::You) { Rot2::IDENTITY } else { Rot2::radians(heading - yaw) };
+        let rot = if matches!(icon, Icon::You) {
+            Rot2::IDENTITY
+        } else {
+            Rot2::radians(heading - yaw)
+        };
         if tf.rotation != rot {
             tf.rotation = rot;
         }
     }
+}
+
+/// The red rim arc of a threat wedge, 24 degrees wide around screen angle `a` (clockwise from
+/// up), fading at both ends.
+fn wedge_gradient(a: f32) -> ConicGradient {
+    let tau = std::f32::consts::TAU;
+    let red = Color::srgb(1.0, 0.25, 0.15);
+    let half = 12.0_f32.to_radians();
+    let soft = 4.0_f32.to_radians();
+    let a = a.rem_euclid(tau);
+    let mut stops = vec![
+        AngularColorStop::new(Color::NONE, 0.0),
+        AngularColorStop::new(Color::NONE, a - half - soft),
+        AngularColorStop::new(red, a - half),
+        AngularColorStop::new(red, a + half),
+        AngularColorStop::new(Color::NONE, a + half + soft),
+        AngularColorStop::new(Color::NONE, tau),
+    ];
+    // Stops must stay inside 0..tau and in order: shift an arc that straddles the top.
+    for s in stops.iter_mut() {
+        if let Some(ang) = s.angle.as_mut() {
+            *ang = ang.clamp(0.0, tau);
+        }
+    }
+    ConicGradient::new(UiPosition::CENTER, stops)
 }
