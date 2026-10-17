@@ -2571,8 +2571,11 @@ pub fn pilot_viewmodel(
         .fade_in("ACT_VM_RAISE_FROM_SPRINT", mods)
         .unwrap_or(0.2)
         .max(0.05);
-    let raising =
-        raise_clip.filter(|&c| !sprint && vl.sprint_end_t < actor.clips[c].duration + fade);
+    // Aiming out of a sprint skips the raise: in 1080p footage the gun goes from the sprint
+    // pose straight into the aimed pose in three frames, the zoom alongside, so the aim-in
+    // cross-fades with the sprint pose as the sprint fraction ramps down.
+    let raising = raise_clip
+        .filter(|&c| !sprint && ads <= 0.0 && vl.sprint_end_t < actor.clips[c].duration + fade);
     let raise_w = raising.map(|c| {
         let (t, dur) = (vl.sprint_end_t, actor.clips[c].duration);
         if t < dur {
@@ -2914,6 +2917,9 @@ pub fn pilot_viewmodel(
     } else {
         lo.vm_motion.step(&def, &inp, dt)
     };
+    if std::env::var_os("TF_VM_LOG").is_some() {
+        log::info!(target: "vm_log", "place sprint {sprint_blend:.2} ads {ads:.2} sway trans {:.2?} rot {:.2?} pivot {:.2?} offset {:.2?} shake {:.2?}", off.trans, off.rot, pivot, offset, punch.vm_shake);
+    }
     let rs = crate::vmmotion::angles_quat(off.rot);
     let rp = crate::vmmotion::angles_quat(if vm_off("punch") {
         Vec3::ZERO
