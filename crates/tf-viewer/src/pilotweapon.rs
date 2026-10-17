@@ -2855,6 +2855,13 @@ pub fn pilot_viewmodel(
         .bone_model_transform("jx_c_camera")
         .map(|t| t.translation)
         .unwrap_or(Vec3::ZERO);
+    if std::env::var_os("TF_VM_LOG").is_some() {
+        for b in ["def_c_base", "ja_c_propGun", "jx_c_delta", "jx_c_pov"] {
+            if let Some(t) = actor.bone_model_transform(b) {
+                log::info!(target: "vm_log", "bone {b} model {:.2?} rel-cam {:.2?}", t.translation, t.translation - offset);
+            }
+        }
+    }
     // Scopes: the ADS scope (a dark tube with the reticle and glowing emitters) sits where the
     // ADS animation puts its bone; it shows from zoom_scope_frac_start, and from
     // zoom_scope_frac_end it is all that is drawn (the rest of the gun would block the view).

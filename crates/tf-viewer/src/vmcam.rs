@@ -70,6 +70,8 @@ pub fn spawn_camera(commands: &mut Commands) {
 #[allow(clippy::type_complexity)]
 pub fn follow_camera(
     control: Res<crate::pilotctl::Control>,
+    loadouts: Query<&crate::pilotweapon::PilotLoadout>,
+    settings: Res<crate::settings::Settings>,
     main: Query<
         (&Transform, Option<&bevy::light::EnvironmentMapLight>),
         (With<MainCamera>, Without<ViewmodelCamera>),
@@ -100,8 +102,21 @@ pub fn follow_camera(
     } else {
         PILOT_VM_FOV
     };
+    let mut half = (vertical_from_43(fov) * 0.5).tan();
+    // Aiming down sights zooms the Pilot's viewmodel by the same tangent ratio as the world
+    // (zoom_fov against the hip FOV, over the zoom's ads_fov window): in 1080p footage the
+    // R-201's sight and its ammo digits grow 2.1x from hip to aimed, as 35 over 70 gives, so
+    // the sight fills a third of the screen. The Titan's guns only zoom the world.
+    if matches!(*control, crate::pilotctl::Control::Pilot) {
+        if let Some(g) = loadouts.single().ok().and_then(|l| l.active()) {
+            let hip = (crate::settings::BASE_FOV_DEG * settings.fov_scale).to_radians();
+            let k = (g.def.zoom_fov.to_radians() * 0.5).tan() / (hip * 0.5).tan();
+            let a = crate::vmmotion::ads_fov_blend(g.ads, g.def.ads_fov_frac);
+            half *= 1.0 + (k - 1.0) * a;
+        }
+    }
     if let Projection::Perspective(pp) = p.as_mut() {
-        pp.fov = vertical_from_43(fov);
+        pp.fov = 2.0 * half.atan();
     }
     // Reflections: the same cubemap as the world camera.
     if let Some(env) = env {
