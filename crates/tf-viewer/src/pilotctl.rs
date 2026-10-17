@@ -298,6 +298,11 @@ impl PilotHealth {
         self.damage(amount.min(allowed));
     }
     pub fn damage(&mut self, amount: f32) {
+        // TF_PILOT_GOD=1: nothing gets through (no flash, no regen delay).
+        static GOD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *GOD.get_or_init(|| std::env::var_os("TF_PILOT_GOD").is_some()) {
+            return;
+        }
         if self.health > 0.0 {
             self.health = (self.health - amount).max(0.0);
             self.since_hit = 0.0;
