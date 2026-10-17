@@ -2707,10 +2707,33 @@ pub fn pilot_viewmodel(
         // zoom fraction, so their own motion paths show (the R-201's gun dips below the hip pose
         // on the way out); a change of direction cross-fades the two.
         // Crouched (and sliding) the crouch pair plays: its hip pose cants the gun to the middle.
+        // The Charge Rifle's `ads_in_seq` and `ads_out_seq` are single frames: the aimed and
+        // the hip pose (the gun and forearm bones; the idle is a delta breathing layer), so
+        // the pose is the pair blended by the zoom, not an aim-in played at the zoom.
+        let one_frame =
+            |p: &[(Option<usize>, f32); 4]| p[0].0.filter(|&c| actor.clips[c].duration <= 0.04);
+        let pose_pair = one_frame(&pick(&actor, "ACT_VM_ADS_IN", "ads_in_seq")).map(|aim| {
+            (
+                one_frame(&pick(&actor, "ACT_VM_ADS_OUT", "ads_out_seq")).or(draw[0].0),
+                aim,
+            )
+        });
         match (
             pick(&actor, "ACT_VM_ADS_IN", "ads_in_seq"),
             pick(&actor, "ACT_VM_ADS_OUT", "ads_out_seq"),
         ) {
+            (_, _) if pose_pair.is_some() => {
+                let (hip, aim) = pose_pair.unwrap();
+                for (c, w) in [(hip, 1.0 - ads), (Some(aim), ads)] {
+                    if let Some(c) = c {
+                        layers.push(Layer {
+                            clip: c,
+                            cycle: 0.999,
+                            weight: (still * w).max(1e-3),
+                        });
+                    }
+                }
+            }
             (pin @ [(Some(_), _), ..], pout) => {
                 let out = pout[0].0.is_some();
                 let [(cyc_in, w_in), (cyc_out, w_out)] =

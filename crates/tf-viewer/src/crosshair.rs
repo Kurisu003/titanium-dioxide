@@ -233,9 +233,18 @@ pub fn update(
     };
     // How far the crosshair fades: a Pilot's gun hands over to its sight while aiming down
     // sights; a Titan's guns have none (ADS only zooms), so theirs stays up.
+    // A gun with no sight RUI and no ADS scope (the Charge Rifle) keeps its crosshair while
+    // zoomed: nothing else marks the aim point.
     let (name, spread, ads) = match *control {
         Control::Pilot => match pilots.single().ok().and_then(|l| l.active()) {
-            Some(g) => (g.def.crosshair.clone(), g.cur_spread, g.ads),
+            Some(g) => {
+                let has_sight = !g.def.rui.is_empty() || g.def.ads_scope.is_some();
+                (
+                    g.def.crosshair.clone(),
+                    g.cur_spread,
+                    if has_sight { g.ads } else { 0.0 },
+                )
+            }
             None => (String::new(), 0.0, 0.0),
         },
         _ => match titans.single() {

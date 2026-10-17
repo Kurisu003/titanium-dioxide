@@ -1334,14 +1334,15 @@ pub fn pilot_camera(
                 pilot_eye.y,
                 eye_z + pilot_settings.0.sprint_view_offset * f.sprint,
             ) + ahead;
-            *vm_eye = VmEye {
-                offset: eye - pilot_eye,
-                roll: f.roll,
-            };
             let (py, pp) = (
                 punch.yaw.to_radians(),
                 (punch.pitch + f.land_ang.x).to_radians(),
             );
+            *vm_eye = VmEye {
+                offset: eye - pilot_eye,
+                roll: f.roll + (punch.roll + f.land_ang.z).to_radians(),
+                punch: Vec2::new(py, pp),
+            };
             (
                 eye,
                 view_quat(s.yaw + py, s.pitch + pp)
@@ -1398,15 +1399,22 @@ fn from_bevy(v: Vec3) -> Vec3 {
 pub struct VmEye {
     pub offset: Vec3,
     pub roll: f32,
+    /// The camera's punch (yaw, pitch; radians): recoil's camera share and the landing kick.
+    pub punch: Vec2,
 }
 
 impl VmEye {
-    /// The view origin and rotation (no recoil punch) for first-person models.
+    /// The view origin and rotation for first-person models: the camera's own view, punch
+    /// included. The viewmodel rides the punched view as in Source (CalcViewModelView gets the
+    /// eye angles after the punch is added); the gun's extra share and the roll undo come on
+    /// top (`ViewPunch::vm`). Placed at the unpunched aim it lagged the camera and sank on
+    /// screen with every shot, which read as recoil pulling down.
     pub fn frame(&self, s: &tf_sim::pilot::PilotState, settings: &PilotParams) -> (Vec3, Quat) {
         let eye = Vec3::from(s.eye(settings).to_array()) + self.offset;
         (
             eye,
-            view_quat(s.yaw, s.pitch) * Quat::from_rotation_x(self.roll),
+            view_quat(s.yaw + self.punch.x, s.pitch + self.punch.y)
+                * Quat::from_rotation_x(self.roll),
         )
     }
 }
