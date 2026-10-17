@@ -360,10 +360,7 @@ pub fn control_transitions(
     actors: Query<&crate::actor::Actor>,
     mut doom_test: Local<(bool, f32)>,
     game: Res<crate::game::Game>,
-    (mut rodeo, mut cores): (
-        ResMut<crate::rodeo::Rodeo>,
-        Query<&mut crate::abilities::TitanCore>,
-    ),
+    mut rodeo: ResMut<crate::rodeo::Rodeo>,
     (mut fpseq, globals, titan_settings, mut auto): (
         ResMut<crate::fparms::FpSeq>,
         Query<&GlobalTransform>,
@@ -741,17 +738,30 @@ pub fn control_transitions(
                 *control = Control::Titan;
                 log::info!("in BT");
                 if rodeo.battery {
-                    // Rodeo_YouEmbarkedWithABattery: ApplyBatteryToTitan.
+                    // Rodeo_ApplyAllBatteriesOnEmbark -> Rodeo_ApplyBatteryToTitan (SP): a
+                    // doomed BT is undoomed to one segment, else 2000 health; what the health
+                    // can't take goes to the shield; 98% or more rounds up to full. (No core
+                    // in SP; that is the MP branch.)
                     rodeo.battery = false;
                     let v = &mut bt_health.v;
-                    v.health = (v.health
-                        + crate::rodeo::BT_SEGMENT_HEALTH * crate::rodeo::BATTERY_HEALTH_FRAC)
-                        .min(v.max_health);
-                    v.shield = v.max_shield;
-                    if let Ok(mut core) = cores.single_mut() {
-                        if core.state == crate::abilities::CoreState::Building {
-                            core.meter = (core.meter + crate::rodeo::BATTERY_CORE_FRAC).min(1.0);
-                        }
+                    let heal = crate::rodeo::BATTERY_HEAL_SP;
+                    let missing = v.max_health - v.health;
+                    if v.doomed.is_some() {
+                        v.doomed = None;
+                        v.health = crate::rodeo::BT_SEGMENT_HEALTH;
+                    } else if missing >= heal {
+                        v.health += heal;
+                    } else {
+                        v.health = v.max_health;
+                    }
+                    if v.health >= v.max_health * crate::rodeo::BATTERY_FULL_FRAC {
+                        v.health = v.max_health;
+                    }
+                    if missing < heal {
+                        v.shield = (v.shield + heal - missing).min(v.max_shield);
+                    }
+                    if v.shield >= v.max_shield * crate::rodeo::BATTERY_FULL_FRAC {
+                        v.shield = v.max_shield;
                     }
                     crate::audio::event(&mut commands, "UI_TitanBattery_Titan_PickUp");
                     log::info!(

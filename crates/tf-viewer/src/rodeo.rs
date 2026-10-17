@@ -5,16 +5,21 @@
 //!   (`pt_rodeo_move_<chassis>_<front|back|left|right>[_lower|_mid]_entrance`, and the
 //!   first-person `ptpov_` twin on the arms). Chassis: atlas (Ion, Tone), ogre (Scorch, Legion),
 //!   stryder (Northstar, Ronin).
-//! - On the back you ride along; a Titan that still has its battery gets it ripped out
-//!   (`ptpov_rodeo_*_hijack_battery`): at the `rodeo_battery_rip` event the Titan takes one
-//!   health segment (`GetSegmentHealthForTitan`: `healthPerSegment` 1500 in the SP player
-//!   settings; a doomed Titan dies) and you are pushed off at 450 u/s with 80 + 100 up
-//!   (RODEO_BATTERY_RIP_PILOT_PUSHED_OFF_*, ThrowRiderOff), carrying the battery.
-//! - Without a battery you drop a grenade in the open hatch (`ptpov_rodeo_*_grenade_1st`) for
-//!   the same damage, then jump clear.
+//! - On the back you rip the battery out (`ptpov_rodeo_*_hijack_battery`,
+//!   PlayerRemovesBatteryPack): at the `rodeo_battery_rip` event the Titan takes one health
+//!   segment (RodeoBatteryPackRemovalDamage, `healthPerSegment` 1500 in the SP player settings;
+//!   a doomed Titan dies) and you are thrown off (ThrowRiderOff: 100 units up, then 450 u/s
+//!   backwards (0.75 of it, or your stick: forward 0.75..1, sideways up to 0.4) with 80 up plus
+//!   SP_RODEO_BOOST 300), carrying the battery.
+//! - Already carrying a battery (ShouldThrowGrenadeInHatch) you drop a grenade in the open
+//!   hatch instead (`ptpov_rodeo_*_grenade_1st`) for half the damage, and are thrown off the
+//!   same way. A Titan that lost its battery can be ripped again (the game counts them).
 //! - Jump leaves the Titan at 350 u/s along the input, 390 up (after a 0.6 s debounce).
-//! - Embarking BT with a battery applies it: half a segment of health (`battery_health_frac`
-//!   0.5; BT's `healthPerSegment` is 1800), full shield, 20% core (`battery_core_frac`).
+//! - Embarking BT with a battery applies it (Rodeo_ApplyAllBatteriesOnEmbark,
+//!   Rodeo_ApplyBatteryToTitan's SP branch): 2000 health, a doomed BT is undoomed to one
+//!   segment, what the health can't take goes to the shield, and 98% or more rounds up to
+//!   full (BATTERY_PICKUP_IGNORE_FRAC). BT himself can't be rodeoed (titan_buddy.set
+//!   `rodeo_allow 0`), so this is the only way to give him one.
 //!
 //! The rider is parented to the Titan's `HIJACK` attachment (on `def_c_spineC`, like
 //! `GetRodeoSpotOrigin`: attachment + 40 up is the ride spot, 180 units is the attach range,
@@ -26,8 +31,9 @@
 //! entrances; otherwise `fromBelow` (Titan less than 70 below you) and the forward/right dots
 //! choose front/back lower, back mid, left or right.
 //!
-//! Not modelled: the enemy's anti-rodeo electric smoke, rodeoing friendly BT to apply the
-//! battery from outside, the third-person rider on the Titan's back.
+//! Not modelled: the third-person rider on the Titan's back, the halved air control for
+//! 0.75 s after being thrown off (PostRodeoAirControl), friendly NPC Titans to hand a battery
+//! to (none exist here).
 
 use crate::actor::{Actor, Layer};
 use crate::fparms::{attach_frame, FpArms};
@@ -44,10 +50,16 @@ use tf_sim::pilot::PilotMove;
 pub const SP_TITAN_SEGMENT_HEALTH: f32 = 1500.0;
 /// titan_buddy.set healthPerSegment.
 pub const BT_SEGMENT_HEALTH: f32 = 1800.0;
-pub const BATTERY_HEALTH_FRAC: f32 = 0.5;
-pub const BATTERY_CORE_FRAC: f32 = 0.2;
+/// Rodeo_ApplyBatteryToTitan, single player: the healing a battery gives.
+pub const BATTERY_HEAL_SP: f32 = 2000.0;
+/// BATTERY_PICKUP_IGNORE_FRAC: this full or more rounds up to full.
+pub const BATTERY_FULL_FRAC: f32 = 0.98;
 const RIP_PUSH_HORIZONTAL: f32 = 450.0;
-const RIP_PUSH_VERTICAL: f32 = 80.0 + 100.0;
+const RIP_PUSH_VERTICAL: f32 = 80.0;
+/// SP_RODEO_BOOST: extra height thrown off with in SP, against rodeo spam.
+const SP_RODEO_BOOST: f32 = 300.0;
+/// ThrowRiderOff lifts the rider this much before the throw.
+const RIP_PUSH_LIFT: f32 = 100.0;
 const JUMP_OFF_SPEED: f32 = 350.0;
 const JUMP_OFF_UP: f32 = 390.0;
 const JUMP_DEBOUNCE: f32 = 0.6;
@@ -373,6 +385,7 @@ pub fn rodeo_update(
     let spot = attach.translation + Vec3::Z * 40.0;
     let titan_vel = Vec3::from(e.state.vel.to_array());
     let mut detach: Option<Vec3> = None;
+    let mut lift = false;
     if !e.alive() || !on_foot {
         detach = Some(titan_vel);
     }
@@ -426,24 +439,22 @@ pub fn rodeo_update(
             }
         }
         Phase::Idle => {
-            // Straight to work: the battery, or a grenade down the open hatch.
+            // Straight to work: the battery, or, already carrying one, a grenade down the
+            // open hatch (ShouldThrowGrenadeInHatch).
             if ride.t >= 0.3 {
-                ride.phase = if e.battery {
-                    Phase::Hijack
-                } else {
-                    Phase::Grenade
-                };
+                let rip = !rodeo.battery;
+                ride.phase = if rip { Phase::Hijack } else { Phase::Grenade };
                 ride.t = 0.0;
                 ride.done_hit = false;
                 log::info!(
                     "rodeo: {}",
-                    if e.battery {
+                    if rip {
                         "ripping the battery"
                     } else {
                         "grenade in the hatch"
                     }
                 );
-                if e.battery
+                if rip
                     && !e.held
                     && ride
                         .chassis
@@ -476,8 +487,12 @@ pub fn rodeo_update(
             };
             if cycle >= hit_at && !ride.done_hit {
                 ride.done_hit = true;
+                // RodeoBatteryPackRemovalDamage: a segment, half of it from a grenade
+                // (thrown only while carrying a battery); a doomed Titan dies.
                 let dmg = if e.doomed() {
                     e.v.health + e.v.shield + 1.0
+                } else if rodeo.battery {
+                    SP_TITAN_SEGMENT_HEALTH / 2.0
                 } else {
                     SP_TITAN_SEGMENT_HEALTH
                 };
@@ -510,15 +525,24 @@ pub fn rodeo_update(
                 }
             }
             if ride.t >= len {
-                // Pushed off (CalculateDirectionToThrowOffBatteryThief: away from the Titan).
-                let away = (Vec3::from(pilot.state.pos.to_array()) - e.pos)
-                    .truncate()
-                    .normalize_or(Vec2::NEG_X);
+                // Thrown off (CalculateDirectionToThrowOffBatteryThief): backwards off the
+                // Titan, 0.75 of the speed, or steered by the stick (forward 0.75..1 of it,
+                // sideways up to 0.4), then ThrowRiderOff lifts you and adds the SP boost.
+                let back = -(titan_rot * Vec3::X).truncate().normalize_or(Vec2::NEG_X);
+                let right = Vec2::new(back.y, -back.x);
+                let x = input.right.clamp(-1.0, 1.0) * 0.4;
+                let y = 0.875 - input.forward.clamp(-1.0, 1.0) * 0.125;
+                let dir = if x.abs() < 0.2 && y.abs() < 0.2 {
+                    back * 0.75
+                } else {
+                    back * y + right * x
+                };
                 detach = Some(
                     titan_vel
-                        + Vec3::new(away.x, away.y, 0.0) * RIP_PUSH_HORIZONTAL
-                        + Vec3::Z * RIP_PUSH_VERTICAL,
+                        + Vec3::new(dir.x, dir.y, 0.0) * RIP_PUSH_HORIZONTAL
+                        + Vec3::Z * (RIP_PUSH_VERTICAL + SP_RODEO_BOOST),
                 );
+                lift = true;
             }
         }
     }
@@ -590,6 +614,9 @@ pub fn rodeo_update(
     if let Some(v) = detach {
         if ride.holds {
             e.held = false;
+        }
+        if lift {
+            pilot.state.pos.z += RIP_PUSH_LIFT;
         }
         pilot.state.vel = SVec3::new(v.x, v.y, v.z);
         pilot.state.mode = PilotMove::Air;
