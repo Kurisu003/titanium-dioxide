@@ -103,6 +103,7 @@ pub fn weapon_screens(
     ui_scale: Res<UiScale>,
     mut built: Local<HashMap<(Entity, usize), Built>>,
     mut sights: Local<HashMap<(Entity, usize), (Handle<StandardMaterial>, f32)>>,
+    mut aogs: Local<HashMap<(Entity, usize), Aog>>,
 ) {
     let Ok(loadout) = loadouts.single() else {
         return;
@@ -121,12 +122,28 @@ pub fn weapon_screens(
         return;
     }
     sights.retain(|(vm, _), _| actors.contains(*vm));
+    aogs.retain(|(vm, _), _| actors.contains(*vm));
     for gun in &loadout.guns {
         let Some((_, vm)) = gun.viewmodel else {
             continue;
         };
         let Ok(actor) = actors.get(vm) else { continue };
         for (i, screen) in gun.screens.iter().enumerate() {
+            if is_aog(&screen.ui) {
+                let key = (vm, i);
+                if !aogs.contains_key(&key) {
+                    match build_aog(&mut commands, actor, screen, &mut meshes, &mut materials) {
+                        Some(a) => {
+                            aogs.insert(key, a);
+                        }
+                        None => continue,
+                    }
+                }
+                if let Some(a) = aogs.get_mut(&key) {
+                    a.update(gun.ammo, gun.def.clip, gun.ads, &mut meshes, &mut materials);
+                }
+                continue;
+            }
             if is_sight(&screen.ui) {
                 let key = (vm, i);
                 if !sights.contains_key(&key) {
@@ -349,6 +366,175 @@ fn build(
 /// The sight RUIs we stand in for.
 fn is_sight(ui: &str) -> bool {
     ui == "ui/r101_sights"
+}
+
+/// The AOG's sight (`ui/aog_multi_reticles`, the R-101's factory scope and an optic of the
+/// Spitfire, Devotion, L-STAR and Hemlok), built on its RUI mesh's two planes: a thick ammo
+/// ring that shortens toward the bottom as the clip empties (cyan, orange
+/// when low), and two red dashes either side of the aim, both on the front plane. Measured on a
+/// 1080p frame of the game (the ring 455 px across with a 90 degree gap at the top when full,
+/// 13 px thick; the dashes from 0.40 to 0.76 of the ring's radius).
+fn is_aog(ui: &str) -> bool {
+    ui == "ui/aog_multi_reticles" || ui == "ui/aog_multi_reticles_lstar"
+}
+
+pub struct Aog {
+    ring: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    /// The rear plane's centre (bone space) and the ring's radius.
+    centre: Vec3,
+    radius: f32,
+    shown: (u32, f32),
+}
+
+/// Ammo left under this fraction of the clip turns the ring orange.
+const AOG_LOW: f32 = 0.35;
+
+impl Aog {
+    fn update(
+        &mut self,
+        ammo: u32,
+        clip: u32,
+        ads: f32,
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+    ) {
+        let a = (ads * 100.0).round() / 100.0;
+        if self.shown.1 != a {
+            if let Some(m) = materials.get_mut(&self.material) {
+                m.base_color = Color::srgba(1.0, 1.0, 1.0, a);
+            }
+        }
+        if self.shown.0 != ammo || self.shown.1 < 0.0 {
+            let frac = ammo as f32 / clip.max(1) as f32;
+            let colour = if frac < AOG_LOW {
+                [3.0, 1.1, 0.25, 1.0]
+            } else {
+                [0.12, 1.25, 2.1, 1.0]
+            };
+            // Full: 270 degrees, from the upper left round the bottom to the upper right.
+            let half = 135f32.to_radians() * frac;
+            let (mut pos, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::new());
+            let steps = 48;
+            let w = self.radius * 0.075;
+            let bottom = -std::f32::consts::FRAC_PI_2;
+            for k in 0..=steps {
+                let t = bottom - half + 2.0 * half * k as f32 / steps as f32;
+                let d = Vec2::new(t.cos(), t.sin());
+                for r in [self.radius - w * 0.5, self.radius + w * 0.5] {
+                    let p = self.centre.truncate() + d * r;
+                    pos.push([p.x, p.y, self.centre.z]);
+                    col.push(colour);
+                }
+            }
+            if frac > 0.0 {
+                for k in 0..steps as u32 {
+                    let b = k * 2;
+                    idx.extend([b, b + 2, b + 1, b + 1, b + 2, b + 3]);
+                }
+            }
+            if let Some(m) = meshes.get_mut(&self.ring) {
+                let n = pos.len();
+                m.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+                m.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; n]);
+                m.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+                m.insert_indices(bevy::mesh::Indices::U32(idx));
+            }
+        }
+        self.shown = (ammo, a);
+    }
+}
+
+fn build_aog(
+    commands: &mut Commands,
+    actor: &crate::actor::Actor,
+    screen: &ScreenMesh,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Option<Aog> {
+    let bone = &screen.faces.first()?.0;
+    let joint = actor.joint(bone)?;
+    // The two planes (by z): their centres and half sizes.
+    let mut planes: Vec<(f32, Vec2, Vec2)> = Vec::new();
+    for f in &screen.faces {
+        let z = f.1[0][2];
+        let (lo, hi) = f.1.iter().fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(lo, hi), c| (lo.min(Vec2::new(c[0], c[1])), hi.max(Vec2::new(c[0], c[1]))),
+        );
+        match planes.iter_mut().find(|p| (p.0 - z).abs() < 0.01) {
+            Some(p) => {
+                p.1 = p.1.min(lo);
+                p.2 = p.2.max(hi);
+            }
+            None => planes.push((z, lo, hi)),
+        }
+    }
+    planes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Both on the front plane (the rear one sits too near the eye to draw); the ring fills
+    // 0.945 of it, which puts it just inside the scope's aperture as in the footage.
+    let (fz, flo, fhi) = *planes.last()?;
+    let front_c = (flo + fhi) * 0.5;
+    let radius = (fhi.x - flo.x) * 0.5 * 0.945;
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 1.0, 1.0, 0.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    // The red dashes at the aim height, in the ring's radii.
+    let k = radius;
+    let (mut pos, mut col, mut idx) = (Vec::new(), Vec::new(), Vec::new());
+    let red = [2.6, 0.2, 0.25, 1.0];
+    for side in [-1.0f32, 1.0] {
+        strip(
+            front_c + Vec2::new(side * 0.40 * k, 0.0),
+            front_c + Vec2::new(side * 0.76 * k, 0.0),
+            k * 0.018,
+            fz,
+            red,
+            &mut pos,
+            &mut col,
+            &mut idx,
+        );
+    }
+    let n = pos.len();
+    let mut dashes = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, default());
+    dashes.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    dashes.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; n]);
+    dashes.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
+    dashes.insert_indices(bevy::mesh::Indices::U32(idx));
+    let mut ring = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, default());
+    ring.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
+    ring.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
+    ring.insert_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
+    ring.insert_indices(bevy::mesh::Indices::U32(Vec::new()));
+    let ring = meshes.add(ring);
+    for mesh in [meshes.add(dashes), ring.clone()] {
+        let e = commands
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material.clone()),
+                Transform::IDENTITY,
+                NotShadowCaster,
+                bevy::camera::visibility::NoFrustumCulling,
+            ))
+            .id();
+        commands.entity(joint).add_child(e);
+    }
+    log::debug!(
+        "weapon sight {} on {bone}: AOG ring r {radius:.2}",
+        screen.ui
+    );
+    Some(Aog {
+        ring,
+        material,
+        centre: front_c.extend(fz),
+        radius,
+        shown: (u32::MAX, -1.0),
+    })
 }
 
 /// Push a quad of width `w` along a-b (a bone-space plane at `z`), with a vertex colour.

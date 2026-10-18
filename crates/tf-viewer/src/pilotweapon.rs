@@ -513,6 +513,10 @@ pub struct PilotWeapon {
     pub sight: Option<crate::launcherscreen::Panel>,
     /// Not drawn yet: the first draw plays `drawfirst_seq` over `deployfirst_time`.
     pub first_draw: bool,
+    /// Aiming brings the gun up to the eye (its `ads_in_seq` ends away from the hip pose). The
+    /// EPG, Sidewinder, MGL and Charge Rifle only zoom: their aim pose is the hip pose, so the
+    /// crosshair stays up while aimed.
+    pub aim_moves_gun: bool,
     /// The viewmodel's sequences by activity and modifier.
     pub seqs: std::sync::Arc<VmSeqs>,
 }
@@ -551,6 +555,7 @@ impl PilotWeapon {
             screens: Vec::new(),
             sight: None,
             first_draw: true,
+            aim_moves_gun: true,
             seqs: Default::default(),
         }
     }
@@ -842,6 +847,12 @@ pub fn build_loadout(
         gun.projectile = projectile;
         gun.pivots = pivots;
         gun.ads_scope = ads_scope;
+        gun.aim_moves_gun = vm_model.as_ref().is_none_or(|m| aim_moves_gun(m));
+        log::debug!(
+            "{}: aim pose moves the gun: {}",
+            gun.def.name,
+            gun.aim_moves_gun
+        );
         gun.fx_atts = [
             vm_model.as_ref().and_then(|m| {
                 model_attachment(
@@ -1104,6 +1115,31 @@ const MELEE_SEQS: &[&str] = &[
     "melee_07_seq",
     "melee_09_seq",
 ];
+
+/// Whether a viewmodel's aim pose (the last frame of `ads_in_seq`) holds the gun anywhere
+/// but where the draw ends (the hip pose).
+fn aim_moves_gun(m: &tf_assets::mdl::Model) -> bool {
+    let last = |label: &str| {
+        let seq = m
+            .sequences
+            .iter()
+            .find(|s| s.label.eq_ignore_ascii_case(label))?;
+        let an = m.animation(*seq.anims.first()?).ok()?;
+        let pose = tf_assets::mdl::screen_cull::pose_frame(m, &an, an.num_frames.saturating_sub(1));
+        let gun = m.bone_index("ja_c_propGun")?;
+        pose.get(gun).copied()
+    };
+    match (last("ads_in_seq"), last("draw_seq")) {
+        (Some((qa, pa)), Some((qh, ph))) => {
+            let moved = Vec3::from(pa).distance(Vec3::from(ph));
+            let turned = Quat::from_array(qa)
+                .angle_between(Quat::from_array(qh))
+                .to_degrees();
+            moved > 0.25 || turned > 0.5
+        }
+        _ => true,
+    }
+}
 
 /// The viewmodel attachments the sway rotates about (hip and zoomed): bone name and offset.
 pub fn sway_pivots(gd: &crate::gamedata::GameData, def: &WeaponDef) -> [(String, Vec3); 2] {
@@ -3119,11 +3155,15 @@ pub fn pilot_viewmodel(
         // weighting): the Thunderbolt's standing clip (`walk_anim_static`, 67 frames where every
         // other gun's has 25) turns the gun 36 degrees for frames 32-65, which played at full
         // weight swung its ADS view to the side and back every 2.2 s while standing still.
+        // The grid's standing column is left out too: the layer's weight already brings the
+        // motion in with speed, and the Thunderbolt's standing clip raises the gun 36 degrees
+        // for half its loop, which at the aimed walk (half speed, ads_move_speed_scale 0.5)
+        // tipped the sight up and down with every step.
         if let Some(d) = grid_dur(&actor, "walk_seq").filter(|_| !vm_off("walk")) {
             let moving = (speed / 173.0).min(1.0);
             grid_layers.push(GridLayer {
                 grid: "walk_seq",
-                x: speed.min(173.0),
+                x: 173.0,
                 y: ads,
                 cycle: (vl.clock / d).fract(),
                 weight: still * vl.ground_blend * moving,

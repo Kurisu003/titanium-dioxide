@@ -567,6 +567,12 @@ fn main() {
     )
     .add_systems(
         Update,
+        crosshair::aim_dot
+            .run_if(ui::loaded)
+            .after(pilotweapon::pilot_weapon_fire),
+    )
+    .add_systems(
+        Update,
         launcherscreen::update
             .run_if(ui::loaded)
             .after(pilotweapon::pilot_weapon_fire),

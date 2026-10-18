@@ -11,6 +11,23 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct CrosshairRoot;
 
+/// A stand-in for the sight RUIs we can't draw (the R-97's, Alternator's, G2's, Thunderbolt's
+/// and the other guns' factory reticles): a red dot at the aim point while aimed down sights,
+/// so a gun whose sight would light up in the game isn't left with no reticle at all.
+#[derive(Component)]
+pub struct AimDot;
+
+/// The sight RUIs drawn in 3D (ruiscreen.rs) or that are screens, not reticles.
+fn sight_drawn_or_not_reticle(ui: &str) -> bool {
+    ui == "ui/r101_sights"
+        || ui.starts_with("ui/aog_")
+        || ui.contains("ammo_counter")
+        || ui.contains("pro_screen")
+        || ui.contains("_bar")
+        || ui.contains("panel")
+        || ui.contains("screens")
+}
+
 #[derive(Component)]
 pub struct Piece {
     /// Where on the ring (degrees clockwise from up); None: at the centre.
@@ -212,6 +229,20 @@ pub fn spawn(commands: &mut Commands, root: Entity) {
         ))
         .id();
     commands.entity(root).add_child(c);
+    let d = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(0.0),
+                height: Val::Px(0.0),
+                ..default()
+            },
+            AimDot,
+        ))
+        .id();
+    commands.entity(root).add_child(d);
 }
 
 /// What the crosshair should show: the active weapon's crosshair, spread and zoom.
@@ -233,12 +264,14 @@ pub fn update(
     };
     // How far the crosshair fades: a Pilot's gun hands over to its sight while aiming down
     // sights; a Titan's guns have none (ADS only zooms), so theirs stays up.
-    // A gun with no sight RUI and no ADS scope (the Charge Rifle) keeps its crosshair while
-    // zoomed: nothing else marks the aim point.
+    // A gun with no sight RUI and no ADS scope, or whose aim pose leaves it at the hip (the
+    // EPG, Sidewinder, MGL, Charge Rifle), keeps its crosshair while zoomed: nothing else
+    // marks the aim point.
     let (name, spread, ads) = match *control {
         Control::Pilot => match pilots.single().ok().and_then(|l| l.active()) {
             Some(g) => {
-                let has_sight = !g.def.rui.is_empty() || g.def.ads_scope.is_some();
+                let has_sight =
+                    g.aim_moves_gun && (!g.def.rui.is_empty() || g.def.ads_scope.is_some());
                 (
                     g.def.crosshair.clone(),
                     g.cur_spread,
@@ -322,5 +355,67 @@ pub fn update(
         crate::hud::set(&mut node, |n| &mut n.top, Val::Vh(centre.y - size.y * 0.5));
         tf.rotation = Rot2::degrees(p.rot);
         img.color = Color::srgba(1.0, 1.0, 1.0, alpha);
+    }
+}
+
+/// Show [`AimDot`] while a Pilot aims a gun whose factory sight RUI we don't draw.
+pub fn aim_dot(
+    mut commands: Commands,
+    ui: Res<UiAssets>,
+    control: Res<crate::pilotctl::Control>,
+    pilots: Query<&crate::pilotweapon::PilotLoadout>,
+    dots: Query<(Entity, Option<&Children>), With<AimDot>>,
+    mut images: Query<&mut ImageNode>,
+) {
+    let Ok((dot, children)) = dots.single() else {
+        return;
+    };
+    let alpha = match *control {
+        crate::pilotctl::Control::Pilot => pilots
+            .single()
+            .ok()
+            .and_then(|l| l.active())
+            .filter(|g| {
+                g.aim_moves_gun
+                    && g.def.ads_scope.is_none()
+                    && g.def
+                        .rui
+                        .iter()
+                        .any(|(u, _)| !sight_drawn_or_not_reticle(u))
+                    && !g
+                        .def
+                        .rui
+                        .iter()
+                        .any(|(u, _)| u == "ui/r101_sights" || u.starts_with("ui/aog_"))
+            })
+            .map_or(0.0, |g| ((g.ads - 0.6) / 0.4).clamp(0.0, 1.0)),
+        _ => 0.0,
+    };
+    match children.and_then(|c| c.first()) {
+        Some(&c) => {
+            if let Ok(mut img) = images.get_mut(c) {
+                img.color = Color::srgba(1.0, 0.2, 0.15, alpha);
+            }
+        }
+        None => {
+            let Some(img) = ui.image("rui/hud/crosshairs/crosshair_dot") else {
+                return;
+            };
+            let size = 15.0 * VH_PER_PX;
+            let e = commands
+                .spawn((
+                    img,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Vh(size),
+                        height: Val::Vh(size),
+                        left: Val::Vh(-size * 0.5),
+                        top: Val::Vh(-size * 0.5),
+                        ..default()
+                    },
+                ))
+                .id();
+            commands.entity(dot).add_child(e);
+        }
     }
 }
