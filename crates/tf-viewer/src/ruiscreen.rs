@@ -70,6 +70,31 @@ fn shows_whole(screen: &ScreenMesh) -> bool {
     })
 }
 
+/// The faces a counter's digits go on: all of them when each shows the whole canvas region,
+/// else the one face that shows most of it (the P2016's display on the back of the slide,
+/// beside a thin strip that shows another corner of its RUI); None for a ring of slices.
+fn counter_faces(screen: &ScreenMesh) -> Option<ScreenMesh> {
+    if shows_whole(screen) {
+        return Some(screen.clone());
+    }
+    let area = |f: &(String, [[f32; 3]; 4], [[f32; 2]; 4])| {
+        let (lo, hi) = f.2.iter().fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(a, b), uv| (a.min(Vec2::from(*uv)), b.max(Vec2::from(*uv))),
+        );
+        ((hi - lo).x * (hi - lo).y).max(0.0)
+    };
+    let total: f32 = screen.faces.iter().map(area).sum();
+    let best = screen
+        .faces
+        .iter()
+        .max_by(|a, b| area(a).total_cmp(&area(b)))?;
+    (area(best) > total * 0.5).then(|| ScreenMesh {
+        ui: screen.ui.clone(),
+        faces: vec![best.clone()],
+    })
+}
+
 pub struct Built {
     camera: Entity,
     ui_root: Entity,
@@ -184,15 +209,18 @@ pub fn weapon_screens(
                 }
                 continue;
             }
-            if !drawn(&screen.ui) || !shows_whole(screen) {
+            if !drawn(&screen.ui) {
                 continue;
             }
+            let Some(screen) = counter_faces(screen) else {
+                continue;
+            };
             let key = (vm, i);
             if !built.contains_key(&key) {
                 let Some(b) = build(
                     &mut commands,
                     actor,
-                    screen,
+                    &screen,
                     &ui.bold_font,
                     &mut meshes,
                     &mut images,
