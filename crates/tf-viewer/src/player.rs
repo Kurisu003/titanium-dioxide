@@ -523,13 +523,6 @@ pub fn gather_input(
     let down = |c: C| bind(c).pressed(&keys, &buttons);
     let hit = |c: C| bind(c).just_pressed(&keys, &buttons);
     input.sprint_key = down(C::Sprint);
-    if hit(C::View) && *mode != CameraMode::Free {
-        *mode = if *mode == CameraMode::Third {
-            CameraMode::Cockpit
-        } else {
-            CameraMode::Third
-        };
-    }
     if *mode == CameraMode::Free {
         return;
     }

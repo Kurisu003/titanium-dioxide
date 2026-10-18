@@ -36,14 +36,13 @@ pub enum Command {
     Throw,
     Core,
     Titanfall,
-    View,
     Slot1,
     Slot2,
     Slot3,
 }
 
 impl Command {
-    pub const ALL: [Command; 21] = [
+    pub const ALL: [Command; 20] = [
         Command::Forward,
         Command::Back,
         Command::Left,
@@ -61,7 +60,6 @@ impl Command {
         Command::Throw,
         Command::Core,
         Command::Titanfall,
-        Command::View,
         Command::Slot1,
         Command::Slot2,
         Command::Slot3,
@@ -87,7 +85,6 @@ impl Command {
             Command::Throw => "+offhand0",
             Command::Core => "+ability 1",
             Command::Titanfall => "+scriptcommand1",
-            Command::View => "toggle_view",
             Command::Slot1 => "weaponselect_primary0",
             Command::Slot2 => "weaponselect_primary1",
             Command::Slot3 => "weaponselect_primary2",
@@ -113,7 +110,6 @@ impl Command {
             Command::Throw => "ORDNANCE / TITAN ORDNANCE",
             Command::Core => "TITAN CORE",
             Command::Titanfall => "CALL TITAN",
-            Command::View => "COCKPIT / THIRD PERSON",
             Command::Slot1 => "PRIMARY WEAPON",
             Command::Slot2 => "SIDEARM",
             Command::Slot3 => "ANTI-TITAN WEAPON",
@@ -147,7 +143,6 @@ impl Command {
             Command::Throw => Bind::Key(K::KeyG),
             Command::Core => Bind::Key(K::KeyV),
             Command::Titanfall => Bind::Key(K::KeyT),
-            Command::View => Bind::Key(K::KeyC),
             Command::Slot1 => Bind::Key(K::Digit1),
             Command::Slot2 => Bind::Key(K::Digit2),
             Command::Slot3 => Bind::Key(K::Digit3),

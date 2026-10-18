@@ -1525,7 +1525,6 @@ fn build_page(
             (k(C::Core), "Titan Core"),
             (k(C::Use), "Disembark / Embark"),
             (k(C::Titanfall), "Titanfall"),
-            (k(C::View), "Cockpit / Third Person"),
             ("- / =".to_string(), "Volume"),
         ];
         for (kk, v) in rows {
