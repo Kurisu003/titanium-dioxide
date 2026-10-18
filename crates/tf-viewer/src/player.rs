@@ -370,6 +370,17 @@ impl Script {
     }
 }
 
+/// The turn_slow status effect's severity on the player's Titan (Laser Core).
+static TURN_SLOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_turn_slow(severity: f32) {
+    TURN_SLOW.store(severity.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn turn_slow() -> f32 {
+    f32::from_bits(TURN_SLOW.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 pub fn gather_input(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -563,7 +574,13 @@ pub fn gather_input(
             } else {
                 settings.mouse_sensitivity
             };
-            let k = (crate::settings::M_YAW * sens).to_radians();
+            // turn_slow (client.dll 0x180256fd0): mouse look times 1 - 2 x severity.
+            let slow = if *control == crate::pilotctl::Control::Titan {
+                (1.0 - 2.0 * turn_slow()).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let k = (crate::settings::M_YAW * sens).to_radians() * slow;
             let invert = if settings.invert_y { -1.0 } else { 1.0 };
             input.yaw -= motion.delta.x * k;
             input.pitch = (input.pitch + motion.delta.y * k * invert).clamp(pitch_lo, pitch_hi);
@@ -721,9 +738,10 @@ pub fn gather_input(
             };
             let lin = crate::gamepad::Curve::linear();
             let curve = pad_cfg.curves.get(settings.gamepad_curve).unwrap_or(&lin);
-            let rate =
-                crate::gamepad::look_rate(right, row, curve, pad_cfg.accel.as_ref(), pad.edge_time)
-                    * assist.slowdown;
+            let rate = crate::gamepad::look_rate(right, row, curve, pad_cfg.accel.as_ref(), pad.edge_time)
+                    * assist.slowdown
+                    // turn_slow on the stick: 1 - severity (client.dll 0x18024f760).
+                    * if titan { 1.0 - turn_slow() } else { 1.0 };
             let invert = if settings.gamepad_invert_y { -1.0 } else { 1.0 };
             input.yaw -= rate.x.to_radians() * dt;
             input.pitch =

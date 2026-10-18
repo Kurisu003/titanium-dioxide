@@ -59,6 +59,9 @@ const PHASE_DASH_SPEED: f32 = 1000.0;
 const PHASE_DASH_TIME: f32 = 1.0;
 const PHASE_FADE: f32 = 0.5;
 const HOVER_LERP_IN: f32 = 0.5;
+const HOVER_TIME: f32 = 3.0;
+const LASER_CORE_SLOW: f32 = 0.25;
+const LASER_CORE_SLOW_FADE: f32 = 2.0;
 const HOVER_RISE: f32 = 450.0;
 /// mp_titanability_hover.nut horizontalVelocity (350 with the Northstar passive).
 const HOVER_HORIZ: f32 = 250.0;
@@ -1226,6 +1229,9 @@ pub struct KitState {
     hover_t: f32,
     hover_len: f32,
     hover_slow: f32,
+    /// Laser Core's turn_slow / move_slow (SEVERITY_*_LASERCORE 0.25): seconds left of the
+    /// core's duration plus its 2 s fade.
+    laser_slow: f32,
     /// airSpeed for this flight (250 for the Hover ability, 200 for the Flight Core).
     hover_horiz: f32,
     /// Laser Tripwire groups deployed (each use is one group of three pylons).
@@ -1281,6 +1287,7 @@ impl Default for KitState {
             hover_t: 0.0,
             hover_len: 0.0,
             hover_slow: 0.0,
+            laser_slow: 0.0,
             hover_horiz: HOVER_HORIZ,
             trip_group: 0,
             phase_hidden: false,
@@ -2604,8 +2611,10 @@ pub fn kit_input(
                 true
             }
             UtilKind::Hover => {
+                // OnWeaponPrimaryAttack_TitanHover: FlyerHovers( flyer, soundInfo, 3.0, ... ), a
+                // fixed 3 s (the script's fire_duration, 2.75, isn't what it flies).
                 st.hover_t = 0.0;
-                st.hover_len = un.duration.max(0.1);
+                st.hover_len = HOVER_TIME;
                 st.hover_horiz = HOVER_HORIZ;
                 emit(
                     &mut commands,
@@ -2779,7 +2788,11 @@ pub fn kit_input(
         st.hover_slow / HOVER_FADE
     };
     mods.arc_slow = (mods.arc_slow - dt).max(0.0);
+    st.laser_slow = (st.laser_slow - dt).max(0.0);
+    let laser_k = LASER_CORE_SLOW * (st.laser_slow / LASER_CORE_SLOW_FADE).min(1.0);
+    crate::player::set_turn_slow(laser_k);
     mods.speed_scale = (1.0 - 0.6 * phase_k)
+        .min(1.0 - laser_k)
         .min(1.0 - 0.65 * hover_k)
         .min(if mods.arc_slow > 0.0 { ARC_SLOW } else { 1.0 });
 
@@ -2848,7 +2861,12 @@ pub fn kit_input(
                     targets.len()
                 );
             }
-            CoreKind::Laser => crate::audio::event(&mut commands, "Titan_Core_Laser_FireBeam_1P"),
+            CoreKind::Laser => {
+                crate::audio::event(&mut commands, "Titan_Core_Laser_FireBeam_1P");
+                // OnAbilityStart_LaserCannon: turn_slow and move_slow 0.25 for the discharge
+                // plus a 2 s fade.
+                st.laser_slow = core.duration + LASER_CORE_SLOW_FADE;
+            }
             CoreKind::Flight => {
                 // PROTO_FlightCore: FlyerHovers for the core's duration, rockets after takeoff.
                 st.hover_t = 0.0;

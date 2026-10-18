@@ -44,8 +44,11 @@ use tf_assets::settings::PlayerSettings;
 use tf_sim::glam::Vec3 as SVec3;
 use tf_sim::pilot::{GrappleEvent, PilotMove};
 
-/// Stim's speed boost (STIM_EFFECT_SEVERITY with movement_speedboost_extraScale 2.0).
-const STIM_SPEED: f32 = 1.4;
+/// Stim's speed_boost status effect: STIM_EFFECT_SEVERITY, held for the stim's duration plus
+/// 0.5 s and eased out over the last 0.25 s (StatusEffect_AddTimed in sh_stim.gnut).
+const STIM_SEVERITY: f32 = 0.4;
+const STIM_BOOST_EXTRA: f32 = 0.5;
+const STIM_BOOST_EASE_OUT: f32 = 0.25;
 /// grapple_gracePeriod: seconds of pull off the world before any power is drained.
 const GRAPPLE_GRACE: f32 = 0.25;
 
@@ -739,6 +742,8 @@ pub struct PilotStatus {
     pub pulse: Option<(Vec3, f32)>,
     /// Satchels waiting for the detonator.
     pub satchels: u32,
+    /// Seconds left of Stim's speed_boost status effect.
+    pub stim_boost: f32,
 }
 
 impl PilotStatus {
@@ -751,16 +756,19 @@ impl PilotStatus {
         self.ord_charges = defs.ordnance[self.ordnance].charges;
         self.ord_cooldown = 0.0;
         self.active = 0.0;
+        self.stim_boost = 0.0;
     }
     fn is(&self, t: Tactical) -> bool {
         self.active > 0.0 && TACTICALS[self.tactical].0 == t
     }
+    /// The speed_boost severity now (0 without Stim).
+    pub fn speed_boost(&self) -> f32 {
+        STIM_SEVERITY * (self.stim_boost / STIM_BOOST_EASE_OUT).clamp(0.0, 1.0)
+    }
+    /// client.dll 0x180329030: max speeds scale by 1 + 2 * the speed_boost severity (Stim's 0.4
+    /// makes 1.8; STIM_EFFECT_SEVERITY's comment assumes movement_speedboost_extraScale 2.0).
     pub fn speed_scale(&self) -> f32 {
-        if self.is(Tactical::Stim) {
-            STIM_SPEED
-        } else {
-            1.0
-        }
+        1.0 + 2.0 * self.speed_boost()
     }
     pub fn stimmed(&self) -> bool {
         self.is(Tactical::Stim)
@@ -1052,6 +1060,7 @@ pub fn pilot_abilities(
     let oi = status.ordnance.min(defs.ordnance.len() - 1);
     let def = &defs.tactical[ti];
     let odef = &defs.ordnance[oi];
+    status.stim_boost = (status.stim_boost - dt).max(0.0);
     if status.active > 0.0 {
         status.active -= dt;
         // The sustain loop the ability script keeps up while it runs (pilot_stimpack_loop_1P
@@ -1300,7 +1309,10 @@ pub fn pilot_abilities(
             log::info!("tactical: {kind:?}");
             match kind {
                 Tactical::Stim | Tactical::Cloak | Tactical::PhaseShift => {
-                    status.active = def.duration
+                    status.active = def.duration;
+                    if kind == Tactical::Stim {
+                        status.stim_boost = def.duration + STIM_BOOST_EXTRA;
+                    }
                 }
                 // The hook flies out from the eye at grapple_shootVel up to grapple_maxLength
                 // (tf-sim moves it and reports where it lands). When the straight shot would
@@ -1461,7 +1473,8 @@ fn radius_damage(
             let k = 1.0 - ((d - inner) / (radius - inner).max(1.0)).clamp(0.0, 1.0);
             let amount = if e.infantry { dmg } else { heavy } * k;
             if amount > 0.0 {
-                e.damage(amount, false);
+                // RadiusDamage: a Vortex or Thermal Shield doesn't stop the blast.
+                e.damage_radius(amount, false);
                 hits += 1;
                 log::debug!(
                     "ordnance hit {} for {amount:.0}",

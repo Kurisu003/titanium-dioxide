@@ -530,9 +530,6 @@ impl VmOffset {
 /// Turn rate (degrees/s) that counts as a full `sway_turn_*` push. The engine's scale isn't
 /// in the scripts; chosen so ordinary mouse turns reach the clamps.
 const TURN_FULL: f32 = 150.0;
-/// Speeds that count as a full `sway_move_*` push: the viewmodels' velocity pose parameter
-/// range (0..173) horizontally, a jump's launch speed vertically.
-const MOVE_FULL: Vec3 = Vec3::new(173.0, 173.0, 300.0);
 
 impl VmMotion {
     pub fn step(&mut self, def: &MotionDef, inp: &MotionInput, dt: f32) -> VmOffset {
@@ -555,14 +552,17 @@ impl VmMotion {
             (-dpitch / TURN_FULL).clamp(0.0, 1.0),
             (dpitch / TURN_FULL).clamp(0.0, 1.0),
         ];
-        let m = inp.vel / MOVE_FULL;
+        // client.dll 0x1805939c0: each axis of the view-space velocity times the frame time
+        // pushes along its direction's `sway_move_*` set (the sum is then clamped to the
+        // sway_min/max limits and eased in at the gains).
+        let m = inp.vel * dt;
         let mv = [
-            m.x.clamp(0.0, 1.0),
-            (-m.x).clamp(0.0, 1.0),
-            m.y.clamp(0.0, 1.0),
-            (-m.y).clamp(0.0, 1.0),
-            m.z.clamp(0.0, 1.0),
-            (-m.z).clamp(0.0, 1.0),
+            m.x.max(0.0),
+            (-m.x).max(0.0),
+            m.y.max(0.0),
+            (-m.y).max(0.0),
+            m.z.max(0.0),
+            (-m.z).max(0.0),
         ];
         let spring = |set: &SwaySet, t: &mut Vec3, r: &mut Vec3| {
             let mut target_t = Vec3::ZERO;

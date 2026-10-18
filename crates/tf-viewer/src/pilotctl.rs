@@ -1050,12 +1050,16 @@ pub fn simulate_pilot(
     let Ok(mut pilot) = pilots.single_mut() else {
         return;
     };
-    // Stim speeds the Pilot up.
+    // Stim speeds the Pilot up (all max speeds), and slides lose less speed: the slide's
+    // slideVelocityDecay is raised to 1 - 0.75 * severity (client.dll 0x1801f8090).
     let mut params = settings.0.clone();
     let k = status.speed_scale();
     params.walk_speed *= k;
     params.sprint_speed *= k;
     params.crouch_speed *= k;
+    params.slide_velocity_decay = params
+        .slide_velocity_decay
+        .powf(1.0 - 0.75 * status.speed_boost());
     // Aiming down sights slows the Pilot (the gun's ads_move_speed_scale).
     if let Some(g) = loadouts.single().ok().and_then(|l| l.active()) {
         let a = 1.0 + (g.def.ads_move_scale - 1.0) * g.ads;
