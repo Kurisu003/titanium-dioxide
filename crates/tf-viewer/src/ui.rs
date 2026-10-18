@@ -788,6 +788,10 @@ pub enum Page {
     Bindings,
     /// Campaign mission select.
     Missions,
+    /// Multiplayer: host settings (port, PvP or PvE), join (address), and the lobby.
+    Host,
+    Join,
+    Lobby,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -826,6 +830,15 @@ pub enum Action {
     Back,
     MainMenu,
     Quit,
+    HostGame,
+    JoinGame,
+    NetPort,
+    NetMode,
+    NetAddress,
+    OpenLobby,
+    Connect,
+    StartMatch,
+    Leave,
 }
 
 impl Action {
@@ -854,7 +867,13 @@ impl Action {
                 | Action::PadInvert
                 | Action::AimAssist
                 | Action::PadLayout
+                | Action::NetPort
+                | Action::NetMode
         )
+    }
+    /// Rows typed into (digits, or an address).
+    fn is_text(self) -> bool {
+        matches!(self, Action::NetPort | Action::NetAddress)
     }
 }
 
@@ -896,6 +915,39 @@ pub struct SliderTrack(Action);
 
 #[derive(Component)]
 pub struct SliderFill(Action);
+
+/// The letter a key types (addresses are host names and IPs).
+fn key_letter(k: KeyCode) -> Option<char> {
+    Some(match k {
+        KeyCode::KeyA => 'a',
+        KeyCode::KeyB => 'b',
+        KeyCode::KeyC => 'c',
+        KeyCode::KeyD => 'd',
+        KeyCode::KeyE => 'e',
+        KeyCode::KeyF => 'f',
+        KeyCode::KeyG => 'g',
+        KeyCode::KeyH => 'h',
+        KeyCode::KeyI => 'i',
+        KeyCode::KeyJ => 'j',
+        KeyCode::KeyK => 'k',
+        KeyCode::KeyL => 'l',
+        KeyCode::KeyM => 'm',
+        KeyCode::KeyN => 'n',
+        KeyCode::KeyO => 'o',
+        KeyCode::KeyP => 'p',
+        KeyCode::KeyQ => 'q',
+        KeyCode::KeyR => 'r',
+        KeyCode::KeyS => 's',
+        KeyCode::KeyT => 't',
+        KeyCode::KeyU => 'u',
+        KeyCode::KeyV => 'v',
+        KeyCode::KeyW => 'w',
+        KeyCode::KeyX => 'x',
+        KeyCode::KeyY => 'y',
+        KeyCode::KeyZ => 'z',
+        _ => return None,
+    })
+}
 
 fn opt(title: &str, value: impl std::fmt::Display) -> String {
     format!("{title}      <  {value}  >")
@@ -941,6 +993,8 @@ pub struct Menu {
     restore: Option<usize>,
     /// The slider being dragged with the mouse.
     dragging: Option<Action>,
+    /// Hosting a multiplayer session (the lobby shows START MATCH).
+    host: bool,
 }
 
 impl Default for Menu {
@@ -955,9 +1009,14 @@ impl Default for Menu {
             missions: 0,
             restore: None,
             dragging: None,
+            host: false,
         }
     }
 }
+
+/// The lobby's player list and status line (updated live).
+#[derive(Component)]
+pub struct LobbyText;
 
 #[derive(Component)]
 pub struct MenuButton {
@@ -983,10 +1042,16 @@ pub struct MissionImage;
 #[derive(Resource, Default)]
 pub struct MissionImages(HashMap<String, Option<Handle<Image>>>);
 
-fn actions(page: Page, missions: usize) -> Vec<Action> {
+fn actions(page: Page, missions: usize, host: bool) -> Vec<Action> {
     use Action::*;
     match page {
-        Page::Main => vec![Play, Campaign, Map, Loadout, Difficulty, Settings, Quit],
+        Page::Main => vec![
+            Play, Campaign, HostGame, JoinGame, Map, Loadout, Difficulty, Settings, Quit,
+        ],
+        Page::Host => vec![NetPort, NetMode, OpenLobby, Back],
+        Page::Join => vec![NetAddress, NetPort, Connect, Back],
+        Page::Lobby if host => vec![StartMatch, Leave],
+        Page::Lobby => vec![Leave],
         Page::Pause => vec![
             Resume, Restart, Loadout, Difficulty, Settings, MainMenu, Quit,
         ],
@@ -1023,7 +1088,9 @@ pub fn sync_menu(
     settings: Res<crate::settings::Settings>,
     strings: Res<crate::pilotweapon::Strings>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    net: Res<crate::net::Net>,
 ) {
+    menu.host = net.is_host();
     let base = match game.state {
         GameState::Title => Page::Main,
         GameState::GameOver => Page::GameOver,
@@ -1056,6 +1123,7 @@ pub fn sync_menu(
             &game,
             &settings,
             menu.missions,
+            menu.host,
         ));
     }
 }
@@ -1067,6 +1135,7 @@ fn build_page(
     game: &Game,
     settings: &crate::settings::Settings,
     missions: usize,
+    host: bool,
 ) -> Entity {
     let root = commands
         .spawn((
@@ -1189,6 +1258,34 @@ fn build_page(
             let t = title(commands, "CAMPAIGN");
             commands.entity(column).add_child(t);
         }
+        Page::Host | Page::Join | Page::Lobby => {
+            let t = title(
+                commands,
+                match page {
+                    Page::Host => "HOST MULTIPLAYER",
+                    Page::Join => "JOIN MULTIPLAYER",
+                    _ => "LOBBY",
+                },
+            );
+            // Players and status, filled in by menu_visuals.
+            let list = text(
+                commands,
+                "",
+                &ui.bold_font,
+                2.2,
+                Color::srgba(1.0, 1.0, 1.0, 0.85),
+            );
+            commands.entity(list).insert((
+                Node {
+                    margin: UiRect::bottom(vh(3.0)),
+                    min_height: vh(if page == Page::Lobby { 18.0 } else { 3.0 }),
+                    ..default()
+                },
+                TextLayout::new_with_justify(Justify::Center),
+                LobbyText,
+            ));
+            commands.entity(column).add_children(&[t, list]);
+        }
         Page::GameOver => {
             let t = text(
                 commands,
@@ -1217,7 +1314,7 @@ fn build_page(
     }
     // Buttons (RuiSmallButton), pinned to the left edge of main.menu's 1328-wide PinFrame
     // that sits under the title. Long lists (settings, bindings) use smaller rows.
-    let list_actions = actions(page, missions);
+    let list_actions = actions(page, missions, host);
     let long = list_actions.len() > 10;
     let (row_h, font_vh, list_w) = if long {
         (3.6, 1.9, 62.0)
@@ -1502,6 +1599,7 @@ pub fn menu_input(
         gamepads,
         strings,
         tracks,
+        mut net,
     ): (
         MessageWriter<AppExit>,
         ResMut<crate::pilotability::PilotStatus>,
@@ -1511,6 +1609,7 @@ pub fn menu_input(
         Query<&Gamepad>,
         Res<crate::pilotweapon::Strings>,
         Query<(&SliderTrack, &bevy::ui::RelativeCursorPosition)>,
+        ResMut<crate::net::Net>,
     ),
 ) {
     // Rebinding: the next key or mouse button (after the click that started it) is the new
@@ -1545,9 +1644,13 @@ pub fn menu_input(
         keys.just_pressed(KeyCode::Escape) || pad_hit(GamepadButton::East) || nav == Some(5);
     // Esc closes an open sub-page first.
     if back_key && !menu.stack.is_empty() {
-        if let Some((_, focus)) = menu.stack.pop() {
+        if let Some((page, focus)) = menu.stack.pop() {
             // Restore the parent's focus once it is rebuilt.
             menu.restore = Some(focus);
+            // Backing out of the lobby closes the session.
+            if page == Page::Lobby {
+                net.leave();
+            }
         }
         return;
     }
@@ -1564,34 +1667,73 @@ pub fn menu_input(
         }
         return;
     }
-    let list = actions(menu.page, menu.missions);
+    let list = actions(menu.page, menu.missions, menu.host);
     if list.is_empty() {
         return;
     }
+    // Typing into the focused text row (port digits, address characters); while an address
+    // row has focus, letters go to it rather than to WASD navigation.
+    let typing_into = list.get(menu.focus).copied().filter(|a| a.is_text());
+    if let Some(row) = typing_into {
+        let address = row == Action::NetAddress;
+        for k in keys.get_just_pressed() {
+            let c = match k {
+                KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
+                KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
+                KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
+                KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
+                KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
+                KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
+                KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
+                KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
+                KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
+                KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
+                KeyCode::Period | KeyCode::NumpadDecimal if address => Some('.'),
+                KeyCode::Minus if address => Some('-'),
+                KeyCode::Semicolon if address && keys.pressed(KeyCode::ShiftLeft) => Some(':'),
+                KeyCode::Semicolon if address => Some(':'),
+                k if address => key_letter(*k),
+                _ => None,
+            };
+            let field = if address {
+                &mut net.address
+            } else {
+                &mut net.port
+            };
+            if let Some(c) = c {
+                if field.len() < if address { 48 } else { 5 } {
+                    field.push(c);
+                }
+            } else if *k == KeyCode::Backspace {
+                field.pop();
+            }
+        }
+    }
+    let typing_text = typing_into == Some(Action::NetAddress);
     let mut activate = None;
     let mut change = 0i32;
-    if keys.just_pressed(KeyCode::KeyW)
+    if (keys.just_pressed(KeyCode::KeyW) && !typing_text)
         || keys.just_pressed(KeyCode::ArrowUp)
         || pad_hit(GamepadButton::DPadUp)
         || nav == Some(0)
     {
         menu.focus = (menu.focus + list.len() - 1) % list.len();
     }
-    if keys.just_pressed(KeyCode::KeyS)
+    if (keys.just_pressed(KeyCode::KeyS) && !typing_text)
         || keys.just_pressed(KeyCode::ArrowDown)
         || pad_hit(GamepadButton::DPadDown)
         || nav == Some(1)
     {
         menu.focus = (menu.focus + 1) % list.len();
     }
-    if keys.just_pressed(KeyCode::KeyA)
+    if (keys.just_pressed(KeyCode::KeyA) && !typing_text)
         || keys.just_pressed(KeyCode::ArrowLeft)
         || pad_hit(GamepadButton::DPadLeft)
         || nav == Some(2)
     {
         change = -1;
     }
-    if keys.just_pressed(KeyCode::KeyD)
+    if (keys.just_pressed(KeyCode::KeyD) && !typing_text)
         || keys.just_pressed(KeyCode::ArrowRight)
         || pad_hit(GamepadButton::DPadRight)
         || nav == Some(3)
@@ -1667,6 +1809,19 @@ pub fn menu_input(
             Action::Map => {
                 let i = MAPS.iter().position(|m| *m == map.0).unwrap_or(0);
                 map.0 = MAPS[step(i, MAPS.len())].to_string();
+            }
+            Action::NetPort => {
+                let p = net
+                    .port
+                    .parse::<i32>()
+                    .unwrap_or(crate::net::DEFAULT_PORT as i32);
+                net.port = (p + change).clamp(1, 65535).to_string();
+            }
+            Action::NetMode => {
+                net.mode = match net.mode {
+                    crate::net::Mode::Pve => crate::net::Mode::Pvp,
+                    crate::net::Mode::Pvp => crate::net::Mode::Pve,
+                };
             }
             Action::Primary => loadout.cycle(crate::pilotweapon::Slot::Primary, change),
             Action::Sidearm => loadout.cycle(crate::pilotweapon::Slot::Sidearm, change),
@@ -1781,6 +1936,32 @@ pub fn menu_input(
             time.unpause();
         }
         Action::Campaign => open(&mut menu, Page::Missions),
+        Action::HostGame => open(&mut menu, Page::Host),
+        Action::JoinGame => open(&mut menu, Page::Join),
+        Action::OpenLobby => {
+            net.host();
+            if net.is_host() {
+                open(&mut menu, Page::Lobby);
+            }
+        }
+        Action::Connect => {
+            net.join();
+            if net.active() {
+                open(&mut menu, Page::Lobby);
+            }
+        }
+        Action::StartMatch => {
+            // Like PLAY; net::update tells the others once the run is on.
+            menu.paused = false;
+            menu.stack.clear();
+            time.unpause();
+            game.state = GameState::GameOver;
+            input.start = true;
+        }
+        Action::Leave => {
+            net.leave();
+            menu.stack.clear();
+        }
         Action::Loadout => open(&mut menu, Page::Loadout),
         Action::Settings => open(&mut menu, Page::Settings),
         Action::Bindings => open(&mut menu, Page::Bindings),
@@ -1798,6 +1979,7 @@ pub fn menu_input(
             }
         }
         Action::MainMenu => {
+            net.leave();
             menu.paused = false;
             menu.stack.clear();
             time.unpause();
@@ -1834,8 +2016,43 @@ pub fn menu_visuals(
     mut labels: Query<(&mut Text, &mut TextColor), With<MenuLabel>>,
     mut icons: Query<&mut ImageNode, With<MenuIcon>>,
     mut fills: Query<(&SliderFill, &mut Node)>,
+    (net, mut lobby): (
+        Res<crate::net::Net>,
+        Query<&mut Text, (With<LobbyText>, Without<MenuLabel>)>,
+    ),
 ) {
     use crate::pilotweapon::{Slot, ARSENAL};
+    // The lobby: who is here, then the status line.
+    for mut t in &mut lobby {
+        let mut lines: Vec<String> = Vec::new();
+        if menu.page == Page::Lobby {
+            for (i, p) in net.players.iter().enumerate() {
+                let tag = if p.id == 0 { "  (HOST)" } else { "" };
+                let you = if p.id == net.my_id { "  - YOU" } else { "" };
+                lines.push(format!("{}. {}{tag}{you}", i + 1, p.name));
+            }
+            if net.players.is_empty() {
+                lines.push("NOT CONNECTED".into());
+            }
+            lines.push(String::new());
+            lines.push(if net.is_host() {
+                format!(
+                    "{} - PORT {} - PLAYERS CAN JOIN AT ANY TIME",
+                    net.mode.name(),
+                    net.port
+                )
+            } else {
+                "WAITING FOR THE HOST TO START".into()
+            });
+        }
+        if !net.status.is_empty() {
+            lines.push(net.status.clone());
+        }
+        let s = lines.join("\n");
+        if t.0 != s {
+            t.0 = s;
+        }
+    }
     for (f, mut node) in &mut fills {
         let w = percent(
             slider_get(f.0, &settings, &volume)
@@ -1914,6 +2131,28 @@ pub fn menu_visuals(
                     Action::Back => "BACK".into(),
                     Action::MainMenu => "QUIT TO MAIN MENU".into(),
                     Action::Quit => "QUIT GAME".into(),
+                    Action::HostGame => "HOST MULTIPLAYER".into(),
+                    Action::JoinGame => "JOIN MULTIPLAYER".into(),
+                    Action::OpenLobby => "OPEN LOBBY".into(),
+                    Action::Connect => "CONNECT".into(),
+                    Action::StartMatch => "START MATCH".into(),
+                    Action::Leave => "LEAVE".into(),
+                    Action::NetPort => opt(
+                        "PORT",
+                        format!("{}{}", net.port, if focused { "_" } else { "" }),
+                    ),
+                    Action::NetMode => opt(
+                        "MODE",
+                        match net.mode {
+                            crate::net::Mode::Pve => "PVE - CO-OP WAVES",
+                            crate::net::Mode::Pvp => "PVP - PILOTS VS PILOTS",
+                        },
+                    ),
+                    Action::NetAddress => format!(
+                        "ADDRESS      {}{}",
+                        net.address,
+                        if focused { "_" } else { "" }
+                    ),
                     Action::Difficulty => opt("DIFFICULTY", difficulty.name()),
                     Action::Volume => opt(
                         "MASTER VOLUME",

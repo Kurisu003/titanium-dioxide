@@ -40,6 +40,7 @@ mod launcherscreen;
 mod minimap;
 mod music;
 mod nav;
+mod net;
 mod offhandvm;
 mod particles;
 mod pfx;
@@ -98,6 +99,10 @@ struct Args {
     volume: Option<f32>,
     /// "primary,sidearm,antititan" weapon ids (e.g. mp_weapon_hemlok).
     loadout: Option<String>,
+    /// Multiplayer from the command line: host on a port, or join an address (tests).
+    host: Option<u16>,
+    join: Option<String>,
+    pvp: bool,
     /// BT's loadout at start (index into weapons::TITAN_ARSENAL).
     titan: usize,
 }
@@ -194,6 +199,9 @@ fn parse_args() -> Args {
         volume: None,
         loadout: None,
         titan: 0,
+        host: None,
+        join: None,
+        pvp: false,
     };
     let mut single: Option<String> = None;
     let mut after = 4.0;
@@ -218,6 +226,9 @@ fn parse_args() -> Args {
             "--script" => a.script = it.next(),
             "--loadout" => a.loadout = it.next(),
             "--titan" => a.titan = it.next().and_then(|v| v.parse().ok()).unwrap_or(0),
+            "--host" => a.host = it.next().and_then(|v| v.parse().ok()),
+            "--join" => a.join = it.next(),
+            "--pvp" => a.pvp = true,
             "--volume" => a.volume = it.next().and_then(|v| v.parse().ok()),
             "--difficulty" => {
                 a.difficulty = it
@@ -444,6 +455,7 @@ fn main() {
     .init_resource::<pilotability::OrdnanceThrow>()
     .init_resource::<pilotability::Shields>()
     .init_resource::<game::Game>()
+    .init_resource::<net::Net>()
     .insert_resource(pilotctl::Control::Titan)
     .insert_resource(pilotctl::PilotSettings(
         tf_sim::pilot::PilotParams::default(),
@@ -562,8 +574,14 @@ fn main() {
                 )
                     .chain(),
                 (game::gate_input, inputrec::record_input).chain(),
-                targets::script_aim,
-                game::director,
+                (
+                    targets::script_aim,
+                    net::auto_session,
+                    net::update,
+                    net::spawn_remotes,
+                    game::director,
+                )
+                    .chain(),
                 (
                     zipline::zipline_grab,
                     pilotctl::control_transitions,
@@ -663,7 +681,7 @@ fn main() {
 }
 
 /// An enemy's sequences: locomotion, death, Titanfall, and the execution victim sequences.
-fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
+pub fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
     let c = targets::enemy_clips(&kit.model);
     let mut seq_list: Vec<&'static str> = vec![c[0], c[1], c[2], c[3]];
     if kit.infantry {
@@ -1052,6 +1070,7 @@ fn setup_world(
             .map(|i| targets::EnemyKit::class(i, &mut read))
             .collect();
         kits.push(targets::EnemyKit::infantry(&mut read));
+        kits.extend(net::remote_kits(&mut read));
         commands.insert_resource(executions::PilotMeleeDef::load(&mut read));
         commands.insert_resource(vmmotion::WeaponSprings::load(&mut read));
         let defs = pilotability::PilotAbilityDefs::load(&mut read);
@@ -1746,8 +1765,8 @@ fn setup(
     prefetch.dedup();
     actor::prefetch_models(&gd, &prefetch);
     // Then a squad of grunts (the last kit), each with an R-201.
-    let titan_classes = kits.iter().filter(|k| !k.infantry).count();
-    let grunt_class = kits.iter().position(|k| k.infantry);
+    let titan_classes = kits.iter().filter(|k| !k.infantry && !k.remote).count();
+    let grunt_class = kits.iter().position(|k| k.infantry && !k.remote);
     for i in 0..(titan_classes * 2 + grunt_class.map_or(0, |_| GRUNT_POOL)) as u64 {
         let class = if (i as usize) < titan_classes * 2 {
             i as usize % titan_classes
@@ -1799,13 +1818,10 @@ fn setup(
                         log::warn!("enemy gun: {e:#}");
                     }
                 }
-                commands.entity(e_anchor).insert(targets::Enemy::new(
-                    bt_pos,
-                    a.entity,
-                    0x9E37_79B9 * (i + 1),
-                    class,
-                    kit,
-                ));
+                let mut enemy =
+                    targets::Enemy::new(bt_pos, a.entity, 0x9E37_79B9 * (i + 1), class, kit);
+                enemy.pool = Some(i as usize);
+                commands.entity(e_anchor).insert(enemy);
             }
             Err(e) => log::warn!("enemy titan: {e:#}"),
         }

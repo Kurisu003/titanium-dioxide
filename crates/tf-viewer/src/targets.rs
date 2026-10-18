@@ -63,6 +63,8 @@ pub struct EnemyKit {
     pub melee_damage_heavy: (f32, f32),
     pub melee_damage: (f32, f32),
     pub melee_interval: f32,
+    /// A remote player's body (net.rs), never pooled into waves.
+    pub remote: bool,
 }
 
 /// The enemy Titan classes: AI settings, model, the primary from the class loadout, name.
@@ -404,6 +406,7 @@ impl EnemyKit {
             ),
             melee_damage: (f("meleedamagemin", 150.0), f("meleedamagemax", 300.0)),
             melee_interval: f("meleeinterval", 2.0),
+            remote: false,
         }
     }
 }
@@ -489,6 +492,12 @@ pub struct Enemy {
     replan: f32,
     /// Killed this frame (for scoring); cleared by the game director.
     pub just_died: bool,
+    /// A remote player's body (net.rs): driven by their snapshots, no AI.
+    pub remote: Option<u32>,
+    /// Index in the wave pool (None for remote players' bodies); the host sends these.
+    pub pool: Option<usize>,
+    /// A remote Pilot body's locomotion state (net::body_move).
+    pub body_move: u8,
 }
 
 impl Enemy {
@@ -551,6 +560,87 @@ impl Enemy {
             goal: None,
             replan: 0.0,
             just_died: false,
+            remote: None,
+            pool: None,
+            body_move: 0,
+        }
+    }
+    /// Driven from the network (a remote player's body, or a mirrored enemy on a client).
+    pub fn mirrored(&self, client: bool) -> bool {
+        self.remote.is_some() || (client && self.pool.is_some())
+    }
+    /// No Titanfall drop for a body that just appeared (remote players).
+    pub fn cancel_arrival(&mut self) {
+        self.drop = None;
+        self.stand = None;
+        self.landed = true;
+    }
+    /// Place a remote body from its owner's snapshot (game space, pitch positive down).
+    pub fn set_remote_pose(&mut self, pos: Vec3, vel: Vec3, yaw: f32, pitch: f32) {
+        self.pos = pos;
+        self.state.pos = SVec3::new(pos.x, pos.y, pos.z);
+        self.state.vel = SVec3::new(vel.x, vel.y, vel.z);
+        self.state.yaw = yaw;
+        self.state.pitch = pitch;
+        let dir = Vec3::new(
+            yaw.cos() * pitch.cos(),
+            yaw.sin() * pitch.cos(),
+            -pitch.sin(),
+        );
+        self.threat = pos - Vec3::Z * 60.0 + dir * 1000.0;
+    }
+    /// This pooled enemy, for the clients.
+    pub fn net_state(&self, idx: u16) -> crate::net::EnemySnap {
+        crate::net::EnemySnap {
+            idx,
+            active: self.active,
+            pos: self.pos,
+            vel: Vec3::from(self.state.vel.to_array()),
+            yaw: self.state.yaw,
+            health: self.v.health,
+            shield: self.v.shield,
+            doomed: self.v.doomed.is_some(),
+            dead_for: self.dead_for,
+            drop: self.drop.unwrap_or(f32::NAN),
+            stand: self.stand.unwrap_or(f32::NAN),
+            threat: self.threat,
+            battery: self.battery,
+        }
+    }
+    /// Take the host's state of this pooled enemy (a client).
+    pub fn apply_net(&mut self, s: &crate::net::EnemySnap, kit: &EnemyKit) {
+        if s.active && !self.active {
+            self.activate(s.pos, s.yaw, kit);
+            self.drop = None;
+        }
+        if !s.active {
+            self.active = false;
+            return;
+        }
+        self.pos = s.pos;
+        self.state.pos = SVec3::new(s.pos.x, s.pos.y, s.pos.z);
+        self.state.vel = SVec3::new(s.vel.x, s.vel.y, s.vel.z);
+        self.state.yaw = s.yaw;
+        self.threat = s.threat;
+        self.battery = s.battery;
+        let was_alive = self.alive();
+        self.v.health = s.health;
+        self.v.shield = s.shield;
+        self.v.doomed = if s.doomed {
+            Some(self.v.doomed.unwrap_or(1.0))
+        } else {
+            None
+        };
+        if was_alive && !self.alive() {
+            self.just_died = true;
+            self.dead_for = 0.0;
+        } else if self.alive() {
+            self.dead_for = 0.0;
+        }
+        self.drop = (!s.drop.is_nan()).then_some(s.drop);
+        self.stand = (!s.stand.is_nan()).then_some(s.stand);
+        if self.drop.is_none() && self.stand.is_none() {
+            self.landed = true;
         }
     }
     pub fn alive(&self) -> bool {
@@ -869,13 +959,25 @@ pub fn update_enemies(
     mut actors: Query<&mut Actor>,
     ui: Res<crate::ui::UiAssets>,
     mut damage_from: ResMut<crate::hud::DamageFrom>,
-    status: Res<crate::pilotability::PilotStatus>,
-    rodeo: Res<crate::rodeo::Rodeo>,
+    (status, rodeo, mut net): (
+        Res<crate::pilotability::PilotStatus>,
+        Res<crate::rodeo::Rodeo>,
+        ResMut<crate::net::Net>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.1);
     let Ok((titan, mut bt_health, mut core)) = player.single_mut() else {
         return;
     };
+    // Multiplayer: a client mirrors the host's enemies; remote players' bodies are mirrored
+    // everywhere; the host's AI also fights the other players.
+    let client = net.is_client();
+    let remotes: Vec<(u32, Vec3, f32, f32, bool)> = if net.is_host() && !net.pvp() {
+        net.targets()
+    } else {
+        Vec::new()
+    };
+    let mut net_dmg: Vec<(u32, bool, f32, Vec3)> = Vec::new();
     let Ok((pilot, mut pilot_health)) = pilots.single_mut() else {
         return;
     };
@@ -927,6 +1029,7 @@ pub fn update_enemies(
         proficiency,
         cone0,
         focus_time,
+        remotes: &remotes,
     };
     let mut pending = Vec::new();
     macro_rules! flush {
@@ -940,6 +1043,7 @@ pub fn update_enemies(
                 &mut pilot_health,
                 &mut bt_health,
                 &mut core,
+                &mut net_dmg,
             )
         };
     }
@@ -972,7 +1076,7 @@ pub fn update_enemies(
         }
         vis.set_if_neq(Visibility::Inherited);
         // BT crushes grunts he walks into (on his own too).
-        if e.infantry && e.alive() {
+        if e.infantry && e.alive() && !e.mirrored(client) {
             let tp = Vec3::from(titan.state.pos.to_array());
             let moving = Vec2::new(titan.state.vel.x, titan.state.vel.y).length() > 40.0;
             if moving
@@ -999,6 +1103,10 @@ pub fn update_enemies(
         if e.held {
             continue;
         }
+        if e.mirrored(client) {
+            mirror_enemy(&mut commands, &mut actors, &mut e, &mut tf, &mut vis, dt);
+            continue;
+        }
         // TF_STATIC_TITAN (game.rs): the test Titan never goes down; it refills below 30%.
         let static_titan = !e.infantry && std::env::var_os("TF_STATIC_TITAN").is_some();
         if static_titan && (e.v.doomed.is_some() || e.v.health < e.v.max_health * 0.3) {
@@ -1016,6 +1124,56 @@ pub fn update_enemies(
         pending.push((id, e, tf, static_titan));
     }
     flush!();
+    for (pid, titan, dmg, from) in net_dmg {
+        net.hit_player(pid, titan, dmg, from);
+    }
+}
+
+/// A body driven from the network: follow its last snapshot (dead reckoning on its velocity
+/// between them) and animate it; a remote Pilot body uses the third-person Pilot clips.
+fn mirror_enemy(
+    commands: &mut Commands,
+    actors: &mut Query<&mut Actor>,
+    e: &mut Enemy,
+    tf: &mut Transform,
+    vis: &mut Visibility,
+    dt: f32,
+) {
+    if e.drop.is_some() || e.stand.is_some() {
+        enemy_titanfall(commands, actors, e, tf, vis, dt);
+        return;
+    }
+    // Carry on along the last velocity until the next snapshot (nothing is walked through:
+    // the owner's own collision already shaped that velocity).
+    let vel = Vec3::from(e.state.vel.to_array());
+    e.pos += vel * dt;
+    e.state.pos = SVec3::new(e.pos.x, e.pos.y, e.pos.z);
+    tf.translation = e.pos;
+    tf.rotation = Quat::from_rotation_z(e.state.yaw);
+    if e.remote.is_some() && e.infantry {
+        let Ok(mut actor) = actors.get_mut(e.actor) else {
+            return;
+        };
+        actor.autoplay = false;
+        actor.aim = None;
+        let v = Vec2::new(vel.x, vel.y);
+        let mut cycle = e.move_cycle;
+        let layers = crate::pilotbody::body_layers(
+            &actor,
+            crate::net::body_move(e.body_move),
+            v,
+            e.state.yaw,
+            dt,
+            &mut cycle,
+        );
+        e.move_cycle = cycle;
+        if !layers.is_empty() {
+            actor.layers = layers;
+        }
+        return;
+    }
+    let aim = e.threat;
+    animate_enemy(actors, e, dt, Some(aim));
 }
 
 /// What an enemy's move and attack read besides the enemy (`update_enemies`).
@@ -1037,6 +1195,8 @@ struct MoveCx<'a> {
     proficiency: crate::vitals::Proficiency,
     cone0: f32,
     focus_time: f32,
+    /// Other players' bodies (the host, PvE): (player, feet, radius, height, is_pilot).
+    remotes: &'a [(u32, Vec3, f32, f32, bool)],
 }
 
 /// Move the enemies in `pending` (each on its own, in parallel: steering, routes and the
@@ -1051,6 +1211,7 @@ fn flush_moves(
     pilot_health: &mut Mut<PilotHealth>,
     bt_health: &mut Mut<TitanHealth>,
     core: &mut Option<Mut<TitanCore>>,
+    net_dmg: &mut Vec<(u32, bool, f32, Vec3)>,
 ) {
     if pending.is_empty() {
         return;
@@ -1070,17 +1231,29 @@ fn flush_moves(
         proficiency,
         cone0,
         focus_time,
+        remotes,
     } = *cx;
     let decide = |id: Entity, e: &mut Enemy, static_titan: bool| {
         let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
         let params = &kit.params;
         let w = &kit.weapon;
-        let base = match (target, bt_target) {
+        let mut base = match (target, bt_target) {
             (Some(p), Some(b)) if (e.pos - b.0).length() < (e.pos - p.0).length() => Some(b),
             _ => target,
         };
+        // The nearest of the other players' bodies instead (multiplayer host).
+        let mut remote_id = None;
+        for &(pid, p, r, h, is_pilot) in remotes {
+            if base.is_none_or(|b| (e.pos - p).length() < (e.pos - b.0).length()) {
+                base = Some((p, r, h, is_pilot));
+                remote_id = Some(pid);
+            }
+        }
         // The Holo Pilot draws fire.
         let (mut target, at_decoy) = crate::pilotability::enemy_target(base, &status, e.pos);
+        if at_decoy {
+            remote_id = None;
+        }
         // A Titan can't shoot or punch the Pilot on its own back (it would need its smoke).
         if rodeo.ride.as_ref().is_some_and(|r| r.target == id) {
             target = None;
@@ -1296,9 +1469,9 @@ fn flush_moves(
             step_input.dash = input.dash && i == 0;
             titan::step(&mut e.state, &step_input, params, &world.0, dt / n as f32);
         }
-        (target, at_decoy)
+        (target, at_decoy, remote_id)
     };
-    let moves: Vec<(Option<(Vec3, f32, f32, bool)>, bool)> = if pending.len() > 1 {
+    let moves: Vec<(Option<(Vec3, f32, f32, bool)>, bool, Option<u32>)> = if pending.len() > 1 {
         bevy::tasks::ComputeTaskPool::get().scope(|s| {
             for (id, e, _, static_titan) in pending.iter_mut() {
                 let decide = &decide;
@@ -1311,7 +1484,7 @@ fn flush_moves(
             .map(|(id, e, _, static_titan)| decide(*id, &mut **e, *static_titan))
             .collect()
     };
-    for ((_, mut e, mut tf, _), (target, at_decoy)) in pending.drain(..).zip(moves) {
+    for ((_, mut e, mut tf, _), (target, at_decoy, remote_id)) in pending.drain(..).zip(moves) {
         let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
         let w = &kit.weapon;
         e.pos = Vec3::from(e.state.pos.to_array());
@@ -1339,7 +1512,9 @@ fn flush_moves(
                 kit.melee_damage_heavy
             };
             let dmg = (lo + (hi - lo) * e.rand()) * difficulty.damage_to_player();
-            if is_pilot {
+            if let Some(pid) = remote_id {
+                net_dmg.push((pid, !is_pilot, dmg, e.pos + Vec3::Z * 150.0));
+            } else if is_pilot {
                 pilot_health.damage_capped(dmg, difficulty.max_pilot_damage_per_hit());
             } else {
                 let hit = bt_health.damage(dmg, false);
@@ -1422,7 +1597,10 @@ fn flush_moves(
                                 > 60f32.to_radians().cos();
                         if close && !(is_pilot && status.phased()) {
                             damage_from.push(e.pos + Vec3::Z * 150.0);
-                            if is_pilot {
+                            if let Some(pid) = remote_id {
+                                let dmg = if is_pilot { HEAT_PILOT } else { HEAT_TITAN } * scale;
+                                net_dmg.push((pid, !is_pilot, dmg, e.pos + Vec3::Z * 150.0));
+                            } else if is_pilot {
                                 pilot_health.damage_capped(
                                     HEAT_PILOT * scale,
                                     difficulty.max_pilot_damage_per_hit(),
@@ -1769,6 +1947,12 @@ fn spawn_bolt_dmg(
         k if k == ABILITY_BOLT + 5 => (Vec3::new(8.0, 6.0, 3.0), 0.6, false),
         _ => (Vec3::new(5.0, 2.8, 1.0), 0.25, false),
     };
+    // The host tells the clients about its enemies' rounds (drawn there as ghosts).
+    if crate::net::HOSTING.load(std::sync::atomic::Ordering::Relaxed) && dmg != Some((0.0, 0.0)) {
+        if let Ok(mut shots) = crate::net::SHOTS.lock() {
+            shots.push((pos, vel, gravity, kit));
+        }
+    }
     commands.spawn((
         Transform::from_translation(to_bevy(pos)),
         crate::particles::Glow::new(color, size, smoke),
@@ -1810,10 +1994,31 @@ pub fn update_bolts(
     mut damage_from: ResMut<crate::hud::DamageFrom>,
     status: Res<crate::pilotability::PilotStatus>,
     mode: Res<crate::player::CameraMode>,
-    mut walls: ResMut<crate::titankit::BoltShields>,
-    mut shields: ResMut<crate::pilotability::Shields>,
+    (mut walls, mut shields, mut net): (
+        ResMut<crate::titankit::BoltShields>,
+        ResMut<crate::pilotability::Shields>,
+        ResMut<crate::net::Net>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.1);
+    // Ghost rounds the host's enemies fired (a client): they fly and hit the world, nothing else.
+    for (pos, vel, gravity, kit) in std::mem::take(&mut net.shots) {
+        spawn_bolt_dmg(
+            &mut commands,
+            &_fx,
+            pos,
+            vel,
+            gravity,
+            kit,
+            Some((0.0, 0.0)),
+        );
+    }
+    // The other players' bodies (the host, PvE), hit like the local player's.
+    let remotes: Vec<(u32, Vec3, f32, f32, bool)> = if net.is_host() && !net.pvp() {
+        net.targets()
+    } else {
+        Vec::new()
+    };
     let Ok((bt_entity, bt_gt, titan, mut bt_health, mut vortex, mut core)) = player.single_mut()
     else {
         return;
@@ -1855,7 +2060,9 @@ pub fn update_bolts(
             Vortex,
             Player,
             Shield(usize),
+            Remote(usize),
         }
+        let ghost = b.dmg == Some((0.0, 0.0));
         let mut struck = Struck::Nothing;
         if let Some(h) = world.0.raycast(
             SVec3::from(b.pos.to_array()),
@@ -1882,11 +2089,21 @@ pub fn update_bolts(
                 }
             }
         }
-        if let Some((tpos, tr, th, _)) = target.filter(|t| !(t.3 && status.phased())) {
+        if let Some((tpos, tr, th, _)) = target.filter(|t| !ghost && !(t.3 && status.phased())) {
             if let Some(t) = crate::weapons::ray_cylinder(b.pos, dir, tpos, tr + BOLT_HITSIZE, th) {
                 if t < t_end {
                     t_end = t;
                     struck = Struck::Player;
+                }
+            }
+        }
+        if !ghost {
+            for (i, &(_, p, r, h, _)) in remotes.iter().enumerate() {
+                if let Some(t) = crate::weapons::ray_cylinder(b.pos, dir, p, r + BOLT_HITSIZE, h) {
+                    if t < t_end {
+                        t_end = t;
+                        struck = Struck::Remote(i);
+                    }
                 }
             }
         }
@@ -2001,6 +2218,31 @@ pub fn update_bolts(
             continue;
         }
         let scale = difficulty.damage_to_player();
+        if let Struck::Remote(i) = struck {
+            let (pid, _, _, _, is_pilot) = remotes[i];
+            let dmg = if is_pilot {
+                falloff(b.travelled, w.npc_damage_near_pilot, w.npc_damage_far_pilot)
+            } else {
+                falloff(b.travelled, w.npc_damage_near, w.npc_damage_far)
+            } * scale;
+            net.hit_player(pid, !is_pilot, dmg, at - b.vel.normalize_or_zero() * 3000.0);
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Hit {
+                    at: to_bevy(at),
+                    normal: -dir_b(b.vel),
+                    table: w.impact_table,
+                    surface: if is_pilot {
+                        crate::particles::Surface::Flesh
+                    } else {
+                        crate::particles::Surface::Titan
+                    },
+                    victim: true,
+                    scale: 1.6,
+                },
+            );
+            continue;
+        }
         if matches!(struck, Struck::Player) {
             // Point back along the bolt's path for the HUD's damage direction.
             damage_from.push(at - b.vel.normalize_or_zero() * 3000.0);
@@ -2474,10 +2716,12 @@ pub fn update_health_bars(
     mut bars: Query<(&HealthBar, &mut Node, &mut Visibility)>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), Without<HealthBar>>,
     mut labels: Query<(&mut Text, &mut TextColor)>,
+    net: Res<crate::net::Net>,
 ) {
     let Ok((camera, cam_tf)) = cameras.single() else {
         return;
     };
+    let pvp = net.pvp();
     for (bar, mut node, mut vis) in &mut bars {
         let Ok(e) = enemies.get(bar.enemy) else {
             continue;
@@ -2499,12 +2743,19 @@ pub fn update_health_bars(
                 vis.set_if_neq(Visibility::Hidden);
             }
         }
+        // Another player's Titan carries their name; a team mate's (PvE) is blue.
+        let player = e
+            .remote
+            .and_then(|pid| net.players.iter().find(|p| p.id == pid));
+        let mate = player.is_some() && !pvp;
+        let friendly = Color::srgb(0.45, 0.8, 1.0);
         if let Ok((mut t, mut c)) = labels.get_mut(bar.label) {
-            let name = kits
-                .0
-                .get(e.kit)
-                .map(|k| k.name.as_str())
-                .unwrap_or("TITAN");
+            let name = player.map(|p| p.name.as_str()).unwrap_or_else(|| {
+                kits.0
+                    .get(e.kit)
+                    .map(|k| k.name.as_str())
+                    .unwrap_or("TITAN")
+            });
             let s = if locks > 0 {
                 format!("{name}   LOCK x{locks}")
             } else if e.doomed() {
@@ -2517,6 +2768,8 @@ pub fn update_health_bars(
             }
             c.0 = if locks > 0 {
                 Color::srgb(1.0, 0.8, 0.25)
+            } else if mate {
+                friendly
             } else {
                 Color::srgb(1.0, 0.36, 0.26)
             };
@@ -2534,6 +2787,8 @@ pub fn update_health_bars(
                 Color::WHITE
             } else if e.doomed() {
                 Color::srgb(0.75, 0.1, 0.05)
+            } else if mate {
+                friendly
             } else {
                 Color::srgb(1.0, 0.36, 0.26)
             };

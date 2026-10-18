@@ -1870,7 +1870,10 @@ pub fn update_hud(
             percent(left.clamp(0.0, 1.0) * 100.0),
         );
     }
-    let alive = enemies.iter().filter(|e| e.alive() && !e.infantry).count();
+    let alive = enemies
+        .iter()
+        .filter(|e| e.alive() && !e.infantry && e.remote.is_none())
+        .count();
     // The splash: on a state change into Playing or Intermission (from a wave), restart it.
     if splash.0 != Some(game.state) {
         let from_wave = splash.0 == Some(GameState::Playing);

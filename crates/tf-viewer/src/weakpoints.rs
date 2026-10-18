@@ -25,6 +25,7 @@ pub fn update_weakpoints(
     enemies: Query<(Entity, &Enemy)>,
     children: Query<&Children>,
     mut marks: Query<&mut Visibility, With<Weakpoint>>,
+    net: Res<crate::net::Net>,
 ) {
     let Ok((pilot, loadout)) = pilots.single() else {
         return;
@@ -58,6 +59,8 @@ pub fn update_weakpoints(
                 && e.active
                 && e.alive()
                 && !e.infantry
+                // Team mates' Titans (PvE) show no weak points.
+                && !(e.remote.is_some() && !net.pvp())
                 && e.v.shield <= 0.0
                 && ridden != Some(id)
                 && {

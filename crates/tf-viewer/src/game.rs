@@ -113,8 +113,14 @@ pub fn director(
         ResMut<crate::feed::Feed>,
         Query<&crate::pilotweapon::PilotLoadout>,
     ),
+    mut net: ResMut<crate::net::Net>,
 ) {
     let dt = time.delta_secs();
+    // Multiplayer: a client runs no waves (the host's enemies are mirrored), a PvP host none
+    // either; a dead player respawns instead of ending the game.
+    let no_waves = no_enemies.0 || net.no_waves();
+    let online = net.active();
+    let spawn_slot = net.my_id;
     // The gun in hand, for the kill feed rows.
     let weapon_name: String = match *control {
         Control::Pilot => loadouts
@@ -130,14 +136,38 @@ pub fn director(
             .unwrap_or_default(),
     };
     let kits = Some(&*kits);
-    let start = std::mem::take(&mut input.start);
+    let mut start = std::mem::take(&mut input.start);
+    // Online, a dead Pilot comes back at the spawn after a few seconds.
+    let mut respawn = false;
+    if online && game.in_play() {
+        if pilots.iter().any(|(_, h)| h.dead()) {
+            let t = net.respawn.get_or_insert(crate::net::RESPAWN_SECS);
+            *t -= dt;
+            if *t <= 0.0 {
+                net.respawn = None;
+                respawn = true;
+                log::info!("respawning");
+            }
+        } else {
+            net.respawn = None;
+        }
+    }
+    if respawn {
+        start = true;
+    }
     match game.state {
-        GameState::Title | GameState::GameOver => {
-            if start {
-                // Fresh run: BT at the spawn, full health and kit, no enemies.
+        GameState::Title | GameState::GameOver | GameState::Playing | GameState::Intermission
+            if start =>
+        {
+            let fresh = !game.in_play();
+            if fresh || respawn {
+                // Fresh run (or a respawn): BT at the spawn, full health and kit; a fresh run
+                // also clears the enemies. Online, each player has their own spawn slot.
+                let spawn = arena.player_spawn
+                    + crate::net::Net::spawn_offset(spawn_slot, arena.player_yaw);
                 for (mut t, mut h, mut tf, mut w, mut o, mut c, mut v, mut m) in &mut titans {
                     t.state = tf_sim::titan::TitanState::new(
-                        SVec3::from(arena.player_spawn.to_array()),
+                        SVec3::from(spawn.to_array()),
                         arena.player_yaw,
                     );
                     t.override_anim = None;
@@ -155,13 +185,18 @@ pub fn director(
                 if let Some(d) = ability_defs.as_deref() {
                     pilot_status.refill(d);
                 }
-                for mut e in &mut enemies {
-                    e.active = false;
-                    e.v.health = 0.0;
-                }
                 input.yaw = arena.player_yaw;
                 input.pitch = 0.0;
                 *control = Control::Titan;
+                if !fresh {
+                    return;
+                }
+                for mut e in &mut enemies {
+                    if e.pool.is_some() {
+                        e.active = false;
+                        e.v.health = 0.0;
+                    }
+                }
                 // TF_WAVE=N starts at wave N (debugging bigger fights).
                 game.wave = std::env::var("TF_WAVE")
                     .ok()
@@ -174,9 +209,10 @@ pub fn director(
                 feed.popups.clear();
                 game.timer = 2.0;
                 game.state = GameState::Intermission;
-                log::info!("new game");
+                log::info!("new game at {spawn:.0?} (slot {spawn_slot})");
             }
         }
+        GameState::Title | GameState::GameOver => {}
         GameState::Playing | GameState::Intermission => {
             if std::mem::take(&mut input.kill_nearest) {
                 let from = titans
@@ -221,22 +257,27 @@ pub fn director(
                     });
                 }
             }
-            if pilots.iter().any(|(_, h)| h.dead()) {
+            if pilots.iter().any(|(_, h)| h.dead()) && !online {
                 game.best_wave = game.best_wave.max(game.wave);
                 game.state = GameState::GameOver;
                 log::info!("game over at wave {} with {} kills", game.wave, game.kills);
                 return;
             }
+            if net.is_client() {
+                // The host runs the waves; its snapshots carry the wave and kill counts.
+                return;
+            }
             if game.state == GameState::Playing {
-                if !enemies.iter().any(|e| e.active) {
+                if !enemies.iter().any(|e| e.active && e.pool.is_some()) {
                     game.state = GameState::Intermission;
                     game.timer = INTERMISSION_SECS;
                     log::info!("wave {} cleared", game.wave);
                 }
             } else {
                 game.timer -= dt;
-                // An empty map for testing movement, weapons and animations (`NoEnemies`).
-                if no_enemies.0 {
+                // An empty map for testing movement, weapons and animations (`NoEnemies`), or
+                // a PvP match.
+                if no_waves {
                     game.timer = game.timer.max(1.0);
                 }
                 if game.timer <= 0.0 {
@@ -319,8 +360,16 @@ fn spawn_wave(
         .sort_by_key(|p| (!sees(p) as i64) * 100_000 + ((p.distance(player) - range).abs()) as i64);
     // Mix the classes: walk the pool starting at a class that rotates with the wave, so each
     // wave brings a different line-up and no class repeats until all have appeared.
-    let (titans, grunts): (Vec<_>, Vec<_>) = enemies.iter_mut().partition(|e| !e.infantry);
-    let classes = kits.0.iter().filter(|k| !k.infantry).count().max(1);
+    let (titans, grunts): (Vec<_>, Vec<_>) = enemies
+        .iter_mut()
+        .filter(|e| e.pool.is_some())
+        .partition(|e| !e.infantry);
+    let classes = kits
+        .0
+        .iter()
+        .filter(|k| !k.infantry && !k.remote)
+        .count()
+        .max(1);
     let first = (game.wave as usize).saturating_sub(1) % classes;
     let mut seen = vec![0usize; classes];
     let mut keyed: Vec<_> = titans

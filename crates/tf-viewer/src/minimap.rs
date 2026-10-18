@@ -152,6 +152,7 @@ pub fn update_minimap(
     camera: Query<&GlobalTransform, With<MainCamera>>,
     titans: Query<(&PlayerTitan, &crate::combat::TitanHealth)>,
     enemies: Query<&Enemy>,
+    net: Res<crate::net::Net>,
     mut nodes: Query<
         (&MaterialNode<MinimapMaterial>, &mut Visibility),
         (With<MinimapNode>, Without<Icon>, Without<MinimapRim>),
@@ -374,7 +375,7 @@ pub fn update_minimap(
     let titan = titans.single().ok();
     let enemies: Vec<&Enemy> = enemies
         .iter()
-        .filter(|e| e.alive() && !e.infantry)
+        .filter(|e| e.alive() && !e.infantry && !(e.remote.is_some() && !net.pvp()))
         .collect();
     for (icon, mut node, mut vis, mut tf, grad) in &mut icons {
         // Enemies beyond the edge show as the white triangle on a red rim arc instead.
