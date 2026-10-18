@@ -63,6 +63,7 @@ mod titankit;
 mod transparentpass;
 mod uber;
 mod ui;
+mod update;
 mod vitals;
 mod vmcam;
 mod vmmotion;
@@ -460,6 +461,7 @@ fn main() {
     .init_resource::<pilotability::Shields>()
     .init_resource::<game::Game>()
     .init_resource::<net::Net>()
+    .init_resource::<update::Updater>()
     .insert_resource(pilotctl::Control::Titan)
     .insert_resource(pilotctl::PilotSettings(
         tf_sim::pilot::PilotParams::default(),
@@ -584,6 +586,7 @@ fn main() {
                     net::update,
                     net::spawn_remotes,
                     game::director,
+                    update::update,
                 )
                     .chain(),
                 (

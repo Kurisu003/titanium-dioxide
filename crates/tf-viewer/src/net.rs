@@ -160,6 +160,8 @@ pub enum Msg {
         mode: Mode,
         started: bool,
         players: Vec<(u32, String)>,
+        /// The host's map: a client on another one restarts on it and joins again.
+        map: String,
     },
     Joined {
         id: u32,
@@ -409,8 +411,10 @@ impl Msg {
                 mode,
                 started,
                 players,
+                map,
             } => {
                 w.u8(2);
+                w.s(map);
                 w.u32(*id);
                 w.u8(mode_u8(*mode));
                 w.b(*started);
@@ -506,6 +510,7 @@ impl Msg {
         Some(match r.u8()? {
             1 => Msg::Hello { name: r.s()? },
             2 => {
+                let map = r.s()?;
                 let id = r.u32()?;
                 let mode = u8_mode(r.u8()?);
                 let started = r.b()?;
@@ -519,6 +524,7 @@ impl Msg {
                     mode,
                     started,
                     players,
+                    map,
                 }
             }
             3 => Msg::Joined {
@@ -731,6 +737,10 @@ pub struct Net {
     join_started: bool,
     /// Our Titan is playing the rodeo panel clip for a remote rider.
     panel_open: bool,
+    /// The map this game loaded (`--map`).
+    pub map: String,
+    /// The host plays another map: restart on it and join this address again (ui.rs).
+    pub relaunch: Option<(String, String)>,
 }
 
 /// Enemy shots the host fired this frame (targets.rs pushes, `update` sends).
@@ -828,6 +838,8 @@ impl Default for Net {
             was_in_play: false,
             join_started: false,
             panel_open: false,
+            map: String::new(),
+            relaunch: None,
         }
     }
 }
@@ -835,6 +847,14 @@ impl Default for Net {
 impl Net {
     pub fn active(&self) -> bool {
         !matches!(self.role, Role::Off)
+    }
+    /// The host we joined (a client).
+    pub fn host_address(&self) -> Option<String> {
+        match &self.role {
+            Role::Client(c) => Some(c.addr.clone()),
+            Role::Connecting(_) => Some(self.address.clone()),
+            _ => None,
+        }
     }
     pub fn is_host(&self) -> bool {
         matches!(self.role, Role::Host(_))
@@ -1010,6 +1030,9 @@ pub fn auto_session(
     mut menu: ResMut<crate::ui::Menu>,
     game: Res<Game>,
 ) {
+    if net.map.is_empty() {
+        net.map = args.map.clone();
+    }
     if let Some(port) = args.host {
         if tries.0 == 0 {
             tries.0 = 1;
@@ -1195,6 +1218,7 @@ pub fn update(
                     mode: net.mode,
                     started: game.in_play(),
                     players,
+                    map: net.map.clone(),
                 };
                 net.send_to(from, &welcome);
                 if let Role::Host(h) = &mut net.role {
@@ -1222,7 +1246,19 @@ pub fn update(
                 mode,
                 started,
                 players,
+                map,
             } => {
+                // Everyone plays the host's map: on another one, restart on it and join again.
+                if !map.is_empty() && map != net.map {
+                    let addr = match &net.role {
+                        Role::Client(c) => c.addr.clone(),
+                        _ => net.address.clone(),
+                    };
+                    log::info!("net: the host plays {map}, restarting on it to join {addr}");
+                    net.status = format!("LOADING {}...", map.to_uppercase());
+                    net.relaunch = Some((map, addr));
+                    continue;
+                }
                 net.my_id = id;
                 net.mode = mode;
                 net.players = players

@@ -604,6 +604,7 @@ fn relaunch(
     volume: f32,
     loadout: &crate::pilotweapon::LoadoutChoice,
     titan: usize,
+    join: Option<(&str, &str)>,
 ) {
     use crate::pilotweapon::{Slot, ARSENAL};
     let Ok(exe) = std::env::current_exe() else {
@@ -612,7 +613,12 @@ fn relaunch(
     let ids = [Slot::Primary, Slot::Sidearm, Slot::AntiTitan]
         .map(|s| ARSENAL[loadout.get(s)].id)
         .join(",");
-    let r = std::process::Command::new(exe)
+    let mut cmd = std::process::Command::new(exe);
+    // Joining a host on its map: connect again at once, under the same name.
+    if let Some((addr, name)) = join {
+        cmd.args(["--join", addr]).env("TF_NAME", name);
+    }
+    let r = cmd
         .args([
             "--game",
             &args.game,
@@ -1621,6 +1627,20 @@ pub fn menu_input(
         ResMut<crate::net::Net>,
     ),
 ) {
+    // The host plays another map (net.rs): restart on it, joining the same host again.
+    if let Some((m, addr)) = net.relaunch.take() {
+        relaunch(
+            &args,
+            &m,
+            *difficulty,
+            volume.volume.to_linear(),
+            &loadout,
+            titan_kit.0,
+            Some((&addr, &net.name)),
+        );
+        exit.write(AppExit::Success);
+        return;
+    }
     // Rebinding: the next key or mouse button (after the click that started it) is the new
     // binding; Esc cancels.
     if let Some((cmd, armed)) = menu.capture {
@@ -1916,6 +1936,7 @@ pub fn menu_input(
                 volume.volume.to_linear(),
                 &loadout,
                 titan_kit.0,
+                None,
             );
             exit.write(AppExit::Success);
         }
@@ -1928,6 +1949,7 @@ pub fn menu_input(
                     volume.volume.to_linear(),
                     &loadout,
                     titan_kit.0,
+                    None,
                 );
                 exit.write(AppExit::Success);
             }
