@@ -254,3 +254,38 @@ pub fn replay_input(
     input.pilot_slot = if fresh { unopt(f.slot) } else { None };
     input.titan_kit = if fresh { unopt(f.kit) } else { None };
 }
+
+/// TF_REPLAY_SKIP=secs: fast-forward a replay to that time by not rendering until then (every
+/// camera off). With TF_FIXED_DT=60 and TF_NO_VSYNC=1 the sim steps exactly as at 60 fps but
+/// as fast as the frames go, so a moment late in a long recording is reached in a fraction of
+/// its length; `--shots` times stay on the same clock.
+pub fn replay_skip(
+    loaded: Option<Res<crate::ui::LoadedAt>>,
+    mut cams: Query<&mut Camera>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    static SKIP: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    let Some(skip) = *SKIP.get_or_init(|| {
+        std::env::var("TF_REPLAY_SKIP")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|_| std::env::var_os("TF_REPLAY").is_some())
+    }) else {
+        *done = true;
+        return;
+    };
+    let Some(l) = loaded else { return };
+    let skipping = l.secs() < skip;
+    for mut c in &mut cams {
+        if c.is_active == skipping {
+            c.is_active = !skipping;
+        }
+    }
+    if !skipping {
+        log::info!("replay: skipped ahead to {skip} s");
+        *done = true;
+    }
+}

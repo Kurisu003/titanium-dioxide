@@ -242,14 +242,18 @@ pub struct Rodeo {
     pub hatch_down: Option<HatchDown>,
 }
 
-/// The hatch battery of the Titan being rodeoed, sunk since the show event
-/// (`hatch_rodeo_down_idle` while the hand holds the battery / grenade over the socket).
-/// When the ride ends it rises again (`hatch_rodeo_up`) if the rip got past the point of no
-/// return or a grenade went in, else it snaps straight back (PlayerRemovesBatteryPack).
+/// The hatch battery of the Titan being rodeoed, sunk: for a rip, snapped down at the show
+/// event (`hatch_rodeo_down_idle` while the hand holds the battery over the socket); for a
+/// grenade, lowered (`hatch_rodeo_down`, 0.667 s) as soon as the rider lands
+/// (Rodeo_MoveBatteryDown when ShouldThrowGrenadeInHatch). When the ride ends it rises again
+/// (`hatch_rodeo_up`) if the rip got past the point of no return or a grenade went in, else it
+/// snaps straight back (PlayerRemovesBatteryPack).
 #[derive(Clone, Copy)]
 pub struct HatchDown {
     pub target: Entity,
     pub rises: bool,
+    /// Play the `down` clip instead of snapping to `down_idle`.
+    pub lower: bool,
 }
 
 impl Default for Rodeo {
@@ -474,6 +478,14 @@ pub fn rodeo_update(
             done_hit: false,
             holds: false,
         });
+        // Carrying a battery: the container sinks right away for the grenade.
+        if rodeo.battery {
+            rodeo.hatch_down = Some(HatchDown {
+                target: id,
+                rises: true,
+                lower: true,
+            });
+        }
         if std::env::var_os("TF_RODEO_TEST").is_some() {
             if let Ok((_, mut e)) = enemies.get_mut(id) {
                 e.held = false;
@@ -603,10 +615,11 @@ pub fn rodeo_update(
             } else {
                 ride.chassis.grenade_events()
             };
-            if cycle >= ev.show {
+            if cycle >= ev.show && ride.phase == Phase::Hijack {
                 rodeo.hatch_down = Some(HatchDown {
                     target: ride.target,
-                    rises: ride.phase == Phase::Grenade || cycle >= ev.no_return,
+                    rises: cycle >= ev.no_return,
+                    lower: false,
                 });
             }
             if cycle >= ev.hit && !ride.done_hit {
@@ -777,6 +790,7 @@ pub fn rodeo_update(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HatchState {
     Up,
+    Lowering,
     Down,
     Rising,
 }
@@ -824,6 +838,7 @@ pub fn rodeo_props(
     mut actors: Query<&mut Actor>,
     mut vis: Query<&mut Visibility>,
     globals: Query<&GlobalTransform>,
+    skins: Query<&bevy::mesh::skinning::SkinnedMesh>,
 ) {
     let (cache, meshes, images, materials, bindposes) = (
         &mut *assets.0,
@@ -881,6 +896,7 @@ pub fn rodeo_props(
         let clips = [
             chassis.hatch_clip("up_idle"),
             chassis.hatch_clip("down_idle"),
+            chassis.hatch_clip("down"),
             chassis.hatch_clip("up"),
         ];
         let refs: Vec<&str> = clips.iter().map(String::as_str).collect();
@@ -942,7 +958,18 @@ pub fn rodeo_props(
                 };
                 h.t = 0.0;
             }
-            (_, Some(_)) => h.state = HatchState::Down,
+            (HatchState::Up | HatchState::Rising, Some(d)) => {
+                h.state = if d.lower {
+                    HatchState::Lowering
+                } else {
+                    HatchState::Down
+                };
+                h.t = 0.0;
+            }
+            (HatchState::Lowering, None) => {
+                h.state = HatchState::Rising;
+                h.t = 0.0;
+            }
             _ => {}
         }
         // TF_HATCH_TEST=up|down: hold every hatch in a state (testing).
@@ -956,7 +983,7 @@ pub fn rodeo_props(
             _ => {}
         }
         let Some(actor) = h.actor else { continue };
-        if std::env::var_os("TF_RODEO_TEST").is_some()
+        if log::log_enabled!(target: "tf_viewer::rodeo", log::Level::Debug)
             && riding == Some(*ent)
             && time.elapsed_secs() % 0.25 < dt
         {
@@ -971,7 +998,33 @@ pub fn rodeo_props(
                 .and_then(|a| a.joint("ja_c_propGun"))
                 .and_then(|j| globals.get(j).ok());
             let sock = globals.get(h.socket).ok();
+            // The hull's socket hole as the GPU skins it: the ajax hole centre sits at bind
+            // (0.1, 223.0, -40.3) (vertsnear), 100% on def_c_spineC.
+            let hole = enemies
+                .get(*ent)
+                .ok()
+                .and_then(|(_, e)| actors.get(e.actor).ok())
+                .and_then(|a| {
+                    let bi = a
+                        .bone_names
+                        .iter()
+                        .position(|b| b.eq_ignore_ascii_case("def_c_spineC"))?;
+                    let skin = skins
+                        .iter()
+                        .find(|s| s.joints.first() == a.joints.first())?;
+                    let inv = bindposes.get(&skin.inverse_bindposes)?;
+                    let jg = globals.get(a.joints[bi]).ok()?;
+                    let v = inv.get(bi)?.transform_point3(Vec3::new(0.1, 223.0, -40.3));
+                    Some(jg.affine().transform_point3(v))
+                });
             if let (Some(hand), Some(gun), Some(sock)) = (hand, gun, sock) {
+                if let Some(hole) = hole {
+                    log::debug!(
+                        "hatch {:?}: skinned hole in the socket frame {:.1}",
+                        ent,
+                        sock.affine().inverse().transform_point3(hole)
+                    );
+                }
                 // The hand battery hangs down the hand's -Y, the socket one down the socket's
                 // -Z: at the hand-off they should coincide (distance 0, dot 1). The grenade
                 // sits on the propGun bone, over the socket at its show.
@@ -988,6 +1041,7 @@ pub fn rodeo_props(
                     in_socket(gun.translation()),
                     match h.state {
                         HatchState::Up => "up",
+                        HatchState::Lowering => "lowering",
                         HatchState::Down => "down",
                         HatchState::Rising => "rising",
                     }
@@ -1001,6 +1055,21 @@ pub fn rodeo_props(
         let (name, cycle) = match h.state {
             HatchState::Up => (h.chassis.hatch_clip("up_idle"), 0.0),
             HatchState::Down => (h.chassis.hatch_clip("down_idle"), 0.0),
+            HatchState::Lowering => {
+                let name = h.chassis.hatch_clip("down");
+                let len = a
+                    .clip(&name)
+                    .map(|c| a.clips[c].duration)
+                    .unwrap_or(0.667)
+                    .max(1e-3);
+                h.t += dt;
+                if h.t >= len {
+                    h.state = HatchState::Down;
+                    (h.chassis.hatch_clip("down_idle"), 0.0)
+                } else {
+                    (name, h.t / len)
+                }
+            }
             HatchState::Rising => {
                 let name = h.chassis.hatch_clip("up");
                 let len = a

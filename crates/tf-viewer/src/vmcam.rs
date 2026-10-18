@@ -188,3 +188,30 @@ pub fn one_shadow_cascade(
         }
     }
 }
+
+/// The game plays its FirstPersonSequences (mounts, dismounts, the rodeo) on the first-person
+/// proxy, which is drawn in the world at the world FOV, so the hands land on the hatch they
+/// were animated against. While one plays, the arms and whatever hangs off them (the rodeo's
+/// battery and grenade) move to the world layer: through the viewmodel camera's 70° lens a
+/// prop that sits exactly in the socket draws elsewhere on screen than the hull's hole.
+pub fn arms_world_layer(
+    arms: Option<Res<crate::fparms::FpArms>>,
+    rodeo: Res<crate::rodeo::Rodeo>,
+    seq: Res<crate::fparms::FpSeq>,
+    children: Query<&Children>,
+    mut layers: Query<&mut RenderLayers, With<Mesh3d>>,
+) {
+    let Some(arms) = arms else { return };
+    let want = if rodeo.riding() || seq.active.is_some() {
+        RenderLayers::layer(0)
+    } else {
+        RenderLayers::layer(VM_LAYER)
+    };
+    for e in children.iter_descendants(arms.anchor) {
+        if let Ok(mut l) = layers.get_mut(e) {
+            if *l != want {
+                *l = want.clone();
+            }
+        }
+    }
+}

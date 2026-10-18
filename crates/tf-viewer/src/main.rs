@@ -514,7 +514,7 @@ fn main() {
             screenshots,
             env::nearest_reflection,
             uber::swap_materials,
-            vmcam::tag_meshes,
+            (vmcam::tag_meshes, vmcam::arms_world_layer).chain(),
         ),
     )
     .add_systems(
@@ -554,7 +554,12 @@ fn main() {
         Update,
         (
             (
-                (player::gather_input, inputrec::replay_input).chain(),
+                (
+                    player::gather_input,
+                    inputrec::replay_input,
+                    inputrec::replay_skip,
+                )
+                    .chain(),
                 (game::gate_input, inputrec::record_input).chain(),
                 targets::script_aim,
                 game::director,
