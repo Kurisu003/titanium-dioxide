@@ -61,6 +61,38 @@ impl VortexRefire {
     }
 }
 
+/// A grenade launcher's rounds (see [`WeaponDef::grenade`]).
+#[derive(Debug, Clone, Copy)]
+pub struct GrenadeDef {
+    /// `grenade_fuse_time` from launch (0: none).
+    pub fuse: f32,
+    /// Sticks to what it hits and goes off this long after.
+    pub stick_fuse: Option<f32>,
+    /// Pull toward enemy Titans (units/s²).
+    pub magnetic: Option<f32>,
+    /// `grenade_bounce_vel_frac_shallow/_sharp/_along_normal`.
+    pub bounce: (f32, f32, f32),
+    /// `projectile_launch_pitch_offset` (degrees up).
+    pub pitch_offset: f32,
+    /// `grenade_arc_indicator_*`: the trajectory preview.
+    pub arc: Option<GrenadeArc>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GrenadeArc {
+    /// Shown from the hip too, else only aimed down sights.
+    pub from_hip: bool,
+    /// Bounces the preview follows before it ends.
+    pub bounces: u32,
+}
+
+impl GrenadeDef {
+    /// Pilot guns whose scripts fire with `FireWeaponGrenade`.
+    pub fn fires_grenades(name: &str) -> bool {
+        matches!(name, "mp_weapon_softball" | "mp_weapon_mgl")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WeaponDef {
     pub name: String,
@@ -125,6 +157,9 @@ pub struct WeaponDef {
     pub projectile_speed: Option<f32>,
     /// Fraction of gravity applied to projectiles.
     pub gravity: f32,
+    /// The weapon fires grenades (`FireWeaponGrenade`: the Softball, the MGL): they fall under
+    /// `projectile_gravity_scale` (engine default 1), bounce or stick, and have a fuse.
+    pub grenade: Option<GrenadeDef>,
     pub shotgun: bool,
     pub bolt_spread: (f32, f32),
     pub headshot_scale: f32,
@@ -481,9 +516,39 @@ impl WeaponDef {
             },
             gravity: if f("bolt_gravity_enabled", 0.0) > 0.0 {
                 f("bolt_gravity_amount", 0.5)
+            } else if GrenadeDef::fires_grenades(name) {
+                f("projectile_gravity_scale", 1.0)
             } else {
                 f("projectile_gravity_scale", 0.0)
             },
+            grenade: GrenadeDef::fires_grenades(name).then(|| GrenadeDef {
+                fuse: f("grenade_fuse_time", 0.0),
+                // mp_weapon_softball.nut: PlantSuperStickyGrenade, then FUSE_TIME (0.5 s).
+                stick_fuse: (name == "mp_weapon_softball").then_some(0.5),
+                // mp_weapon_mgl.nut: InitMagnetic( MGL_MAGNETIC_FORCE (1600) ), drawn to Titans
+                // within their magneticRange (titan_base.set, 190), and it goes off on an enemy
+                // Titan (OnProjectileCollision_weapon_mgl).
+                magnetic: (name == "mp_weapon_mgl").then_some(1600.0),
+                bounce: (
+                    f("grenade_bounce_vel_frac_shallow", 0.5),
+                    f("grenade_bounce_vel_frac_sharp", 0.5),
+                    f("grenade_bounce_vel_frac_along_normal", 0.5),
+                ),
+                pitch_offset: f("projectile_launch_pitch_offset", 0.0),
+                arc: s
+                    .get(".grenade_arc_indicator_effect")
+                    .map(|_| GrenadeArc {
+                        from_hip: f("grenade_arc_indicator_show_from_hip", 0.0) > 0.0,
+                        // Engine default 1 (the key table's default).
+                        bounces: f("grenade_arc_indicator_bounce_count", 1.0) as u32,
+                    })
+                    // The MGL's own arc is its ar_trajectory mod's (shown from the hip, two
+                    // bounces), which MP's attachment list leaves out; it is on here by request.
+                    .or((name == "mp_weapon_mgl").then_some(GrenadeArc {
+                        from_hip: true,
+                        bounces: 2,
+                    })),
+            }),
             shotgun: s
                 .get(".damage_flags")
                 .is_some_and(|v| v.contains("DF_SHOTGUN")),

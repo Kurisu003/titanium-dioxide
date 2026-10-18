@@ -1166,11 +1166,29 @@ pub struct PilotBolt {
     /// eye, and the offset closes over BOLT_BARREL_BLEND seconds.
     barrel: Vec3,
     age: f32,
+    /// A grenade launcher's round: it bounces or sticks and goes off on its fuse.
+    grenade: Option<crate::weapons::GrenadeDef>,
+    /// Seconds left on the fuse.
+    fuse: f32,
+    /// Stuck (the Softball): to an enemy (following it at this offset) or to the world.
+    stuck: Option<(Option<Entity>, Vec3)>,
 }
 
 /// Seconds a Pilot projectile takes to close from the barrel onto its path (a guess at the
 /// engine's projectile_first_person_offset_fraction blend).
 const BOLT_BARREL_BLEND: f32 = 0.12;
+
+/// `dir` pitched up by `degrees` (about the horizontal axis across it).
+fn grenade_launch_dir(dir: Vec3, degrees: f32) -> Vec3 {
+    let side = dir.cross(Vec3::Z).normalize_or_zero();
+    if side == Vec3::ZERO {
+        return dir;
+    }
+    Quat::from_axis_angle(side, degrees.to_radians()) * dir
+}
+
+/// titan_base.set `magneticRange`: how near a magnetic grenade must come to be drawn in.
+const TITAN_MAGNETIC_RANGE: f32 = 190.0;
 
 /// mp_weapon_arc_launcher.nut / FireArcBall: the ball flies at 500 u/s plus the shooter's
 /// speed along the shot, lives 8 s, and its ball lightning zaps every
@@ -1265,6 +1283,13 @@ impl PilotBolt {
             zap: is_arc_ball(def).then_some(0.0),
             barrel: Vec3::ZERO,
             age: 0.0,
+            grenade: def.grenade.filter(|_| !from_titan),
+            fuse: def
+                .grenade
+                .map(|g| g.fuse)
+                .filter(|f| *f > 0.0)
+                .unwrap_or(f32::INFINITY),
+            stuck: None,
         }
     }
 }
@@ -1943,6 +1968,11 @@ pub fn pilot_weapon_fire(
                 continue;
             }
             if let Some(speed) = w.def.projectile_speed {
+                // projectile_launch_pitch_offset: grenades leave a little above the aim.
+                let dir = match w.def.grenade {
+                    Some(g) if g.pitch_offset != 0.0 => grenade_launch_dir(dir, g.pitch_offset),
+                    _ => dir,
+                };
                 spawn_bolt_from(
                     &mut commands,
                     &fx,
@@ -2229,18 +2259,55 @@ pub fn update_pilot_bolts(
                     Quat::from_axis_angle(axis, angle.min(turn.to_radians() * dt)) * cur * speed;
             }
         }
-        let step = b.vel * dt;
+        // A grenade's fuse; a stuck one rides along on what it stuck to until it goes off.
+        if b.grenade.is_some() {
+            b.fuse -= dt;
+            if let Some((on, off)) = b.stuck {
+                if let Some((_, e)) = on.and_then(|t| enemies.get(t).ok()) {
+                    b.pos = e.pos + off;
+                }
+                tf.translation = to_bevy(b.pos);
+                if b.fuse > 0.0 {
+                    continue;
+                }
+            }
+        }
+        // The MGL's magnet: drawn toward an enemy Titan within its magneticRange.
+        if let (Some(force), None) = (b.grenade.and_then(|g| g.magnetic), b.stuck) {
+            let pull = enemies
+                .iter()
+                .filter(|(_, e)| e.alive() && !e.infantry)
+                .map(|(_, e)| crate::smartammo::chest(e) - b.pos)
+                .filter(|d| d.length() < TITAN_MAGNETIC_RANGE)
+                .min_by(|a, b| a.length().total_cmp(&b.length()));
+            if let Some(d) = pull {
+                b.vel += d.normalize_or_zero() * force * dt;
+            }
+        }
+        let step = if b.stuck.is_some() {
+            Vec3::ZERO
+        } else {
+            b.vel * dt
+        };
         let len = step.length().max(1e-4);
-        let dir = step / len;
+        let dir = if b.stuck.is_some() {
+            Vec3::Z
+        } else {
+            step / len
+        };
         let mut t_end = len;
         let mut hit_world = false;
-        if let Some(h) = world.0.raycast(
-            SVec3::from(b.pos.to_array()),
-            SVec3::from(dir.to_array()),
-            len,
-        ) {
-            t_end = h.t;
-            hit_world = true;
+        let mut world_normal = Vec3::Z;
+        if b.stuck.is_none() {
+            if let Some(h) = world.0.raycast(
+                SVec3::from(b.pos.to_array()),
+                SVec3::from(dir.to_array()),
+                len,
+            ) {
+                t_end = h.t;
+                hit_world = true;
+                world_normal = Vec3::from(h.normal.to_array());
+            }
         }
         // An enemy Tone's Particle Wall: the round (or missile) ends on it and it takes the hit.
         let mut wall = None;
@@ -2251,7 +2318,7 @@ pub fn update_pilot_bolts(
         }
         let mut victim = None;
         for (eid, e) in enemies.iter() {
-            if e.alive() {
+            if e.alive() && b.stuck.is_none() {
                 if let Some(h) =
                     crate::hitbox::trace(b.pos, dir, t_end, e, hitboxes, &actors, &globals)
                 {
@@ -2284,13 +2351,60 @@ pub fn update_pilot_bolts(
         let blend = (1.0 - b.age / BOLT_BARREL_BLEND).max(0.0);
         tf.translation = to_bevy(b.pos) + b.barrel * blend;
         tf.rotation = Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y));
-        if victim.is_none() && !hit_world {
+        if let Some(g) = b.grenade {
+            if b.stuck.is_none() && (victim.is_some() || hit_world) {
+                let on = victim.as_ref().map(|(eid, _)| *eid);
+                let on_titan = on
+                    .and_then(|t| enemies.get(t).ok())
+                    .is_some_and(|(_, e)| !e.infantry);
+                // Its impact damage (damage_near_value) on whoever it hits.
+                if let Some((_, mut e)) = on.and_then(|t| enemies.get_mut(t).ok()) {
+                    let amount = b.dmg.direct(b.travelled, e.infantry);
+                    e.damage(amount, b.stops_regen);
+                }
+                if let Some(after) = g.stick_fuse {
+                    // PlantSuperStickyGrenade, then DetonateStickyAfterTime.
+                    let off = on
+                        .and_then(|t| enemies.get(t).ok())
+                        .map(|(_, e)| b.pos - e.pos)
+                        .unwrap_or_default();
+                    b.stuck = Some((on, off));
+                    b.fuse = b.fuse.min(after);
+                    log::debug!("grenade stuck at {:.0} on {:?}", b.pos, on);
+                } else if !(g.magnetic.is_some() && on_titan) {
+                    // Bounce: the normal part reverses scaled by _along_normal, the rest keeps
+                    // _shallow of itself at a grazing hit and _sharp head-on.
+                    let n = if hit_world && victim.is_none() {
+                        world_normal
+                    } else {
+                        -dir
+                    };
+                    // The side facing the grenade.
+                    let n = if n.dot(dir) > 0.0 { -n } else { n };
+                    let vn = n * b.vel.dot(n);
+                    let vt = b.vel - vn;
+                    let head_on = (-dir).dot(n).clamp(0.0, 1.0);
+                    let (shallow, sharp, along) = g.bounce;
+                    b.vel = vt * (shallow + (sharp - shallow) * head_on) - vn * along;
+                    b.pos += n * 1.0;
+                    log::debug!("grenade bounced at {:.0}, now {:.0}", b.pos, b.vel);
+                } else {
+                    b.fuse = 0.0;
+                }
+            }
+            // No fuse and nothing to stick to: it goes off when its life runs out.
+            if b.fuse > 0.0 && b.life > 0.0 {
+                continue;
+            }
+        } else if victim.is_none() && !hit_world {
             if b.life <= 0.0 {
                 commands.entity(id).despawn();
             }
             continue;
         }
         commands.entity(id).despawn();
+        // A grenade going off hits nothing directly (its impact was dealt on contact).
+        let victim = if b.grenade.is_some() { None } else { victim };
         if let (Some(we), None) = (wall, victim.as_ref()) {
             enemy_walls
                 .absorbed

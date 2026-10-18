@@ -32,6 +32,7 @@ mod fparms;
 mod fxuber;
 mod game;
 mod gamedata;
+mod grenadearc;
 mod gamepad;
 mod hitbox;
 mod hud;
@@ -611,6 +612,7 @@ fn main() {
                 (
                     pilotweapon::update_pilot_bolts,
                     pilotweapon::attach_projectile_models,
+                    grenadearc::grenade_arc,
                 )
                     .chain(),
                 abilities::update_abilities,
