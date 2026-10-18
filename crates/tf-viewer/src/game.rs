@@ -238,9 +238,16 @@ pub fn director(
                 if e.just_died {
                     e.just_died = false;
                     game.kills += 1;
-                    // The kill feed row and the Frontier Defense cash popup at the kill.
+                    // Another player's body: net.rs writes their kill row (with their name).
+                    if e.remote.is_some() {
+                        continue;
+                    }
+                    // The kill feed row and the Frontier Defense cash popup at the kill (no
+                    // cash in PvP: it is Frontier Defense's).
                     let worth = if e.infantry { 45 } else { 100 };
-                    game.cash += worth;
+                    if !net.pvp() {
+                        game.cash += worth;
+                    }
                     let victim = kits
                         .and_then(|k| k.0.get(e.kit))
                         .map(|k| titlecase(&k.name))
@@ -250,11 +257,13 @@ pub fn director(
                         weapon: weapon_name.clone(),
                         at: time.elapsed_secs(),
                     });
-                    feed.popups.push(crate::feed::Popup {
-                        pos: e.pos + Vec3::Z * e.height * 0.6,
-                        worth,
-                        at: time.elapsed_secs(),
-                    });
+                    if !net.pvp() {
+                        feed.popups.push(crate::feed::Popup {
+                            pos: e.pos + Vec3::Z * e.height * 0.6,
+                            worth,
+                            at: time.elapsed_secs(),
+                        });
+                    }
                 }
             }
             if pilots.iter().any(|(_, h)| h.dead()) && !online {

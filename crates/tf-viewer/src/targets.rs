@@ -506,6 +506,12 @@ pub struct Enemy {
     pub override_anim: Option<(String, f32)>,
     /// A remote Pilot riding a Titan.
     pub ride: Option<RemoteRide>,
+    /// A remote player's body: seconds since its last shot (the fire gesture), the smoothed
+    /// move direction in its own frame and the sprint blend (the Titan's walk blend).
+    pub fire_t: f32,
+    pub blend_dir: Vec2,
+    pub sprint: bool,
+    pub sprint_blend: f32,
 }
 
 /// A remote Pilot's rodeo, as sent: the Titan it rides, the chassis name for the clips, the
@@ -519,11 +525,17 @@ pub struct RemoteRide {
     pub side: u8,
     pub height: u8,
     pub t: f32,
+    /// A scripted clip instead of the rodeo's (the embark and disembark, played on the Titan's
+    /// hijack point like the rodeo).
+    pub clip: Option<String>,
 }
 
 impl RemoteRide {
     /// The third-person Pilot clip of the phase.
     pub fn clip(&self) -> String {
+        if let Some(c) = &self.clip {
+            return c.clone();
+        }
         let c = self.chassis;
         match self.phase {
             1 => {
@@ -647,6 +659,10 @@ impl Enemy {
             net_age: 0.0,
             override_anim: None,
             ride: None,
+            fire_t: 99.0,
+            blend_dir: Vec2::X,
+            sprint: false,
+            sprint_blend: 0.0,
         }
     }
     /// Driven from the network (a remote player's body, or a mirrored enemy on a client).
@@ -1271,6 +1287,8 @@ fn mirror_enemy(
             if let Ok(mut a) = actors.get_mut(e.actor) {
                 a.autoplay = false;
                 a.aim = None;
+                a.additive.clear();
+                a.overlays.clear();
                 let name = r.clip();
                 if let Some(c) = a.clip(&name) {
                     let len = a.clips[c].duration.max(1e-3);
@@ -1322,6 +1340,8 @@ fn mirror_enemy(
             if let Some(c) = a.clip(&name) {
                 a.autoplay = false;
                 a.aim = None;
+                a.additive.clear();
+                a.overlays.clear();
                 a.layers = vec![Layer {
                     clip: c,
                     cycle: (t / a.clips[c].duration.max(1e-3)).min(0.999),
@@ -1351,10 +1371,137 @@ fn mirror_enemy(
         if !layers.is_empty() {
             actor.layers = layers;
         }
+        // The fire gesture over the body (PlayerAnim ACT_MP_ATTACK_*_PRIMARYFIRE).
+        e.fire_t += dt;
+        actor.additive.clear();
+        actor.overlays.clear();
+        let crouched = matches!(
+            e.body_move,
+            crate::net::MOVE_CROUCH_RUN | crate::net::MOVE_SLIDE
+        );
+        let gesture = if crouched {
+            "gesture_mp_shootCrouch"
+        } else {
+            "gesture_mp_shootStand"
+        };
+        if let Some(c) = actor.clip(gesture) {
+            let len = actor.clips[c].duration.max(1e-3);
+            if e.fire_t < len {
+                actor.push_gesture(c, e.fire_t / len, 1.0);
+            }
+        }
+        return;
+    }
+    if e.remote.is_some() {
+        animate_remote_titan(actors, e, dt);
         return;
     }
     let aim = e.threat;
     animate_enemy(actors, e, dt, Some(aim));
+}
+
+/// A remote player's Titan: the walk blended by direction in its own frame like the player's
+/// (player.rs drive_animation: forward, backward and the two side walks, sprint), the aim
+/// matrix toward where its owner looks, and the fire gesture on each shot.
+fn animate_remote_titan(actors: &mut Query<&mut Actor>, e: &mut Enemy, dt: f32) {
+    let Ok(mut actor) = actors.get_mut(e.actor) else {
+        return;
+    };
+    actor.autoplay = false;
+    actor.event_sounds = e.sound_type.is_some();
+    actor.sound_type = e.sound_type;
+    actor.sound_at = Some(e.pos);
+    let s = &e.state;
+    let fwd = Vec2::new(s.yaw.cos(), s.yaw.sin());
+    let left = Vec2::new(-s.yaw.sin(), s.yaw.cos());
+    let v = Vec2::new(s.vel.x, s.vel.y);
+    let speed = v.length();
+    let local = Vec2::new(v.dot(fwd), v.dot(left));
+    let k = 1.0 - (-dt * 10.0).exp();
+    if speed > 10.0 {
+        e.blend_dir = e.blend_dir.lerp(local / speed, k).normalize_or(Vec2::X);
+    }
+    let sprint_target = if e.sprint { 1.0 } else { 0.0 };
+    e.sprint_blend += (sprint_target - e.sprint_blend) * k;
+    let ids = [
+        actor.clip("Walk_forward_MP"),
+        actor.clip("Walk_backward_MP"),
+        actor.clip("Walk_aim_all_left"),
+        actor.clip("Walk_aim_all_right"),
+    ];
+    let idle = actor
+        .clip("CQB_Idle_MP")
+        .or_else(|| actor.clip("at_IDLE_2"));
+    let sprint = actor.clip("Sprint_mp_forward");
+    let d = e.blend_dir;
+    let mut w = [d.x.max(0.0), (-d.x).max(0.0), d.y.max(0.0), (-d.y).max(0.0)];
+    let sum: f32 = w.iter().sum::<f32>().max(1e-3);
+    w.iter_mut().for_each(|x| *x /= sum);
+    let moving = (speed / 60.0).clamp(0.0, 1.0);
+    let sprint_w = e.sprint_blend * w[0];
+    let mut stride = 0.0;
+    for (i, id) in ids.iter().enumerate() {
+        if let Some(c) = id {
+            let clip = &actor.clips[*c];
+            stride += w[i] * clip.ground_speed * clip.duration;
+        }
+    }
+    if let Some(c) = sprint {
+        let clip = &actor.clips[c];
+        stride = stride * (1.0 - sprint_w) + sprint_w * clip.ground_speed * clip.duration;
+    }
+    if stride > 1.0 {
+        e.move_cycle = (e.move_cycle + speed * dt / stride).rem_euclid(1.0);
+    }
+    if let Some(c) = idle {
+        e.idle_cycle = (e.idle_cycle + dt / actor.clips[c].duration.max(1e-3)).rem_euclid(1.0);
+    }
+    let mut layers = Vec::new();
+    if let Some(c) = idle {
+        layers.push(Layer {
+            clip: c,
+            cycle: e.idle_cycle,
+            weight: 1.0 - moving,
+        });
+    }
+    for (i, id) in ids.iter().enumerate() {
+        if let Some(c) = id {
+            layers.push(Layer {
+                clip: *c,
+                cycle: e.move_cycle,
+                weight: moving * w[i] * (1.0 - if i == 0 { sprint_w } else { 0.0 }),
+            });
+        }
+    }
+    if let Some(c) = sprint {
+        layers.push(Layer {
+            clip: c,
+            cycle: e.move_cycle,
+            weight: moving * sprint_w,
+        });
+    }
+    actor.layers = layers;
+    let to = e.threat - e.pos;
+    let pitch = (to.z + 60.0)
+        .atan2(to.truncate().length().max(1.0))
+        .to_degrees();
+    let grid = e.aim_grids[(moving > 0.5) as usize];
+    actor.aim = Some(Aim {
+        grid: grid.into(),
+        yaw: 0.0,
+        pitch,
+        weight: 1.0,
+    });
+    // mp_stand_shootGeneric_add on each shot of the main gun.
+    e.fire_t += dt;
+    actor.additive.clear();
+    actor.overlays.clear();
+    if let Some(c) = actor.clip("mp_stand_shootGeneric_add") {
+        let len = actor.clips[c].duration.max(1e-3);
+        if e.fire_t < len {
+            actor.push_gesture(c, e.fire_t / len, 1.0);
+        }
+    }
 }
 
 /// What an enemy's move and attack read besides the enemy (`update_enemies`).

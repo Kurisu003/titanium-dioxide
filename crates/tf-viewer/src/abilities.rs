@@ -416,14 +416,44 @@ pub fn update_missiles(
             hit_world = Some(t);
             enemy_walls.absorbed.push((we, spec.direct));
         }
-        let hit_target = target_pos
+        // The rocket strikes any living body it flies through this frame (the game's missiles
+        // collide with entities), not only one that ends a frame near its target: at close
+        // range they flew straight through it and blew up on the terrain behind.
+        let len = step.length();
+        let dir = step.normalize_or_zero();
+        let reach = hit_world.unwrap_or(len);
+        let mut struck: Option<(Entity, f32)> = None;
+        for (de, d) in dummies.iter() {
+            if !d.alive() {
+                continue;
+            }
+            let n = (reach / 20.0).ceil().clamp(1.0, 32.0) as usize;
+            for i in 0..=n {
+                let t = reach * i as f32 / n as f32;
+                let p = m.pos + dir * t;
+                let flat = (p - d.pos).truncate().length();
+                if flat < d.radius + 20.0 && p.z > d.pos.z - 10.0 && p.z < d.pos.z + d.height + 10.0
+                {
+                    if struck.is_none_or(|(_, bt)| t < bt) {
+                        struck = Some((de, t));
+                    }
+                    break;
+                }
+            }
+        }
+        let near_target = target_pos
             .map(|tp| m.pos.distance(tp) < 90.0)
             .unwrap_or(false);
+        let struck_body = struck
+            .map(|(de, _)| de)
+            .or(near_target.then_some(m.target).flatten());
+        let hit_target = struck_body.is_some();
         let next = m.pos + step;
         if hit_target || hit_world.is_some() || m.age > 6.0 {
-            let at = hit_world
-                .map(|t| m.pos + step.normalize() * t)
-                .unwrap_or(next);
+            let at = match struck {
+                Some((_, t)) => m.pos + dir * t,
+                None => hit_world.map(|t| m.pos + dir * t).unwrap_or(next),
+            };
             // Direct hit plus splash on anything within the explosion radius.
             let mut hits = Vec::new();
             for (de, mut d) in &mut dummies {
@@ -433,7 +463,7 @@ pub fn update_missiles(
                 let center = d.pos + Vec3::Z * d.height * 0.5;
                 let dist = (at - center).truncate().length().max(0.0) - d.radius;
                 let mut dmg = 0.0;
-                if hit_target && Some(de) == m.target {
+                if Some(de) == struck_body {
                     dmg += spec.direct;
                 }
                 if dist < spec.radius {

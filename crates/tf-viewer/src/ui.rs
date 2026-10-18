@@ -1014,6 +1014,15 @@ impl Default for Menu {
     }
 }
 
+impl Menu {
+    /// Show the lobby page (a session opened from the command line).
+    pub fn open_lobby(&mut self) {
+        if self.stack.last().map(|s| s.0) != Some(Page::Lobby) {
+            self.stack.push((Page::Lobby, 0));
+        }
+    }
+}
+
 /// The lobby's player list and status line (updated live).
 #[derive(Component)]
 pub struct LobbyText;

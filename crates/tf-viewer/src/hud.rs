@@ -85,6 +85,9 @@ pub struct CoreLabel;
 pub struct AmmoCount;
 #[derive(Component)]
 pub struct WaveTitle;
+/// The Frontier Defense wave panel (hidden in PvP, `hide_in_pvp`).
+#[derive(Component)]
+pub struct WavePanel;
 #[derive(Component)]
 pub struct WaveSub;
 /// The wave panel's bar fill and percentage.
@@ -1088,14 +1091,17 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
     // --- Top left: the Frontier Defense wave panel (wave title, enemies, difficulty, the
     // blue bar with its percentage), laid out like the game's ---
     let wave = commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            left: vh(FD_X),
-            top: vh(FD_Y),
-            width: vh(52.0),
-            height: vh(8.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: vh(FD_X),
+                top: vh(FD_Y),
+                width: vh(52.0),
+                height: vh(8.0),
+                ..default()
+            },
+            WavePanel,
+        ))
         .id();
     commands.entity(root).add_child(wave);
     let wave_title = text(&mut commands, "", &ui.bold_font, 2.0, WHITE);
@@ -2894,5 +2900,27 @@ pub fn lost_health_flash(
             1.0 - (t - HOLD) / FADE
         };
         bg.0 = Color::srgba(1.0, 0.35, 0.25, alpha.clamp(0.0, 1.0));
+    }
+}
+
+/// PvP has no Frontier Defense: no wave panel, wave splash or cash.
+pub fn hide_in_pvp(
+    net: Res<crate::net::Net>,
+    mut nodes: Query<
+        &mut Visibility,
+        Or<(
+            With<WavePanel>,
+            With<WaveSplash>,
+            With<crate::feed::CashRoot>,
+        )>,
+    >,
+) {
+    let want = if net.active() && net.pvp() {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut v in &mut nodes {
+        v.set_if_neq(want);
     }
 }

@@ -656,6 +656,7 @@ fn main() {
                     hud::fit_icons,
                     minimap::update_minimap,
                     feed::update,
+                    hud::hide_in_pvp,
                 ),
                 (
                     hud::update_hud_state,

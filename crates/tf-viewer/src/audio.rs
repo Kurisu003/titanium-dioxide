@@ -36,6 +36,8 @@ pub enum Cue {
     TitanGun(u8, GunPart),
     /// An enemy Titan's shot with that weapon, heard in the world.
     EnemyGun(u8),
+    /// Another player's Pilot gun (pilotweapon::ARSENAL index), heard in the world.
+    RemoteGun(u8),
     Xo16First,
     Xo16Shot,
     Xo16Tail,
@@ -110,6 +112,11 @@ impl Cue {
                     GunPart::Shot => (pick(g.shot, g.first), false),
                     GunPart::Tail => (g.tail, false),
                 };
+            }
+            RemoteGun(i) => {
+                let a = crate::pilotweapon::ARSENAL;
+                let s = &a[(i as usize).min(a.len() - 1)].sound;
+                return (if s.shot.is_empty() { s.first } else { s.shot }, false);
             }
             Gun(i, part) => {
                 let s = &crate::pilotweapon::ARSENAL[i as usize].sound;
@@ -261,7 +268,7 @@ impl Cue {
         match self {
             MissileExplode | TitanDeath | TitanLand => (600.0, 9000.0, 1.0),
             SplitterBurst => (400.0, 7000.0, 0.8),
-            EnemyGun(_) => (400.0, 7000.0, 0.55),
+            EnemyGun(_) | RemoteGun(_) => (400.0, 7000.0, 0.55),
             EnemyStep => (200.0, 3500.0, 0.6),
             VortexAbsorb => (300.0, 3000.0, 0.7),
             BtCoreReady | BtCoreActivated | BtDoomed | BtCritical => (1e9, 1e9, 0.9),
@@ -1451,6 +1458,13 @@ impl Ctx<'_, '_, '_> {
             Cue::TitanGun(i, part) => (crate::weapons::TITAN_ARSENAL[i as usize].id, part, false),
             Cue::EnemyGun(i) => (
                 crate::weapons::TITAN_ARSENAL[i as usize].id,
+                GunPart::Shot,
+                true,
+            ),
+            Cue::RemoteGun(i) => (
+                crate::pilotweapon::ARSENAL
+                    [(i as usize).min(crate::pilotweapon::ARSENAL.len() - 1)]
+                .id,
                 GunPart::Shot,
                 true,
             ),

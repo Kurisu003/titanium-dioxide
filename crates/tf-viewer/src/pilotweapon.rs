@@ -1719,6 +1719,9 @@ pub fn pilot_weapon_fire(
         w.ammo -= 1;
         w.since_fire = 0.0;
         w.fire_t = 0.0;
+        // Counted for the other players, who draw the shot (net.rs).
+        crate::net::PILOT_SHOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::net::PILOT_GUN.store(w.arsenal as u32, std::sync::atomic::Ordering::Relaxed);
         let first_of_burst = w.burst_left + 1 == burst;
         let part = if !w.firing_audio || (burst > 1 && first_of_burst) {
             GunPart::First

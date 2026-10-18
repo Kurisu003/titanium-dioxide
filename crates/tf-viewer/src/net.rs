@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -91,6 +91,12 @@ pub struct PlayerSnap {
     pub rodeo_side: u8,
     pub rodeo_height: u8,
     pub rodeo_t: f32,
+    /// Shots fired so far (wrapping): the Titan's main gun and the Pilot's gun, whose
+    /// pilotweapon::ARSENAL index is `pilot_gun`. Others draw each new shot.
+    pub titan_shots: u16,
+    pub pilot_shots: u16,
+    pub pilot_gun: u8,
+    pub titan_sprint: bool,
 }
 
 /// `rodeo_target` bit for a pooled AI Titan.
@@ -117,6 +123,7 @@ pub const TITAN_ANIMS: &[&str] = &[
     "at_hotdrop_drop_2knee_turbo",
     "at_hotdrop_quickstand",
     "at_rodeo_ride_R_hijack_battery",
+    "at_mount_kneel_airgrab",
 ];
 const RODEO_PANEL_ANIM: &str = "at_rodeo_ride_R_hijack_battery";
 
@@ -198,6 +205,14 @@ pub enum Msg {
         titan: bool,
         dmg: f32,
         from: Vec3,
+    },
+    /// A player put up a Particle Wall (relayed by the host): where, facing, life and health.
+    Wall {
+        id: u32,
+        origin: Vec3,
+        normal: Vec3,
+        life: f32,
+        hp: f32,
     },
 }
 
@@ -307,6 +322,10 @@ impl PlayerSnap {
         w.u8(self.rodeo_side);
         w.u8(self.rodeo_height);
         w.f(self.rodeo_t);
+        w.u16(self.titan_shots);
+        w.u16(self.pilot_shots);
+        w.u8(self.pilot_gun);
+        w.b(self.titan_sprint);
     }
     fn read(r: &mut R) -> Option<Self> {
         Some(Self {
@@ -334,6 +353,10 @@ impl PlayerSnap {
             rodeo_side: r.u8()?,
             rodeo_height: r.u8()?,
             rodeo_t: r.f()?,
+            titan_shots: r.u16()?,
+            pilot_shots: r.u16()?,
+            pilot_gun: r.u8()?,
+            titan_sprint: r.b()?,
         })
     }
 }
@@ -460,6 +483,20 @@ impl Msg {
                 w.f(*dmg);
                 w.v3(*from);
             }
+            Msg::Wall {
+                id,
+                origin,
+                normal,
+                life,
+                hp,
+            } => {
+                w.u8(12);
+                w.u32(*id);
+                w.v3(*origin);
+                w.v3(*normal);
+                w.f(*life);
+                w.f(*hp);
+            }
         }
         w.0
     }
@@ -528,6 +565,13 @@ impl Msg {
                 titan: r.b()?,
                 dmg: r.f()?,
                 from: r.v3()?,
+            },
+            12 => Msg::Wall {
+                id: r.u32()?,
+                origin: r.v3()?,
+                normal: r.v3()?,
+                life: r.f()?,
+                hp: r.f()?,
             },
             _ => return None,
         })
@@ -645,12 +689,15 @@ pub struct Player {
 
 /// A remote player's bodies here: a Pilot and a Titan `Enemy` entity (spawned by
 /// `spawn_remotes`) and the last state they sent.
+#[derive(Default)]
 pub struct Remote {
     pub pilot: Option<Entity>,
     pub titan: Option<Entity>,
     pub snap: Option<PlayerSnap>,
     /// Seconds since the last snapshot.
     pub age: f32,
+    /// The shot counters of the last snapshot drawn (Titan, Pilot).
+    pub shots: Option<(u16, u16)>,
 }
 
 #[derive(Resource)]
@@ -689,6 +736,69 @@ pub struct Net {
 /// Enemy shots the host fired this frame (targets.rs pushes, `update` sends).
 pub static SHOTS: Mutex<Vec<(Vec3, Vec3, f32, usize)>> = Mutex::new(Vec::new());
 pub static HOSTING: AtomicBool = AtomicBool::new(false);
+/// Particle Walls the local player put up this frame (titankit.rs): origin, normal, life, hp.
+pub static WALLS: Mutex<Vec<(Vec3, Vec3, f32, f32)>> = Mutex::new(Vec::new());
+/// Rounds the local Pilot has fired (pilotweapon.rs), for `PlayerSnap::pilot_shots`.
+pub static PILOT_SHOTS: AtomicU32 = AtomicU32::new(0);
+/// The local Pilot's gun (pilotweapon::ARSENAL index), for `PlayerSnap::pilot_gun`.
+pub static PILOT_GUN: AtomicU32 = AtomicU32::new(0);
+
+/// A remote Titan's extra clips: the side walks and sprint of the player's blend and the fire
+/// gesture (targets.rs animate_remote_titan).
+const REMOTE_TITAN_SEQUENCES: &[&str] = &[
+    "Walk_aim_all_left",
+    "Walk_aim_all_right",
+    "Sprint_mp_forward",
+    "mp_stand_shootGeneric_add",
+];
+
+/// A remote Pilot's extra clips: the fire gestures and the third-person embarks and
+/// disembarks, synced with the Titan's (`pilot_mount_clip`).
+const REMOTE_PILOT_SEQUENCES: &[&str] = &[
+    "gesture_mp_shootStand",
+    "gesture_mp_shootCrouch",
+    "pt_dismount_atlas_stand",
+    "pt_dismount_atlas_crouch",
+    "pt_mount_atlas_stand_front",
+    "pt_mount_atlas_stand_behind",
+    "pt_mount_atlas_stand_left",
+    "pt_mount_atlas_stand_right",
+    "pt_mount_atlas_stand_airgrab",
+    "pt_mount_atlas_above_left",
+    "pt_mount_atlas_above_right",
+    "pt_mount_atlas_kneel_front",
+    "pt_mount_atlas_kneel_behind",
+    "pt_mount_atlas_kneel_left",
+    "pt_mount_atlas_kneel_right",
+    "pt_mount_atlas_kneel_airgrab",
+    "pt_mount_atlas_kneel_above_left",
+    "pt_mount_atlas_kneel_above_right",
+];
+
+/// The Pilot's third-person clip that goes with a Titan's embark or disembark sequence (the
+/// game plays the pair together on the Titan's hijack attachment). `left`: the Pilot came from
+/// the Titan's left (the one kneeling sequence from above serves both sides).
+pub fn pilot_mount_clip(titan_anim: &str, left: bool) -> Option<String> {
+    let rest = titan_anim.strip_prefix("at_")?;
+    if let Some(how) = rest.strip_prefix("dismount_") {
+        return Some(format!("pt_dismount_atlas_{how}"));
+    }
+    let how = rest.strip_prefix("mount_")?;
+    if how == "kneel_above" {
+        let side = if left { "left" } else { "right" };
+        return Some(format!("pt_mount_atlas_kneel_above_{side}"));
+    }
+    Some(format!("pt_mount_atlas_{how}"))
+}
+
+/// Where a body at that yaw and pitch (positive down) looks.
+fn look_dir(yaw: f32, pitch: f32) -> Vec3 {
+    Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        -pitch.sin(),
+    )
+}
 
 impl Default for Net {
     fn default() -> Self {
@@ -897,6 +1007,8 @@ pub fn auto_session(
     mut tries: Local<(u32, f32)>,
     args: Res<crate::Args>,
     mut net: ResMut<Net>,
+    mut menu: ResMut<crate::ui::Menu>,
+    game: Res<Game>,
 ) {
     if let Some(port) = args.host {
         if tries.0 == 0 {
@@ -904,8 +1016,14 @@ pub fn auto_session(
             net.port = port.to_string();
             net.mode = if args.pvp { Mode::Pvp } else { Mode::Pve };
             net.host();
+            if game.state == GameState::Title {
+                menu.open_lobby();
+            }
         }
     } else if let Some(addr) = &args.join {
+        if tries.0 == 0 && game.state == GameState::Title {
+            menu.open_lobby();
+        }
         // The host may still be loading: try again every couple of seconds for a minute.
         tries.1 -= time.delta_secs();
         if net.active() || tries.0 >= 30 || tries.1 > 0.0 {
@@ -922,6 +1040,7 @@ pub fn auto_session(
 /// Lobby, joins, state exchange and damage reports. Runs before the game director.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update(
+    mut commands: Commands,
     time: Res<Time>,
     mut net: ResMut<Net>,
     mut game: ResMut<Game>,
@@ -933,8 +1052,14 @@ pub fn update(
     mut enemies: Query<(Entity, &mut Enemy)>,
     mut damage_from: ResMut<crate::hud::DamageFrom>,
     (mut feed, rodeo): (ResMut<crate::feed::Feed>, Res<crate::rodeo::Rodeo>),
+    weapons: Query<&crate::weapons::Weapon, With<PlayerTitan>>,
 ) {
     let dt = time.delta_secs();
+    // The Particle Walls put up since last frame (sent below when online).
+    let walls: Vec<(Vec3, Vec3, f32, f32)> = WALLS
+        .lock()
+        .map(|mut w| std::mem::take(&mut *w))
+        .unwrap_or_default();
     if !net.active() {
         net.was_in_play = game.in_play();
         return;
@@ -1088,12 +1213,7 @@ pub fn update(
                     id: from,
                     name: name.clone(),
                 });
-                net.remotes.entry(from).or_insert(Remote {
-                    pilot: None,
-                    titan: None,
-                    snap: None,
-                    age: 0.0,
-                });
+                net.remotes.entry(from).or_insert(Remote::default());
                 net.status = format!("{name} JOINED");
                 log::info!("net: {name} joined as player {from}");
             }
@@ -1115,12 +1235,7 @@ pub fn update(
                 let my_name = net.name.clone();
                 net.players.push(Player { id, name: my_name });
                 for (pid, _) in &players {
-                    net.remotes.entry(*pid).or_insert(Remote {
-                        pilot: None,
-                        titan: None,
-                        snap: None,
-                        age: 0.0,
-                    });
+                    net.remotes.entry(*pid).or_insert(Remote::default());
                 }
                 net.status = format!("IN THE LOBBY ({})", mode.name());
                 log::info!("net: joined as player {id}, {} others", players.len());
@@ -1133,12 +1248,7 @@ pub fn update(
                     id,
                     name: name.clone(),
                 });
-                net.remotes.entry(id).or_insert(Remote {
-                    pilot: None,
-                    titan: None,
-                    snap: None,
-                    age: 0.0,
-                });
+                net.remotes.entry(id).or_insert(Remote::default());
                 net.status = format!("{name} JOINED");
             }
             Msg::Left { id } => {
@@ -1242,6 +1352,40 @@ pub fn update(
                     );
                 }
             }
+            Msg::Wall {
+                id,
+                origin,
+                normal,
+                life,
+                hp,
+            } => {
+                let id = if is_host { from } else { id };
+                if is_host {
+                    net.broadcast(
+                        &Msg::Wall {
+                            id,
+                            origin,
+                            normal,
+                            life,
+                            hp,
+                        },
+                        Some(id),
+                    );
+                }
+                if id != net.my_id {
+                    // An opponent's wall stops our shots (PvP); a teammate's stops the AI's
+                    // rounds like our own (PvE).
+                    crate::titankit::ParticleWall::spawn(
+                        &mut commands,
+                        origin,
+                        normal,
+                        life,
+                        hp,
+                        net.pvp(),
+                    );
+                    log::info!("net: player {id} put up a Particle Wall at {origin:.0}");
+                }
+            }
             _ => {}
         }
     }
@@ -1268,6 +1412,22 @@ pub fn update(
         }
     }
     net.was_in_play = in_play;
+    if in_play {
+        for (origin, normal, life, hp) in walls {
+            let m = Msg::Wall {
+                id: net.my_id,
+                origin,
+                normal,
+                life,
+                hp,
+            };
+            if is_host {
+                net.broadcast(&m, None);
+            } else {
+                net.to_host(m);
+            }
+        }
+    }
 
     // --- this frame's local hits on things owned elsewhere ---
     let pvp = net.pvp();
@@ -1340,8 +1500,13 @@ pub fn update(
     };
     let my_id = net.my_id;
     let mut ridden_by_remote: Option<f32> = None;
+    // New shots since the last snapshot drawn (none on the first one), at most a few a frame.
+    let fresh = |now: u16, last: Option<u16>| last.map_or(0, |l| now.wrapping_sub(l).min(6));
+    let mut shot_marks: Vec<(u32, (u16, u16))> = Vec::new();
+    let mut ghosts: Vec<(Vec3, Vec3, f32, usize)> = Vec::new();
     for (pid, r) in net.remotes.iter() {
         let Some(s) = r.snap else { continue };
+        shot_marks.push((*pid, (s.titan_shots, s.pilot_shots)));
         let name = net
             .players
             .iter()
@@ -1358,6 +1523,34 @@ pub fn update(
                 }
                 if s.titan_alive {
                     e.set_remote_pose(s.titan_pos, s.titan_vel, s.titan_yaw, s.titan_pitch);
+                    e.sprint = s.titan_sprint;
+                    // Its main gun's shots: the fire gesture, flash, sound and a harmless round
+                    // (the owner's own rounds do the damage there).
+                    let n = fresh(s.titan_shots, r.shots.map(|x| x.0));
+                    if n > 0 {
+                        log::debug!("net: player {pid}'s Titan fired {n}");
+                        e.fire_t = 0.0;
+                        let dir = look_dir(s.titan_yaw, s.titan_pitch);
+                        let fwd = Vec3::new(s.titan_yaw.cos(), s.titan_yaw.sin(), 0.0);
+                        let muzzle = e.pos + Vec3::Z * 190.0 + fwd * 110.0;
+                        for _ in 0..n {
+                            crate::audio::cue(
+                                &mut commands,
+                                crate::audio::Cue::EnemyGun(kit.arsenal as u8),
+                                Some(muzzle),
+                            );
+                            crate::particles::emit(
+                                &mut commands,
+                                crate::particles::Effect::Muzzle {
+                                    at: crate::player::to_bevy(muzzle),
+                                    dir: crate::player::to_bevy(dir).normalize_or(Vec3::NEG_Z),
+                                    scale: 3.0,
+                                    energy: false,
+                                },
+                            );
+                            ghosts.push((muzzle, dir * kit.projectile, kit.gravity, e.kit));
+                        }
+                    }
                     e.override_anim = TITAN_ANIMS
                         .get(s.titan_anim as usize)
                         .map(|n| (n.to_string(), s.titan_anim_t));
@@ -1403,11 +1596,34 @@ pub fn update(
                         side: s.rodeo_side,
                         height: s.rodeo_height,
                         t: s.rodeo_t,
+                        clip: None,
                     }
                 });
+            // Climbing in or out: the Pilot body plays its half of the Titan's sequence on
+            // the Titan's hijack point (else it would pop out next to the Titan at the end).
+            let left_of_titan = (s.pilot_pos - s.titan_pos)
+                .truncate()
+                .dot(Vec2::new(-s.titan_yaw.sin(), s.titan_yaw.cos()))
+                > 0.0;
+            let mount = (!s.on_foot && s.titan_alive && s.pilot_health > 0.0)
+                .then(|| TITAN_ANIMS.get(s.titan_anim as usize))
+                .flatten()
+                .and_then(|a| pilot_mount_clip(a, left_of_titan))
+                .zip(r.titan)
+                .map(|(clip, target)| crate::targets::RemoteRide {
+                    target,
+                    chassis: "atlas",
+                    phase: 1,
+                    side: 0,
+                    height: 0,
+                    t: s.titan_anim_t,
+                    clip: Some(clip),
+                });
+            let ride = ride.or(mount);
+            let mounting = ride.as_ref().is_some_and(|r| r.clip.is_some());
             if let Ok((_, mut e)) = enemies.get_mut(pe) {
                 let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
-                let show = s.on_foot && s.pilot_health > 0.0;
+                let show = (s.on_foot || mounting) && s.pilot_health > 0.0;
                 let was_alive = e.alive();
                 if show && !e.active {
                     e.activate(s.pilot_pos, s.pilot_yaw, kit);
@@ -1417,6 +1633,31 @@ pub fn update(
                     e.set_remote_pose(s.pilot_pos, s.pilot_vel, s.pilot_yaw, s.pilot_pitch);
                     e.body_move = s.body_move;
                     e.ride = ride.clone();
+                    let n = fresh(s.pilot_shots, r.shots.map(|x| x.1));
+                    if n > 0 && s.on_foot && ride.is_none() {
+                        log::debug!("net: player {pid}'s Pilot fired {n}");
+                        e.fire_t = 0.0;
+                        let dir = look_dir(s.pilot_yaw, s.pilot_pitch);
+                        let right = Vec3::new(s.pilot_yaw.sin(), -s.pilot_yaw.cos(), 0.0);
+                        let muzzle = e.pos + Vec3::Z * 52.0 + dir * 30.0 + right * 8.0;
+                        for _ in 0..n {
+                            crate::audio::cue(
+                                &mut commands,
+                                crate::audio::Cue::RemoteGun(s.pilot_gun),
+                                Some(muzzle),
+                            );
+                            crate::particles::emit(
+                                &mut commands,
+                                crate::particles::Effect::Muzzle {
+                                    at: crate::player::to_bevy(muzzle),
+                                    dir: crate::player::to_bevy(dir).normalize_or(Vec3::NEG_Z),
+                                    scale: 1.0,
+                                    energy: false,
+                                },
+                            );
+                            ghosts.push((muzzle, dir * 12000.0, 0.0, e.kit));
+                        }
+                    }
                     if s.rodeo == 3 && s.rodeo_target == my_id {
                         ridden_by_remote = Some(s.rodeo_t);
                     }
@@ -1440,6 +1681,12 @@ pub fn update(
     for (e, h) in synced_now {
         net.synced.insert(e, h);
     }
+    for (pid, marks) in shot_marks {
+        if let Some(r) = net.remotes.get_mut(&pid) {
+            r.shots = Some(marks);
+        }
+    }
+    net.shots.extend(ghosts);
     // A remote rider ripping our battery: our Titan opens its panel for them (its copy on the
     // rider's side plays the same clip, rodeo.rs).
     if let Ok((mut titan, _)) = titans.single_mut() {
@@ -1529,6 +1776,10 @@ pub fn update(
                 rodeo_side,
                 rodeo_height,
                 rodeo_t,
+                titan_shots: weapons.single().map_or(0, |w| w.shots as u16),
+                pilot_shots: PILOT_SHOTS.load(Ordering::Relaxed) as u16,
+                pilot_gun: PILOT_GUN.load(Ordering::Relaxed) as u8,
+                titan_sprint: ts.sprinting,
             };
             let m = Msg::Player {
                 id: net.my_id,
@@ -1732,9 +1983,12 @@ pub fn spawn_remotes(
                 }
             }
         };
-        let titan = spawn(titan_kit, TITAN_ANIMS);
+        let mut titan_seqs: Vec<&str> = TITAN_ANIMS.to_vec();
+        titan_seqs.extend_from_slice(REMOTE_TITAN_SEQUENCES);
+        let titan = spawn(titan_kit, &titan_seqs);
         let mut pilot_seqs: Vec<&str> = crate::pilotbody::BODY_SEQUENCES.to_vec();
         pilot_seqs.extend_from_slice(crate::targets::PILOT_RODEO_SEQUENCES);
+        pilot_seqs.extend_from_slice(REMOTE_PILOT_SEQUENCES);
         let pilot = spawn(pilot_kit, &pilot_seqs);
         if let Some(r) = net.remotes.get_mut(&id) {
             r.titan = titan;

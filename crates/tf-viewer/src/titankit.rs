@@ -1669,6 +1669,28 @@ impl ParticleWall {
             enemy: true,
         }
     }
+
+    /// Put up another player's wall (net.rs): `enemy` when it is an opponent's.
+    pub fn spawn(
+        commands: &mut Commands,
+        origin: Vec3,
+        normal: Vec3,
+        life: f32,
+        hp: f32,
+        enemy: bool,
+    ) {
+        commands.spawn((
+            Transform::from_translation(to_bevy(origin)),
+            Visibility::default(),
+            ParticleWall {
+                origin,
+                normal,
+                life,
+                hp,
+                enemy,
+            },
+        ));
+    }
 }
 
 /// Enemy Particle Walls, for the player's shots and missiles to stop at (rebuilt each frame).
@@ -2406,6 +2428,10 @@ pub fn kit_input(
                 let origin = Vec3::from(s.pos.to_array()) - Vec3::Z * 64.0;
                 let normal = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
                 log::debug!("particle wall up at {origin:.0} facing {normal:.2}");
+                // The other players get it too (net.rs).
+                if let Ok(mut w) = crate::net::WALLS.lock() {
+                    w.push((origin, normal, n.wall_life, n.wall_hp));
+                }
                 commands.spawn((
                     Transform::from_translation(to_bevy(origin)),
                     Visibility::default(),
@@ -2952,15 +2978,21 @@ pub fn kit_input(
                 let (target, spec) = st.queue.remove(0);
                 st.pod_right = !st.pod_right;
                 let side = right * if st.pod_right { 70.0 } else { -70.0 };
-                let out = (dir + side.normalize() * 0.2 + Vec3::Z * 0.2).normalize();
-                spawn_missile(
-                    &mut commands,
-                    a,
-                    eye + side + Vec3::Z * 40.0,
-                    out,
-                    target,
-                    spec,
-                );
+                let launch = eye + side + Vec3::Z * 40.0;
+                // Out of the pods toward the target, fanned less the closer it is: at close
+                // range the full fan carried the rockets past both sides of it.
+                let (aim, fan) = match target.and_then(|t| enemies.get(t).ok()) {
+                    Some((_, e)) => {
+                        let to = e.pos + Vec3::Z * e.height * 0.6 - launch;
+                        (
+                            to.normalize_or(dir),
+                            0.2 * (to.length() / 1500.0).clamp(0.0, 1.0),
+                        )
+                    }
+                    None => (dir, 0.2),
+                };
+                let out = (aim + side.normalize() * fan + Vec3::Z * fan).normalize();
+                spawn_missile(&mut commands, a, launch, out, target, spec);
                 crate::audio::cue(&mut commands, crate::audio::Cue::MissileFire, None);
             }
         } else {
