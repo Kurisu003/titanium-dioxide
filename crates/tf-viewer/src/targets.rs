@@ -498,7 +498,87 @@ pub struct Enemy {
     pub pool: Option<usize>,
     /// A remote Pilot body's locomotion state (net::body_move).
     pub body_move: u8,
+    /// The last position sent for a mirrored body and how long ago (the body eases to it).
+    pub net_pos: Vec3,
+    pub net_age: f32,
+    /// A sequence (and seconds into it) a mirrored Titan plays instead of locomotion (mounts,
+    /// dismounts, Titanfall, the rodeo panel).
+    pub override_anim: Option<(String, f32)>,
+    /// A remote Pilot riding a Titan.
+    pub ride: Option<RemoteRide>,
 }
+
+/// A remote Pilot's rodeo, as sent: the Titan it rides, the chassis name for the clips, the
+/// phase (1 entrance, 2 idle, 3 battery rip, 4 grenade), the entrance side (0 back, 1 front,
+/// 2 left, 3 right) and height (0 level, 1 lower, 2 mid), seconds into the phase.
+#[derive(Clone, Debug)]
+pub struct RemoteRide {
+    pub target: Entity,
+    pub chassis: &'static str,
+    pub phase: u8,
+    pub side: u8,
+    pub height: u8,
+    pub t: f32,
+}
+
+impl RemoteRide {
+    /// The third-person Pilot clip of the phase.
+    pub fn clip(&self) -> String {
+        let c = self.chassis;
+        match self.phase {
+            1 => {
+                let side = ["back", "front", "left", "right"][self.side.min(3) as usize];
+                let height = ["", "_lower", "_mid"][self.height.min(2) as usize];
+                format!("pt_rodeo_move_{c}_{side}{height}_entrance")
+            }
+            3 => match c {
+                "ogre" => "pt_rodeo_ogre_hijack_battery".into(),
+                "stryder" => "pt_rodeo_stryder_ride_R_hijack_battery".into(),
+                _ => "pt_rodeo_ride_R_hijack_battery".into(),
+            },
+            4 => match c {
+                "ogre" => "pt_rodeo_heavy_grenade_1st".into(),
+                "stryder" => "pt_rodeo_light_grenade_1st".into(),
+                _ => "pt_rodeo_medium_grenade_1st".into(),
+            },
+            _ => format!("pt_rodeo_move_{c}_back_idle"),
+        }
+    }
+}
+
+/// The Pilot body's rodeo clips (all chassis), for remote players' bodies.
+pub const PILOT_RODEO_SEQUENCES: &[&str] = &[
+    "pt_rodeo_move_atlas_back_entrance",
+    "pt_rodeo_move_atlas_back_lower_entrance",
+    "pt_rodeo_move_atlas_back_mid_entrance",
+    "pt_rodeo_move_atlas_front_entrance",
+    "pt_rodeo_move_atlas_front_lower_entrance",
+    "pt_rodeo_move_atlas_left_entrance",
+    "pt_rodeo_move_atlas_right_entrance",
+    "pt_rodeo_move_atlas_back_idle",
+    "pt_rodeo_ride_R_hijack_battery",
+    "pt_rodeo_medium_grenade_1st",
+    "pt_rodeo_move_ogre_back_entrance",
+    "pt_rodeo_move_ogre_back_lower_entrance",
+    "pt_rodeo_move_ogre_back_mid_entrance",
+    "pt_rodeo_move_ogre_front_entrance",
+    "pt_rodeo_move_ogre_front_lower_entrance",
+    "pt_rodeo_move_ogre_left_entrance",
+    "pt_rodeo_move_ogre_right_entrance",
+    "pt_rodeo_move_ogre_back_idle",
+    "pt_rodeo_ogre_hijack_battery",
+    "pt_rodeo_heavy_grenade_1st",
+    "pt_rodeo_move_stryder_back_entrance",
+    "pt_rodeo_move_stryder_back_lower_entrance",
+    "pt_rodeo_move_stryder_back_mid_entrance",
+    "pt_rodeo_move_stryder_front_entrance",
+    "pt_rodeo_move_stryder_front_lower_entrance",
+    "pt_rodeo_move_stryder_left_entrance",
+    "pt_rodeo_move_stryder_right_entrance",
+    "pt_rodeo_move_stryder_back_idle",
+    "pt_rodeo_stryder_ride_R_hijack_battery",
+    "pt_rodeo_light_grenade_1st",
+];
 
 impl Enemy {
     pub fn new(pos: Vec3, actor: Entity, seed: u64, kit_index: usize, kit: &EnemyKit) -> Self {
@@ -563,6 +643,10 @@ impl Enemy {
             remote: None,
             pool: None,
             body_move: 0,
+            net_pos: pos,
+            net_age: 0.0,
+            override_anim: None,
+            ride: None,
         }
     }
     /// Driven from the network (a remote player's body, or a mirrored enemy on a client).
@@ -577,8 +661,13 @@ impl Enemy {
     }
     /// Place a remote body from its owner's snapshot (game space, pitch positive down).
     pub fn set_remote_pose(&mut self, pos: Vec3, vel: Vec3, yaw: f32, pitch: f32) {
-        self.pos = pos;
-        self.state.pos = SVec3::new(pos.x, pos.y, pos.z);
+        // A big jump (spawn, teleport) cuts; otherwise the body eases to the new spot.
+        if self.pos.distance(pos) > 400.0 || !self.active {
+            self.pos = pos;
+        }
+        self.net_pos = pos;
+        self.net_age = 0.0;
+        self.state.pos = SVec3::new(self.pos.x, self.pos.y, self.pos.z);
         self.state.vel = SVec3::new(vel.x, vel.y, vel.z);
         self.state.yaw = yaw;
         self.state.pitch = pitch;
@@ -617,8 +706,12 @@ impl Enemy {
             self.active = false;
             return;
         }
-        self.pos = s.pos;
-        self.state.pos = SVec3::new(s.pos.x, s.pos.y, s.pos.z);
+        if self.pos.distance(s.pos) > 400.0 {
+            self.pos = s.pos;
+        }
+        self.net_pos = s.pos;
+        self.net_age = 0.0;
+        self.state.pos = SVec3::new(self.pos.x, self.pos.y, self.pos.z);
         self.state.vel = SVec3::new(s.vel.x, s.vel.y, s.vel.z);
         self.state.yaw = s.yaw;
         self.threat = s.threat;
@@ -978,6 +1071,12 @@ pub fn update_enemies(
         Vec::new()
     };
     let mut net_dmg: Vec<(u32, bool, f32, Vec3)> = Vec::new();
+    // Where every Titan stands (a remote rider's body is placed on the one it rides).
+    let titan_poses: std::collections::HashMap<Entity, (Vec3, f32, Entity)> = enemies
+        .iter()
+        .filter(|(_, e, _, _)| !e.infantry && e.active)
+        .map(|(id, e, _, _)| (id, (e.pos, e.state.yaw, e.actor)))
+        .collect();
     let Ok((pilot, mut pilot_health)) = pilots.single_mut() else {
         return;
     };
@@ -1104,7 +1203,15 @@ pub fn update_enemies(
             continue;
         }
         if e.mirrored(client) {
-            mirror_enemy(&mut commands, &mut actors, &mut e, &mut tf, &mut vis, dt);
+            mirror_enemy(
+                &mut commands,
+                &mut actors,
+                &mut e,
+                &mut tf,
+                &mut vis,
+                dt,
+                &titan_poses,
+            );
             continue;
         }
         // TF_STATIC_TITAN (game.rs): the test Titan never goes down; it refills below 30%.
@@ -1138,18 +1245,92 @@ fn mirror_enemy(
     tf: &mut Transform,
     vis: &mut Visibility,
     dt: f32,
+    titan_poses: &std::collections::HashMap<Entity, (Vec3, f32, Entity)>,
 ) {
     if e.drop.is_some() || e.stand.is_some() {
         enemy_titanfall(commands, actors, e, tf, vis, dt);
         return;
     }
-    // Carry on along the last velocity until the next snapshot (nothing is walked through:
-    // the owner's own collision already shaped that velocity).
+    // A remote rider hangs on the Titan it rides, playing the third-person rodeo clip there
+    // (the clip's jx_c_start bone is its reference point on the hijack attachment, as the
+    // first-person arms do in rodeo.rs).
+    if let Some(r) = e.ride.clone() {
+        if let Some(&(tpos, tyaw, tactor)) = titan_poses.get(&r.target) {
+            let titan_tf =
+                Transform::from_translation(tpos).with_rotation(Quat::from_rotation_z(tyaw));
+            let attach = match actors
+                .get(tactor)
+                .ok()
+                .and_then(|a| a.bone_model_transform("def_c_spineC"))
+            {
+                Some(b) => Transform::from_translation(titan_tf.transform_point(b.translation))
+                    .with_rotation(titan_tf.rotation * b.rotation * crate::fparms::attach_frame()),
+                None => Transform::from_translation(titan_tf.transform_point(Vec3::Z * 180.0))
+                    .with_rotation(titan_tf.rotation),
+            };
+            if let Ok(mut a) = actors.get_mut(e.actor) {
+                a.autoplay = false;
+                a.aim = None;
+                let name = r.clip();
+                if let Some(c) = a.clip(&name) {
+                    let len = a.clips[c].duration.max(1e-3);
+                    let cycle = if r.phase == 2 {
+                        (r.t / len).rem_euclid(1.0)
+                    } else {
+                        (r.t / len).min(0.999)
+                    };
+                    a.layers = vec![Layer {
+                        clip: c,
+                        cycle,
+                        weight: 1.0,
+                    }];
+                }
+                let s0 = Quat::from_xyzw(0.5, 0.5, 0.5, 0.5);
+                let (pos, rot) = match a.bone_model_transform("jx_c_start") {
+                    Some(st) => {
+                        let root = attach.compute_affine()
+                            * Transform::from_rotation(s0).compute_affine()
+                            * st.compute_affine().inverse();
+                        let (_, r, t) = root.to_scale_rotation_translation();
+                        (t, r)
+                    }
+                    None => (attach.translation, titan_tf.rotation),
+                };
+                tf.translation = pos;
+                tf.rotation = rot;
+                e.pos = pos;
+                e.net_pos = pos;
+                e.state.pos = SVec3::new(pos.x, pos.y, pos.z);
+                e.state.yaw = tyaw;
+            }
+            return;
+        }
+    }
+    // Ease to the last sent position carried on along its velocity (the owner's own
+    // collision already shaped that velocity); a cut only on a big jump.
     let vel = Vec3::from(e.state.vel.to_array());
-    e.pos += vel * dt;
+    e.net_age += dt;
+    let target = e.net_pos + vel * e.net_age.min(0.25);
+    let k = 1.0 - (-dt * 20.0).exp();
+    e.pos += (target - e.pos) * k;
     e.state.pos = SVec3::new(e.pos.x, e.pos.y, e.pos.z);
     tf.translation = e.pos;
     tf.rotation = Quat::from_rotation_z(e.state.yaw);
+    // Scripted sequences (mounts, dismounts, Titanfall, the rodeo panel) replace locomotion.
+    if let Some((name, t)) = e.override_anim.clone() {
+        if let Ok(mut a) = actors.get_mut(e.actor) {
+            if let Some(c) = a.clip(&name) {
+                a.autoplay = false;
+                a.aim = None;
+                a.layers = vec![Layer {
+                    clip: c,
+                    cycle: (t / a.clips[c].duration.max(1e-3)).min(0.999),
+                    weight: 1.0,
+                }];
+                return;
+            }
+        }
+    }
     if e.remote.is_some() && e.infantry {
         let Ok(mut actor) = actors.get_mut(e.actor) else {
             return;

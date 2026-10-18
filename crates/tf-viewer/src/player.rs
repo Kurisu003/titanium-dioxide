@@ -999,6 +999,8 @@ fn mirror_bt_clips(actor: &mut Actor) {
                 "bt_combat_sprint_forward_noaim",
                 "bt_vortex_arm_pose_add",
                 "bt_vortex_ion_arm_pose_add",
+                "mp_vortex_add",
+                "mp_vortex_ion_add",
             ],
             &["combat_aim_stand", "combat_aim_run"],
         );
@@ -1076,16 +1078,35 @@ pub fn drive_animation(
         t.sprint_blend += (sprint_target - t.sprint_blend) * k;
 
         let mirrored = |n: &str| actor.clip(&format!("{n}#m")).or_else(|| actor.clip(n));
-        // Mirrored, the walk to the right is the one that goes left.
+        // A grid's centre clip (the MP walks are move_yaw grids).
+        let grid_mid = |n: &str| {
+            actor
+                .grids
+                .get(n)
+                .and_then(|g| g.clips.get(g.clips.len() / 2).copied())
+        };
+        // Mirrored, the walk to the right is the one that goes left. Other chassis (Tone)
+        // have no bt_ set: the right-handed MP set plays as it is.
         let names = [
-            "bt_combat_walk_forward",
-            "bt_combat_walk_backward",
-            "bt_combat_walk_right",
-            "bt_combat_walk_left",
+            ("bt_combat_walk_forward", "Walk_forward_MP"),
+            ("bt_combat_walk_backward", "Walk_backward_MP"),
+            ("bt_combat_walk_right", "Walk_aim_all_left"),
+            ("bt_combat_walk_left", "Walk_aim_all_right"),
         ];
-        let ids: Vec<Option<usize>> = names.iter().map(|n| mirrored(n)).collect();
-        let idle = mirrored("bt_combat_idle").or_else(|| mirrored("bt_casual_idle"));
-        let sprint = mirrored("bt_combat_sprint_forward_noaim");
+        let ids: Vec<Option<usize>> = names
+            .iter()
+            .map(|(bt, mp)| {
+                mirrored(bt)
+                    .or_else(|| actor.clip(mp))
+                    .or_else(|| grid_mid(mp))
+            })
+            .collect();
+        let idle = mirrored("bt_combat_idle")
+            .or_else(|| mirrored("bt_casual_idle"))
+            .or_else(|| actor.clip("CQB_Idle_MP"));
+        let sprint = mirrored("bt_combat_sprint_forward_noaim")
+            .or_else(|| actor.clip("Sprint_mp_forward"))
+            .or_else(|| grid_mid("Sprint_mp_forward"));
 
         // Directional weights from the movement direction in BT's frame.
         let d = t.blend_dir;
@@ -1293,12 +1314,21 @@ pub fn drive_animation(
 
         // The aim matrix folds the shoulder pods and points the gun arm at the view pitch.
         // Source pitch is positive looking down; aim_pitch is positive aiming up.
+        // BT's mirrored matrices, or the chassis' own MP ones (Tone).
+        let mp = crate::targets::aim_grids(crate::PLAYER_TITAN_MODEL);
+        let bt_grids = actor.grids.contains_key("combat_aim_stand#m");
         let grid = if crouch_w > 0.5 && actor.grids.contains_key("MP_crouch_Aim_all") {
             "MP_crouch_Aim_all"
         } else if moving > 0.5 {
-            "combat_aim_run#m"
-        } else {
+            if bt_grids {
+                "combat_aim_run#m"
+            } else {
+                mp[1]
+            }
+        } else if bt_grids {
             "combat_aim_stand#m"
+        } else {
+            mp[0]
         };
         let no_aim = std::env::var_os("TF_NO_AIM").is_some();
         actor.aim = (!no_aim).then(|| Aim {

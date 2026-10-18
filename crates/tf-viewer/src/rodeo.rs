@@ -293,6 +293,39 @@ impl Rodeo {
     }
 }
 
+impl Ride {
+    /// For the network: the Titan ridden, the phase (1 entrance, 2 idle, 3 rip, 4 grenade),
+    /// the entrance side (0 back, 1 front, 2 left, 3 right) and height (0, 1 lower, 2 mid),
+    /// seconds into the phase.
+    pub fn net_state(&self) -> (Entity, u8, u8, u8, f32) {
+        let phase = match self.phase {
+            Phase::Entrance => 1,
+            Phase::Idle => 2,
+            Phase::Hijack => 3,
+            Phase::Grenade => 4,
+        };
+        let rest = self
+            .entrance
+            .trim_start_matches("ptpov_rodeo_move_")
+            .trim_end_matches("_entrance");
+        let rest = rest.split_once('_').map(|(_, r)| r).unwrap_or(rest);
+        let side = match rest.split('_').next().unwrap_or("back") {
+            "front" => 1,
+            "left" => 2,
+            "right" => 3,
+            _ => 0,
+        };
+        let height = if rest.ends_with("_lower") {
+            1
+        } else if rest.ends_with("_mid") {
+            2
+        } else {
+            0
+        };
+        (self.target, phase, side, height, self.t)
+    }
+}
+
 fn view_quat(yaw: f32, pitch: f32) -> Quat {
     Quat::from_rotation_z(yaw) * Quat::from_rotation_y(pitch)
 }
@@ -619,8 +652,11 @@ pub fn rodeo_update(
                         "grenade in the hatch"
                     }
                 );
+                // Another player's Titan keeps following their snapshots; its copy plays the
+                // panel clip over them (targets.rs mirror_enemy) instead of being held.
                 if rip
                     && !e.held
+                    && e.remote.is_none()
                     && ride
                         .chassis
                         .hijack_titan()
@@ -632,6 +668,13 @@ pub fn rodeo_update(
             }
         }
         Phase::Hijack | Phase::Grenade => {
+            if e.remote.is_some() {
+                e.override_anim = ride
+                    .chassis
+                    .hijack_titan()
+                    .filter(|_| ride.phase == Phase::Hijack)
+                    .map(|c| (c.to_string(), ride.t));
+            }
             if ride.holds {
                 if let (Some(c), Ok(mut a)) = (ride.chassis.hijack_titan(), actors.get_mut(e.actor))
                 {
@@ -803,6 +846,9 @@ pub fn rodeo_update(
     if let Some(v) = detach {
         if ride.holds {
             e.held = false;
+        }
+        if e.remote.is_some() {
+            e.override_anim = None;
         }
         if lift {
             pilot.state.pos.z += RIP_PUSH_LIFT;

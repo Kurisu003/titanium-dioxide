@@ -81,7 +81,44 @@ pub struct PlayerSnap {
     pub titan_shield: f32,
     pub titan_max_shield: f32,
     pub titan_doomed: bool,
+    /// The Titan's scripted sequence (index into TITAN_ANIMS, 255 none) and seconds into it.
+    pub titan_anim: u8,
+    pub titan_anim_t: f32,
+    /// Rodeo: phase (0 none, 1 entrance, 2 idle, 3 rip, 4 grenade), the Titan ridden (a
+    /// player id, or POOL_TARGET | pool index), entrance side/height, seconds into the phase.
+    pub rodeo: u8,
+    pub rodeo_target: u32,
+    pub rodeo_side: u8,
+    pub rodeo_height: u8,
+    pub rodeo_t: f32,
 }
+
+/// `rodeo_target` bit for a pooled AI Titan.
+pub const POOL_TARGET: u32 = 0x8000_0000;
+
+/// The Titan sequences a player's Titan can be in (PlayerTitan.override_anim), as sent.
+pub const TITAN_ANIMS: &[&str] = &[
+    "at_dismount_stand",
+    "at_dismount_crouch",
+    "at_MP_disembark_back2idle",
+    "at_mount_stand_front",
+    "at_mount_stand_behind",
+    "at_mount_stand_left",
+    "at_mount_stand_right",
+    "at_mount_stand_airgrab",
+    "at_mount_above_left",
+    "at_mount_above_right",
+    "at_mount_kneel_front",
+    "at_mount_kneel_behind",
+    "at_mount_kneel_left",
+    "at_mount_kneel_right",
+    "at_mount_kneel_above",
+    "at_MP_eject_stand_start",
+    "at_hotdrop_drop_2knee_turbo",
+    "at_hotdrop_quickstand",
+    "at_rodeo_ride_R_hijack_battery",
+];
+const RODEO_PANEL_ANIM: &str = "at_rodeo_ride_R_hijack_battery";
 
 /// One pooled AI enemy, as the host tells the clients.
 #[derive(Clone, Copy, Debug, Default)]
@@ -263,6 +300,13 @@ impl PlayerSnap {
         w.f(self.titan_shield);
         w.f(self.titan_max_shield);
         w.b(self.titan_doomed);
+        w.u8(self.titan_anim);
+        w.f(self.titan_anim_t);
+        w.u8(self.rodeo);
+        w.u32(self.rodeo_target);
+        w.u8(self.rodeo_side);
+        w.u8(self.rodeo_height);
+        w.f(self.rodeo_t);
     }
     fn read(r: &mut R) -> Option<Self> {
         Some(Self {
@@ -283,6 +327,13 @@ impl PlayerSnap {
             titan_shield: r.f()?,
             titan_max_shield: r.f()?,
             titan_doomed: r.b()?,
+            titan_anim: r.u8()?,
+            titan_anim_t: r.f()?,
+            rodeo: r.u8()?,
+            rodeo_target: r.u32()?,
+            rodeo_side: r.u8()?,
+            rodeo_height: r.u8()?,
+            rodeo_t: r.f()?,
         })
     }
 }
@@ -631,6 +682,8 @@ pub struct Net {
     was_in_play: bool,
     /// Join in progress: the Welcome said a match is on.
     join_started: bool,
+    /// Our Titan is playing the rodeo panel clip for a remote rider.
+    panel_open: bool,
 }
 
 /// Enemy shots the host fired this frame (targets.rs pushes, `update` sends).
@@ -664,6 +717,7 @@ impl Default for Net {
             shots: Vec::new(),
             was_in_play: false,
             join_started: false,
+            panel_open: false,
         }
     }
 }
@@ -838,16 +892,27 @@ impl Net {
 
 /// `--host PORT [--pvp]` opens the lobby and `--join ADDR[:PORT]` connects as soon as the
 /// world is up (scripted tests).
-pub fn auto_session(mut done: Local<bool>, args: Res<crate::Args>, mut net: ResMut<Net>) {
-    if *done {
-        return;
-    }
-    *done = true;
+pub fn auto_session(
+    time: Res<Time>,
+    mut tries: Local<(u32, f32)>,
+    args: Res<crate::Args>,
+    mut net: ResMut<Net>,
+) {
     if let Some(port) = args.host {
-        net.port = port.to_string();
-        net.mode = if args.pvp { Mode::Pvp } else { Mode::Pve };
-        net.host();
+        if tries.0 == 0 {
+            tries.0 = 1;
+            net.port = port.to_string();
+            net.mode = if args.pvp { Mode::Pvp } else { Mode::Pve };
+            net.host();
+        }
     } else if let Some(addr) = &args.join {
+        // The host may still be loading: try again every couple of seconds for a minute.
+        tries.1 -= time.delta_secs();
+        if net.active() || tries.0 >= 30 || tries.1 > 0.0 {
+            return;
+        }
+        tries.0 += 1;
+        tries.1 = 2.0;
         net.address = addr.clone();
         net.mode = if args.pvp { Mode::Pvp } else { Mode::Pve };
         net.join();
@@ -864,10 +929,10 @@ pub fn update(
     control: Res<Control>,
     kits: Res<EnemyKits>,
     mut pilots: Query<(&PlayerPilot, &mut PilotHealth)>,
-    mut titans: Query<(&PlayerTitan, &mut crate::combat::TitanHealth)>,
+    mut titans: Query<(&mut PlayerTitan, &mut crate::combat::TitanHealth)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
     mut damage_from: ResMut<crate::hud::DamageFrom>,
-    mut feed: ResMut<crate::feed::Feed>,
+    (mut feed, rodeo): (ResMut<crate::feed::Feed>, Res<crate::rodeo::Rodeo>),
 ) {
     let dt = time.delta_secs();
     if !net.active() {
@@ -1261,6 +1326,20 @@ pub fn update(
     // --- apply the remote players' snapshots to their bodies ---
     let mut kill_names: Vec<String> = Vec::new();
     let mut synced_now: Vec<(Entity, f32)> = Vec::new();
+    // What a rider's `rodeo_target` means here: a player's Titan body or a pooled Titan.
+    let resolve_target = |code: u32, net: &Net, enemies: &Query<(Entity, &mut Enemy)>| {
+        if code & POOL_TARGET != 0 {
+            let idx = (code & !POOL_TARGET) as usize;
+            enemies
+                .iter()
+                .find(|(_, e)| e.pool == Some(idx))
+                .map(|(id, _)| id)
+        } else {
+            net.remotes.get(&code).and_then(|r| r.titan)
+        }
+    };
+    let my_id = net.my_id;
+    let mut ridden_by_remote: Option<f32> = None;
     for (pid, r) in net.remotes.iter() {
         let Some(s) = r.snap else { continue };
         let name = net
@@ -1279,6 +1358,9 @@ pub fn update(
                 }
                 if s.titan_alive {
                     e.set_remote_pose(s.titan_pos, s.titan_vel, s.titan_yaw, s.titan_pitch);
+                    e.override_anim = TITAN_ANIMS
+                        .get(s.titan_anim as usize)
+                        .map(|n| (n.to_string(), s.titan_anim_t));
                     let v = &mut e.v;
                     v.max_health = s.titan_max_health.max(1.0);
                     v.max_shield = s.titan_max_shield;
@@ -1299,6 +1381,30 @@ pub fn update(
             }
         }
         if let Some(pe) = r.pilot {
+            // The rodeo, resolved to the Titan body it rides here (before borrowing the body).
+            let ride = (s.rodeo != 0)
+                .then(|| resolve_target(s.rodeo_target, &net, &enemies))
+                .flatten()
+                .map(|target| {
+                    let chassis = if s.rodeo_target & POOL_TARGET != 0 {
+                        enemies
+                            .get(target)
+                            .ok()
+                            .and_then(|(_, t)| kits.0.get(t.kit))
+                            .map(|k| chassis_name(&k.model))
+                            .unwrap_or("atlas")
+                    } else {
+                        chassis_name(crate::PLAYER_TITAN_MODEL)
+                    };
+                    crate::targets::RemoteRide {
+                        target,
+                        chassis,
+                        phase: s.rodeo,
+                        side: s.rodeo_side,
+                        height: s.rodeo_height,
+                        t: s.rodeo_t,
+                    }
+                });
             if let Ok((_, mut e)) = enemies.get_mut(pe) {
                 let kit = &kits.0[e.kit.min(kits.0.len() - 1)];
                 let show = s.on_foot && s.pilot_health > 0.0;
@@ -1310,6 +1416,10 @@ pub fn update(
                 if show {
                     e.set_remote_pose(s.pilot_pos, s.pilot_vel, s.pilot_yaw, s.pilot_pitch);
                     e.body_move = s.body_move;
+                    e.ride = ride.clone();
+                    if s.rodeo == 3 && s.rodeo_target == my_id {
+                        ridden_by_remote = Some(s.rodeo_t);
+                    }
                     e.v.health = s.pilot_health;
                     e.v.max_health = 100.0;
                     e.dead_for = 0.0;
@@ -1329,6 +1439,27 @@ pub fn update(
     }
     for (e, h) in synced_now {
         net.synced.insert(e, h);
+    }
+    // A remote rider ripping our battery: our Titan opens its panel for them (its copy on the
+    // rider's side plays the same clip, rodeo.rs).
+    if let Ok((mut titan, _)) = titans.single_mut() {
+        match ridden_by_remote {
+            Some(t) => {
+                titan.override_anim = Some((RODEO_PANEL_ANIM.into(), t));
+                net.panel_open = true;
+            }
+            None if net.panel_open => {
+                if titan
+                    .override_anim
+                    .as_ref()
+                    .is_some_and(|(n, _)| n == RODEO_PANEL_ANIM)
+                {
+                    titan.override_anim = None;
+                }
+                net.panel_open = false;
+            }
+            None => {}
+        }
     }
     for n in kill_names {
         feed.kills.push(crate::feed::Kill {
@@ -1351,6 +1482,28 @@ pub fn update(
         if let (Ok((pilot, ph)), Ok((titan, th))) = (pilots.single(), titans.single()) {
             let ps = &pilot.state;
             let ts = &titan.state;
+            let (titan_anim, titan_anim_t) = titan
+                .override_anim
+                .as_ref()
+                .and_then(|(n, t)| {
+                    TITAN_ANIMS
+                        .iter()
+                        .position(|a| a == n)
+                        .map(|i| (i as u8, *t))
+                })
+                .unwrap_or((255, 0.0));
+            let (rodeo_phase, rodeo_target, rodeo_side, rodeo_height, rodeo_t) = rodeo
+                .ride
+                .as_ref()
+                .and_then(|r| {
+                    let (target, phase, side, height, t) = r.net_state();
+                    let (_, e) = enemies.get(target).ok()?;
+                    let code = e
+                        .remote
+                        .or_else(|| e.pool.map(|i| POOL_TARGET | i as u32))?;
+                    Some((phase, code, side, height, t))
+                })
+                .unwrap_or((0, 0, 0, 0, 0.0));
             let snap = PlayerSnap {
                 on_foot: *control == Control::Pilot,
                 pilot_pos: Vec3::from(ps.pos.to_array()),
@@ -1369,6 +1522,13 @@ pub fn update(
                 titan_shield: th.v.shield,
                 titan_max_shield: th.v.max_shield,
                 titan_doomed: th.v.doomed.is_some(),
+                titan_anim,
+                titan_anim_t,
+                rodeo: rodeo_phase,
+                rodeo_target,
+                rodeo_side,
+                rodeo_height,
+                rodeo_t,
             };
             let m = Msg::Player {
                 id: net.my_id,
@@ -1560,6 +1720,8 @@ pub fn spawn_remotes(
                     let mut e =
                         Enemy::new(at, a.entity, 0x51ED_2704 * (id as u64 + 7), kit_index, kit);
                     e.remote = Some(id);
+                    // Its owner pops their own smoke; no anti-rodeo charge here.
+                    e.smoke_charges = 0;
                     commands.entity(anchor).insert(e);
                     Some(anchor)
                 }
@@ -1570,8 +1732,10 @@ pub fn spawn_remotes(
                 }
             }
         };
-        let titan = spawn(titan_kit, &[]);
-        let pilot = spawn(pilot_kit, &crate::pilotbody::BODY_SEQUENCES);
+        let titan = spawn(titan_kit, TITAN_ANIMS);
+        let mut pilot_seqs: Vec<&str> = crate::pilotbody::BODY_SEQUENCES.to_vec();
+        pilot_seqs.extend_from_slice(crate::targets::PILOT_RODEO_SEQUENCES);
+        let pilot = spawn(pilot_kit, &pilot_seqs);
         if let Some(r) = net.remotes.get_mut(&id) {
             r.titan = titan;
             r.pilot = pilot;
@@ -1580,12 +1744,27 @@ pub fn spawn_remotes(
     }
 }
 
-/// The kits remote players' bodies use: BT's chassis with the XO-16 and the Pilot body model.
+/// The chassis name of a Titan model for the rodeo clips (rodeo.rs Chassis).
+pub fn chassis_name(model: &str) -> &'static str {
+    let m = model.to_ascii_lowercase();
+    if m.contains("titan_heavy") {
+        "ogre"
+    } else if m.contains("titan_light") {
+        "stryder"
+    } else {
+        "atlas"
+    }
+}
+
+/// The kits remote players' bodies use: the players' chassis (Tone) with its gun, and the
+/// Pilot body model.
 pub fn remote_kits(read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<crate::targets::EnemyKit> {
-    let mut titan = crate::targets::EnemyKit::class(0, read);
-    titan.model = "models/titans/buddy/titan_buddy.mdl".into();
-    titan.name = "VANGUARD".into();
-    titan.weapon = crate::weapons::WeaponDef::load(crate::weapons::TITAN_ARSENAL[0].id, read);
+    let tone = crate::targets::ENEMY_CLASSES
+        .iter()
+        .position(|c| c.3 == "TONE")
+        .unwrap_or(0);
+    let mut titan = crate::targets::EnemyKit::class(tone, read);
+    titan.model = crate::PLAYER_TITAN_MODEL.into();
     titan.ability = None;
     titan.defense = None;
     titan.remote = true;

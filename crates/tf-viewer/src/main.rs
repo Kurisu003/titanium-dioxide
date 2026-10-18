@@ -198,7 +198,11 @@ fn parse_args() -> Args {
         difficulty: vitals::Difficulty::Normal,
         volume: None,
         loadout: None,
-        titan: 0,
+        // Tone's kit, matching the chassis every player gets.
+        titan: weapons::TITAN_ARSENAL
+            .iter()
+            .position(|g| g.kit == "TONE")
+            .unwrap_or(0),
         host: None,
         join: None,
         pvp: false,
@@ -702,6 +706,10 @@ pub fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
 
 /// How many grunts can be on the field at once.
 const GRUNT_POOL: usize = 12;
+
+/// The chassis every player's Titan uses (Tone; BT's buddy model lacks the rodeo panel and
+/// battery, which multiplayer needs on other players' Titans).
+pub const PLAYER_TITAN_MODEL: &str = "models/titans/medium/titan_medium_wraith.mdl";
 
 /// Find a Titan start spawn point in the map's spawn entity file.
 fn titan_spawn(gd: &GameData, map: &str) -> Option<(Vec3, f32)> {
@@ -1376,9 +1384,20 @@ fn setup(
     ph.mark("between the load frames");
     // The actors' templates (models, clips, meshes, textures) build on every core while the
     // collision hierarchy does; spawning them below only adds their assets.
+    // The player's Titan: Tone's chassis (titan_medium_wraith). The bt_ names are BT's own
+    // set, used when the buddy model is swapped back in; the MP set covers Tone.
     let bt_spec = ActorSpec {
-        path: "models/titans/buddy/titan_buddy.mdl",
+        path: PLAYER_TITAN_MODEL,
         sequences: &[
+            "CQB_Idle_MP",
+            "Walk_forward_MP",
+            "Walk_backward_MP",
+            "Walk_aim_all_left",
+            "Walk_aim_all_right",
+            "Sprint_mp_forward",
+            "mp_vortex_add",
+            "mp_vortex_ion_add",
+            "at_rodeo_ride_R_hijack_battery",
             "bt_combat_idle",
             "bt_combat_walk_forward",
             "bt_combat_walk_backward",
@@ -1414,8 +1433,10 @@ fn setup(
         ],
         // The crouch walks are 3x1 grids over move_yaw (their clips are blended by hand).
         grids: &[
-            "combat_aim_stand",
-            "combat_aim_run",
+            "?combat_aim_stand",
+            "?combat_aim_run",
+            "?MP_stand_Aim_all",
+            "?Aim_combat_walk_MP",
             "?MP_crouch_Aim_all",
             "?Walk_Crouch_forward_MP",
             "?Walk_Crouch_backward_MP",

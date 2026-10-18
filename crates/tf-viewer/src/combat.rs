@@ -629,7 +629,10 @@ pub fn player_combat(
     const TAG: Vec3 = Vec3::new(25.59, 11.81, 0.0);
     let arm = actors.get(titan.actor).ok().and_then(|a| {
         let jx = a.bone_names.iter().position(|n| n == "jx_vortex")?;
-        let (lp, lq) = a.clips[a.clip("bt_vortex_arm_pose_add")?].frames.first()?[jx];
+        let pose = a
+            .clip("bt_vortex_arm_pose_add")
+            .or_else(|| a.clip("mp_vortex_add"))?;
+        let (lp, lq) = a.clips[pose].frames.first()?[jx];
         let (bone, p, [fwd, up]) =
             a.mirrored_frame("def_r_elbow", lp + lq * TAG, [lq * Vec3::X, lq * Vec3::Z])?;
         Some((
