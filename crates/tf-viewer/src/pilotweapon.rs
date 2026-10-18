@@ -1,11 +1,12 @@
 //! The pilot's arsenal: every pilot weapon is driven by its own weapon script
-//! (`scripts/weapons/mp_weapon_*.txt`, SP values): fire rate, auto / semi-auto / burst, clip,
+//! (`scripts/weapons/mp_weapon_*.txt`, MP or SP values by map): fire rate, auto / semi-auto / burst, clip,
 //! reload times, spread and kick, view punch, ADS zoom, hitscan or projectile (with gravity
 //! and explosions), and the shotgun bolt patterns from the weapon's `.nut`. Each weapon shows
 //! its own first-person viewmodel with the pilot's arms bone-merged onto it.
 //!
 //! A loadout is a primary, a sidearm and an anti-Titan weapon (keys 1/2/3 or the mouse wheel),
-//! switched with the weapons' holster and deploy times.
+//! switched with the weapons' holster and deploy times. Slots follow `menu_category`: "pistol"
+//! is a sidearm, the "handgun"s (Wingman Elite, Mozambique) are primaries.
 
 use crate::actor::{Actor, ActorSpec, BoneMergeTo, GridLayer, Layer};
 use crate::audio::{self, Cue, GunPart};
@@ -183,7 +184,7 @@ pub const ARSENAL: &[ArsenalEntry] = &[
     ),
     gun!(
         "mp_weapon_smart_pistol",
-        Primary,
+        Sidearm,
         [],
         ["wpn_smartpistol_1p_wpnfire_core"],
         []
@@ -211,14 +212,14 @@ pub const ARSENAL: &[ArsenalEntry] = &[
     ),
     gun!(
         "mp_weapon_wingman_n",
-        Sidearm,
+        Primary,
         [],
         ["wpn_wingman_1p_wpnfire_shot"],
         []
     ),
     gun!(
         "mp_weapon_shotgun_pistol",
-        Sidearm,
+        Primary,
         [],
         ["wpn_shotgun_1p_wpnfire_reduced"],
         []
@@ -1157,6 +1158,33 @@ pub struct PilotBolt {
     burn: Option<((f32, f32), (f32, f32, f32))>,
     /// Scorch's T-203 shell: it leaves thermite where it lands (OnProjectileCollision_Meteor).
     thermite: bool,
+    /// The Thunderbolt's ball lightning: seconds to its next zap (BallLightningThink).
+    zap: Option<f32>,
+}
+
+/// mp_weapon_arc_launcher.nut / FireArcBall: the ball flies at 500 u/s plus the shooter's
+/// speed along the shot, lives 8 s, and its ball lightning zaps every
+/// BALL_LIGHTNING_BURST_DELAY (0.4 s) for ARC_LAUNCHER_ZAP_DAMAGE (350) to Titans and
+/// BALL_LIGHTNING_DAMAGE_TO_PILOTS (8 MP, 10 SP) to Pilots, within BALL_LIGHTNING_ZAP_RADIUS
+/// (400; 200 for human-sized targets) and 300 units of height (_ball_lightning.gnut).
+const ARC_BALL_SPEED: f32 = 500.0;
+const ARC_BALL_LIFE: f32 = 8.0;
+const ARC_BALL_ZAP_EVERY: f32 = 0.4;
+const ARC_BALL_ZAP_TITAN: f32 = 350.0;
+const ARC_BALL_ZAP_RADIUS: f32 = 400.0;
+const ARC_BALL_ZAP_HUMAN_RADIUS: f32 = 200.0;
+const ARC_BALL_ZAP_HEIGHT: f32 = 300.0;
+
+fn arc_ball_zap_pilot() -> f32 {
+    if crate::gamedata::multiplayer() {
+        8.0
+    } else {
+        10.0
+    }
+}
+
+fn is_arc_ball(def: &WeaponDef) -> bool {
+    def.name == "mp_weapon_arc_launcher"
 }
 
 impl PilotBolt {
@@ -1190,6 +1218,7 @@ impl PilotBolt {
                 )
             }),
             thermite: from_titan && def.name == "mp_titanweapon_meteor",
+            zap: is_arc_ball(def).then_some(0.0),
         }
     }
 }
@@ -1221,7 +1250,13 @@ pub fn spawn_bolt(
     let mut e = commands.spawn((
         Transform::from_translation(to_bevy(pos)).with_rotation(facing),
         Visibility::default(),
-        PilotBolt::new(pos, vel, gravity, def, from_titan),
+        {
+            let mut b = PilotBolt::new(pos, vel, gravity, def, from_titan);
+            if is_arc_ball(def) {
+                b.life = ARC_BALL_LIFE;
+            }
+            b
+        },
     ));
     // The script's look: its trail system (`projectile_trail_effect_0`) and `projectilemodel`.
     // Weapons without a trail keep the hand-built glow.
@@ -1626,8 +1661,13 @@ pub fn pilot_weapon_fire(
     let pulled = input.pilot_fire && !w.trigger_held;
     w.trigger_held = input.pilot_fire;
     // A pull during the refire delay is kept for one interval and fires once ready.
+    // attack_button_presses_ads weapons (Thunderbolt, Archer): the script refuses the shot
+    // until fully zoomed but the press is not used up, so a held pull fires once zoomed in.
+    let zooming = w.def.attack_presses_ads && input.pilot_fire && w.ads < 0.999;
     w.pull_age = if pulled {
         Some(0.0)
+    } else if zooming {
+        w.pull_age
     } else {
         w.pull_age
             .map(|a| a + dt)
@@ -1678,6 +1718,13 @@ pub fn pilot_weapon_fire(
             .as_ref()
             .map(|sd| w.smart.burst(sd.max_targeted_burst))
             .unwrap_or_default();
+        if w.smart.queue.is_empty() && w.def.smart.as_ref().is_some_and(|sd| !sd.allow_unlocked) {
+            if pulled {
+                log::debug!("{}: no lock, no shot", w.def.name);
+            }
+            w.pull_age = None;
+            return;
+        }
         w.burst_size = if w.smart.queue.is_empty() {
             w.def.burst_count.max(1)
         } else {
@@ -1794,6 +1841,21 @@ pub fn pilot_weapon_fire(
                     smart_target,
                     sd.homing_speed,
                     &w.projectile,
+                );
+                continue;
+            }
+            if is_arc_ball(&w.def) {
+                let own = Vec3::from(pilot.state.vel.to_array());
+                let along = own.length() * own.normalize_or_zero().dot(dir).max(0.0);
+                log::debug!("arc ball fired at {:.0} u/s", ARC_BALL_SPEED + along);
+                spawn_bolt(
+                    &mut commands,
+                    &fx,
+                    eye + dir * 40.0,
+                    dir * (ARC_BALL_SPEED + along),
+                    0.0,
+                    &shot_def,
+                    false,
                 );
                 continue;
             }
@@ -2028,6 +2090,39 @@ pub fn update_pilot_bolts(
     for (id, mut b, mut tf) in &mut bolts {
         b.life -= dt;
         b.vel.z -= 750.0 * b.gravity * dt;
+        if let Some(t) = b.zap.as_mut() {
+            *t -= dt;
+            if *t <= 0.0 {
+                *t += ARC_BALL_ZAP_EVERY;
+                for (_, mut e) in &mut enemies {
+                    if !e.alive() || (e.pos.z - b.pos.z).abs() > ARC_BALL_ZAP_HEIGHT {
+                        continue;
+                    }
+                    let centre = e.pos + Vec3::Z * e.height * 0.5;
+                    let (reach, damage) = if e.infantry {
+                        (ARC_BALL_ZAP_HUMAN_RADIUS, arc_ball_zap_pilot())
+                    } else {
+                        (ARC_BALL_ZAP_RADIUS, ARC_BALL_ZAP_TITAN)
+                    };
+                    if centre.distance(b.pos) - e.radius > reach {
+                        continue;
+                    }
+                    let hit = e.damage(damage, b.stops_regen);
+                    log::debug!("arc ball zap for {:.0}", hit.dealt);
+                    crate::particles::emit(
+                        &mut commands,
+                        crate::particles::Effect::Hit {
+                            at: to_bevy(centre),
+                            normal: to_bevy(b.pos - centre).normalize_or(Vec3::Y),
+                            table: b.impact_table,
+                            surface: crate::particles::Surface::Shield,
+                            victim: false,
+                            scale: 0.5,
+                        },
+                    );
+                }
+            }
+        }
         // Smart missiles turn toward their target's chest while it lives.
         let homing = b.homing.and_then(|(t, turn)| {
             enemies

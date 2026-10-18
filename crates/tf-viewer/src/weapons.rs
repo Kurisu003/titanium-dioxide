@@ -1603,7 +1603,10 @@ pub fn weapon_fire(
         w.cooldown += interval;
         w.pull_age = None;
         if !burst {
-            w.ammo -= 1;
+            // The attack's return value is the ammo it uses: FireWeaponPlayerAndNPC spends 2
+            // rounds a shot in the Predator Cannon's long-range mode.
+            let per_shot = if w.long_range() { 2 } else { 1 };
+            w.ammo = w.ammo.saturating_sub(per_shot);
         }
         w.shots += 1;
         log::debug!("{} fires, {} left", w.def.name, w.ammo);

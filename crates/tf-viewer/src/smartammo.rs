@@ -21,7 +21,8 @@
 //!   walks the locked targets), bullets flying straight at the target's aim attachment
 //!   (`HEADSHOT` on NPCs) and missiles homing on it. The locks clear after the burst
 //!   (`SmartAmmo_SetUnlockAfterBurst`). Without a lock the weapon fires normally
-//!   (`SmartAmmo_SetAllowUnlockedFiring`: the Smart Pistol, and the Archer in SP).
+//!   (`SmartAmmo_SetAllowUnlockedFiring`: the Smart Pistol, and the Archer in SP; in MP the
+//!   Archer only fires at a lock).
 //!
 //! Engine-side, so estimated: the targeting time runs from min (point blank) to max (at the
 //! search distance) with range, and missile homing is taken as a turn rate in degrees/s.
@@ -48,15 +49,15 @@ pub struct SmartDef {
     /// Full cone angle, degrees.
     pub search_angle: f32,
     pub search_distance: f32,
-    /// Lock time on players (unused here, kept for reference) and on NPCs; NPCs lock faster.
-    #[allow(dead_code)]
+    /// Lock time on players (remote players online) and on NPCs; NPCs lock faster.
     pub time_min: f32,
-    #[allow(dead_code)]
     pub time_max: f32,
     /// NPC targets lock faster (`smart_ammo_targeting_time_*_npc`).
     pub time_min_npc: f32,
     pub time_max_npc: f32,
     pub new_target_delay: f32,
+    /// `SmartAmmo_SetAllowUnlockedFiring`: fires without a lock (the Archer only in SP).
+    pub allow_unlocked: bool,
     pub max_targeted_burst: u32,
     /// 0: no limit.
     pub max_targets: u32,
@@ -105,6 +106,8 @@ impl SmartDef {
             get("smart_ammo_weapon_type").is_some_and(|t| t.eq_ignore_ascii_case("homing_missile"));
         let (missile_speed, homing_speed) = missile_flight(name, mods);
         Some(Self {
+            allow_unlocked: !(name == "mp_weapon_rocket_launcher"
+                && crate::gamedata::multiplayer()),
             search_angle: f("smart_ammo_search_angle", 0.0),
             search_distance: f("smart_ammo_search_distance", 0.0),
             time_min: f("smart_ammo_targeting_time_min", 0.5),
@@ -186,18 +189,25 @@ impl SmartDef {
         (n.max(1) as u32).min(self.max_targeted_burst)
     }
 
-    /// Seconds per lock at `dist`; every enemy here is an NPC, so the `_npc` times apply.
-    pub fn targeting_time(&self, dist: f32) -> f32 {
+    /// Seconds per lock at `dist`: the `_npc` times on NPCs, the plain ones on players.
+    pub fn targeting_time(&self, dist: f32, player: bool) -> f32 {
         let k = (dist / self.search_distance.max(1.0)).clamp(0.0, 1.0);
-        (self.time_min_npc + (self.time_max_npc - self.time_min_npc) * k).max(0.01)
+        let (min, max) = if player {
+            (self.time_min, self.time_max)
+        } else {
+            (self.time_min_npc, self.time_max_npc)
+        };
+        (min + (max - min) * k).max(0.01)
     }
 }
 
-/// Missile speed and homing from each smart launcher's .nut (SP branch); sh_smart_ammo.gnut's
+/// Missile speed and homing from each smart launcher's .nut (MP and SP branches); sh_smart_ammo.gnut's
 /// defaults otherwise.
 fn missile_flight(name: &str, mods: &[String]) -> (f32, f32) {
     let has = |m: &str| mods.iter().any(|x| x.eq_ignore_ascii_case(m));
     match name {
+        // Multiplayer: SmartAmmo_SetMissileSpeed 1200, SetMissileHomingSpeed 125.
+        "mp_weapon_rocket_launcher" if crate::gamedata::multiplayer() => (1200.0, 125.0),
         // OnWeaponActivate_weapon_rocket_launcher: S2S_MISSILE_SPEED / S2S_MISSILE_HOMING with
         // sp_s2s_settings, else 1750 / 70 in single player.
         "mp_weapon_rocket_launcher" if has("sp_s2s_settings") => (2500.0, 5000.0),
@@ -296,8 +306,8 @@ pub fn search(
     enemies: &Query<(Entity, &mut Enemy)>,
 ) {
     let cos_half = (sd.search_angle * 0.5).to_radians().cos();
-    // (target, distance, alignment, max locks)
-    let mut found: Vec<(Entity, f32, f32, u32)> = Vec::new();
+    // (target, distance, alignment, max locks, a remote player)
+    let mut found: Vec<(Entity, f32, f32, u32, bool)> = Vec::new();
     if searching {
         for (id, e) in enemies.iter() {
             if !e.alive() || !sd.can_target(e) {
@@ -336,7 +346,7 @@ pub fn search(
             {
                 continue;
             }
-            found.push((id, dist, align, sd.max_locks(e, def)));
+            found.push((id, dist, align, sd.max_locks(e, def), e.remote.is_some()));
         }
     }
     for l in &mut locks.targets {
@@ -354,7 +364,7 @@ pub fn search(
         .retain(|l| l.lost == 0.0 || l.lost < sd.unlock_debounce);
     // New targets, nearest the crosshair first.
     found.sort_by(|a, b| b.2.total_cmp(&a.2));
-    for &(id, _, _, max) in &found {
+    for &(id, _, _, max, _) in &found {
         let full = sd.max_targets > 0 && locks.targets.len() as u32 >= sd.max_targets;
         if !full && !locks.targets.iter().any(|l| l.target == id) {
             locks.targets.push(Lock {
@@ -374,17 +384,23 @@ pub fn search(
         let room = sd.max_targeted_burst.saturating_sub(total - before);
         let limit = l.max.min(room) as f32;
         if l.lost == 0.0 && l.seen >= sd.new_target_delay && l.frac < limit {
-            let dist = found
+            let (dist, player) = found
                 .iter()
                 .find(|f| f.0 == l.target)
-                .map(|f| f.1)
-                .unwrap_or(sd.search_distance);
+                .map(|f| (f.1, f.4))
+                .unwrap_or((sd.search_distance, false));
             started |= l.frac == 0.0;
-            l.frac += dt / sd.targeting_time(dist);
+            l.frac += dt / sd.targeting_time(dist, player);
         }
         l.frac = l.frac.min(limit.max(before as f32));
         total = total + l.full() - before;
         confirmed |= l.full() > before;
+    }
+    if started || confirmed {
+        log::debug!(
+            "smart locks: {:?}",
+            locks.targets.iter().map(|l| l.frac).collect::<Vec<_>>()
+        );
     }
     if started && !sd.acquiring_sound.is_empty() {
         crate::audio::event(commands, &sd.acquiring_sound);
