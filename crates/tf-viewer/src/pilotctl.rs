@@ -269,6 +269,11 @@ pub struct Titanfall {
     /// other eject), and seconds since the last one.
     pub eject_presses: u32,
     pub since_eject_press: f32,
+    /// Seconds left of the eject prompt opened by the eject-enable button (EJECT_FADE_TIME);
+    /// doomed, the prompt is always up.
+    pub eject_window: f32,
+    /// The eject press button (Utility) last frame, for its press edge.
+    prev_eject_key: bool,
     pub cooldown: f32,
     /// BT was destroyed and a replacement is being prepared.
     pub rebuilding: bool,
@@ -314,6 +319,9 @@ pub const PILOT_HEALTH: f32 = 100.0;
 const PILOT_REGEN_RATE: f32 = 40.0;
 /// TITAN_EJECT_MAX_PRESS_DELAY (_settings.nut): the eject presses must come this close together.
 pub const EJECT_MAX_PRESS_DELAY: f32 = 1.0;
+/// EJECT_FADE_TIME (_settings.nut): how long the eject prompt stays up after the eject-enable
+/// button (PlayerPressed_EjectEnable) when the Titan isn't doomed.
+pub const EJECT_FADE_TIME: f32 = 3.0;
 /// Presses needed to eject (PlayerPressed_Eject in cl_titan_cockpit.nut).
 pub const EJECT_PRESSES: u32 = 3;
 /// Seconds after BT is destroyed before a new Titanfall can be called.
@@ -534,8 +542,55 @@ pub fn control_transitions(
     let call = std::mem::take(&mut input.titanfall);
     tf.cooldown = (tf.cooldown - dt).max(0.0);
     tf.since_eject_press += dt;
-    if tf.since_eject_press > EJECT_MAX_PRESS_DELAY || bt_health.v.doomed.is_none() {
+    tf.eject_window = (tf.eject_window - dt).max(0.0);
+    let doomed = bt_health.v.doomed.is_some();
+    // The eject prompt (IsDisplayingEjectInterface): always when doomed, else for
+    // EJECT_FADE_TIME after the eject-enable button (here the embark key, X). While it is up,
+    // the eject button (here E) counts presses (PlayerPressed_Eject) and does nothing else.
+    let in_titan = matches!(*control, Control::Titan | Control::Disembark(_));
+    let prompt = in_titan && tf.eject.is_none() && (doomed || tf.eject_window > 0.0);
+    let eject_key = input.utility;
+    let eject_hit = eject_key && !tf.prev_eject_key;
+    tf.prev_eject_key = eject_key;
+    if prompt {
+        input.utility = false;
+    }
+    if tf.since_eject_press > EJECT_MAX_PRESS_DELAY || !prompt {
         tf.eject_presses = 0;
+    }
+    let mut eject_now = false;
+    if prompt && eject_hit {
+        tf.eject_presses += 1;
+        tf.since_eject_press = 0.0;
+        crate::audio::event(&mut commands, "titan_eject_xbutton");
+        crate::audio::event(&mut commands, "hud_boost_card_radar_jammer_redtextbeep_1p");
+        log::info!("eject press {}/{EJECT_PRESSES}", tf.eject_presses);
+        eject_now = tf.eject_presses >= EJECT_PRESSES;
+    }
+    if eject_now {
+        if let Control::Disembark(_) = *control {
+            // Ejecting out of a disembark that has just begun: back in the seat first.
+            fpseq.stop();
+            titan.override_anim = None;
+            *control = Control::Titan;
+        }
+        tf.eject = Some(0.0);
+        tf.eject_presses = 0;
+        tf.eject_window = 0.0;
+        crate::audio::event_at(
+            &mut commands,
+            "Titan_Eject_Servos_3P",
+            Vec3::from(titan.state.pos.to_array()),
+        );
+        log::info!("ejecting");
+        // The cockpit's eject clip, from the eye.
+        let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
+        fpseq.start(
+            "atpov_cockpit_eject",
+            (eye, view_quat(titan.state.yaw, 0.0)),
+            None,
+            true,
+        );
     }
 
     match *control {
@@ -543,55 +598,27 @@ pub fn control_transitions(
             if tf.eject.is_none() {
                 titan.override_anim = None;
             }
-            if interact && tf.eject.is_none() {
-                if bt_health.v.doomed.is_some() {
-                    // Doomed: the use button counts eject presses instead (PlayerPressed_Eject);
-                    // the third within TITAN_EJECT_MAX_PRESS_DELAY of the last ejects.
-                    tf.eject_presses += 1;
-                    tf.since_eject_press = 0.0;
-                    crate::audio::event(&mut commands, "titan_eject_xbutton");
-                    crate::audio::event(
-                        &mut commands,
-                        "hud_boost_card_radar_jammer_redtextbeep_1p",
-                    );
-                    log::info!("eject press {}/{EJECT_PRESSES}", tf.eject_presses);
-                    if tf.eject_presses >= EJECT_PRESSES {
-                        tf.eject = Some(0.0);
-                        tf.eject_presses = 0;
-                        crate::audio::event_at(
-                            &mut commands,
-                            "Titan_Eject_Servos_3P",
-                            Vec3::from(titan.state.pos.to_array()),
-                        );
-                        log::info!("ejecting");
-                        // The cockpit's eject clip, from the eye.
-                        let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
-                        fpseq.start(
-                            "atpov_cockpit_eject",
-                            (eye, view_quat(titan.state.yaw, 0.0)),
-                            None,
-                            true,
-                        );
-                    }
+            // Doomed, the embark key does nothing (the Titan can only be ejected from).
+            if interact && tf.eject.is_none() && !doomed {
+                // The embark key is also the eject-enable button: the prompt opens.
+                tf.eject_window = EJECT_FADE_TIME;
+                *control = Control::Disembark(0.0);
+                // GetDisembarkSequenceForPlayer/Titan: crouch held = the crouch dismount
+                // (the _fast set needs PAS_FAST_EMBARK, an MP passive).
+                let (anim, clip) = if input.crouch {
+                    (DISEMBARK_CROUCH_ANIM, "ptpov_dismount_buddy_crouch")
                 } else {
-                    *control = Control::Disembark(0.0);
-                    // GetDisembarkSequenceForPlayer/Titan: crouch held = the crouch dismount
-                    // (the _fast set needs PAS_FAST_EMBARK, an MP passive).
-                    let (anim, clip) = if input.crouch {
-                        (DISEMBARK_CROUCH_ANIM, "ptpov_dismount_buddy_crouch")
-                    } else {
-                        (DISEMBARK_ANIM, "ptpov_dismount_buddy_stand")
-                    };
-                    pilot.disembark_anim = anim;
-                    log::info!("disembarking ({anim}, {clip})");
-                    let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
-                    fpseq.start(
-                        clip,
-                        hijack_frame(&titan),
-                        Some((eye, view_quat(titan.state.yaw, titan.state.pitch))),
-                        false,
-                    );
-                }
+                    (DISEMBARK_ANIM, "ptpov_dismount_buddy_stand")
+                };
+                pilot.disembark_anim = anim;
+                log::info!("disembarking ({anim}, {clip})");
+                let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
+                fpseq.start(
+                    clip,
+                    hijack_frame(&titan),
+                    Some((eye, view_quat(titan.state.yaw, titan.state.pitch))),
+                    false,
+                );
             }
         }
         Control::Disembark(t) => {

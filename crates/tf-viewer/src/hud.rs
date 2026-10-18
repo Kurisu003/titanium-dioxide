@@ -2051,16 +2051,19 @@ pub fn update_hud(
                         String::new()
                     }
                 }
-                Control::Disembark(_) => "DISEMBARKING".into(),
-                Control::Embark(_) => "EMBARKING".into(),
-                // The doomed eject interface: three presses of the use button.
-                Control::Titan if doomed && titanfall.eject.is_none() => {
+                // The eject interface: doomed, or after the eject-enable button (the embark
+                // key), three presses of the eject button (Utility, E).
+                Control::Titan | Control::Disembark(_)
+                    if (doomed || titanfall.eject_window > 0.0) && titanfall.eject.is_none() =>
+                {
                     format!(
-                        "[X] x3  EJECT   {}/{}",
+                        "[E] x3  EJECT   {}/{}",
                         titanfall.eject_presses,
                         crate::pilotctl::EJECT_PRESSES
                     )
                 }
+                Control::Disembark(_) => "DISEMBARKING".into(),
+                Control::Embark(_) => "EMBARKING".into(),
                 Control::Titan => String::new(),
             }
         } else {
