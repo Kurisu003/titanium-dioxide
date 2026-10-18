@@ -3049,11 +3049,30 @@ pub fn update_health_bars(
     mut fills: Query<(&mut Node, &mut BackgroundColor), Without<HealthBar>>,
     mut labels: Query<(&mut Text, &mut TextColor)>,
     net: Res<crate::net::Net>,
+    world: Res<crate::player::Collision>,
 ) {
     let Ok((camera, cam_tf)) = cameras.single() else {
         return;
     };
     let pvp = net.pvp();
+    // Bars show only for Titans in sight: through a wall, nothing gives them away.
+    let eye = crate::player::from_bevy(cam_tf.translation());
+    let seen = |e: &Enemy| {
+        [0.6, 0.95].iter().any(|k| {
+            let at = e.pos + Vec3::Z * e.height * k;
+            let d = at - eye;
+            let len = d.length();
+            len < 1.0
+                || world
+                    .0
+                    .raycast(
+                        SVec3::from(eye.to_array()),
+                        SVec3::from((d / len).to_array()),
+                        len - e.radius.min(len * 0.5),
+                    )
+                    .is_none()
+        })
+    };
     for (bar, mut node, mut vis) in &mut bars {
         let Ok(e) = enemies.get(bar.enemy) else {
             continue;
@@ -3064,7 +3083,7 @@ pub fn update_health_bars(
             .unwrap_or(0);
         let top = to_bevy(e.pos + Vec3::Z * (e.height + 60.0));
         match camera.world_to_viewport(cam_tf, top) {
-            Ok(p) if e.alive() && !hidden.0 => {
+            Ok(p) if e.alive() && !hidden.0 && seen(e) => {
                 vis.set_if_neq(Visibility::Inherited);
                 crate::hud::set(&mut node, |n| &mut n.left, px(p.x));
                 crate::hud::set(&mut node, |n| &mut n.top, px(p.y));

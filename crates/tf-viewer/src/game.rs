@@ -63,8 +63,14 @@ pub struct Arena {
 }
 
 /// Outside of play, only the start key does anything.
-pub fn gate_input(game: Res<Game>, mut input: ResMut<PlayerInput>) {
-    if game.in_play() {
+pub fn gate_input(
+    game: Res<Game>,
+    mut input: ResMut<PlayerInput>,
+    pilots: Query<&PilotHealth, With<PlayerPilot>>,
+) {
+    // In a match only a dead player (online, waiting to respawn) is held still: no moving,
+    // shooting or abilities until the respawn.
+    if game.in_play() && !pilots.iter().any(|h| h.dead()) {
         return;
     }
     let (start, pause, menu_nav) = (input.start, input.pause, input.menu_nav);
