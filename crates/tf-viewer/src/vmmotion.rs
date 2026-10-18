@@ -12,7 +12,7 @@ use tf_assets::settings::PlayerSettings;
 
 /// A weapon script value: the `sp_base` block's copy if there is one, else the top level.
 fn val(s: &PlayerSettings, k: &str) -> Option<f32> {
-    s.get(&format!("sp_base.{k}"))
+    s.get(&format!("{}{k}", crate::gamedata::base()))
         .or_else(|| s.get(&format!(".{k}")))
         .and_then(|v| v.trim().parse().ok())
 }
@@ -40,7 +40,9 @@ pub struct WeaponSprings(pub HashMap<String, (SpringAxes, SpringAxes)>);
 
 impl WeaponSprings {
     pub fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let Some(s) = PlayerSettings::load("scripts/weapons/springs.txt", true, read) else {
+        let Some(s) =
+            PlayerSettings::load("scripts/weapons/springs.txt", crate::gamedata::sp(), read)
+        else {
             log::warn!("scripts/weapons/springs.txt not found; recoil uses Source's punch spring");
             return Self::default();
         };
@@ -114,7 +116,7 @@ impl KickDef {
         let f = |k: &str, d: f32| val(s, k).unwrap_or(d);
         Self {
             spring: s
-                .get("sp_base.viewkick_spring")
+                .get(&format!("{}viewkick_spring", crate::gamedata::base()))
                 .or_else(|| s.get(".viewkick_spring"))
                 .unwrap_or("")
                 .trim()
@@ -414,7 +416,10 @@ impl MotionDef {
                 )
             };
             let attach = s
-                .get(&format!("sp_base.sway_rotate_attach{suffix}"))
+                .get(&format!(
+                    "{}sway_rotate_attach{suffix}",
+                    crate::gamedata::base()
+                ))
                 .or_else(|| s.get(&format!(".sway_rotate_attach{suffix}")))
                 .map(|a| a.trim().to_string())
                 .or_else(|| fallback.map(|f| f.attach.clone()))

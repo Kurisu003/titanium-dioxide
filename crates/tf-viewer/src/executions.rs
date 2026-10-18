@@ -129,12 +129,12 @@ impl PilotMeleeDef {
     pub fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
         let s = tf_assets::settings::PlayerSettings::load(
             "scripts/weapons/melee_pilot_emptyhanded.txt",
-            true,
+            crate::gamedata::sp(),
             read,
         )
         .unwrap_or_default();
         let f = |k: &str, d: f32| {
-            s.get(&format!("sp_base.{k}"))
+            s.get(&format!("{}{k}", crate::gamedata::base()))
                 .or_else(|| s.get(&format!(".{k}")))
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(d)

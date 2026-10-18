@@ -77,7 +77,7 @@ fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> 
     };
     let s = tf_assets::settings::PlayerSettings::load(
         &format!("scripts/weapons/{script}.txt"),
-        true,
+        crate::gamedata::sp(),
         &mut read,
     )?;
     let f = |k: &str, d: f32| {

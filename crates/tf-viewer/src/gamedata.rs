@@ -5,6 +5,30 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tf_assets::{material, rpak::Rpak, vpk::Vpk};
 
+/// Which values the game's scripts are read with: multiplayer (`MP_BASE`, `[$mp]`) on mp maps,
+/// the campaign's (`SP_BASE`, `[$sp]`) on sp maps. Set once from the map at start.
+static MULTIPLAYER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_multiplayer(mp: bool) {
+    MULTIPLAYER.store(mp, std::sync::atomic::Ordering::Relaxed);
+}
+/// Multiplayer values (else the campaign's).
+pub fn multiplayer() -> bool {
+    MULTIPLAYER.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// The script section to prefer: `"mp_base."` or `"sp_base."`.
+pub fn base() -> &'static str {
+    if multiplayer() {
+        "mp_base."
+    } else {
+        "sp_base."
+    }
+}
+/// For `PlayerSettings::load`: read the `[$sp]` conditionals.
+pub fn sp() -> bool {
+    !multiplayer()
+}
+
 #[derive(bevy::prelude::Resource)]
 pub struct GameData {
     pub root: PathBuf,

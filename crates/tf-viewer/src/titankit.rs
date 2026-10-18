@@ -714,9 +714,15 @@ pub struct KitNumbers {
     pub salvo_rocket: MissileSpec,
 }
 
-/// SP_BASE, then MP_BASE, then the top level of a weapon script.
+/// The mode's base section (MP_BASE on mp maps, else SP_BASE), then the other, then the top
+/// level of a weapon script.
 fn num(s: &PlayerSettings, k: &str, d: f32) -> f32 {
-    for pre in ["sp_base.", "mp_base.", "."] {
+    let order = if crate::gamedata::multiplayer() {
+        ["mp_base.", "sp_base.", "."]
+    } else {
+        ["sp_base.", "mp_base.", "."]
+    };
+    for pre in order {
         if let Some(v) = s
             .get(&format!("{pre}{k}"))
             .and_then(|v| v.parse::<f32>().ok())
@@ -741,8 +747,12 @@ fn regen_cd(s: &PlayerSettings, d: f32) -> f32 {
 impl KitNumbers {
     fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
         let mut w = |n: &str| {
-            PlayerSettings::load(&format!("scripts/weapons/{n}.txt"), true, read)
-                .unwrap_or_default()
+            PlayerSettings::load(
+                &format!("scripts/weapons/{n}.txt"),
+                crate::gamedata::sp(),
+                read,
+            )
+            .unwrap_or_default()
         };
         let laser = w("mp_titanweapon_laser_lite");
         let firewall = w("mp_titanweapon_flame_wall");
@@ -902,9 +912,11 @@ impl KitDefs {
         let n = KitNumbers::load(&mut read);
         // A weapon script's localised name, 1P fire sound, deploy time and HUD icon.
         let mut info = |id: &str| -> (Option<String>, String, f32, Option<String>) {
-            let Some(s) =
-                PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, &mut read)
-            else {
+            let Some(s) = PlayerSettings::load(
+                &format!("scripts/weapons/{id}.txt"),
+                crate::gamedata::sp(),
+                &mut read,
+            ) else {
                 return (None, String::new(), 0.0, None);
             };
             let name = s

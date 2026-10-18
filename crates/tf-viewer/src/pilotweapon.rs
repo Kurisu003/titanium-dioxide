@@ -487,6 +487,8 @@ pub struct PilotWeapon {
     pub fire_t: f32,
     burst_left: u32,
     trigger_held: bool,
+    /// Seconds since a semi-auto pull that has not fired yet (see `weapons::Weapon`).
+    pull_age: Option<f32>,
     firing_audio: bool,
     rng: u64,
     /// Placement entity and viewmodel actor.
@@ -534,6 +536,7 @@ impl PilotWeapon {
             fire_t: 9.0,
             burst_left: 0,
             trigger_held: false,
+            pull_age: None,
             firing_audio: false,
             rng: 0x51ED_2701 ^ arsenal as u64 * 7919,
             viewmodel,
@@ -1622,6 +1625,14 @@ pub fn pilot_weapon_fire(
     // Trigger: automatic weapons fire while held; others once (or one burst) per pull.
     let pulled = input.pilot_fire && !w.trigger_held;
     w.trigger_held = input.pilot_fire;
+    // A pull during the refire delay is kept for one interval and fires once ready.
+    w.pull_age = if pulled {
+        Some(0.0)
+    } else {
+        w.pull_age
+            .map(|a| a + dt)
+            .filter(|a| *a <= 1.0 / w.def.fire_rate.max(0.1) + w.def.burst_delay)
+    };
     if !ready || w.reloading() || w.ammo == 0 || lowered || !raised {
         if pulled {
             log::debug!("{}: trigger refused (ready {ready}, reloading {}, ammo {}, lowered {lowered}, raised {raised})", w.def.name, w.reloading(), w.ammo);
@@ -1646,7 +1657,7 @@ pub fn pilot_weapon_fire(
         } else if w.def.automatic && w.def.burst_count <= 1 {
             input.pilot_fire
         } else {
-            pulled
+            w.pull_age.is_some()
         };
         // attack_button_presses_ads weapons only fire fully zoomed.
         if !start || w.cooldown > 0.0 || (w.def.attack_presses_ads && w.ads < 0.999) {
@@ -1673,6 +1684,7 @@ pub fn pilot_weapon_fire(
             w.smart.queue.len() as u32
         };
         w.burst_left = w.burst_size;
+        w.pull_age = None;
         if charged {
             log::info!(
                 "{} fires charged: {:.0} damage",

@@ -7,7 +7,7 @@
 use tf_assets::settings::PlayerSettings;
 
 fn val(s: &PlayerSettings, k: &str) -> Option<f32> {
-    s.get(&format!("sp_base.{k}"))
+    s.get(&format!("{}{k}", crate::gamedata::base()))
         .or_else(|| s.get(&format!(".{k}")))
         .and_then(|v| v.trim().parse().ok())
 }

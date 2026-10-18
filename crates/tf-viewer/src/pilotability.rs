@@ -352,7 +352,7 @@ pub struct PilotAbilityDefs {
 
 /// A key from the script's MP_BASE block, else its top level.
 fn mp(s: &PlayerSettings, k: &str, default: f32) -> f32 {
-    s.get(&format!("mp_base.{k}"))
+    s.get(&format!("{}{k}", crate::gamedata::base()))
         .or_else(|| s.get(&format!(".{k}")))
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
@@ -375,11 +375,19 @@ fn charges(s: &PlayerSettings) -> u32 {
 
 impl PilotAbilityDefs {
     pub fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let pilot = PlayerSettings::load("scripts/players/mp/pilot_base.set", false, read)
-            .unwrap_or_default();
+        let pilot = PlayerSettings::load(
+            "scripts/players/mp/pilot_base.set",
+            crate::gamedata::sp(),
+            read,
+        )
+        .unwrap_or_default();
         let mut load = |w: &str| {
-            PlayerSettings::load(&format!("scripts/weapons/{w}.txt"), false, read)
-                .unwrap_or_default()
+            PlayerSettings::load(
+                &format!("scripts/weapons/{w}.txt"),
+                crate::gamedata::sp(),
+                read,
+            )
+            .unwrap_or_default()
         };
         let tactical: Vec<TacticalDef> = TACTICALS
             .iter()

@@ -322,7 +322,7 @@ impl WeaponDef {
         body
     }
 
-    /// Load a weapon script (`scripts/weapons/<name>.txt`), preferring SP_BASE values.
+    /// Load a weapon script (`scripts/weapons/<name>.txt`), with the MP_BASE or SP_BASE values for the map's mode (`gamedata::base`).
     pub fn load(name: &str, read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
         Self::load_modded(name, &[], read)
     }
@@ -334,8 +334,12 @@ impl WeaponDef {
         mods: &[&str],
         read: &mut dyn FnMut(&str) -> Option<String>,
     ) -> Self {
-        let base = PlayerSettings::load(&format!("scripts/weapons/{name}.txt"), true, read)
-            .unwrap_or_default();
+        let base = PlayerSettings::load(
+            &format!("scripts/weapons/{name}.txt"),
+            crate::gamedata::sp(),
+            read,
+        )
+        .unwrap_or_default();
         let available_mods = base.mod_names();
         let mods: Vec<&str> = mods
             .iter()
@@ -344,12 +348,12 @@ impl WeaponDef {
             .collect();
         let s = base.with_mods(&mods);
         let f = |k: &str, d: f32| -> f32 {
-            s.get(&format!("sp_base.{k}"))
+            s.get(&format!("{}{k}", crate::gamedata::base()))
                 .or_else(|| s.get(&format!(".{k}")))
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(d)
         };
-        Self {
+        let def = Self {
             name: name.to_string(),
             fire_rate: f("fire_rate", 12.0),
             clip: if f("ammo_clip_size", 30.0) > 0.0 {
@@ -460,7 +464,7 @@ impl WeaponDef {
             ),
             viewmodel: s.get(".viewmodel").unwrap_or_default().to_string(),
             automatic: s
-                .get("sp_base.fire_mode")
+                .get(&format!("{}fire_mode", crate::gamedata::base()))
                 .or_else(|| s.get(".fire_mode"))
                 .is_none_or(|m| m == "auto"),
             burst_count: f("burst_fire_count", 0.0) as u32,
@@ -545,12 +549,12 @@ impl WeaponDef {
             fire_rate_speedup: f("fire_rate_max_time_speedup", 0.0),
             fire_rate_cooldown: f("fire_rate_max_time_cooldown", 0.0),
             fire_rate_by_ads: s
-                .get("sp_base.fire_rate_max_use_ads")
+                .get(&format!("{}fire_rate_max_use_ads", crate::gamedata::base()))
                 .or_else(|| s.get(".fire_rate_max_use_ads"))
                 .is_some_and(|v| matches!(v.trim(), "1" | "true")),
             fx: {
                 let g = |k: &str| {
-                    s.get(&format!("sp_base.{k}"))
+                    s.get(&format!("{}{k}", crate::gamedata::base()))
                         .or_else(|| s.get(&format!(".{k}")))
                         .map(|v| v.trim().to_string())
                         .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("none"))
@@ -568,7 +572,7 @@ impl WeaponDef {
             },
             ads_scope: {
                 let get = |k: &str| {
-                    s.get(&format!("sp_base.{k}"))
+                    s.get(&format!("{}{k}", crate::gamedata::base()))
                         .or_else(|| s.get(&format!(".{k}")))
                         .map(|v| v.trim().to_string())
                 };
@@ -583,7 +587,7 @@ impl WeaponDef {
             vm_offset: {
                 let v = |k: &str| {
                     let t = s
-                        .get(&format!("sp_base.{k}"))
+                        .get(&format!("{}{k}", crate::gamedata::base()))
                         .or_else(|| s.get(&format!(".{k}")))
                         .unwrap_or_default();
                     let n: Vec<f32> = t
@@ -601,7 +605,7 @@ impl WeaponDef {
             bodygroups: (1..=16)
                 .filter_map(|i| {
                     let get = |k: &str| {
-                        s.get(&format!("sp_base.{k}"))
+                        s.get(&format!("{}{k}", crate::gamedata::base()))
                             .or_else(|| s.get(&format!(".{k}")))
                             .map(|v| v.trim().to_string())
                     };
@@ -616,7 +620,7 @@ impl WeaponDef {
                 .filter_map(|i| {
                     let on = s
                         .get(&format!(".ui{i}_enable"))
-                        .or_else(|| s.get(&format!("sp_base.ui{i}_enable")))?
+                        .or_else(|| s.get(&format!("{}ui{i}_enable", crate::gamedata::base())))?
                         .trim()
                         == "1";
                     on.then_some(())?;
@@ -628,7 +632,18 @@ impl WeaponDef {
                     ))
                 })
                 .collect(),
-        }
+        };
+        log::debug!(
+            "weapon {name}: fire_rate {} clip {} titan {}/{} pilot {}/{} explosion {}",
+            def.fire_rate,
+            def.clip,
+            def.damage_near,
+            def.damage_far,
+            def.damage_near_pilot,
+            def.damage_far_pilot,
+            def.explosion_damage
+        );
+        def
     }
 
     /// Load a weapon the player uses, with the mods `TF_MODS` names for it (see `env_mods`).
@@ -839,6 +854,9 @@ pub struct Weapon {
     /// Index into TITAN_ARSENAL.
     pub arsenal: usize,
     trigger_held: bool,
+    /// Seconds since the last semi-auto trigger pull that has not fired yet (the game keeps
+    /// the press time, `m_pressedAttack`, so a pull during the refire delay still fires).
+    pull_age: Option<f32>,
     /// The Predator Cannon's barrel spin effect while it winds up (zoomed in).
     spin_fx: Option<Entity>,
     /// A Power Shot is pending: zoomed in by force, no ordinary rounds.
@@ -998,6 +1016,7 @@ impl Weapon {
             firing_audio: false,
             arsenal: 0,
             trigger_held: false,
+            pull_age: None,
             spin_fx: None,
             alt_shot: false,
             forced_ads: false,
@@ -1428,6 +1447,18 @@ pub fn weapon_fire(
     let gun = &TITAN_ARSENAL[w.arsenal.min(TITAN_ARSENAL.len() - 1)];
     let pulled = fire && !w.trigger_held;
     w.trigger_held = fire;
+    // A semi-auto pull is kept for one refire interval: pulled during the cooldown, the shot
+    // goes off as soon as the gun is ready, even if the trigger was let go.
+    let semi_buffer = !w.def.automatic && w.def.charge.time <= 0.0;
+    w.pull_age = if pulled && semi_buffer {
+        Some(0.0)
+    } else {
+        w.pull_age
+            .map(|a| a + dt)
+            .filter(|a| *a <= 1.0 / w.def.fire_rate.max(0.1))
+    };
+    let pulled = pulled || (semi_buffer && w.pull_age.is_some() && w.cooldown <= 0.0);
+    let fire = fire || pulled;
     // mp_titanweapon_predator_cannon.nut: zooming in (the trigger zooms too) spins the barrels,
     // P_predator_barrel_blur_FP on fx_barrel with the wind-up; zooming out winds them down.
     if w.def.name == "mp_titanweapon_predator_cannon" {
@@ -1570,10 +1601,12 @@ pub fn weapon_fire(
     let interval = 1.0 / rate.max(0.1);
     while w.cooldown <= 0.0 && (w.ammo > 0 || burst) {
         w.cooldown += interval;
+        w.pull_age = None;
         if !burst {
             w.ammo -= 1;
         }
         w.shots += 1;
+        log::debug!("{} fires, {} left", w.def.name, w.ammo);
         let arsenal = w.arsenal as u8;
         if cdef.by_ads && !burst {
             // FireSniper's sound tiers: level > 4, > 3, > 2, else 1.

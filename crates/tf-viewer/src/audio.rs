@@ -769,13 +769,13 @@ impl Sfx {
         };
         let Some(s) = tf_assets::settings::PlayerSettings::load(
             &format!("scripts/weapons/{id}.txt"),
-            true,
+            crate::gamedata::sp(),
             &mut read,
         ) else {
             return WeaponSounds::default();
         };
         let key = |k: &str| {
-            s.get(&format!("sp_base.{k}"))
+            s.get(&format!("{}{k}", crate::gamedata::base()))
                 .or_else(|| s.get(&format!(".{k}")))
                 .map(str::to_string)
                 .unwrap_or_default()

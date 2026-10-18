@@ -89,7 +89,7 @@ impl SmartDef {
     /// The smart ammo block of a (modded) weapon script, if it has one.
     pub fn from_settings(name: &str, mods: &[String], s: &PlayerSettings) -> Option<Self> {
         let get = |k: &str| {
-            s.get(&format!("sp_base.{k}"))
+            s.get(&format!("{}{k}", crate::gamedata::base()))
                 .or_else(|| s.get(&format!(".{k}")))
         };
         let f = |k: &str, d: f32| {

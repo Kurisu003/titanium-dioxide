@@ -252,6 +252,7 @@ fn parse_args() -> Args {
 
 fn main() {
     let args = parse_args();
+    gamedata::set_multiplayer(!args.map.starts_with("sp_"));
     if !std::path::Path::new(&args.game).join("vpk").is_dir() {
         eprintln!(
             "Titanium Dioxide needs your own Titanfall 2 install, and none was found at {:?}.\n\

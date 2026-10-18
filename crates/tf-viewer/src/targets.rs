@@ -297,9 +297,13 @@ impl EnemyKit {
                         weapon.explosion_radius.max(k.weapon.explosion_radius);
                     weapon.explosion_inner_radius = k.weapon.explosion_inner_radius;
                 }
-                let sound = PlayerSettings::load(&format!("scripts/weapons/{id}.txt"), true, read)
-                    .and_then(|s| s.get(".fire_sound_1_player_3p").map(str::to_string))
-                    .unwrap_or_default();
+                let sound = PlayerSettings::load(
+                    &format!("scripts/weapons/{id}.txt"),
+                    crate::gamedata::sp(),
+                    read,
+                )
+                .and_then(|s| s.get(".fire_sound_1_player_3p").map(str::to_string))
+                .unwrap_or_default();
                 Ability {
                     weapon,
                     speed,
