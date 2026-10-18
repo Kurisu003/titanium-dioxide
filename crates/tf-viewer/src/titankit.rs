@@ -633,6 +633,8 @@ pub struct KitSpec {
 pub struct UtilNumbers {
     pub cooldown: f32,
     pub charges: u32,
+    /// fire_duration (the Hover flies FlyerHovers' fixed 3 s instead).
+    #[allow(dead_code)]
     pub duration: f32,
 }
 
@@ -1548,13 +1550,24 @@ pub fn meteor_thermite(
     mut pieces: Query<(Entity, &mut MeteorThermite, &mut Transform)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
     mut cores: Query<&mut TitanCore, With<PlayerTitan>>,
+    (control, settings, mut player, mut pilots): (
+        Res<Control>,
+        Res<TitanSettings>,
+        Query<(&PlayerTitan, &mut TitanHealth)>,
+        Query<(
+            &crate::pilotctl::PlayerPilot,
+            &mut crate::pilotctl::PilotHealth,
+        )>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.1);
     spots.burning.clear();
+    let selfk = scorch_self_damage();
     let (tick_titan, tick_pilot) = defs.as_ref().map_or((100.0, 20.0), |d| {
         (d.n.thermite_tick, d.n.thermite_tick_pilot)
     });
     let mut burned: Vec<(u32, Entity)> = Vec::new();
+    let mut self_burned: Vec<u32> = Vec::new();
     for (id, mut t, mut tf) in &mut pieces {
         t.age += dt;
         if t.age >= t.life {
@@ -1615,6 +1628,42 @@ pub fn meteor_thermite(
                 core.credit_inflicted(hit);
             }
         }
+        // Your own thermite burns you (Scorch_SelfDamageReduction), once per shot per tick.
+        if self_burned.contains(&t.shot) {
+            continue;
+        }
+        let reach = |p: Vec3, r: f32, h: f32| {
+            (p - t.pos).truncate().length() - r < radius
+                && t.pos.z > p.z - radius
+                && t.pos.z < p.z + h + radius
+        };
+        if *control == Control::Titan {
+            if let Ok((bt, mut health)) = player.single_mut() {
+                let bp = Vec3::from(bt.state.pos.to_array());
+                if health.dead_for.is_none() && reach(bp, settings.0.radius, settings.0.height) {
+                    self_burned.push(t.shot);
+                    health.damage_from(tick_titan * selfk, true, t.pos);
+                }
+            }
+        } else if *control == Control::Pilot {
+            if let Ok((p, mut health)) = pilots.single_mut() {
+                if reach(Vec3::from(p.state.pos.to_array()), 16.0, 72.0) {
+                    self_burned.push(t.shot);
+                    health.damage(tick_pilot * selfk);
+                }
+            }
+        }
+    }
+}
+
+/// Scorch_SelfDamageReduction (mp_titanweapon_meteor.nut): self damage from your own thermite,
+/// Firewall, gas fire and Flame Core patches is full in MP (zero with PAS_SCORCH_SELFDMG,
+/// Tempered Plating) and 20% in SP.
+fn scorch_self_damage() -> f32 {
+    if crate::gamedata::multiplayer() {
+        1.0
+    } else {
+        0.2
     }
 }
 
@@ -3445,6 +3494,41 @@ pub fn kit_world(
                 };
                 let hit = e.damage_radius(amount, false);
                 core.credit_inflicted(hit);
+            }
+        }
+        // Your own fire burns you too (Scorch_SelfDamageReduction: full damage in MP, 20% in
+        // SP): the Titan while you drive it, the Pilot on foot. An auto-Titan is a teammate
+        // (no friendly fire).
+        let selfk = scorch_self_damage();
+        if *control == Control::Titan && !mods.phased {
+            if let Ok((bid, bt, mut health)) = player.single_mut() {
+                let bp = Vec3::from(bt.state.pos.to_array());
+                let d = (bp - t.pos).truncate().length() - settings.0.radius;
+                if !burned.contains(&(key, bid))
+                    && health.dead_for.is_none()
+                    && d < t.radius
+                    && (t.pos.z - bp.z) < settings.0.height
+                    && (bp.z - t.pos.z) < 100.0
+                    && trap_center.is_none_or(|c| (bp - c).truncate().length() <= SLOW_TRAP_RADIUS)
+                {
+                    burned.push((key, bid));
+                    health.damage_from(n.thermite_tick * selfk, true, t.pos);
+                }
+            }
+        }
+        if *control == Control::Pilot {
+            if let Ok((pid, pilot, mut health)) = pilots.single_mut() {
+                let pp = Vec3::from(pilot.state.pos.to_array());
+                let d = (pp - t.pos).truncate().length() - 16.0;
+                if !burned.contains(&(key, pid))
+                    && d < t.radius
+                    && (t.pos.z - pp.z) < 72.0
+                    && (pp.z - t.pos.z) < 100.0
+                    && trap_center.is_none_or(|c| (pp - c).truncate().length() <= SLOW_TRAP_RADIUS)
+                {
+                    burned.push((key, pid));
+                    health.damage(n.thermite_tick_pilot * selfk);
+                }
             }
         }
     }

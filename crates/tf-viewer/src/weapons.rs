@@ -79,6 +79,10 @@ pub struct WeaponDef {
     pub damage_near_pilot: f32,
     pub damage_far_pilot: f32,
     pub explosion_damage: f32,
+    /// explosion_damage_heavy_armor: the blast on Titans (the plain value if unset).
+    pub explosion_damage_heavy: f32,
+    /// explosion_damages_owner (engine default 0): the blast hurts whoever fired it.
+    pub explosion_damages_owner: bool,
     /// What an NPC deals with this weapon (npc_damage_*; falls back to the player numbers).
     pub npc_damage_near: f32,
     pub npc_damage_far: f32,
@@ -389,6 +393,8 @@ impl WeaponDef {
             damage_near_pilot: f("damage_near_value", 20.0),
             damage_far_pilot: f("damage_far_value", 15.0),
             explosion_damage: f("explosion_damage", 0.0),
+            explosion_damage_heavy: f("explosion_damage_heavy_armor", f("explosion_damage", 0.0)),
+            explosion_damages_owner: f("explosion_damages_owner", 0.0) > 0.0,
             npc_damage_near: f(
                 "npc_damage_near_value_titanarmor",
                 f(
@@ -1652,9 +1658,12 @@ pub fn weapon_fire(
         let ads = w.ads;
         let base = w.def.spread.base(stance, ads);
         let cone = (base + w.spread_kick).to_radians() * 0.5;
+        // Uniform inside the cone (a disc on screen, the crosshair's ring), not a square whose
+        // corners reach past it.
         let (r1, r2) = (w.rand(), w.rand());
-        let yaw = vyaw + punch.yaw.to_radians() + (r1 - 0.5) * 2.0 * cone;
-        let pitch = vpitch + punch.pitch.to_radians() + (r2 - 0.5) * 2.0 * cone;
+        let (a, r) = (r1 * std::f32::consts::TAU, r2.sqrt() * cone);
+        let yaw = vyaw + punch.yaw.to_radians() + a.cos() * r;
+        let pitch = vpitch + punch.pitch.to_radians() + a.sin() * r;
         let mut dir = Vec3::new(
             pitch.cos() * yaw.cos(),
             pitch.cos() * yaw.sin(),

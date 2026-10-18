@@ -1141,8 +1141,7 @@ pub struct PilotBolt {
     vel: Vec3,
     gravity: f32,
     travelled: f32,
-    damage: (f32, f32, f32, f32),
-    explosion: (f32, f32, f32),
+    dmg: BoltDamage,
     stops_regen: bool,
     life: f32,
     /// Fired by BT: hits build his core meter.
@@ -1155,12 +1154,23 @@ pub struct PilotBolt {
     /// The weapon's impact table (what its hits look like).
     impact_table: &'static str,
     /// Its burn mod's damage and explosion, taken on when it leaves through your A-Wall.
-    burn: Option<((f32, f32), (f32, f32, f32))>,
+    burn: Option<BoltDamage>,
+    /// explosion_damages_owner: its blast can hurt the Pilot who fired it.
+    damages_owner: bool,
     /// Scorch's T-203 shell: it leaves thermite where it lands (OnProjectileCollision_Meteor).
     thermite: bool,
     /// The Thunderbolt's ball lightning: seconds to its next zap (BallLightningThink).
     zap: Option<f32>,
+    /// Where it is drawn relative to its simulated position at launch (Bevy units): a Pilot's
+    /// shot leaves the gun barrel (projectile_adjust_to_gun_barrel) while it flies from the
+    /// eye, and the offset closes over BOLT_BARREL_BLEND seconds.
+    barrel: Vec3,
+    age: f32,
 }
+
+/// Seconds a Pilot projectile takes to close from the barrel onto its path (a guess at the
+/// engine's projectile_first_person_offset_fraction blend).
+const BOLT_BARREL_BLEND: f32 = 0.12;
 
 /// mp_weapon_arc_launcher.nut / FireArcBall: the ball flies at 500 u/s plus the shooter's
 /// speed along the shot, lives 8 s, and its ball lightning zaps every
@@ -1187,6 +1197,49 @@ fn is_arc_ball(def: &WeaponDef) -> bool {
     def.name == "mp_weapon_arc_launcher"
 }
 
+/// A projectile's damage: direct (Titan armour and Pilot values, near/far by distance) and its
+/// blast (plain and heavy-armour damage, inner and outer radius).
+#[derive(Clone, Copy, Debug)]
+struct BoltDamage {
+    titan: (f32, f32),
+    pilot: (f32, f32),
+    dist: (f32, f32),
+    blast: f32,
+    blast_heavy: f32,
+    inner: f32,
+    radius: f32,
+}
+
+impl BoltDamage {
+    fn of(def: &WeaponDef) -> Self {
+        Self {
+            titan: (def.damage_near, def.damage_far),
+            pilot: (def.damage_near_pilot, def.damage_far_pilot),
+            dist: (def.near_dist, def.far_dist),
+            blast: def.explosion_damage,
+            blast_heavy: def.explosion_damage_heavy,
+            inner: def.explosion_inner_radius,
+            radius: def.explosion_radius,
+        }
+    }
+    /// Direct damage after `travelled` units, on a Pilot or on a Titan.
+    fn direct(&self, travelled: f32, infantry: bool) -> f32 {
+        let (near, far) = if infantry { self.pilot } else { self.titan };
+        let (nd, fd) = self.dist;
+        let f = ((travelled - nd) / (fd - nd).max(1.0)).clamp(0.0, 1.0);
+        near + (far - near) * f
+    }
+    /// The blast at `d` units from its centre (RadiusDamage's linear falloff).
+    fn blast_at(&self, d: f32, infantry: bool) -> f32 {
+        let k = 1.0 - ((d - self.inner) / (self.radius - self.inner).max(1.0)).clamp(0.0, 1.0);
+        if infantry {
+            self.blast * k
+        } else {
+            self.blast_heavy * k
+        }
+    }
+}
+
 impl PilotBolt {
     fn new(pos: Vec3, vel: Vec3, gravity: f32, def: &WeaponDef, from_titan: bool) -> Self {
         Self {
@@ -1194,12 +1247,7 @@ impl PilotBolt {
             vel,
             gravity,
             travelled: 0.0,
-            damage: (def.damage_near, def.damage_far, def.near_dist, def.far_dist),
-            explosion: (
-                def.explosion_damage,
-                def.explosion_inner_radius,
-                def.explosion_radius,
-            ),
+            dmg: BoltDamage::of(def),
             stops_regen: def.stops_regen,
             life: 6.0,
             from_titan,
@@ -1207,18 +1255,16 @@ impl PilotBolt {
             crit: if def.crit { def.crit_scale } else { 1.0 },
             homing: None,
             impact_table: def.impact_table,
-            burn: def.burn.as_deref().filter(|_| !from_titan).map(|b| {
-                (
-                    (b.damage_near, b.damage_far),
-                    (
-                        b.explosion_damage,
-                        b.explosion_inner_radius,
-                        b.explosion_radius,
-                    ),
-                )
-            }),
+            burn: def
+                .burn
+                .as_deref()
+                .filter(|_| !from_titan)
+                .map(BoltDamage::of),
+            damages_owner: def.explosion_damages_owner && !from_titan,
             thermite: from_titan && def.name == "mp_titanweapon_meteor",
             zap: is_arc_ball(def).then_some(0.0),
+            barrel: Vec3::ZERO,
+            age: 0.0,
         }
     }
 }
@@ -1233,11 +1279,34 @@ pub fn spawn_bolt(
     def: &WeaponDef,
     from_titan: bool,
 ) {
+    spawn_bolt_from(commands, fx, pos, vel, gravity, def, from_titan, None);
+}
+
+/// [`spawn_bolt`], drawn leaving `barrel` (Bevy space, the viewmodel's muzzle).
+#[allow(clippy::too_many_arguments)]
+fn spawn_bolt_from(
+    commands: &mut Commands,
+    fx: &FxAssets,
+    pos: Vec3,
+    vel: Vec3,
+    gravity: f32,
+    def: &WeaponDef,
+    from_titan: bool,
+    barrel: Option<Vec3>,
+) {
     let _ = fx;
     let size = if from_titan { 0.35 } else { 0.12 };
-    let energy = ["particle_accelerator", "sniper", "arc", "lstar", "plasma"]
-        .iter()
-        .any(|k| def.name.contains(k));
+    let energy = [
+        "particle_accelerator",
+        "sniper",
+        "arc",
+        "lstar",
+        "plasma",
+        "epg",
+        "pulse_lmg",
+    ]
+    .iter()
+    .any(|k| def.name.contains(k));
     let color = if energy {
         Vec3::new(1.0, 2.5, 6.0)
     } else if def.name.contains("meteor") {
@@ -1255,6 +1324,9 @@ pub fn spawn_bolt(
             if is_arc_ball(def) {
                 b.life = ARC_BALL_LIFE;
             }
+            if let Some(m) = barrel {
+                b.barrel = m - to_bevy(pos);
+            }
             b
         },
     ));
@@ -1266,6 +1338,12 @@ pub fn spawn_bolt(
             e.insert(ProjectileModel(crate::weapons::intern(
                 &def.projectile_model,
             )));
+        }
+        // Rocket trails (Rocket_Smoke_SMR's rope and puffs) don't draw in our particle system
+        // yet, which left the Sidewinder's rockets invisible: Pilot rockets keep the
+        // hand-built glow and smoke too.
+        if smoke && !from_titan {
+            e.insert(crate::particles::Glow::new(color, size, smoke));
         }
     } else {
         e.insert(crate::particles::Glow::new(color, size, smoke));
@@ -1795,7 +1873,11 @@ pub fn pilot_weapon_fire(
         let ads = w.ads;
         let base = w.def.spread.base(crate::spread::pilot_stance(s), ads);
         let cone = (base + w.spread_kick).to_radians() * 0.5;
-        let (r1, r2) = (w.rand() - 0.5, w.rand() - 0.5);
+        // Uniform inside the cone (a disc on screen, the crosshair's ring).
+        let (r1, r2) = {
+            let (a, r) = (w.rand() * std::f32::consts::TAU, w.rand().sqrt() * 0.5);
+            (a.cos() * r, a.sin() * r)
+        };
         let yaw = input.yaw + punch.yaw.to_radians();
         let pitch = input.pitch + punch.pitch.to_radians();
         let forward = view_dir(yaw, pitch);
@@ -1848,7 +1930,7 @@ pub fn pilot_weapon_fire(
                 let own = Vec3::from(pilot.state.vel.to_array());
                 let along = own.length() * own.normalize_or_zero().dot(dir).max(0.0);
                 log::debug!("arc ball fired at {:.0} u/s", ARC_BALL_SPEED + along);
-                spawn_bolt(
+                spawn_bolt_from(
                     &mut commands,
                     &fx,
                     eye + dir * 40.0,
@@ -1856,11 +1938,12 @@ pub fn pilot_weapon_fire(
                     0.0,
                     &shot_def,
                     false,
+                    Some(muzzle),
                 );
                 continue;
             }
             if let Some(speed) = w.def.projectile_speed {
-                spawn_bolt(
+                spawn_bolt_from(
                     &mut commands,
                     &fx,
                     eye + dir * 40.0,
@@ -1868,6 +1951,7 @@ pub fn pilot_weapon_fire(
                     w.def.gravity,
                     &shot_def,
                     false,
+                    Some(muzzle),
                 );
                 continue;
             }
@@ -2083,6 +2167,10 @@ pub fn update_pilot_bolts(
     mut enemy_walls: ResMut<crate::titankit::EnemyWalls>,
     shields: Res<crate::pilotability::Shields>,
     mut fire_spots: ResMut<crate::titankit::FireSpots>,
+    (control, mut pilots): (
+        Res<Control>,
+        Query<(&PlayerPilot, &mut crate::pilotctl::PilotHealth)>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.1);
     let no_boxes = crate::hitbox::EnemyHitboxes::default();
@@ -2173,10 +2261,7 @@ pub fn update_pilot_bolts(
             }
         }
         if b.burn.is_some() && shields.passes_out(b.pos, dir, t_end) {
-            let ((near, far), explosion) = b.burn.take().unwrap();
-            b.damage.0 = near;
-            b.damage.1 = far;
-            b.explosion = explosion;
+            b.dmg = b.burn.take().unwrap();
         }
         b.pos += dir * t_end;
         b.travelled += t_end;
@@ -2195,7 +2280,9 @@ pub fn update_pilot_bolts(
                 nearest
             );
         }
-        tf.translation = to_bevy(b.pos);
+        b.age += dt;
+        let blend = (1.0 - b.age / BOLT_BARREL_BLEND).max(0.0);
+        tf.translation = to_bevy(b.pos) + b.barrel * blend;
         tf.rotation = Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y));
         if victim.is_none() && !hit_world {
             if b.life <= 0.0 {
@@ -2204,12 +2291,10 @@ pub fn update_pilot_bolts(
             continue;
         }
         commands.entity(id).despawn();
-        let (near, far, nd, fd) = b.damage;
-        let f = ((b.travelled - nd) / (fd - nd).max(1.0)).clamp(0.0, 1.0);
         if let (Some(we), None) = (wall, victim.as_ref()) {
             enemy_walls
                 .absorbed
-                .push((we, near + (far - near) * f + b.explosion.0));
+                .push((we, b.dmg.direct(b.travelled, false) + b.dmg.blast_heavy));
         }
         let mut hits = Vec::new();
         // Titans this bolt actually damaged (the game's damage callbacks, Tone's
@@ -2228,8 +2313,9 @@ pub fn update_pilot_bolts(
                 } else {
                     crate::particles::Surface::Titan
                 };
-                let base = near + (far - near) * f;
-                // Projectiles carry Titan-armour damage; headshots and crits multiply it.
+                let base = b.dmg.direct(b.travelled, e.infantry);
+                // Pilot values on Pilots, Titan-armour values on Titans; headshots and crits
+                // multiply them.
                 let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD {
                     b.headshot
                 } else if !e.infantry && h.crit {
@@ -2244,7 +2330,7 @@ pub fn update_pilot_bolts(
                 hits.push(hit);
             }
         }
-        let (exp, inner, radius) = b.explosion;
+        let (exp, radius) = (b.dmg.blast.max(b.dmg.blast_heavy), b.dmg.radius);
         if b.thermite {
             fire_spots.blasts.push((b.pos, radius));
             crate::titankit::spawn_meteor_thermite(
@@ -2264,12 +2350,25 @@ pub fn update_pilot_bolts(
                 }
                 let d = ((e.pos + Vec3::Z * e.height * 0.5) - b.pos).length() - e.radius;
                 if d < radius {
-                    let k = 1.0 - ((d - inner) / (radius - inner).max(1.0)).clamp(0.0, 1.0);
-                    let hit = e.damage(exp * k, b.stops_regen);
+                    // RadiusDamage: shields that catch rounds don't stop the blast.
+                    let amount = b.dmg.blast_at(d, e.infantry);
+                    let hit = e.damage_radius(amount, b.stops_regen);
                     if hit.dealt > 0.0 && !e.infantry && !damaged.contains(&eid) {
                         damaged.push(eid);
                     }
                     hits.push(hit);
+                }
+            }
+            // explosion_damages_owner (EPG, L-STAR, Cold War): your own blast hurts you.
+            if b.damages_owner && *control == Control::Pilot {
+                if let Ok((p, mut health)) = pilots.single_mut() {
+                    let centre = Vec3::from(p.state.pos.to_array()) + Vec3::Z * 36.0;
+                    let d = centre.distance(b.pos) - 16.0;
+                    if d < radius {
+                        let amount = b.dmg.blast_at(d, true);
+                        log::debug!("own blast hit the pilot for {amount:.0}");
+                        health.damage(amount);
+                    }
                 }
             }
             audio::cue(&mut commands, Cue::MissileExplode, Some(b.pos));
