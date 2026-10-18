@@ -1535,11 +1535,12 @@ pub fn update_hud(
         ),
         Without<WaveQuip>,
     >,
-    (mut quip, mut meter_pct, strings, map): (
+    (mut quip, mut meter_pct, strings, map, auto): (
         Query<&mut Text, With<WaveQuip>>,
         Query<&mut TextSpan, With<MeterPct>>,
         Res<crate::pilotweapon::Strings>,
         Res<crate::ui::MapChoice>,
+        Res<crate::autotitan::AutoTitan>,
     ),
     (
         kit_view,
@@ -1700,7 +1701,7 @@ pub fn update_hud(
             .map(|k| k.core_icon.clone())
             .unwrap_or_else(|| "rui/hud/titan_core".to_string());
         (
-            if core.active() { 1.0 } else { core.meter },
+            core.expire_frac().unwrap_or(core.meter),
             ready,
             icon,
             caption,
@@ -1730,11 +1731,12 @@ pub fn update_hud(
             )
         }
     } else {
+        // The auto-Titan's health, with its mode's icon (cl_earn_meter eEarnMeterMode.PET).
         let frac = health.v.fraction();
         (
             frac,
             false,
-            "rui/hud/earn_meter/titan_follow".to_string(),
+            crate::combat::pet_icon(auto.mode == crate::autotitan::Mode::Guard),
             format!("{:.0}%", frac * 100.0),
             "",
             if doomed { DOOM } else { METER_BLUE },

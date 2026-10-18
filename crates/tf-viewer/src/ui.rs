@@ -1688,7 +1688,9 @@ pub fn menu_input(
         || std::mem::take(&mut input.pause);
     if pause_key && game.in_play() {
         menu.paused = !menu.paused;
-        if menu.paused {
+        // Online the match goes on behind the menu (the others still see you, and can hit
+        // you); only offline does the clock stop.
+        if menu.paused && !net.active() {
             time.pause()
         } else {
             time.unpause()

@@ -533,8 +533,11 @@ const TURN_FULL: f32 = 150.0;
 
 impl VmMotion {
     pub fn step(&mut self, def: &MotionDef, inp: &MotionInput, dt: f32) -> VmOffset {
+        // Paused (no time passes), a turn made meanwhile is no turn rate.
+        let paused = dt <= 0.0;
         let dt = dt.max(1e-4);
         let (dyaw, dpitch) = match self.last {
+            Some(_) if paused => (0.0, 0.0),
             Some((y, p)) => {
                 let mut dy = inp.yaw - y;
                 dy = (dy + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
@@ -751,7 +754,12 @@ impl CockpitSway {
     /// `yaw`/`pitch` in radians (pitch positive looking down); `vel` in the view's yaw frame
     /// (forward, left, up).
     pub fn step(&mut self, def: &CockpitSwayDef, yaw: f32, pitch: f32, vel: Vec3, dt: f32) {
-        let dt = dt.max(1e-4);
+        // Paused (no time passes): hold still. A turn made meanwhile is not a turn rate over
+        // a zero-length frame, which would throw the cockpit against its limits.
+        if dt <= 0.0 {
+            self.last = Some((yaw, pitch));
+            return;
+        }
         let (dyaw, dpitch) = match self.last {
             Some((y, p)) => {
                 let dy = (yaw - y + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)

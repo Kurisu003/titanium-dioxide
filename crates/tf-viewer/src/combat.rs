@@ -25,6 +25,24 @@ pub fn set_titan_layout(segment: f32, health: f32, dash_drain: f32) {
     SEG_COUNT.store(((health / segment).ceil() as u32).clamp(1, 8), Relaxed);
     DASH_DRAIN.store(dash_drain.clamp(1.0, 100.0) as u32, Relaxed);
 }
+/// The on-foot meter's auto-Titan icons (hud_follow_icon, hud_guard_icon of the chassis).
+static PET_ICONS: std::sync::RwLock<Option<(String, String)>> = std::sync::RwLock::new(None);
+
+pub fn set_pet_icons(follow: &str, guard: &str) {
+    if let Ok(mut i) = PET_ICONS.write() {
+        *i = Some((follow.replace('\\', "/"), guard.replace('\\', "/")));
+    }
+}
+/// The auto-Titan's icon for its mode.
+pub fn pet_icon(guard: bool) -> String {
+    let icons = PET_ICONS.read().ok().and_then(|i| i.clone());
+    match (icons, guard) {
+        (Some((f, _)), false) => f,
+        (Some((_, g)), true) => g,
+        (None, false) => "rui/hud/earn_meter/titan_follow".to_string(),
+        (None, true) => "rui/hud/earn_meter/titan_guard".to_string(),
+    }
+}
 /// Health per HUD segment.
 pub fn segment() -> f32 {
     SEG_SIZE.load(std::sync::atomic::Ordering::Relaxed) as f32

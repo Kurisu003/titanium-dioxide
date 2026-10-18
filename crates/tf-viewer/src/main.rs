@@ -1121,6 +1121,12 @@ fn setup_world(
             bt.max_health,
             params.dash_drain,
         );
+        if let (Some(f), Some(g)) = (
+            chassis.get("global.hud_follow_icon"),
+            chassis.get("global.hud_guard_icon"),
+        ) {
+            combat::set_pet_icons(f, g);
+        }
         let feel = player::TitanFeel::from_settings(&buddy);
         log::info!("BT feel: {feel:?}");
         commands.insert_resource(feel);

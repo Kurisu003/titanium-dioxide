@@ -2480,7 +2480,13 @@ pub fn update_pilot_bolts(
                 hits.push(hit);
             }
         }
-        let (exp, radius) = (b.dmg.blast.max(b.dmg.blast_heavy), b.dmg.radius);
+        // A round a Particle Wall catches is absorbed whole: no blast behind the wall.
+        let absorbed = wall.is_some() && victim.is_none();
+        let (exp, radius) = if absorbed {
+            (0.0, 0.0)
+        } else {
+            (b.dmg.blast.max(b.dmg.blast_heavy), b.dmg.radius)
+        };
         if b.thermite {
             fire_spots.blasts.push((b.pos, radius));
             crate::titankit::spawn_meteor_thermite(

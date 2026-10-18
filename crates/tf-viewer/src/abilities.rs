@@ -102,6 +102,16 @@ impl TitanCore {
     pub fn active(&self) -> bool {
         matches!(self.state, CoreState::Active(_))
     }
+    /// The meter while the core is in use (`coreExpireFrac`, SoulTitanCore_SetExpireTime):
+    /// 1 when it is triggered, falling to 0 over the spin-up plus the duration.
+    pub fn expire_frac(&self) -> Option<f32> {
+        let used = match self.state {
+            CoreState::Building => return None,
+            CoreState::Charging(t) => t,
+            CoreState::Active(t) => self.chargeup + t,
+        };
+        Some((1.0 - used / (self.chargeup + self.duration).max(1e-3)).clamp(0.0, 1.0))
+    }
     /// BT is slowed during the core's spin-up and firing (move_slow 0.4).
     pub fn move_scale(&self) -> f32 {
         if self.state == CoreState::Building {

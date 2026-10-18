@@ -67,10 +67,12 @@ pub fn gate_input(
     game: Res<Game>,
     mut input: ResMut<PlayerInput>,
     pilots: Query<&PilotHealth, With<PlayerPilot>>,
+    menu: Res<crate::ui::Menu>,
 ) {
     // In a match only a dead player (online, waiting to respawn) is held still: no moving,
-    // shooting or abilities until the respawn.
-    if game.in_play() && !pilots.iter().any(|h| h.dead()) {
+    // shooting or abilities until the respawn. Paused online (the clock keeps running) the
+    // player stands still behind the menu too.
+    if game.in_play() && !menu.paused && !pilots.iter().any(|h| h.dead()) {
         return;
     }
     let (start, pause, menu_nav) = (input.start, input.pause, input.menu_nav);

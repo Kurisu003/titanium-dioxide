@@ -1,5 +1,5 @@
-//! BT on his own while you're on foot (the auto-Titan): he follows you, or guards a spot
-//! you point at (the Titan command key toggles, like MP's `eNPCTitanMode` FOLLOW / STAY with
+//! BT on his own while you're on foot (the auto-Titan): he follows you, or guards where he
+//! stands, facing where you point (the Titan command key toggles, like MP's `eNPCTitanMode` FOLLOW / STAY with
 //! `PrototypeOrderTitanMove`), and engages enemies with his main weapon in NPC bursts
 //! (`npc_min_burst`..`npc_max_burst`, resting `npc_rest_min`..`npc_rest_max`, within
 //! `npc_max_range`, with the weapon's own spread). The campaign's `_ai_titan` script isn't
@@ -31,8 +31,9 @@ pub enum Mode {
 #[derive(Resource)]
 pub struct AutoTitan {
     pub mode: Mode,
-    /// Where he was told to stand (game space).
+    /// Where he was told to stand (game space), and which way to face there.
     pub guard: Vec3,
+    pub guard_yaw: Option<f32>,
     /// This frame's movement and aim for `player::simulate`, when he's acting on his own.
     pub input: Option<TitanInput>,
     /// Hold the trigger this frame (`weapons::weapon_fire`).
@@ -49,6 +50,7 @@ impl Default for AutoTitan {
         Self {
             mode: Mode::Follow,
             guard: Vec3::ZERO,
+            guard_yaw: None,
             input: None,
             fire: false,
             target: None,
@@ -67,11 +69,15 @@ impl AutoTitan {
         self.rng ^= self.rng << 17;
         (self.rng >> 40) as f32 / (1u64 << 24) as f32
     }
-    /// The Titan command key: Follow <-> Guard (the spot you're looking at).
-    pub fn toggle(&mut self, commands: &mut Commands, look_at: Vec3) {
+    /// The Titan command key: Follow <-> Guard. Guarding, he holds where he stands, turned
+    /// toward the spot you're looking at (NPCTitanEnableCurrentMode: AssaultPointClamped at his
+    /// own origin, AssaultSetAngles toward the trace end).
+    pub fn toggle(&mut self, commands: &mut Commands, at: Vec3, look_at: Vec3) {
         self.mode = match self.mode {
             Mode::Follow => {
-                self.guard = look_at;
+                self.guard = at;
+                let d = (look_at - at).truncate();
+                self.guard_yaw = (d.length_squared() > 100.0).then(|| d.y.atan2(d.x));
                 crate::audio::event(commands, "Menu_TitanAIMode_Guard");
                 Mode::Guard
             }
@@ -194,7 +200,10 @@ pub fn auto_titan_think(
     let want_yaw = match best {
         Some((_, at, _, _)) => (at.y - pos.y).atan2(at.x - pos.x),
         None if moving => to_goal.y.atan2(to_goal.x),
-        None => s.yaw,
+        None => match auto.mode {
+            Mode::Guard => auto.guard_yaw.unwrap_or(s.yaw),
+            Mode::Follow => s.yaw,
+        },
     };
     let diff = (want_yaw - s.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
         - std::f32::consts::PI;

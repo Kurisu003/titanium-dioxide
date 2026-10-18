@@ -746,7 +746,8 @@ pub fn control_transitions(
                 fpseq.start(clip, hijack_frame(&titan), None, false);
             }
             if call && bt_health.dead_for.is_none() && !tf.busy() {
-                // The Titan command: BT guards the spot you're looking at, or follows again.
+                // The Titan command: BT guards where he stands (facing the spot you're
+                // looking at), or follows again.
                 let p = &pilot.state;
                 let eye = p.eye(&pilot_settings.0);
                 let dir = SVec3::new(
@@ -759,7 +760,8 @@ pub fn control_transitions(
                     .raycast(eye, dir, 9999.0)
                     .map(|h| h.point)
                     .unwrap_or(eye + dir * 9999.0);
-                auto.toggle(&mut commands, Vec3::from(spot.to_array()));
+                let at = Vec3::from(titan.state.pos.to_array());
+                auto.toggle(&mut commands, at, Vec3::from(spot.to_array()));
             } else if call && !tf.busy() && tf.cooldown <= 0.0 {
                 // Drop BT at the crosshair (or a little ahead), onto the ground.
                 let p = &pilot.state;
