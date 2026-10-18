@@ -15,6 +15,8 @@ pub struct Cache {
     pub images: HashMap<u64, Option<Handle<Image>>>,
     pub materials: HashMap<String, Handle<StandardMaterial>>,
     pub missing_materials: Vec<String>,
+    /// The Titans' weak-point marker material (actor.rs tags the meshes wearing it).
+    pub weakpoint: Option<Handle<StandardMaterial>>,
     pub actors: HashMap<String, crate::actor::ActorTemplate>,
     /// Materials whose shader needs the effect path (uber.rs swaps them in on the meshes).
     pub uber: HashMap<AssetId<StandardMaterial>, crate::uber::UberInfo>,
@@ -536,6 +538,58 @@ pub fn material(
     let key = format!("{}|{}", crate::gamedata::normalize_name(name), blend);
     if let Some(h) = cache.materials.get(&key) {
         return h.clone();
+    }
+    // The Titans' weak-point markers (bodypart "hitpoints", models/titans/titan_ar_marker): a
+    // legacy VMT in the VPK, not an rpak material. UnlitTwoTexture: effects/white times the
+    // effects/dev_scanline_sparse lines, additive, red ($layercolor1 1 0.1 0.1, BaseCritColor),
+    // no fog; its alpha is 0 or 1 from ShouldShowWeakpoints, which weakpoints.rs applies by
+    // showing and hiding the meshes.
+    if name.to_ascii_lowercase().contains("titan_ar_marker") {
+        let mut mat = StandardMaterial {
+            base_color: Color::srgb(1.0, 0.1, 0.1),
+            unlit: true,
+            alpha_mode: AlphaMode::Add,
+            fog_enabled: false,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        };
+        match gd
+            .read_file("materials/effects/dev_scanline_sparse.vtf")
+            .map_err(anyhow::Error::from)
+            .and_then(|b| tf_assets::vtf::decode(&b, 256))
+        {
+            Ok(mut v) => {
+                // $addlayers: a solid red layer (white times $layercolor1, fresnel inner 1.0 /
+                // outer 0.3) plus the scanlines at the rim (fresnel2 inner 0.0 / outer 1.0).
+                // Without a fresnel term: mostly solid, the lines a quarter on top.
+                for px in v.rgba.chunks_exact_mut(4) {
+                    for c in &mut px[..3] {
+                        *c = 191 + (*c as u32 / 4) as u8;
+                    }
+                }
+                let mut img = Image::new(
+                    Extent3d {
+                        width: v.width,
+                        height: v.height,
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    std::mem::take(&mut v.rgba),
+                    TextureFormat::Rgba8UnormSrgb,
+                    RenderAssetUsages::RENDER_WORLD,
+                );
+                img.sampler = ImageSampler::Descriptor(sampler());
+                mat.base_color_texture = Some(images.add(img));
+                // The game tiles it in screen space; the markers' own UVs stand in.
+                mat.uv_transform = bevy::math::Affine2::from_scale(Vec2::splat(6.0));
+            }
+            Err(e) => log::warn!("weak point scanlines: {e:#}"),
+        }
+        let h = materials.add(mat);
+        cache.weakpoint = Some(h.clone());
+        cache.materials.insert(key, h.clone());
+        return h;
     }
     let t0 = std::time::Instant::now();
     let _timer = scopeguard(move || {

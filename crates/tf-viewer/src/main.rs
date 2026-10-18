@@ -65,6 +65,7 @@ mod ui;
 mod vitals;
 mod vmcam;
 mod vmmotion;
+mod weakpoints;
 mod weapons;
 mod world;
 mod zipline;
@@ -589,7 +590,7 @@ fn main() {
                 abilities::update_abilities,
                 abilities::update_missiles,
                 titankit::kit_input,
-                targets::update_enemies,
+                (targets::update_enemies, weakpoints::update_weakpoints).chain(),
                 (
                     titankit::meteor_thermite,
                     titankit::kit_world,

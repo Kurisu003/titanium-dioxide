@@ -17,6 +17,42 @@ const DISEMBARK_CROUCH_ANIM: &str = "at_dismount_crouch";
 /// After the pilot is out, BT closes the hatch and returns to idle.
 const DISEMBARK_RECOVER_ANIM: &str = "at_MP_disembark_back2idle";
 /// BT's standing mount, by which side the pilot climbs on from (relative to his facing).
+/// The hook-target id of the player's own Titan (enemies use their actor entity's bits).
+pub const BT_HOOK_ID: u64 = u64::MAX;
+
+/// What the grapple hook can catch besides the world (client.dll traces it against entities
+/// with the grapple flag, 0x1804f7230): living enemies and BT, as their hull cylinders. `skip`
+/// leaves one enemy out (the Titan being ridden: a hook into it retracts, 0x180566280).
+pub fn hook_targets<'a>(
+    enemies: impl Iterator<Item = &'a Enemy>,
+    bt: Option<&PlayerTitan>,
+    skip: Option<Entity>,
+) -> Vec<tf_sim::pilot::HookTarget> {
+    let mut out: Vec<tf_sim::pilot::HookTarget> = enemies
+        .filter(|e| e.active && e.alive() && !e.arriving() && skip != Some(e.actor))
+        .map(|e| tf_sim::pilot::HookTarget {
+            id: e.actor.to_bits(),
+            pos: SVec3::new(e.pos.x, e.pos.y, e.pos.z),
+            radius: e.radius,
+            height: e.height,
+            yaw: e.state.yaw,
+            melee: e.infantry,
+        })
+        .collect();
+    if let Some(t) = bt {
+        let d = tf_sim::titan::TitanParams::default();
+        out.push(tf_sim::pilot::HookTarget {
+            id: BT_HOOK_ID,
+            pos: t.state.pos,
+            radius: d.radius,
+            height: d.height,
+            yaw: t.state.yaw,
+            melee: false,
+        });
+    }
+    out
+}
+
 const EMBARK_FRONT: &str = "at_mount_stand_front";
 const EMBARK_BEHIND: &str = "at_mount_stand_behind";
 const EMBARK_LEFT: &str = "at_mount_stand_left";
@@ -635,7 +671,20 @@ pub fn control_transitions(
                 .map(|e| e.pos.distance(bt_pos))
                 .fold(f32::INFINITY, f32::min);
             let combat = nearest < EMBARK_COMBAT_RANGE;
-            let embark = interact
+            // Grappled to BT, the embark starts by itself grapple_titanEmbarkDist (less the
+            // hull radius) from him (client.dll 0x1804f7be0).
+            let grapple_bt = pilot
+                .state
+                .grapple_entity
+                .is_some_and(|(id, _)| id == BT_HOOK_ID)
+                && {
+                    let eye = pilot.state.eye(&pilot_settings.0);
+                    let g = &pilot_settings.0.grapple;
+                    (titan.state.pos - eye).truncate().length()
+                        < g.titan_embark_dist - pilot_settings.0.radius
+                };
+            let want_embark = interact || grapple_bt;
+            let embark = want_embark
                 .then(|| embark_anim_for(titan.state.yaw, -to_bt, !combat))
                 .flatten();
             if interact && !(embark.is_some() && !tf.busy() && bt_health.dead_for.is_none()) {
@@ -647,8 +696,12 @@ pub fn control_transitions(
                 );
             }
             if let Some((anim, clip)) =
-                embark.filter(|_| interact && !tf.busy() && bt_health.dead_for.is_none())
+                embark.filter(|_| want_embark && !tf.busy() && bt_health.dead_for.is_none())
             {
+                if grapple_bt {
+                    log::info!("grapple: embarking BT");
+                    pilot.state.release_grapple(&pilot_settings.0);
+                }
                 let eye = Vec3::from(pilot.state.eye(&pilot_settings.0).to_array());
                 pilot.embark_from = Some((eye, view_quat(pilot.state.yaw, pilot.state.pitch)));
                 pilot.embark_anim = anim;
@@ -965,6 +1018,7 @@ pub fn simulate_pilot(
     status: Res<crate::pilotability::PilotStatus>,
     rodeo: Res<crate::rodeo::Rodeo>,
     loadouts: Query<&crate::pilotweapon::PilotLoadout>,
+    enemies: Query<&Enemy>,
 ) {
     let Ok(mut pilot) = pilots.single_mut() else {
         return;
@@ -1008,6 +1062,21 @@ pub fn simulate_pilot(
     // One movement step per frame with the frame's time, as the real game runs one user command
     // per client frame (a capture of it at 141 fps: the server's states are the client's frames
     // bit for bit, not 60 Hz ticks); only hitches over 1/30 s are split.
+    // What the hook can catch (enemies and BT as hull cylinders); the anchor of a hook stuck in
+    // one rides along with it, and lets go if it is gone.
+    pilot.state.hook_targets = hook_targets(enemies.iter(), titans.single().ok(), None);
+    if let Some((id, _)) = pilot.state.grapple_entity {
+        match pilot
+            .state
+            .hook_targets
+            .iter()
+            .find(|t| t.id == id)
+            .copied()
+        {
+            Some(t) => pilot.state.follow_anchor(id, t.pos, t.yaw),
+            None => pilot.state.release_grapple(&params),
+        }
+    }
     let n = (dt * 30.0).ceil().max(1.0) as usize;
     for i in 0..n {
         let mut step_input = pi;

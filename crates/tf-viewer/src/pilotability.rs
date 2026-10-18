@@ -46,6 +46,55 @@ use tf_sim::pilot::{GrappleEvent, PilotMove};
 
 /// Stim's speed boost (STIM_EFFECT_SEVERITY with movement_speedboost_extraScale 2.0).
 const STIM_SPEED: f32 = 1.4;
+/// grapple_gracePeriod: seconds of pull off the world before any power is drained.
+const GRAPPLE_GRACE: f32 = 0.25;
+
+/// The hook's direction when fired (client.dll 0x1802cd1e0): where the straight shot would hit
+/// nothing within reach, aim at a target in the cone instead, at its feet beside its hull
+/// (radius + 4 to the side the aim is on, then the other side), if that is within acos(0.95)
+/// of the aim and the shot that way reaches it.
+fn grapple_snap(
+    eye: SVec3,
+    dir: SVec3,
+    reach: f32,
+    world: &tf_sim::collision::CollisionWorld,
+    targets: &[tf_sim::pilot::HookTarget],
+) -> SVec3 {
+    if world.raycast(eye, dir, reach).is_some() {
+        return dir;
+    }
+    let best = targets
+        .iter()
+        .filter_map(|t| {
+            let to = t.pos + SVec3::Z * (t.height * 0.5) - eye;
+            let d = to.length();
+            (d > 1.0 && d <= reach).then(|| (t, to.dot(dir) / d))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1));
+    let Some((t, _)) = best else { return dir };
+    let right = SVec3::new(t.yaw.sin(), -t.yaw.cos(), 0.0);
+    let mut sign = if dir.dot(right) >= 0.0 { -1.0 } else { 1.0 };
+    for _ in 0..2 {
+        let point = t.pos + right * ((t.radius + 4.0) * sign);
+        let to = point - eye;
+        let d = to.length().max(1e-3);
+        let nd = to / d;
+        if nd.dot(dir) >= 0.95 {
+            let hit = world
+                .raycast(eye, nd, reach)
+                .map(|h| h.t)
+                .into_iter()
+                .chain(t.hit(eye, nd, reach))
+                .fold(None, |b: Option<f32>, x| Some(b.map_or(x, |b| b.min(x))));
+            if hit.is_some_and(|h| d - 15.0 < h) {
+                log::info!("grapple aimed at a target {d:.0} away");
+                return nd;
+            }
+        }
+        sign = -sign;
+    }
+    dir
+}
 /// Health regenerated per second while stimmed, on top of normal regen (ABILITY_STIM_REGEN_MOD).
 const STIM_REGEN: f32 = 40.0;
 /// Cloaked Pilots are only seen this close (game units).
@@ -228,6 +277,10 @@ pub struct TacticalDef {
     /// Grapple: seconds from the pull starting to the power regenerating
     /// (grapple_power_regen_delay).
     pub regen_delay: f32,
+    /// Grapple: power drained per second of pull off the world after grapple_gracePeriod
+    /// (grapple_power_use_rate), and the vertical reach (grapple_maxLengthVert).
+    pub use_rate: f32,
+    pub max_len_vert: f32,
     /// Thrown tacticals (Pulse Blade, A-Wall): `viewmodel`, `toss_pullout_time`, `toss_time`.
     pub viewmodel: String,
     pub pullout: f32,
@@ -339,6 +392,8 @@ impl PilotAbilityDefs {
                     charges: charges(&s),
                     speed: mp(&s, "projectile_launch_speed", 1100.0),
                     regen_delay: 0.0,
+                    use_rate: 0.0,
+                    max_len_vert: 0.0,
                     viewmodel: if thrown {
                         s.get(".viewmodel").unwrap_or("").trim().to_string()
                     } else {
@@ -364,6 +419,8 @@ impl PilotAbilityDefs {
                         d.regen_delay = pilot.f32("global.grapple_power_regen_delay", 3.0);
                         d.duration = 0.0;
                         d.speed = mp(&s, "grapple_maxLength", 1100.0);
+                        d.max_len_vert = mp(&s, "grapple_maxLengthVert", d.speed);
+                        d.use_rate = mp(&s, "grapple_power_use_rate", 50.0);
                     }
                     Tactical::PulseBlade => d.duration = SONAR_DURATION,
                     Tactical::HoloPilot => d.duration = DECOY_DURATION,
@@ -657,6 +714,10 @@ pub struct PilotStatus {
     /// Grapple power (0-100) and seconds since the last pull started.
     pub grapple_power: f32,
     pub grapple_regen: f32,
+    /// Power the current pull has drained so far (up to grapple_power_required), and whether it
+    /// is hooked into a target (those take the whole charge at once).
+    pub grapple_used: f32,
+    pub grapple_entity: bool,
     /// Index into ORDNANCE.
     pub ordnance: usize,
     pub ord_charges: u32,
@@ -970,6 +1031,11 @@ pub fn pilot_abilities(
     mut input: ResMut<PlayerInput>,
     mut pilots: Query<(&mut PlayerPilot, &mut PilotHealth)>,
     mut throw_state: ResMut<OrdnanceThrow>,
+    (world, enemies, titans): (
+        Res<crate::player::Collision>,
+        Query<&crate::targets::Enemy>,
+        Query<&crate::player::PlayerTitan>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.1);
     let mut tactical = std::mem::take(&mut input.tactical);
@@ -1077,8 +1143,10 @@ pub fn pilot_abilities(
         pilot.state.grapple_events.clear();
         return;
     }
-    // What the grapple did in the movement step: the pull starting takes the power
-    // (client.dll 0x1802cdec0); a miss costs nothing.
+    // What the grapple did in the movement step. Power (client.dll 0x1804f5ed0 / 0x1804f55d0):
+    // a pull off the world costs nothing for grapple_gracePeriod, then drains
+    // grapple_power_use_rate per second up to grapple_power_required (a short hop is cheap); a
+    // pull into a target takes the whole charge when it starts. A miss costs nothing.
     for ev in std::mem::take(&mut pilot.state.grapple_events) {
         match ev {
             GrappleEvent::Hooked { point, normal } => {
@@ -1087,6 +1155,7 @@ pub fn pilot_abilities(
                     "grapple hooked {:.0} units away",
                     (at - Vec3::from(pilot.state.eye(&settings.0).to_array())).length()
                 );
+                status.grapple_entity = false;
                 crate::audio::event_at(&mut commands, "default_grapple_impact_1p_vs_3p", at);
                 emit(
                     &mut commands,
@@ -1098,13 +1167,51 @@ pub fn pilot_abilities(
                     },
                 );
             }
-            GrappleEvent::Pulling => {
-                status.grapple_power = (status.grapple_power - need).max(0.0);
-                status.grapple_regen = 0.0;
+            GrappleEvent::HookedEntity { id, point } => {
+                let at = Vec3::from(point.to_array());
+                log::info!(
+                    "grapple hooked {} {:.0} units away",
+                    if id == crate::pilotctl::BT_HOOK_ID {
+                        "BT"
+                    } else {
+                        "an enemy"
+                    },
+                    (at - Vec3::from(pilot.state.eye(&settings.0).to_array())).length()
+                );
+                status.grapple_entity = true;
+                crate::audio::event_at(&mut commands, "default_grapple_impact_1p_vs_3p", at);
             }
-            GrappleEvent::Missed | GrappleEvent::Released => {
+            GrappleEvent::Pulling => {
+                status.grapple_used = 0.0;
+                status.grapple_regen = 0.0;
+                if status.grapple_entity {
+                    status.grapple_power = (status.grapple_power - need).max(0.0);
+                    status.grapple_used = need;
+                }
+            }
+            GrappleEvent::Melee(_) => {
+                // grapple_autoMeleeOnDetach: the grapple into someone ends in a melee swing.
+                log::info!("grapple: auto melee");
+                input.melee = true;
+            }
+            GrappleEvent::Missed => crate::audio::event(&mut commands, "pilot_grapple_retract_1p"),
+            GrappleEvent::Released => {
+                log::info!(
+                    "grapple released ({:.1} of {need:.0} power used, {:.0} left)",
+                    status.grapple_used,
+                    status.grapple_power
+                );
                 crate::audio::event(&mut commands, "pilot_grapple_retract_1p")
             }
+        }
+    }
+    if let Some(t) = pilot.state.grapple_pull_time() {
+        if !status.grapple_entity && t >= GRAPPLE_GRACE && status.grapple_used < need {
+            let take = (def.use_rate * dt)
+                .min(need - status.grapple_used - 0.001)
+                .max(0.0);
+            status.grapple_used += take;
+            status.grapple_power = (status.grapple_power - take).max(0.0);
         }
     }
     if status.is(Tactical::Stim) {
@@ -1188,11 +1295,22 @@ pub fn pilot_abilities(
                     status.active = def.duration
                 }
                 // The hook flies out from the eye at grapple_shootVel up to grapple_maxLength
-                // (tf-sim moves it and reports where it lands).
+                // (tf-sim moves it and reports where it lands). When the straight shot would
+                // hit nothing in reach, it is steered at a target in the aim's cone
+                // (client.dll 0x1802cd1e0).
                 Tactical::Grapple => {
+                    let targets =
+                        crate::pilotctl::hook_targets(enemies.iter(), titans.single().ok(), None);
+                    let dir = grapple_snap(
+                        SVec3::from(eye.to_array()),
+                        SVec3::from(look.to_array()),
+                        def.speed.max(def.max_len_vert),
+                        &world.0,
+                        &targets,
+                    );
                     pilot
                         .state
-                        .fire_grapple(SVec3::from(look.to_array()), def.speed, &settings.0);
+                        .fire_grapple(dir, def.speed, def.max_len_vert, &settings.0);
                 }
                 Tactical::PulseBlade => {
                     let dir = view_dir(&pilot.state, 2.0);
@@ -2027,24 +2145,34 @@ pub fn update_pulse_markers(
     }
 }
 
-/// The grapple's cable while the hook is out (flying, stuck or coming back): a thin line from the left hand (beside and below the view)
-/// to the hook, placed after the camera moves so it doesn't trail a frame behind.
+/// The grapple's rope while the hook is out (flying, stuck or coming back): thin segments from
+/// the left hand (beside and below the view) through the rope's bends to the hook, placed after
+/// the camera moves so they don't trail a frame behind.
 #[allow(clippy::type_complexity)]
 pub fn grapple_cable(
     mut commands: Commands,
     pilots: Query<&PlayerPilot>,
     control: Res<Control>,
     cams: Query<&Transform, (With<crate::player::MainCamera>, Without<GrappleCable>)>,
-    mut cables: Query<(&mut Transform, &mut Visibility), With<GrappleCable>>,
+    mut cables: Query<(&GrappleCable, &mut Transform, &mut Visibility)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let hook = pilots
+    let rope: Vec<Vec3> = pilots
         .single()
         .ok()
-        .and_then(|p| p.state.hook_pos())
-        .filter(|_| *control == Control::Pilot);
-    let Ok((mut tf, mut vis)) = cables.single_mut() else {
+        .filter(|_| *control == Control::Pilot)
+        .map(|p| {
+            p.state
+                .rope()
+                .iter()
+                .map(|v| to_bevy(Vec3::from(v.to_array())))
+                .collect()
+        })
+        .unwrap_or_default();
+    if cables.is_empty() {
+        // The hook flies straight; stuck, the rope has up to three bends (client.dll keeps four
+        // points), so four segments.
         let mesh = meshes.add(Cylinder::new(1.0, 1.0));
         let mat = materials.add(StandardMaterial {
             base_color: Color::srgb(0.1, 0.1, 0.11),
@@ -2052,40 +2180,57 @@ pub fn grapple_cable(
             perceptual_roughness: 0.6,
             ..default()
         });
-        commands.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
-            Transform::default(),
-            Visibility::Hidden,
-            GrappleCable,
-            bevy::light::NotShadowCaster,
-        ));
+        for i in 0..4 {
+            commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform::default(),
+                Visibility::Hidden,
+                GrappleCable(i),
+                bevy::light::NotShadowCaster,
+            ));
+        }
         return;
-    };
-    let (Some(hook), Ok(cam)) = (hook, cams.single()) else {
-        vis.set_if_neq(Visibility::Hidden);
+    }
+    let Ok(cam) = cams.single() else {
+        for (_, _, mut vis) in &mut cables {
+            vis.set_if_neq(Visibility::Hidden);
+        }
         return;
     };
     let u = crate::player::UNIT;
     // Camera space: x right, y up, -z forward; game units scaled to metres.
     let hand = cam.translation + cam.rotation * (Vec3::new(-7.0, -9.0, -16.0) * u);
-    let end = to_bevy(Vec3::from(hook.to_array()));
-    let d = end - hand;
-    let len = d.length();
-    if len < 1e-3 {
-        vis.set_if_neq(Visibility::Hidden);
-        return;
+    let points: Vec<Vec3> = std::iter::once(hand).chain(rope).collect();
+    for (seg, mut tf, mut vis) in &mut cables {
+        let i = seg.0;
+        if i + 1 >= points.len() {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        let (a, b) = (points[i], points[i + 1]);
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-3 {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        // The engine draws ropes no thinner than a pixel or so on screen (rope_solid_minwidth),
+        // so the far end stays visible: the radius grows with the distance from the camera.
+        let mid = a + d * 0.5;
+        let r = (0.35 * u).max((mid - cam.translation).length() * 0.0012);
+        *tf = Transform {
+            translation: mid,
+            rotation: Quat::from_rotation_arc(Vec3::Y, d / len),
+            scale: Vec3::new(r, len, r),
+        };
+        vis.set_if_neq(Visibility::Visible);
     }
-    *tf = Transform {
-        translation: hand + d * 0.5,
-        rotation: Quat::from_rotation_arc(Vec3::Y, d / len),
-        scale: Vec3::new(0.35 * u, len, 0.35 * u),
-    };
-    vis.set_if_neq(Visibility::Visible);
 }
 
+/// One segment of the grapple's rope (its index from the hand).
 #[derive(Component)]
-pub struct GrappleCable;
+pub struct GrappleCable(pub usize);
 
 /// Thrown ordnance and tactical models by path (None: failed to build).
 #[derive(Resource, Default)]

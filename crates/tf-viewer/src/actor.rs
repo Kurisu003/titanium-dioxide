@@ -165,6 +165,10 @@ pub struct AimGrid {
 #[derive(Component, Clone, Copy)]
 pub struct BodyPartMesh(pub usize);
 
+/// A mesh of a Titan's weak-point markers (bodypart "hitpoints", material titan_ar_marker).
+#[derive(Component)]
+pub struct Weakpoint;
+
 /// One weighted clip contribution.
 #[derive(Clone, Copy, Debug)]
 pub struct Layer {
@@ -847,18 +851,21 @@ pub fn spawn_actor(
         joints.push(j);
     }
     for (mesh, mat, part) in tpl.parts.iter() {
-        let e = commands
-            .spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(mat.clone()),
-                SkinnedMesh {
-                    inverse_bindposes: tpl.inverse.clone(),
-                    joints: joints.clone(),
-                },
-                NoFrustumCulling,
-                BodyPartMesh(*part),
-            ))
-            .id();
+        let mut ec = commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            SkinnedMesh {
+                inverse_bindposes: tpl.inverse.clone(),
+                joints: joints.clone(),
+            },
+            NoFrustumCulling,
+            BodyPartMesh(*part),
+        ));
+        // A Titan's weak-point markers start hidden; weakpoints.rs shows them.
+        if cache.weakpoint.as_ref().is_some_and(|w| w.id() == mat.id()) {
+            ec.insert((Weakpoint, Visibility::Hidden));
+        }
+        let e = ec.id();
         commands.entity(actor).add_child(e);
     }
     let bone_names: Vec<String> = tpl.bones.iter().map(|b| b.0.clone()).collect();

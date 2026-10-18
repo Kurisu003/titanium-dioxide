@@ -344,7 +344,7 @@ mod tests {
             // Fire at the wall 900 units away: the hook flies at grapple_shootVel (3000), so
             // it lands after about 0.3 s, and the pull waits grapple_pullDelay (0.2 s) more.
             let dir = Vec3::new(0.0, 0.3f32.cos(), 0.3f32.sin());
-            assert!(s.fire_grapple(dir, 1100.0, &p));
+            assert!(s.fire_grapple(dir, 1100.0, 1100.0, &p));
             let mut ticks = 0;
             while s.grapple.is_none() {
                 step(&mut s, &look, &p, &w, 1.0 / 120.0);
@@ -385,6 +385,36 @@ mod tests {
             assert!(s.grapple.is_none());
         }
 
+        /// The rope wraps around a corner instead of cutting (client.dll 0x1801fee10), and the
+        /// bend goes once the line past it is clear again (0x1804f6820).
+        #[test]
+        fn grapple_rope_bends_around_a_corner() {
+            let mut w = arena();
+            // A partition along Y at x = 100 (both faces), from y = -200 to the back wall.
+            quad(&mut w, Vec3::new(100.0, -200.0, 0.0), Vec3::new(100.0, -200.0, 800.0), Vec3::new(100.0, 300.0, 800.0), Vec3::new(100.0, 300.0, 0.0));
+            quad(&mut w, Vec3::new(100.0, 300.0, 0.0), Vec3::new(100.0, 300.0, 800.0), Vec3::new(100.0, -200.0, 800.0), Vec3::new(100.0, -200.0, 0.0));
+            let p = PilotParams::default();
+            let anchor = Vec3::new(300.0, 100.0, 200.0);
+            let look = PilotInput { yaw: 0.25, pitch: -0.3, ..Default::default() };
+            let mut s = PilotState::new(Vec3::new(-100.0, 0.0, 0.0), look.yaw);
+            run(&mut s, look, &w, 0.2);
+            s.attach_grapple(anchor);
+            step(&mut s, &look, &p, &w, 1.0 / 120.0);
+            assert!(s.grapple.is_some(), "the rope bends, it isn't cut");
+            assert_eq!(s.bends.len(), 1, "one bend: {:?}", s.bends);
+            let b = s.bends[0];
+            assert!((b.x - 100.0).abs() < 2.0 && (0.0..120.0).contains(&b.y), "bend on the partition: {b:?}");
+            // Pulled: toward the bend, not the hook.
+            run(&mut s, look, &w, 0.3);
+            assert!(s.grapple_pulling() && s.bends.len() == 1);
+            let to_bend = (b - s.pos).normalize();
+            assert!(s.vel.normalize().dot(to_bend) > 0.7, "pulled toward the bend: vel {:?}", s.vel);
+            // Past the partition's end the line to the hook clears and the bend goes.
+            s.pos = Vec3::new(300.0, -100.0, 100.0);
+            step(&mut s, &look, &p, &w, 1.0 / 120.0);
+            assert!(s.grapple.is_some() && s.bends.is_empty(), "straightened: {:?}", s.bends);
+        }
+
         /// A hook that hits nothing flies its reach and comes back; firing again while it's
         /// stuck lets go.
         #[test]
@@ -394,14 +424,14 @@ mod tests {
             let away = PilotInput { yaw: -std::f32::consts::FRAC_PI_2, ..Default::default() };
             let mut s = PilotState::new(Vec3::new(0.0, -600.0, 0.0), away.yaw);
             run(&mut s, away, &w, 0.2);
-            assert!(s.fire_grapple(Vec3::new(0.0, -1.0, 0.2), 1100.0, &p));
+            assert!(s.fire_grapple(Vec3::new(0.0, -1.0, 0.2), 1100.0, 1100.0, &p));
             run(&mut s, away, &w, 0.4);
             assert_eq!(s.grapple_events, vec![GrappleEvent::Missed]);
             assert!(s.hook.is_some_and(|h| h.back.is_some()));
             run(&mut s, away, &w, 0.3);
             assert!(s.hook.is_none() && s.grapple.is_none());
             s.attach_grapple(Vec3::new(0.0, 299.0, 300.0));
-            assert!(!s.fire_grapple(Vec3::Y, 1100.0, &p));
+            assert!(!s.fire_grapple(Vec3::Y, 1100.0, 1100.0, &p));
             assert!(s.grapple.is_none() && s.hook.is_some());
         }
 

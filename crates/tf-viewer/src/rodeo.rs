@@ -64,6 +64,7 @@ const RIP_PUSH_LIFT: f32 = 100.0;
 const JUMP_OFF_SPEED: f32 = 350.0;
 const JUMP_OFF_UP: f32 = 390.0;
 const JUMP_DEBOUNCE: f32 = 0.6;
+const GRAPPLE_OFF_DEBOUNCE: f32 = 1.5;
 /// How long a rider has been on an NPC Titan's back before it pops its Electric Smoke (the
 /// NPC's anti-rodeo timing is server-side script that isn't shipped; 2 s is an approximation).
 const ANTI_RODEO_SMOKE_DELAY: f32 = 2.0;
@@ -311,6 +312,7 @@ pub fn rodeo_update(
     mut actors: Query<&mut Actor>,
     mut tfs: Query<(&mut Transform, &mut Visibility)>,
     fp_arms: Option<Res<FpArms>>,
+    world: Res<crate::player::Collision>,
 ) {
     let dt = time.delta_secs().min(0.1);
     rodeo.debounce = (rodeo.debounce - dt).max(0.0);
@@ -333,7 +335,12 @@ pub fn rodeo_update(
                 .iter_mut()
                 .find(|(_, e)| e.alive() && !e.infantry && !e.arriving())
             {
-                let p = me + fwd * 110.0;
+                // TF_RODEO_DIST=units: park it further out (grapple tests).
+                let dist = std::env::var("TF_RODEO_DIST")
+                    .ok()
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(110.0);
+                let p = me + fwd * dist;
                 e.pos = p;
                 e.state.pos = SVec3::new(p.x, p.y, p.z);
                 e.state.vel = SVec3::ZERO;
@@ -492,6 +499,10 @@ pub fn rodeo_update(
             }
         }
         pilot.state.jumps = 0;
+        // A grapple that pulled us here ends with the mount.
+        if pilot.state.grapple.is_some() {
+            pilot.state.release_grapple(&settings.0);
+        }
         crate::audio::event(&mut commands, "Pilot_Rodeo_Titan_Attach");
         return;
     }
@@ -502,6 +513,17 @@ pub fn rodeo_update(
     let mut ride = rodeo.ride.take().unwrap();
     ride.t += dt;
     ride.since += dt;
+    // The hook still flies while riding (the hook update runs whatever the move does,
+    // client.dll 0x1804f5db0), though not into the Titan under us (0x180566280 retracts it).
+    pilot.state.hook_targets = crate::pilotctl::hook_targets(
+        enemies
+            .iter()
+            .filter(|(id, _)| *id != ride.target)
+            .map(|(_, e)| e),
+        None,
+        None,
+    );
+    tf_sim::pilot::step_hook_only(&mut pilot.state, &settings.0, &world.0, dt);
     let Ok((_, mut e)) = enemies.get_mut(ride.target) else {
         return;
     };
@@ -560,6 +582,19 @@ pub fn rodeo_update(
         log::info!("rodeo: jumped off");
     }
     input.jump = false;
+    // The hook landed somewhere: the rider lets go, thrown up by grapple_rodeoVerticalImpulse
+    // (client.dll 0x1804f5750), and the pull takes over. Past the rip's point of no return it
+    // just comes back.
+    let mut grappled_off = false;
+    if pilot.state.grapple.is_some() && detach.is_none() {
+        if can_jump {
+            detach = Some(titan_vel + Vec3::Z * settings.0.grapple.rodeo_impulse);
+            grappled_off = true;
+            log::info!("rodeo: grappled off");
+        } else {
+            pilot.state.release_grapple(&settings.0);
+        }
+    }
 
     match ride.phase {
         Phase::Entrance => {
@@ -775,7 +810,13 @@ pub fn rodeo_update(
         pilot.state.vel = SVec3::new(v.x, v.y, v.z);
         pilot.state.mode = PilotMove::Air;
         pilot.state.jumps = 1;
-        rodeo.debounce = JUMP_DEBOUNCE;
+        // Thrown up off the hull by a grapple, the pull swings the rider back past the Titan:
+        // not onto it again.
+        rodeo.debounce = if grappled_off {
+            GRAPPLE_OFF_DEBOUNCE
+        } else {
+            JUMP_DEBOUNCE
+        };
         rodeo.cam = None;
         if let Some((anchor, _)) = arms {
             if let Ok((_, mut vis)) = tfs.get_mut(anchor) {
