@@ -264,18 +264,22 @@ impl Default for Rodeo {
     }
 }
 
-/// The Titan's `HIJACK` attachment (on `def_c_spineC`) in game space: the bone's position,
-/// facing the Titan's way (the bone's own tilt is dropped, like `GetFrontRightDots` does; the
-/// rodeo clips sit a little lower on a leaning Titan than in the game).
+/// The Titan's `HIJACK` attachment in game space: on `def_c_spineC` at the bone's origin with
+/// the axes forward = bone Z, left = bone X, up = bone Y (attachdump: ajax, ogre, raptor all
+/// the same). The rider is parented to it with `useAnimatedRefAttachment`, so it follows the
+/// bone's animated pose: the torso's aim pitch and lean carry the rider, and the hands land on
+/// the `RODEO_BATTERY` socket (40 behind and 58 above it on the ajax) in every pose.
 fn hijack_attachment(actors: &Query<&mut Actor>, titan_tf: &Transform, e: &Enemy) -> Transform {
-    let spine = actors
+    match actors
         .get(e.actor)
         .ok()
         .and_then(|a| a.bone_model_transform("def_c_spineC"))
-        .map(|t| t.translation)
-        .unwrap_or(Vec3::Z * e.height * 0.75);
-    Transform::from_translation(titan_tf.transform_point(spine))
-        .with_rotation(Quat::from_rotation_z(e.state.yaw))
+    {
+        Some(b) => Transform::from_translation(titan_tf.transform_point(b.translation))
+            .with_rotation(titan_tf.rotation * b.rotation * attach_frame()),
+        None => Transform::from_translation(titan_tf.transform_point(Vec3::Z * e.height * 0.75))
+            .with_rotation(Quat::from_rotation_z(e.state.yaw)),
+    }
 }
 
 impl Rodeo {
@@ -335,6 +339,32 @@ pub fn rodeo_update(
                 if let Ok((mut tf, _)) = tfs.get_mut(id) {
                     tf.translation = p;
                     tf.rotation = Quat::from_rotation_z(e.state.yaw);
+                }
+                // TF_RODEO_PITCH=deg: hold the torso's aim pitch (a tilted spine moves the
+                // hatch, like a Titan aiming up at its rider), to check the rider follows.
+                if let Some(pitch) = std::env::var("TF_RODEO_PITCH")
+                    .ok()
+                    .and_then(|v| v.parse::<f32>().ok())
+                {
+                    if let Ok(mut a) = actors.get_mut(e.actor) {
+                        if a.aim.as_ref().is_none_or(|x| x.pitch != pitch) {
+                            log::debug!(
+                                "rodeo test: aim grid {} ({}), pitch {pitch}",
+                                e.aim_grids[0],
+                                if a.grids.contains_key(e.aim_grids[0]) {
+                                    "found"
+                                } else {
+                                    "missing"
+                                }
+                            );
+                        }
+                        a.aim = Some(crate::actor::Aim {
+                            grid: e.aim_grids[0].into(),
+                            yaw: 0.0,
+                            pitch,
+                            weight: 1.0,
+                        });
+                    }
                 }
             }
         }
@@ -694,7 +724,7 @@ pub fn rodeo_update(
                 let rot = root_rot * c.rotation * attach_frame();
                 view = (root_pos + root_rot * c.translation, rot);
                 if std::env::var_os("TF_RODEO_TEST").is_some() {
-                    log::debug!("rodeo cam {clip_name} cycle {cycle:.2}: bone {:.1} eye {:.0} fwd {:.2}; titan {:.0} yaw {:.0} attach {:.0} root {:.0}", c.translation, view.0, rot * Vec3::X, e.pos, e.state.yaw.to_degrees(), attach.translation, root_pos);
+                    log::debug!("rodeo cam {clip_name} cycle {cycle:.2}: bone {:.1} eye {:.0} fwd {:.2}; titan {:.0} yaw {:.0} attach {:.0} (fwd {:.2} up {:.2}) root {:.0}", c.translation, view.0, rot * Vec3::X, e.pos, e.state.yaw.to_degrees(), attach.translation, attach.rotation * Vec3::X, attach.rotation * Vec3::Z, root_pos);
                 }
             }
             if let Ok((mut tf, mut vis)) = tfs.get_mut(anchor) {
@@ -878,6 +908,14 @@ pub fn rodeo_props(
                 for p in [battery, grenade].into_iter().flatten() {
                     commands.entity(p).insert(Visibility::Hidden);
                 }
+                // `R_HAND` has the bone's axes, but `PROPGUN` is turned like the camera and
+                // ref attachments (forward = bone Z, left = bone X, up = bone Y), and a prop
+                // parented to it takes the attachment's axes.
+                if let Some(g) = grenade {
+                    commands
+                        .entity(g)
+                        .insert(Transform::from_rotation(attach_frame()));
+                }
                 if hand.is_none() || gun.is_none() {
                     log::warn!("rodeo props: the arms have no ja_r_propHand / ja_c_propGun");
                 }
@@ -920,22 +958,34 @@ pub fn rodeo_props(
         let Some(actor) = h.actor else { continue };
         if std::env::var_os("TF_RODEO_TEST").is_some()
             && riding == Some(*ent)
-            && time.elapsed_secs() % 0.5 < dt
+            && time.elapsed_secs() % 0.25 < dt
         {
             let hand = fp_arms
                 .as_deref()
                 .and_then(|f| actors.get(f.actor).ok())
                 .and_then(|a| a.joint("ja_r_propHand"))
                 .and_then(|j| globals.get(j).ok());
+            let gun = fp_arms
+                .as_deref()
+                .and_then(|f| actors.get(f.actor).ok())
+                .and_then(|a| a.joint("ja_c_propGun"))
+                .and_then(|j| globals.get(j).ok());
             let sock = globals.get(h.socket).ok();
-            if let (Some(hand), Some(sock)) = (hand, sock) {
+            if let (Some(hand), Some(gun), Some(sock)) = (hand, gun, sock) {
                 // The hand battery hangs down the hand's -Y, the socket one down the socket's
-                // -Z: at the hand-off they should coincide (distance 0, dot 1).
+                // -Z: at the hand-off they should coincide (distance 0, dot 1). The grenade
+                // sits on the propGun bone, over the socket at its show.
+                // The socket sits under the Titan's unit-scaled root, so its local frame is
+                // already in game units.
+                let in_socket = |p: Vec3| sock.affine().inverse().transform_point3(p);
                 log::debug!(
-                    "hatch {:?}: hand-socket {:.1} units, axes dot {:.2}, state {}",
+                    "hatch {:?}: hand-socket {:.1} units, axes dot {:.2}, gun-socket {:.1} (socket frame hand {:.1} gun {:.1}), state {}",
                     ent,
                     (hand.translation() - sock.translation()).length() / crate::player::UNIT,
                     (hand.rotation() * Vec3::NEG_Y).dot(sock.rotation() * Vec3::NEG_Z),
+                    (gun.translation() - sock.translation()).length() / crate::player::UNIT,
+                    in_socket(hand.translation()),
+                    in_socket(gun.translation()),
                     match h.state {
                         HatchState::Up => "up",
                         HatchState::Down => "down",
