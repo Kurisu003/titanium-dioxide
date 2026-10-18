@@ -713,7 +713,7 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
             ..default()
         })
         .id();
-    for i in 0..crate::combat::SEGMENTS as usize {
+    for i in 0..crate::combat::segments() as usize {
         let frame = commands
             .spawn((
                 Node {
@@ -786,7 +786,7 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
             TitanOnly,
         ))
         .id();
-    for i in 0..2 {
+    for i in 0..crate::combat::dash_pips() {
         let frame = commands
             .spawn((
                 Node {
@@ -1820,7 +1820,7 @@ pub fn update_hud(
         let fill = if doomed {
             0.0
         } else {
-            ((health.v.health - seg.0 as f32 * crate::combat::SEGMENT) / crate::combat::SEGMENT)
+            ((health.v.health - seg.0 as f32 * crate::combat::segment()) / crate::combat::segment())
                 .clamp(0.0, 1.0)
         };
         set(&mut node, |n| &mut n.width, percent(fill * 100.0));
@@ -1850,7 +1850,8 @@ pub fn update_hud(
         );
     }
     for (pip, mut node, mut bg) in &mut pips {
-        let fill = ((titan.state.power - pip.0 as f32 * 50.0) / 50.0).clamp(0.0, 1.0);
+        let drain = crate::combat::dash_drain();
+        let fill = ((titan.state.power - pip.0 as f32 * drain) / drain).clamp(0.0, 1.0);
         set(&mut node, |n| &mut n.width, percent(fill * 100.0));
         bg.0 = if fill >= 1.0 { PIP_BLUE } else { DIM };
     }
@@ -2879,8 +2880,8 @@ pub fn lost_health_flash(
             continue;
         };
         let (lo, hi) = (
-            seg.0 as f32 * crate::combat::SEGMENT,
-            (seg.0 + 1) as f32 * crate::combat::SEGMENT,
+            seg.0 as f32 * crate::combat::segment(),
+            (seg.0 + 1) as f32 * crate::combat::segment(),
         );
         let (a, b) = (new.max(lo), old.min(hi));
         if b <= a {
@@ -2890,12 +2891,12 @@ pub fn lost_health_flash(
         set(
             &mut node,
             |n| &mut n.left,
-            percent((a - lo) / crate::combat::SEGMENT * 100.0),
+            percent((a - lo) / crate::combat::segment() * 100.0),
         );
         set(
             &mut node,
             |n| &mut n.width,
-            percent((b - a) / crate::combat::SEGMENT * 100.0),
+            percent((b - a) / crate::combat::segment() * 100.0),
         );
         let alpha = if t < HOLD {
             1.0

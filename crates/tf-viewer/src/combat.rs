@@ -10,9 +10,37 @@ use crate::weapons::{FxAssets, VortexRefire};
 use bevy::prelude::*;
 use tf_sim::glam::Vec3 as SVec3;
 
-/// HUD segment size (titan_buddy.set healthPerSegment); cosmetic, health is not segmented in SP.
-pub const SEGMENT: f32 = 1800.0;
-pub const SEGMENTS: u32 = 5;
+/// The player's Titan as the HUD draws it, from its chassis settings (set by `setup_world`):
+/// the health segment size (healthPerSegment: BT's 1800, 2500 in multiplayer), the number of
+/// segments (health / segment: BT 5, light 3, medium 4, heavy 5) and the dash power drain
+/// (dodgePowerDrain: the dash pips are 100 / drain).
+static SEG_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1800);
+static SEG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(5);
+static DASH_DRAIN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(50);
+
+pub fn set_titan_layout(segment: f32, health: f32, dash_drain: f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let segment = segment.max(1.0);
+    SEG_SIZE.store(segment as u32, Relaxed);
+    SEG_COUNT.store(((health / segment).ceil() as u32).clamp(1, 8), Relaxed);
+    DASH_DRAIN.store(dash_drain.clamp(1.0, 100.0) as u32, Relaxed);
+}
+/// Health per HUD segment.
+pub fn segment() -> f32 {
+    SEG_SIZE.load(std::sync::atomic::Ordering::Relaxed) as f32
+}
+/// HUD health segments.
+pub fn segments() -> u32 {
+    SEG_COUNT.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// Dash power one dash takes.
+pub fn dash_drain() -> f32 {
+    DASH_DRAIN.load(std::sync::atomic::Ordering::Relaxed) as f32
+}
+/// Dash pips on the HUD.
+pub fn dash_pips() -> usize {
+    ((100.0 / dash_drain()).floor() as usize).clamp(1, 4)
+}
 
 // Vortex Shield.
 const VORTEX_HOLD: f32 = 3.0; // charge_time

@@ -1764,7 +1764,7 @@ pub fn cockpit_damage_light(
         *control == crate::pilotctl::Control::Titan,
         &mut sparks,
     );
-    let segment = (health.v.health / crate::combat::SEGMENT).ceil().max(0.0) as u32;
+    let segment = (health.v.health / crate::combat::segment()).ceil().max(0.0) as u32;
     if st.0.is_some_and(|s| segment < s) && health.dead_for.is_none() {
         st.1 = 3.0;
     }

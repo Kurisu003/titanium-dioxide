@@ -917,13 +917,42 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
 }
 
 /// Movement tuning from a Titan .set file (falls back to built-in defaults).
+/// The player's Titan settings: BT's own in the campaign, else the multiplayer chassis file of
+/// the loadout's Titan (titan_<chassis>_<weapon>.set over titan_atlas/stryder/ogre.set: speed,
+/// dash, dash power and health per chassis), read with the [$mp] values.
+pub fn player_titan_settings(map: &str, titan: usize) -> (&'static str, bool) {
+    if map.starts_with("sp_") {
+        return ("scripts/players/mp/titan_buddy.set", true);
+    }
+    let kit = weapons::TITAN_ARSENAL
+        .get(titan)
+        .map(|g| g.kit)
+        .unwrap_or("TONE");
+    let path = match kit {
+        "EXPEDITION" => "scripts/players/mp/titan_atlas_vanguard.set",
+        "ION" => "scripts/players/mp/titan_atlas_stickybomb.set",
+        "TONE" => "scripts/players/mp/titan_atlas_tracker.set",
+        "SCORCH" => "scripts/players/mp/titan_ogre_meteor.set",
+        "LEGION" => "scripts/players/mp/titan_ogre_minigun.set",
+        "NORTHSTAR" => "scripts/players/mp/titan_stryder_sniper.set",
+        "RONIN" => "scripts/players/mp/titan_stryder_leadwall.set",
+        "BRUTE" => "scripts/players/mp/titan_stryder_rocketeer.set",
+        _ => "scripts/players/mp/titan_atlas.set",
+    };
+    (path, false)
+}
+
 fn titan_params(gd: &GameData, path: &str) -> TitanParams {
+    titan_params_for(gd, path, true)
+}
+
+fn titan_params_for(gd: &GameData, path: &str, sp: bool) -> TitanParams {
     let mut read = |p: &str| {
         gd.read_file(p)
             .ok()
             .map(|b| String::from_utf8_lossy(&b).to_string())
     };
-    let Some(s) = PlayerSettings::load(path, true, &mut read) else {
+    let Some(s) = PlayerSettings::load(path, sp, &mut read) else {
         log::warn!("{path} not found, using defaults");
         return TitanParams::default();
     };
@@ -1060,7 +1089,9 @@ fn setup_world(
             }
         });
     commands.insert_resource(colorcorr::MapColorCorrection(map_lut));
-    let params = titan_params(&gd, "scripts/players/mp/titan_buddy.set");
+    let (titan_set, titan_sp) = player_titan_settings(&args.map, args.titan);
+    log::info!("player Titan settings: {titan_set}");
+    let params = titan_params_for(&gd, titan_set, titan_sp);
     let pilot = pilot_params(&gd);
     log::info!("pilot params: {pilot:?}");
     commands.insert_resource(pilotctl::PilotSettings(pilot));
@@ -1073,7 +1104,14 @@ fn setup_world(
         };
         let buddy = PlayerSettings::load("scripts/players/mp/titan_buddy.set", true, &mut read)
             .unwrap_or_default();
-        let bt = vitals::Vitals::from_settings(&buddy, None);
+        // Health, shield and doomed health of the player's chassis.
+        let chassis = PlayerSettings::load(titan_set, titan_sp, &mut read).unwrap_or_default();
+        let bt = vitals::Vitals::from_settings(&chassis, None);
+        combat::set_titan_layout(
+            chassis.f32("global.healthpersegment", 1800.0),
+            bt.max_health,
+            params.dash_drain,
+        );
         let feel = player::TitanFeel::from_settings(&buddy);
         log::info!("BT feel: {feel:?}");
         commands.insert_resource(feel);
