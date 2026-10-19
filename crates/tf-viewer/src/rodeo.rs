@@ -108,7 +108,7 @@ impl Chassis {
             Chassis::Atlas
         }
     }
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Chassis::Atlas => "atlas",
             Chassis::Ogre => "ogre",
@@ -505,6 +505,14 @@ pub fn rodeo_update(
                 "jumped on"
             }
         );
+        // The rodeo package's worldSound for everyone but the ridden Titan's player (Low
+        // Profile, PAS_STEALTH_MOVEMENT, climbs on silently).
+        if !crate::kits::has("pas_stealth_movement") {
+            crate::audio::event(
+                &mut commands,
+                &climb_sound(chassis.name(), side, height, false),
+            );
+        }
         let from = (eye, view_quat(pilot.state.yaw, pilot.state.pitch));
         rodeo.ride = Some(Ride {
             target: id,
@@ -1295,4 +1303,20 @@ pub fn battery_hud(
             Visibility::Hidden
         });
     }
+}
+
+/// GetRodeoPackage's climb-on sounds by entrance (sh_rodeo_titan.gnut): `interior` is the
+/// cockpitSound the ridden Titan's player hears, else the worldSound everyone else hears.
+pub fn climb_sound(chassis: &str, side: &str, height: &str, interior: bool) -> String {
+    let how = match (side, height) {
+        ("front", "_lower") => "ClimbOn_Front",
+        ("front", _) => "LandOn_Above",
+        ("back", "_lower") => "ClimbOn_Back",
+        ("back", "_mid") => "ClimbOn_Back_Mid",
+        ("back", _) => "LandOn_Back",
+        ("left", _) => "ClimbOn_Left",
+        _ => "ClimbOn_Right",
+    };
+    let place = if interior { "Interior" } else { "Exterior" };
+    format!("Rodeo_{chassis}_Rodeo_{how}_{place}")
 }

@@ -111,6 +111,8 @@ pub const F_CLOAK: u16 = 16;
 pub const F_PHASE: u16 = 32;
 /// Fitted with Bulwark (pas_legion_gunshield): the Gun Shield has 5000 health.
 pub const F_BULWARK: u16 = 64;
+/// Fitted with Low Profile (pas_stealth_movement): the rodeo climb is silent.
+pub const F_LOW_PROFILE: u16 = 128;
 
 /// `Msg::Event` kinds: a Titan's Arc Wave, Firewall or Flame Core (from its feet, along its
 /// facing), a Gravity Star popping (at `pos`).
@@ -1223,6 +1225,7 @@ pub fn update(
     mut damage_from: ResMut<crate::hud::DamageFrom>,
     (mut feed, rodeo): (ResMut<crate::feed::Feed>, Res<crate::rodeo::Rodeo>),
     weapons: Query<&crate::weapons::Weapon, With<PlayerTitan>>,
+    mut rodeo_seen: Local<HashMap<u32, u8>>,
 ) {
     let dt = time.delta_secs();
     // The walls put up and abilities used since last frame (sent below when online).
@@ -1853,6 +1856,24 @@ pub fn update(
                     t: s.titan_anim_t,
                     clip: Some(clip),
                 });
+            // A rider climbing on: the ridden Titan's player hears the cockpitSound, everyone
+            // else the worldSound on the rider (EmitDifferentSoundsOnEntityForPlayerAndWorld).
+            if s.rodeo == 1 && rodeo_seen.insert(*pid, 1) != Some(1) && s.flags & F_LOW_PROFILE == 0
+            {
+                if let Some(r) = ride.as_ref() {
+                    let side = ["back", "front", "left", "right"][s.rodeo_side.min(3) as usize];
+                    let height = ["", "_lower", "_mid"][s.rodeo_height.min(2) as usize];
+                    let ours = s.rodeo_target == my_id && *control == Control::Titan;
+                    let name = crate::rodeo::climb_sound(r.chassis, side, height, ours);
+                    if ours {
+                        crate::audio::event(&mut commands, &name);
+                    } else {
+                        crate::audio::event_at(&mut commands, &name, s.pilot_pos);
+                    }
+                }
+            } else if s.rodeo != 1 {
+                rodeo_seen.insert(*pid, s.rodeo);
+            }
             let ride = ride.or(mount);
             let mounting = ride.as_ref().is_some_and(|r| r.clip.is_some());
             if let Ok((_, mut e)) = enemies.get_mut(pe) {
@@ -2303,6 +2324,9 @@ pub fn local_flags(
         } else {
             crate::pilotctl::PHASE_EMBARK.store(false, Ordering::Relaxed);
         }
+    }
+    if crate::kits::has("pas_stealth_movement") {
+        f |= F_LOW_PROFILE;
     }
     if *control == Control::Pilot {
         if status.cloaked() {
