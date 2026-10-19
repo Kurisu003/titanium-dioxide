@@ -28,11 +28,11 @@ pub enum Command {
     Reload,
     Melee,
     Use,
-    /// Q: BT's ordnance, the Pilot's tactical.
+    /// Q: BT's defensive ability, the Pilot's tactical.
     Ability,
-    /// E: BT's defensive ability.
+    /// Middle mouse: BT's utility.
     Utility,
-    /// G: the Pilot's ordnance.
+    /// G: the ordnance (BT's and the Pilot's).
     Throw,
     Core,
     Titanfall,

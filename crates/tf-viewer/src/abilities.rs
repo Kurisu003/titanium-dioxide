@@ -184,6 +184,21 @@ pub const MTMS: MissileSpec = MissileSpec {
     out_time: LAUNCH_OUT_TIME,
 };
 
+/// The Multi-Target Missiles as Init_titanweapon_shoulder_rockets sets them up: in
+/// multiplayer they fly at VANGUARD_SHOULDER_MISSILE_SPEED (2200) and home at 250 scaled by
+/// the same ratio.
+pub fn mtms() -> MissileSpec {
+    if crate::gamedata::sp() {
+        return MTMS;
+    }
+    const MP_SPEED: f32 = 2200.0;
+    MissileSpec {
+        speed: MP_SPEED,
+        homing: MP_SPEED / MISSILE_SPEED * HOMING_SPEED,
+        ..MTMS
+    }
+}
+
 /// Launch a missile (with the rocket model) from `pos` along `dir`.
 pub fn spawn_missile(
     commands: &mut Commands,
@@ -423,7 +438,7 @@ pub fn update_abilities(
                 Vec3::new(s.yaw.sin(), -s.yaw.cos(), 0.0) * if ord.pod_right { 1.0 } else { -1.0 };
             let out =
                 (dir + side * LAUNCH_OUT_ANGLE.to_radians().tan() + Vec3::Z * 0.15).normalize();
-            spawn_missile(&mut commands, &assets, pod_pos, out, target, MTMS);
+            spawn_missile(&mut commands, &assets, pod_pos, out, target, mtms());
             audio::cue(&mut commands, Cue::MissileFire, None);
         }
     }

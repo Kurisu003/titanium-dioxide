@@ -1025,8 +1025,9 @@ impl KitNumbers {
             firewall_count: num(&firewall, "wave_max_count", 15.0) as u32,
             trap_step: num(&slow_trap, "wave_step_dist", 100.0),
             trap_count: num(&slow_trap, "wave_max_count", 15.0) as u32,
-            // FLAME_WALL_THERMITE_DURATION * SP_FLAME_WALL_DURATION_SCALE for the player.
-            thermite_life: 5.2 * 1.75,
+            // FLAME_WALL_THERMITE_DURATION, times SP_FLAME_WALL_DURATION_SCALE for the player in
+            // the campaign only.
+            thermite_life: 5.2 * if crate::gamedata::sp() { 1.75 } else { 1.0 },
             thermite_tick: 100.0,      // PLAYER_METEOR_DAMAGE_TICK
             thermite_tick_pilot: 20.0, // PLAYER_METEOR_DAMAGE_TICK_PILOT
             thermite_radius: 60.0,     // FLAME_WALL_DAMAGE_RADIUS_DEF
@@ -1061,18 +1062,20 @@ impl KitNumbers {
             tracker_damage: num(&tracker, "damage_near_value", 350.0),
             tracker_delay: num(&tracker, "burst_fire_delay", 0.7),
             wall_cd: regen_cd(&wall, 14.0),
-            // SHIELD_WALL_HEALTH (SP) and SHIELD_WALL_DURATION; Reinforced Particle Wall
-            // (PAS_TONE_WALL, _particle_wall.gnut): PAS_TONE_WALL_HEALTH and x1.5 duration.
+            // SHIELD_WALL_HEALTH and the weapon's SP/MP_PARTICLE_WALL_DURATION; Reinforced
+            // Particle Wall (PAS_TONE_WALL, _particle_wall.gnut): PAS_TONE_WALL_HEALTH and x1.5
+            // duration.
             wall_hp: if crate::kits::has("pas_tone_wall") {
                 3000.0
             } else {
-                1750.0
+                shield_wall_health()
             },
-            wall_life: if crate::kits::has("pas_tone_wall") {
-                8.0 * 1.5
-            } else {
-                8.0
-            },
+            wall_life: particle_wall_duration()
+                * if crate::kits::has("pas_tone_wall") {
+                    1.5
+                } else {
+                    1.0
+                },
             power_cd: regen_cd(&power, 8.0),
             power_charges: ammo_charges(&power),
             // Hidden Compartment also gives the shot pas_Close/LongRangePowerShot: x0.85 to
@@ -1848,12 +1851,16 @@ pub struct FireSpots {
 
 /// METEOR_THERMITE_DAMAGE_RADIUS_DEF.
 const METEOR_THERMITE_RADIUS: f32 = 45.0;
-/// thermiteLifetimeMin/Max (2.0, 2.5) times SP_THERMITE_DURATION_SCALE for the player.
-const METEOR_THERMITE_LIFE: (f32, f32) = (2.0 * 1.25, 2.5 * 1.25);
+/// thermiteLifetimeMin/Max (2.0, 2.5), times SP_THERMITE_DURATION_SCALE for the player in the
+/// campaign only.
+fn meteor_thermite_life() -> (f32, f32) {
+    let k = if crate::gamedata::sp() { 1.25 } else { 1.0 };
+    (2.0 * k, 2.5 * k)
+}
 
 /// Proto_MeteorCreatesThermite: where a T-203 shell lands, a base piece (P_wpn_meteor_exp) and
 /// four trails (P_wpn_meteor_exp_trail) thrown along the shell's velocity, its speed capped at
-/// 2500 and scaled by 0.35 (singleplayer), the trails each nudged 50 along a random forward
+/// 2500 and scaled by 0.25 (0.35 in the campaign), the trails each nudged 50 along a random forward
 /// and up. `vel` is the shell's velocity; `on_world` stops the base where it hit.
 pub fn spawn_meteor_thermite(
     commands: &mut Commands,
@@ -1882,7 +1889,9 @@ pub fn spawn_meteor_thermite_as(
         rng ^= rng << 5;
         lo + (hi - lo) * (rng as f32 / u32::MAX as f32)
     };
-    let v = vel.normalize_or_zero() * vel.length().min(2500.0) * 0.35;
+    let speed_scale = if crate::gamedata::sp() { 0.35 } else { 0.25 };
+    let v = vel.normalize_or_zero() * vel.length().min(2500.0) * speed_scale;
+    let life_range = meteor_thermite_life();
     let shot = seed;
     let piece = |pos: Vec3, vel: Vec3, life: f32, still: bool| MeteorThermite {
         pos,
@@ -1898,7 +1907,7 @@ pub fn spawn_meteor_thermite_as(
     commands.spawn((
         Transform::from_translation(to_bevy(at)),
         crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"),
-        piece(at, v, METEOR_THERMITE_LIFE.1, on_world),
+        piece(at, v, life_range.1, on_world),
     ));
     // OnProjectileCollision_Meteor: 4 trails thrown at 50, 8 at 200 with Wildfire Launcher
     // (pas_scorch_weapon).
@@ -1917,7 +1926,7 @@ pub fn spawn_meteor_thermite_as(
         let (sp, cp, sy, cy, sr, cr) = (p.sin(), p.cos(), y.sin(), y.cos(), r.sin(), r.cos());
         let fwd = Vec3::new(cp * cy, cp * sy, -sp);
         let up = Vec3::new(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp);
-        let life = rand(METEOR_THERMITE_LIFE.0, METEOR_THERMITE_LIFE.1);
+        let life = rand(life_range.0, life_range.1);
         commands.spawn((
             Transform::from_translation(to_bevy(at)),
             crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp_trail"),
@@ -2150,14 +2159,32 @@ pub struct ParticleWall {
     awall: bool,
 }
 
+/// _particle_wall.gnut's SHIELD_WALL_HEALTH: 2000 in multiplayer, 1750 in the campaign.
+fn shield_wall_health() -> f32 {
+    if crate::gamedata::sp() {
+        1750.0
+    } else {
+        2000.0
+    }
+}
+
+/// mp_titanability_particle_wall.nut: MP_PARTICLE_WALL_DURATION 6, SP_PARTICLE_WALL_DURATION 8.
+fn particle_wall_duration() -> f32 {
+    if crate::gamedata::sp() {
+        8.0
+    } else {
+        6.0
+    }
+}
+
 impl ParticleWall {
-    /// An enemy Titan's wall (SHIELD_WALL_HEALTH 1750, SP_PARTICLE_WALL_DURATION 8).
+    /// An enemy Titan's wall (SHIELD_WALL_HEALTH, SP/MP_PARTICLE_WALL_DURATION).
     pub fn enemy(feet: Vec3, normal: Vec3) -> Self {
         Self {
             origin: feet + normal * 100.0 - Vec3::Z * 64.0,
             normal,
-            life: 8.0,
-            hp: 1750.0,
+            life: particle_wall_duration(),
+            hp: shield_wall_health(),
             enemy: true,
             awall: false,
         }

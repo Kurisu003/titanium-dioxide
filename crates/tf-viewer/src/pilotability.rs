@@ -732,6 +732,8 @@ const DECOY_SEQUENCES: &[&str] = &[
 
 /// EnableCloak( rider, 7.0 ) in HandleAutoEject (_titan_health.gnut).
 pub const AUTO_EJECT_CLOAK: f32 = 7.0;
+/// player_cloak.nut's CLOAK_FADE_OUT: how long a cloak takes to go when it ends early.
+const CLOAK_FADE_OUT: f32 = 1.0;
 
 /// What the Pilot's abilities are doing right now (read by movement, enemies and damage).
 #[derive(Resource, Default)]
@@ -1188,8 +1190,28 @@ pub fn pilot_abilities(
         Query<&crate::targets::Enemy>,
         Query<&crate::player::PlayerTitan>,
     ),
+    mut shots_seen: Local<u32>,
 ) {
     let dt = time.delta_secs().min(0.1);
+    // A Pilot gun's shot breaks the cloak (the engine's weapon key breaks_cloak, on unless a
+    // weapon turns it off, as only the tacticals do): it fades out over CLOAK_FADE_OUT.
+    let shots = crate::net::PILOT_SHOTS.load(std::sync::atomic::Ordering::Relaxed);
+    if shots != *shots_seen {
+        *shots_seen = shots;
+        let left = if status.is(Tactical::Cloak) {
+            status.active
+        } else {
+            0.0
+        }
+        .max(status.eject_cloak);
+        if left > CLOAK_FADE_OUT {
+            log::info!("cloak broken by a shot");
+            if status.is(Tactical::Cloak) {
+                status.active = status.active.min(CLOAK_FADE_OUT);
+            }
+            status.eject_cloak = status.eject_cloak.min(CLOAK_FADE_OUT);
+        }
+    }
     let mut tactical = std::mem::take(&mut input.tactical);
     let throw = std::mem::take(&mut input.throw);
     let ti = status.tactical.min(defs.tactical.len() - 1);
@@ -2203,7 +2225,13 @@ pub fn spawn_pilot_slots(
     }
     let tac = TACTICALS[status.tactical];
     let ord = ORDNANCE[status.ordnance];
-    for (i, (icon, key)) in [(tac.2, "Q"), (ord.2, "G")].into_iter().enumerate() {
+    for (i, (icon, key)) in [
+        (tac.2, crate::settings::Command::Ability),
+        (ord.2, crate::settings::Command::Throw),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let p = crate::hud::slot_column(&mut commands, &ui, icon, key);
         commands.entity(p.icon).insert(PilotSlotIcon(i));
         commands.entity(p.shade).insert(PilotSlotShade(i));

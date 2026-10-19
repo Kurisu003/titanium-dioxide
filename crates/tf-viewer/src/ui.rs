@@ -1553,8 +1553,12 @@ fn build_page(
             (k(C::Utility), "Titan Utility"),
             (k(C::Throw), "Ordnance"),
             (k(C::Melee), "Melee"),
-            (k(C::Core), "Titan Core"),
+            (k(C::Core), "Titan Core / Titanfall / Titan Mode"),
             (k(C::Use), "Disembark / Embark"),
+            (
+                format!("{}, {} x3", k(C::Eject), k(C::Use)),
+                "Eject (doomed: just the second key x3)",
+            ),
             (k(C::Titanfall), "Titanfall"),
             ("- / =".to_string(), "Volume"),
         ];

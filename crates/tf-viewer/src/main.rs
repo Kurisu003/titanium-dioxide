@@ -391,7 +391,7 @@ fn main() {
         bevy::audio::Volume::Linear(start_volume.clamp(0.0, 1.0)),
     ))
     .insert_resource(user_settings)
-    .add_systems(Update, settings::publish_binds)
+    .add_systems(Update, (settings::publish_binds, hud::update_key_labels))
     .init_resource::<gamepad::PadConfig>()
     .init_resource::<gamepad::PadState>()
     .init_resource::<aimassist::AimAssist>()

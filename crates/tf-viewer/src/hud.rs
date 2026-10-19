@@ -40,6 +40,26 @@ pub struct MeterPct;
 pub struct MeterKey;
 #[derive(Component)]
 pub struct MeterKeyText;
+
+/// A key box's text: the key bound to this command, kept current by `update_key_labels`.
+#[derive(Component)]
+pub struct KeyLabel(pub crate::settings::Command);
+
+/// Rename the HUD's key boxes when the binds change.
+pub fn update_key_labels(
+    settings: Res<crate::settings::Settings>,
+    mut labels: Query<(Ref<KeyLabel>, &mut Text)>,
+) {
+    for (l, mut t) in &mut labels {
+        if settings.is_changed() || l.is_added() {
+            let name = settings.bind(l.0).name();
+            if t.0 != name {
+                t.0 = name;
+            }
+        }
+    }
+}
+
 /// The weapon silhouette on the ammo bar.
 #[derive(Component)]
 pub struct WeaponIcon;
@@ -361,7 +381,12 @@ pub struct SlotParts {
 /// One ability slot of the cockpit cluster (the game's ability_hud): the icon on a dark square,
 /// a cooldown shade rising over it, a state text on it, and the key in a box under it. The
 /// label is kept for callers that name the ability but isn't shown (the game shows none).
-pub fn slot_column(commands: &mut Commands, ui: &UiAssets, icon: &str, key: &str) -> SlotParts {
+pub fn slot_column(
+    commands: &mut Commands,
+    ui: &UiAssets,
+    icon: &str,
+    key: crate::settings::Command,
+) -> SlotParts {
     let col = commands
         .spawn(Node {
             flex_direction: FlexDirection::Column,
@@ -435,7 +460,14 @@ pub fn slot_column(commands: &mut Commands, ui: &UiAssets, icon: &str, key: &str
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
         ))
         .id();
-    let k = text(commands, key, &ui.bold_font, 1.5, WHITE);
+    let k = text(
+        commands,
+        &crate::settings::key_name(key),
+        &ui.bold_font,
+        1.5,
+        WHITE,
+    );
+    commands.entity(k).insert(KeyLabel(key));
     commands.entity(key_box).add_child(k);
     let label = text(commands, "", &ui.font, 1.3, DIM);
     commands.entity(label).insert(Node {
@@ -1017,17 +1049,17 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
         (
             Slot::Defensive,
             "rui/titan_loadout/defensive/titan_defensive_vortex_menu",
-            "Q",
+            crate::settings::Command::Ability,
         ),
         (
             Slot::Utility,
             "rui/titan_loadout/tactical/titan_tactical_electric_smoke_menu",
-            "E",
+            crate::settings::Command::Utility,
         ),
         (
             Slot::Ordnance,
             "rui/titan_loadout/ordnance/multilock_rockets_menu",
-            "G",
+            crate::settings::Command::Throw,
         ),
     ] {
         let p = slot_column(&mut commands, &ui, icon, key);
@@ -1689,6 +1721,8 @@ pub fn update_hud(
 
     // The meter: what it fills with, whether it is ready, its icon and caption.
     let doomed = health.v.doomed.is_some();
+    // The game's +ability 1 (V): the core in the Titan, the Titanfall out of it.
+    let core_key = crate::settings::key_name(crate::settings::Command::Core);
     let (frac, ready, icon, caption, key, color) = if in_titan {
         let ready = core.state == CoreState::Building && core.meter >= 1.0 || core.active();
         let caption = match core.state {
@@ -1706,7 +1740,7 @@ pub fn update_hud(
             ready,
             icon,
             caption,
-            "V",
+            core_key.as_str(),
             if ready { METER_AMBER } else { METER_BLUE },
         )
     } else if health.dead_for.is_some() || titanfall.rebuilding {
@@ -1718,7 +1752,7 @@ pub fn update_hud(
                 true,
                 "rui/hud/earn_meter/titan_ready".to_string(),
                 "TITANFALL".to_string(),
-                "T",
+                core_key.as_str(),
                 METER_BLUE,
             )
         } else {
@@ -1727,7 +1761,7 @@ pub fn update_hud(
                 false,
                 "rui/hud/earn_meter/titan_ready".to_string(),
                 format!("{:.0}%", frac * 100.0),
-                "T",
+                core_key.as_str(),
                 METER_BLUE,
             )
         }
