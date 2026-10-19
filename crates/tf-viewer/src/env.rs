@@ -53,15 +53,24 @@ pub struct MapEnv {
     pub color_correction: Option<String>,
 }
 
+/// `env_fog_controller` as materialsystem_dx11.dll packs it into the shaders' `c_fogParams`
+/// (0x180020eca): the fog thickens as `1 / max(foghalfdist, 0.001)` per unit (below `fogzbottom`
+/// and above `fogztop` its own half distance, a linear blend between them), its opacity is
+/// `(1 - exp(-thickness))` times `fogdensity`, and its colour is `fogcolor` (sRGB, times
+/// `fogcolorstrength`) plus `fogdircolor` times `fogdircolorstrength` times
+/// `saturate((cos(view, dir) - cos(halfangle)) / (1 - cos(halfangle)))^2`, `dir` being the
+/// reverse of the controller's forward (Source's CFogController::Activate with use_angles).
 #[derive(Clone, Debug)]
 pub struct Fog {
     pub color: Color,
+    pub color_strength: f32,
     /// Max opacity (fogdensity, clamped to 0..1).
     pub density: f32,
-    /// Distance (game units) at which the fog reaches half strength.
+    /// `foghalfdisttop`: every shipped map's play area is above `fogztop`.
     pub half_dist: f32,
     pub dir_color: Color,
     pub dir_strength: f32,
+    pub dir_half_angle: f32,
 }
 
 impl Default for MapEnv {
@@ -166,10 +175,12 @@ impl MapEnv {
                 let num = |k: &str, d: f32| get(f, k).and_then(|v| v.parse().ok()).unwrap_or(d);
                 env.fog = Some(Fog {
                     color: color(&get(f, "fogcolor").unwrap_or_default()),
+                    color_strength: num("fogcolorstrength", 1.0),
                     density: num("fogdensity", 0.5).clamp(0.0, 1.0),
-                    half_dist: num("foghalfdisttop", 20000.0).max(100.0),
+                    half_dist: num("foghalfdisttop", 20000.0).max(0.001),
                     dir_color: color(&get(f, "fogdircolor").unwrap_or_default()),
                     dir_strength: num("fogdircolorstrength", 0.0),
+                    dir_half_angle: num("fogdirhalfangle", 90.0),
                 });
             }
         }
@@ -251,13 +262,26 @@ impl MapEnv {
         }
         let f = self.fog.as_ref()?;
         let half_m = f.half_dist * crate::player::UNIT;
-        let dir = f.dir_color.to_linear() * f.dir_strength.min(1.0);
+        // Bevy's in-scatter is `max(cos(view, sun), 0)^exponent` times the sun's colour after
+        // exposure, which is `sun_light * pi` here: divide that out to leave the game's
+        // directional colour. The exponent matches the game's falloff at 60 degrees off.
+        let c = f.dir_half_angle.to_radians().cos();
+        let game = |cos: f32| ((cos - c) / (1.0 - c)).clamp(0.0, 1.0).powi(2);
+        let exponent = (game(0.5).max(1e-4).ln() / 0.5f32.ln()).max(0.1);
+        let dir = f.dir_color.to_linear() * f.dir_strength;
+        let sun = (self.sun_light * std::f32::consts::PI).max(Vec3::splat(1e-4));
+        let base = f.color.to_linear() * f.color_strength;
         Some(DistanceFog {
-            color: f.color.with_alpha(f.density),
-            directional_light_color: Color::LinearRgba(dir.with_alpha(f.density * 0.5)),
-            directional_light_exponent: 12.0,
+            color: Color::LinearRgba(base.with_alpha(f.density)),
+            directional_light_color: Color::linear_rgba(
+                dir.red / sun.x,
+                dir.green / sun.y,
+                dir.blue / sun.z,
+                if f.dir_strength > 0.0 { 1.0 } else { 0.0 },
+            ),
+            directional_light_exponent: exponent,
             falloff: FogFalloff::Exponential {
-                density: std::f32::consts::LN_2 / half_m,
+                density: 1.0 / half_m,
             },
         })
     }
