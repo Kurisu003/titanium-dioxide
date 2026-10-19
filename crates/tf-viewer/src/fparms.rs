@@ -139,6 +139,10 @@ fn sequences() -> Vec<String> {
         "atpov_cockpit_eject",
     ] {
         v.push(s.into());
+        // Phase Embark's versions (pilotctl::fast_embark).
+        if s.starts_with("ptpov_mount_buddy") || s.starts_with("ptpov_dismount_buddy") {
+            v.push(format!("{s}_fast"));
+        }
     }
     // Mantles (pov_pete_core, an include of the arms; pilotweapon.rs plays them).
     for h in MANTLE_CLIPS {

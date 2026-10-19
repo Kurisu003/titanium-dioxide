@@ -169,6 +169,46 @@ impl PlayerPilot {
 /// `above_grab` (dot 0.3, within 275) first, then `front`, `left`, `right` and `behind`
 /// (dot 0.4, within 260), then `front` for anything else within 260. Among a priority's
 /// candidates the best dot wins.
+/// Phase Embark (PAS_FAST_EMBARK, sh_titan_embark.gnut): every mount and dismount, the
+/// Titan's and the Pilot's, plays its `_fast` version.
+fn fast_embark(pair: (&'static str, &'static str)) -> (&'static str, &'static str) {
+    static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    if !crate::kits::has("pas_fast_embark") {
+        return pair;
+    }
+    let mut names = NAMES.lock().unwrap();
+    let mut fast = |n: &str| {
+        let f = format!("{n}_fast");
+        match names.iter().find(|m| **m == f) {
+            Some(m) => *m,
+            None => {
+                let m: &'static str = Box::leak(f.into_boxed_str());
+                names.push(m);
+                m
+            }
+        }
+    };
+    (fast(pair.0), fast(pair.1))
+}
+
+/// The Pilot phasing out during a Phase Embark (sent as F_PHASE: the others stop drawing them).
+pub static PHASE_EMBARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The `phase_shift_start` / `phase_shift_stop` events (cycles) of the Pilot's fast mount that
+/// goes with a Titan's (pt_mount_atlas_*_fast; PhaseEmbarkPhaseStart makes them invisible).
+fn phase_embark_window(titan_anim: &str) -> Option<(f32, f32)> {
+    let how = titan_anim
+        .strip_suffix("_fast")?
+        .strip_prefix("at_mount_")?;
+    Some(match how {
+        "kneel_behind" => (0.231, 0.431),
+        "kneel_airgrab" => (0.327, 0.538),
+        h if h.starts_with("kneel_") => (0.262, 0.431),
+        "stand_behind" | "above_left" | "above_right" => (0.288, 0.538),
+        _ => (0.327, 0.538),
+    })
+}
+
 fn embark_anim_for(yaw: f32, to_pilot: SVec3, kneel: bool) -> Option<(&'static str, &'static str)> {
     let dist = to_pilot.length();
     let dir = if dist > 1e-3 {
@@ -720,12 +760,12 @@ pub fn control_transitions(
                 tf.eject_window = EJECT_FADE_TIME;
                 *control = Control::Disembark(0.0);
                 // GetDisembarkSequenceForPlayer/Titan: crouch held = the crouch dismount
-                // (the _fast set needs PAS_FAST_EMBARK, an MP passive).
-                let (anim, clip) = if input.crouch {
+                // (the _fast set with Phase Embark).
+                let (anim, clip) = fast_embark(if input.crouch {
                     (DISEMBARK_CROUCH_ANIM, "ptpov_dismount_buddy_crouch")
                 } else {
                     (DISEMBARK_ANIM, "ptpov_dismount_buddy_stand")
-                };
+                });
                 pilot.disembark_anim = anim;
                 log::info!("disembarking ({anim}, {clip})");
                 let eye = Vec3::from(titan.state.eye(&titan_settings.0).to_array());
@@ -829,7 +869,8 @@ pub fn control_transitions(
             let want_embark = interact || grapple_bt;
             let embark = want_embark
                 .then(|| embark_anim_for(titan.state.yaw, -to_bt, !combat))
-                .flatten();
+                .flatten()
+                .map(fast_embark);
             if interact && !(embark.is_some() && !tf.busy() && bt_health.dead_for.is_none()) {
                 log::info!(
                     "embark refused: BT {:.0} away ({:.0} up), busy {}",
@@ -935,6 +976,12 @@ pub fn control_transitions(
         }
         Control::Embark(t) => {
             let t = t + dt;
+            let cycle = t / embark_secs.max(0.01);
+            PHASE_EMBARK.store(
+                phase_embark_window(pilot.embark_anim)
+                    .is_some_and(|(a, b)| (a..b).contains(&cycle)),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             titan.override_anim = Some((pilot.embark_anim.into(), t));
             fpseq.set_frame(hijack_frame(&titan));
             // The embark ends with the Pilot's first-person clip (the game waits for the

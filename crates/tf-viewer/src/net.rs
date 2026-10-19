@@ -157,6 +157,22 @@ pub const TITAN_ANIMS: &[&str] = &[
     "bt_synced_titan_execute_flip_takedown_A",
     "bt_synced_titan_execute_kickshoot_A",
     "bt_synced_titan_execute_pilot_rip_A",
+    // Phase Embark (pas_fast_embark).
+    "at_dismount_stand_fast",
+    "at_dismount_crouch_fast",
+    "at_mount_stand_front_fast",
+    "at_mount_stand_behind_fast",
+    "at_mount_stand_left_fast",
+    "at_mount_stand_right_fast",
+    "at_mount_stand_airgrab_fast",
+    "at_mount_above_left_fast",
+    "at_mount_above_right_fast",
+    "at_mount_kneel_front_fast",
+    "at_mount_kneel_behind_fast",
+    "at_mount_kneel_left_fast",
+    "at_mount_kneel_right_fast",
+    "at_mount_kneel_above_fast",
+    "at_mount_kneel_airgrab_fast",
 ];
 const RODEO_PANEL_ANIM: &str = "at_rodeo_ride_R_hijack_battery";
 
@@ -893,12 +909,32 @@ const REMOTE_PILOT_SEQUENCES: &[&str] = &[
     "pt_mount_atlas_kneel_airgrab",
     "pt_mount_atlas_kneel_above_left",
     "pt_mount_atlas_kneel_above_right",
+    "pt_dismount_atlas_stand_fast",
+    "pt_dismount_atlas_crouch_fast",
+    "pt_mount_atlas_stand_front_fast",
+    "pt_mount_atlas_stand_behind_fast",
+    "pt_mount_atlas_stand_left_fast",
+    "pt_mount_atlas_stand_right_fast",
+    "pt_mount_atlas_stand_airgrab_fast",
+    "pt_mount_atlas_above_left_fast",
+    "pt_mount_atlas_above_right_fast",
+    "pt_mount_atlas_kneel_front_fast",
+    "pt_mount_atlas_kneel_behind_fast",
+    "pt_mount_atlas_kneel_left_fast",
+    "pt_mount_atlas_kneel_right_fast",
+    "pt_mount_atlas_kneel_airgrab_fast",
+    "pt_mount_atlas_kneel_above_left_fast",
+    "pt_mount_atlas_kneel_above_right_fast",
 ];
 
 /// The Pilot's third-person clip that goes with a Titan's embark or disembark sequence (the
 /// game plays the pair together on the Titan's hijack attachment). `left`: the Pilot came from
 /// the Titan's left (the one kneeling sequence from above serves both sides).
 pub fn pilot_mount_clip(titan_anim: &str, left: bool) -> Option<String> {
+    // Phase Embark: the Pilot's clip is the `_fast` one too.
+    if let Some(base) = titan_anim.strip_suffix("_fast") {
+        return pilot_mount_clip(base, left).map(|c| c + "_fast");
+    }
     let rest = titan_anim.strip_prefix("at_")?;
     if let Some(how) = rest.strip_prefix("dismount_") {
         return Some(format!("pt_dismount_atlas_{how}"));
@@ -2261,6 +2297,13 @@ pub fn local_flags(
             f |= F_TITAN_PHASE;
         }
     }
+    if crate::pilotctl::PHASE_EMBARK.load(Ordering::Relaxed) {
+        if matches!(*control, Control::Embark(_)) {
+            f |= F_PHASE;
+        } else {
+            crate::pilotctl::PHASE_EMBARK.store(false, Ordering::Relaxed);
+        }
+    }
     if *control == Control::Pilot {
         if status.cloaked() {
             f |= F_CLOAK;
@@ -2347,7 +2390,32 @@ pub fn remote_states(
             // on its back (only Electric Smoke or getting out deals with them); on foot we see
             // them up on its back, where we can shoot them off.
             let on_ours = s.on_foot && s.rodeo != 0 && s.rodeo_target == net.my_id;
-            e.hidden = s.on_foot && (s.flags & F_PHASE != 0 || (on_ours && !on_foot));
+            // F_PHASE climbing in is a Phase Embark: PhaseEmbarkPhaseStart / Stop play the
+            // phase-out effect and sounds as the Pilot vanishes and comes back.
+            let phased = s.flags & F_PHASE != 0;
+            let fast_mount = TITAN_ANIMS
+                .get(s.titan_anim as usize)
+                .is_some_and(|a| a.ends_with("_fast"));
+            if !s.on_foot && fast_mount && phased != e.hidden {
+                log::info!("net: a Pilot phase-embarking: phased {phased}");
+                let at = s.pilot_pos;
+                crate::pfx::emit_named(
+                    &mut commands,
+                    "P_phase_shift_main",
+                    crate::player::to_bevy(at),
+                    Vec3::Y,
+                );
+                crate::audio::event_at(
+                    &mut commands,
+                    if phased {
+                        "pilot_phaseembark_activate_3p"
+                    } else {
+                        "pilot_phaseembark_end_3p"
+                    },
+                    at,
+                );
+            }
+            e.hidden = phased || (s.on_foot && on_ours && !on_foot);
             e.cloaked = s.on_foot && s.flags & F_CLOAK != 0;
             if on_ours && on_foot {
                 if let Ok(t) = titans.single() {
