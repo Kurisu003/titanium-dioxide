@@ -953,6 +953,8 @@ pub struct Weapon {
     pub charge: Charge,
     /// How far the fire rate has ramped toward `fire_rate_max`.
     pub rate_ramp: f32,
+    /// Rounds left in a Burst Loader burst (pas_tone_burst).
+    tone_burst: u32,
     /// Sway pivots (filled on first use) and sway/bob state of the viewmodel.
     pivots: Option<[(String, Vec3); 2]>,
     motion: crate::vmmotion::VmMotion,
@@ -1119,6 +1121,7 @@ impl Weapon {
             motion: Default::default(),
             fx_atts: None,
             rate_ramp: 0.0,
+            tone_burst: 0,
         }
     }
 
@@ -1599,7 +1602,35 @@ pub fn weapon_fire(
     // Charge weapons (the Plasma Railgun charges while aiming down sights; charge_time 2.25 s
     // over 5 levels, draining in charge_cooldown_time). Each level ticks.
     let cdef = w.def.charge.clone();
-    if cdef.time > 0.0 {
+    // The Burst Loader (pas_tone_burst) gives the 40mm an ADS charge with burst_fire_count:
+    // FireWeaponPlayerAndNPC sets the burst to max(1, charge level) on its first round.
+    let loader = cdef.by_ads && w.def.burst_count > 0 && !burst;
+    if loader && (w.ammo == 0 || w.reloading()) {
+        w.tone_burst = 0;
+    }
+    if loader && w.tone_burst == 0 {
+        let can = !frozen
+            && !w.reloading()
+            && w.ammo > 0
+            && !s.sprinting
+            && w.cooldown <= 0.0
+            && !matches!(w.vm_seq, VmSeq::Draw | VmSeq::Holster);
+        let charging = can && input.ads;
+        // OnWeaponStartZoomIn / OnWeaponReadyToFire: the first tick; each level after it
+        // ticks while the clip holds that many rounds.
+        if charging && !w.charge.charging {
+            audio::event(&mut commands, "weapon_40mm_burstloader_leveltick_1");
+        }
+        w.charge.charging = charging;
+        if let Some(level) = w.charge.update(&cdef, charging, dt) {
+            if w.ammo >= level && (2..=3).contains(&level) {
+                audio::event(
+                    &mut commands,
+                    &format!("weapon_40mm_burstloader_leveltick_{level}"),
+                );
+            }
+        }
+    } else if cdef.time > 0.0 && !loader {
         let can = !frozen
             && !burst
             && !w.reloading()
@@ -1636,6 +1667,9 @@ pub fn weapon_fire(
             );
         }
     }
+    // A Burst Loader burst runs on once started.
+    let fire = fire || w.tone_burst > 0;
+    let pulled = pulled || w.tone_burst > 0;
     if !fire
         || frozen
         || (w.reloading() && !burst)
@@ -1667,7 +1701,7 @@ pub fn weapon_fire(
         shot_def.damage_near += extra;
         shot_def.damage_far += extra;
     }
-    let kick_scale = if cdef.time > 0.0 && cdef.by_ads {
+    let kick_scale = if cdef.time > 0.0 && cdef.by_ads && !loader {
         match charge_level {
             6.. => 1.0,
             5 => 0.75,
@@ -1698,7 +1732,19 @@ pub fn weapon_fire(
         w.shots += 1;
         log::debug!("{} fires, {} left", w.def.name, w.ammo);
         let arsenal = w.arsenal as u8;
-        if cdef.by_ads && !burst {
+        if loader {
+            if w.tone_burst == 0 {
+                w.tone_burst = (charge_level - 1).max(1);
+                log::info!("{} Burst Loader: {} rounds", w.def.name, w.tone_burst);
+                w.charge.frac = 0.0;
+            }
+            w.tone_burst -= 1;
+            if w.tone_burst == 0 {
+                // The burst's end waits burst_fire_delay instead of the refire interval.
+                w.cooldown += w.def.burst_delay - interval;
+            }
+        }
+        if cdef.by_ads && !burst && !loader {
             // FireSniper's sound tiers: level > 4, > 3, > 2, else 1.
             let tier = match charge_level {
                 5.. => 4,
