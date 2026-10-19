@@ -15,7 +15,6 @@
 mod abilities;
 mod actor;
 mod aimassist;
-mod diag;
 mod audio;
 mod autotitan;
 mod bindcache;
@@ -24,6 +23,7 @@ mod colorcorr;
 mod combat;
 mod convert;
 mod crosshair;
+mod diag;
 mod dialogue;
 mod env;
 mod executions;
@@ -33,11 +33,12 @@ mod fparms;
 mod fxuber;
 mod game;
 mod gamedata;
-mod grenadearc;
 mod gamepad;
+mod grenadearc;
 mod hitbox;
 mod hud;
 mod inputrec;
+mod kits;
 mod launcherscreen;
 mod minimap;
 mod music;
@@ -90,7 +91,7 @@ use tf_sim::collision::CollisionWorld;
 use tf_sim::titan::{TitanParams, TitanState};
 
 #[derive(Resource, Clone)]
-struct Args {
+pub(crate) struct Args {
     game: String,
     map: String,
     props: bool,
@@ -281,6 +282,8 @@ fn main() {
         Err(_) => args.map == flatmap::NAME,
     };
     let user_settings = settings::Settings::load();
+    // The kits picked on the LOADOUT page, before anything reads a weapon script.
+    kits::set_fitted(kits::fitted_for(&user_settings, args.titan));
     let start_volume = args.volume.unwrap_or(user_settings.volume);
     let start_titan = args.titan;
     let mut loadout = pilotweapon::LoadoutChoice::default();
@@ -550,6 +553,7 @@ fn main() {
             ui::apply_quality,
             pilotweapon::build_loadout,
             pilotweapon::ordnance_viewmodel,
+            kits::sync_fitted,
             weapons::switch_titan_weapon,
             titankit::apply_kit,
             weapons::prepare_weapon_models,
@@ -798,7 +802,7 @@ fn campaign_arena(gd: &GameData, map: &str) -> Option<(Vec3, f32, Vec<Vec3>)> {
 
 /// Pilot movement from the multiplayer pilot's .set file (pilot_mp.set over pilot_base.set: every
 /// MP Pilot class is pilot_mp.set plus models and footsteps), as in a Northstar match.
-fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
+pub(crate) fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
     let mut read = |p: &str| {
         gd.read_file(p)
             .ok()
@@ -808,6 +812,8 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
     let Some(s) = PlayerSettings::load("scripts/players/mp/pilot_mp.set", true, &mut read) else {
         return d;
     };
+    // The Pilot's kits (pas_ads_hover, pas_wallhang, pas_power_cell: its ClassMods).
+    let s = kits::apply(s);
     let view = |k: &str, def: f32| s.vec3(k).map(|v| v[2]).unwrap_or(def);
     let ground_accel = s.f32("stand.acceleration", d.ground_accel);
     tf_sim::pilot::PilotParams {
@@ -940,7 +946,7 @@ fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
 /// The player's Titan settings: BT's own in the campaign, else the multiplayer chassis file of
 /// the loadout's Titan (titan_<chassis>_<weapon>.set over titan_atlas/stryder/ogre.set: speed,
 /// dash, dash power and health per chassis), read with the [$mp] values.
-pub fn player_titan_settings(map: &str, titan: usize) -> (&'static str, bool) {
+pub(crate) fn player_titan_settings(map: &str, titan: usize) -> (&'static str, bool) {
     if map.starts_with("sp_") {
         return ("scripts/players/mp/titan_buddy.set", true);
     }
@@ -963,10 +969,11 @@ pub fn player_titan_settings(map: &str, titan: usize) -> (&'static str, bool) {
 }
 
 fn titan_params(gd: &GameData, path: &str) -> TitanParams {
-    titan_params_for(gd, path, true)
+    titan_params_for(gd, path, true, false)
 }
 
-fn titan_params_for(gd: &GameData, path: &str, sp: bool) -> TitanParams {
+/// `kits`: the player's Titan, with the fitted kits' ClassMods (Turbo Engine's dash).
+pub(crate) fn titan_params_for(gd: &GameData, path: &str, sp: bool, kits: bool) -> TitanParams {
     let mut read = |p: &str| {
         gd.read_file(p)
             .ok()
@@ -976,6 +983,7 @@ fn titan_params_for(gd: &GameData, path: &str, sp: bool) -> TitanParams {
         log::warn!("{path} not found, using defaults");
         return TitanParams::default();
     };
+    let s = if kits { kits::apply(s) } else { s };
     let d = TitanParams::default();
     let hull_max = s.vec3("stand.hull_max").unwrap_or([60.0, 60.0, 235.0]);
     TitanParams {
@@ -1111,7 +1119,7 @@ fn setup_world(
     commands.insert_resource(colorcorr::MapColorCorrection(map_lut));
     let (titan_set, titan_sp) = player_titan_settings(&args.map, args.titan);
     log::info!("player Titan settings: {titan_set}");
-    let params = titan_params_for(&gd, titan_set, titan_sp);
+    let params = titan_params_for(&gd, titan_set, titan_sp, true);
     let pilot = pilot_params(&gd);
     log::info!("pilot params: {pilot:?}");
     commands.insert_resource(pilotctl::PilotSettings(pilot));

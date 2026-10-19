@@ -485,6 +485,8 @@ pub struct Enemy {
     defense_cd: f32,
     /// Gun Shield health left; rounds the Vortex caught and their damage.
     shield_hp: f32,
+    /// A remote player's Gun Shield health when raised (5000 with Bulwark).
+    pub shield_max: f32,
     caught: u32,
     burn_timer: f32,
     /// Where this frame's target is (shots are taken to come from there).
@@ -654,6 +656,7 @@ impl Enemy {
             defense_left: 0.0,
             defense_cd: 0.0,
             shield_hp: 0.0,
+            shield_max: GUN_SHIELD_HEALTH,
             caught: 0,
             burn_timer: 0.0,
             threat: Vec3::ZERO,
@@ -707,7 +710,7 @@ impl Enemy {
                 cooldown: 0.0,
             });
             self.defense_left = if kind.is_some() { f32::MAX } else { 0.0 };
-            self.shield_hp = GUN_SHIELD_HEALTH;
+            self.shield_hp = self.shield_max;
             let system = match kind {
                 Some(DefenseKind::Vortex) => Some("wpn_vortex_chargingCP_titan"),
                 Some(DefenseKind::Heat) => Some("P_wpn_HeatShield"),
@@ -749,7 +752,7 @@ impl Enemy {
                 commands
                     .entity(fx)
                     .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(
-                        1.0 - self.shield_hp / GUN_SHIELD_HEALTH,
+                        1.0 - self.shield_hp / self.shield_max,
                     )));
             }
         }
@@ -2010,7 +2013,7 @@ fn flush_moves(
                     // by how much of its hold is spent, the Gun Shield's by its health.
                     let spent = match d.kind {
                         DefenseKind::Vortex => Some(1.0 - e.defense_left / d.hold.max(1e-3)),
-                        DefenseKind::GunShield => Some(1.0 - e.shield_hp / GUN_SHIELD_HEALTH),
+                        DefenseKind::GunShield => Some(1.0 - e.shield_hp / e.shield_max),
                         _ => None,
                     };
                     if let Some(f) = spent {
@@ -2095,7 +2098,7 @@ fn flush_moves(
                 let reach = d.kind == DefenseKind::Heat && dist - tr < HEAT_RANGE;
                 if recent >= DEFENSE_TRIGGER_DAMAGE || reach {
                     e.defense_left = d.hold;
-                    e.shield_hp = GUN_SHIELD_HEALTH;
+                    e.shield_hp = e.shield_max;
                     e.caught = 0;
                     e.burn_timer = 0.0;
                     e.recent.clear();

@@ -743,7 +743,7 @@ impl WeaponDef {
         let refs: Vec<&str> = want.iter().map(String::as_str).collect();
         let def = Self::load_modded(name, &refs, read);
         for m in &want {
-            if !def.mods.iter().any(|a| a.eq_ignore_ascii_case(m)) {
+            if !crate::kits::has(m) && !def.mods.iter().any(|a| a.eq_ignore_ascii_case(m)) {
                 log::warn!(
                     "{name} has no mod {m:?}; its mods: {}",
                     def.available_mods.join(", ")
@@ -757,11 +757,13 @@ impl WeaponDef {
 
 /// Mods for a weapon from `TF_MODS`: `weapon:mod,mod;weapon:mod`, with `*` for every weapon,
 /// e.g. `TF_MODS="mp_weapon_r97:pas_fast_reload,extended_ammo;mp_weapon_smart_pistol:enhanced_targeting"`.
+/// The fitted kits follow (a weapon only takes the ones its script has).
 pub fn env_mods(weapon: &str) -> Vec<String> {
-    let Ok(v) = std::env::var("TF_MODS") else {
-        return Vec::new();
-    };
-    parse_mods(&v, weapon)
+    let mut v = std::env::var("TF_MODS")
+        .map(|v| parse_mods(&v, weapon))
+        .unwrap_or_default();
+    v.extend(crate::kits::fitted());
+    v
 }
 
 fn parse_mods(spec: &str, weapon: &str) -> Vec<String> {
@@ -2298,6 +2300,7 @@ pub fn switch_titan_weapon(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut titans: Query<&mut Weapon>,
+    mut kits_seen: Local<u32>,
 ) {
     use crate::actor::{spawn_actor, ActorSpec, BoneMergeTo};
     // 1-8 pick a loadout while in the Titan; the loadout menu sets `TitanKit` directly.
@@ -2310,15 +2313,23 @@ pub fn switch_titan_weapon(
     let Ok(mut w) = titans.single_mut() else {
         return;
     };
-    if w.arsenal == want {
-        return;
-    }
-    let t = std::time::Instant::now();
     let mut read = |p: &str| {
         gd.read_file(p)
             .ok()
             .map(|b| String::from_utf8_lossy(&b).to_string())
     };
+    if w.arsenal == want {
+        // Kits changed: the same gun, read again with their mods.
+        let gen = crate::kits::generation();
+        if *kits_seen != gen {
+            *kits_seen = gen;
+            w.def = WeaponDef::load_player(TITAN_ARSENAL[want].id, &mut read);
+            w.ammo = w.ammo.min(w.def.clip);
+        }
+        return;
+    }
+    *kits_seen = crate::kits::generation();
+    let t = std::time::Instant::now();
     let def = WeaponDef::load_player(TITAN_ARSENAL[want].id, &mut read);
     if let Some((anchor, _)) = w.viewmodel {
         commands.entity(anchor).despawn();

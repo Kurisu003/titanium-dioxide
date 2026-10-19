@@ -61,14 +61,24 @@ impl PlayerSettings {
                         ok = (cond == "[$sp]") == sp || (cond != "[$sp]" && cond != "[$mp]");
                         i += 1;
                     }
-                    // Skip the outer class block name and anything inside ClassMods or PoseMods
-                    // (pilot_mp.set's per-mod stance overrides, e.g. coliseum's speeds).
-                    if !ok
-                        || stack.iter().any(|s| {
-                            s.eq_ignore_ascii_case("ClassMods")
-                                || s.eq_ignore_ascii_case("PoseMods")
-                        })
-                    {
+                    if !ok {
+                        continue;
+                    }
+                    // A .set file's `ClassMods { <mod> { key value } }` (in "global"): kept apart
+                    // as `classmods.<mod>.<section>.<key>` for `with_class_mods`.
+                    if stack.len() == 4 && stack[2].eq_ignore_ascii_case("ClassMods") {
+                        self.values.insert(
+                            format!("classmods.{}.{}.{key}", stack[3], stack[1])
+                                .to_ascii_lowercase(),
+                            value.trim().to_string(),
+                        );
+                        continue;
+                    }
+                    // Skip the outer class block name and anything else inside ClassMods or
+                    // PoseMods (pilot_mp.set's per-mod stance overrides, e.g. coliseum's speeds).
+                    if stack.iter().any(|s| {
+                        s.eq_ignore_ascii_case("ClassMods") || s.eq_ignore_ascii_case("PoseMods")
+                    }) {
                         continue;
                     }
                     let section = if stack.len() >= 2 {
@@ -130,6 +140,28 @@ impl PlayerSettings {
                     if let Some(new) = apply_mod(base.as_deref(), &v) {
                         out.values.insert(full, new);
                     }
+                }
+            }
+        }
+        out
+    }
+
+    /// These player settings with a .set file's class mods applied (`ClassMods` in
+    /// pilot_mp.set, titan_*.set: pas_ads_hover, pas_wallhang, pas_mobility_dash_capacity, ...).
+    /// Mods the file doesn't define change nothing.
+    pub fn with_class_mods(&self, mods: &[&str]) -> Self {
+        let mut out = self.clone();
+        for m in mods {
+            let prefix = format!("classmods.{}.", m.to_ascii_lowercase());
+            let entries: Vec<(String, String)> = self
+                .values
+                .iter()
+                .filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_string(), v.clone())))
+                .collect();
+            for (key, v) in entries {
+                let base = out.values.get(&key).cloned();
+                if let Some(new) = apply_mod(base.as_deref(), &v) {
+                    out.values.insert(key, new);
                 }
             }
         }
@@ -206,9 +238,10 @@ fn apply_mod(base: Option<&str>, v: &str) -> Option<String> {
     let num = |s: &str| s.parse::<f32>().ok();
     let b = base.and_then(num);
     let op = |rest: &str, f: fn(f32, f32) -> f32| Some(fmt(f(b.unwrap_or(0.0), num(rest)?)));
-    if let Some(r) = v.strip_prefix("++") {
+    // `++x` and `x++` both add (the .set files write `2500++`, weapon scripts both).
+    if let Some(r) = v.strip_prefix("++").or_else(|| v.strip_suffix("++")) {
         op(r, |a, x| a + x)
-    } else if let Some(r) = v.strip_prefix("--") {
+    } else if let Some(r) = v.strip_prefix("--").or_else(|| v.strip_suffix("--")) {
         op(r, |a, x| a - x)
     } else if let Some(r) = v.strip_prefix('*') {
         op(r, |a, x| a * x)
@@ -287,5 +320,39 @@ mod tests {
         let s = PlayerSettings::load("p.set", false, &mut read).unwrap();
         assert_eq!(s.f32("stand.speed", 0.0), 173.5);
         assert_eq!(s.f32("stand.sprintspeed", 0.0), 260.0);
+    }
+
+    /// A .set file's ClassMods (Turbo Engine's dash, the Pilot's hover kit) apply only with
+    /// `with_class_mods`.
+    #[test]
+    fn class_mods_apply() {
+        let text = r#""titan_atlas_tracker"
+{
+    "global"
+    {
+        dodgePowerDrain 100
+        powerregenrate 16.66
+        ClassMods
+        {
+            pas_mobility_dash_capacity
+            {
+                powerregenrate 8.33
+                dodgePowerDrain 50
+            }
+            fd_health_upgrade
+            {
+                health 2500++
+            }
+        }
+        health 7500
+    }
+}"#;
+        let mut read = |_: &str| Some(text.to_string());
+        let s = PlayerSettings::load("t.set", false, &mut read).unwrap();
+        assert_eq!(s.f32("global.dodgepowerdrain", 0.0), 100.0);
+        let m = s.with_class_mods(&["pas_mobility_dash_capacity", "fd_health_upgrade"]);
+        assert_eq!(m.f32("global.dodgepowerdrain", 0.0), 50.0);
+        assert!((m.f32("global.powerregenrate", 0.0) - 8.33).abs() < 1e-4);
+        assert_eq!(m.f32("global.health", 0.0), 10000.0);
     }
 }

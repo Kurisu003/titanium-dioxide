@@ -25,6 +25,13 @@ pub fn set_titan_layout(segment: f32, health: f32, dash_drain: f32) {
     SEG_COUNT.store(((health / segment).ceil() as u32).clamp(1, 8), Relaxed);
     DASH_DRAIN.store(dash_drain.clamp(1.0, 100.0) as u32, Relaxed);
 }
+/// The dash cost alone (a kit changed it: Turbo Engine).
+pub fn set_dash_drain(dash_drain: f32) {
+    DASH_DRAIN.store(
+        dash_drain.clamp(1.0, 100.0) as u32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
 /// The on-foot meter's auto-Titan icons (hud_follow_icon, hud_guard_icon of the chassis).
 static PET_ICONS: std::sync::RwLock<Option<(String, String)>> = std::sync::RwLock::new(None);
 

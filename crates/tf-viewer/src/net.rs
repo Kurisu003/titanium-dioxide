@@ -109,6 +109,8 @@ pub const F_GUN_SHIELD: u16 = 4;
 pub const F_TITAN_PHASE: u16 = 8;
 pub const F_CLOAK: u16 = 16;
 pub const F_PHASE: u16 = 32;
+/// Fitted with Bulwark (pas_legion_gunshield): the Gun Shield has 5000 health.
+pub const F_BULWARK: u16 = 64;
 
 /// `Msg::Event` kinds: a Titan's Arc Wave, Firewall or Flame Core (from its feet, along its
 /// facing), a Gravity Star popping (at `pos`).
@@ -119,6 +121,9 @@ pub const EV_GRAVITY_STAR: u8 = 3;
 /// A Titan execution: `pos` the victim's spot (the shared reference), `dir` (victim player
 /// id, BT_EXECUTIONS index, facing).
 pub const EV_EXECUTION: u8 = 4;
+/// A Titan's nuclear core going off (Nuclear Ejection), at `pos`: its sound and blast here
+/// (the damage comes from the owner's hits).
+pub const EV_NUKE: u8 = 5;
 
 /// `Msg::Wall` kinds.
 pub const WALL_PARTICLE: u8 = 0;
@@ -2249,6 +2254,9 @@ pub fn local_flags(
         if k.gun_shield > 0.0 && k.gun_shield_hp > 0.0 {
             f |= F_GUN_SHIELD;
         }
+        if crate::kits::has("pas_legion_gunshield") {
+            f |= F_BULWARK;
+        }
         if mods.phased || k.phase > 0.0 {
             f |= F_TITAN_PHASE;
         }
@@ -2326,6 +2334,12 @@ pub fn remote_states(
             } else {
                 None
             };
+            // PAS_LEGION_SHEILD_HEALTH / TITAN_GUN_SHIELD_HEALTH.
+            e.shield_max = if s.flags & F_BULWARK != 0 {
+                5000.0
+            } else {
+                2500.0
+            };
             e.set_remote_defense(&mut commands, kind, me, s.titan_yaw);
         }
         if let Some(mut e) = r.pilot.and_then(|p| enemies.get_mut(p).ok()) {
@@ -2358,6 +2372,15 @@ pub fn remote_states(
             EV_EXECUTION if dir.x as u32 == net.my_id && *control == Control::Titan => {
                 log::info!("net: being executed (sequence {})", dir.y);
                 executed.start(pos, dir.z, dir.y as usize);
+            }
+            EV_NUKE => {
+                crate::audio::event_at(&mut commands, "titan_nuclear_death_explode", pos);
+                crate::pfx::emit_named(
+                    &mut commands,
+                    "P_xo_exp_nuke_3P_alt",
+                    crate::player::to_bevy(pos - Vec3::Z * 100.0),
+                    Vec3::Y,
+                );
             }
             EV_GRAVITY_STAR => {
                 crate::audio::event_at(&mut commands, "weapon_gravitystar_preexplo", pos);

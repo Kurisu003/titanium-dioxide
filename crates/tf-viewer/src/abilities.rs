@@ -279,7 +279,12 @@ pub fn update_abilities(
         CoreState::Active(t) => {
             core.meter = (1.0 - t / core.duration).max(0.0);
             if t + dt >= core.duration {
-                core.meter = 0.0;
+                // Overcore (PAS_HYPER_CORE, CoreDeactivate): the next core starts at 20%.
+                core.meter = if crate::kits::has("pas_hyper_core") {
+                    0.2
+                } else {
+                    0.0
+                };
                 CoreState::Building
             } else {
                 CoreState::Active(t + dt)

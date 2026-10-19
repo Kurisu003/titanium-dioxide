@@ -84,6 +84,18 @@ const EMBARK_SECS: f32 = 2.77;
 /// back from straight up (times sqrt(gravityscale)), looking 80 degrees down at the Titan.
 const EJECT_ANIM: &str = "at_MP_eject_stand_start";
 const EJECT_SECS: f32 = 0.15 + 0.8;
+/// Nuclear Ejection (NuclearCoreExplosion, NuclearCoreExplosionChainReaction in sh_titan.gnut,
+/// payload 1): the core goes 1.3 s after the Pilot is out, then 10 blasts (plus a first one
+/// that only reaches Pilots) 0.1 s apart: 75 to Pilots and 2500 to Titans, full within 350,
+/// out to 750 (the first: 75 out to 600).
+const NUKE_DELAY: f32 = 1.3;
+const NUKE_BLASTS: u32 = 11;
+const NUKE_INTERVAL: f32 = 1.0 / 10.0;
+const NUKE_PILOT: f32 = 75.0;
+const NUKE_TITAN: f32 = 2500.0;
+const NUKE_INNER: f32 = 350.0;
+const NUKE_OUTER: f32 = 750.0;
+const NUKE_FIRST_OUTER: f32 = 600.0;
 const EJECT_SPEED: (f32, f32) = (1500.0, 1700.0);
 /// The embark actions' reach (sh_titan_embark.gnut): the ground ones 260 units from BT's
 /// origin, `above_close` 350 and `above_grab` 275.
@@ -277,6 +289,10 @@ pub struct Titanfall {
     pub cooldown: f32,
     /// BT was destroyed and a replacement is being prepared.
     pub rebuilding: bool,
+    /// Nuclear Ejection (PAS_BUILD_UP_NUCLEAR_CORE): the warning flare while the eject runs
+    /// (twice as long), then seconds since the Pilot launched, the blasts so far and where.
+    nuke_flare: Option<Entity>,
+    nuke: Option<(f32, u32, Vec3)>,
 }
 
 impl Titanfall {
@@ -365,7 +381,12 @@ impl PilotHealth {
             r.0 += dt;
         }
         self.recent.retain(|r| r.0 <= 0.25);
-        let delay = crate::vitals::graph_capped(self.health, 0.0, PILOT_HEALTH, 3.0, 0.8);
+        let mut delay = crate::vitals::graph_capped(self.health, 0.0, PILOT_HEALTH, 3.0, 0.8);
+        // Fast Regen (PAS_FAST_HEALTH_REGEN, _health_regen.gnut): the regen starts in half the
+        // time (2.5 s instead of 5 in the MP rule).
+        if crate::kits::has("pas_fast_health_regen") {
+            delay *= 0.5;
+        }
         if !self.dead() && self.since_hit >= delay {
             self.health = (self.health + PILOT_REGEN_RATE * dt).min(PILOT_HEALTH);
         }
@@ -410,11 +431,12 @@ pub fn control_transitions(
     mut doom_test: Local<(bool, f32)>,
     game: Res<crate::game::Game>,
     mut rodeo: ResMut<crate::rodeo::Rodeo>,
-    (mut fpseq, globals, titan_settings, mut auto): (
+    (mut fpseq, globals, titan_settings, mut auto, mut pilot_status): (
         ResMut<crate::fparms::FpSeq>,
         Query<&GlobalTransform>,
         Res<TitanSettings>,
         ResMut<crate::autotitan::AutoTitan>,
+        ResMut<crate::pilotability::PilotStatus>,
     ),
 ) {
     let dt = time.delta_secs();
@@ -518,6 +540,10 @@ pub fn control_transitions(
     if bt_health.dead_for.is_some() && !tf.rebuilding {
         tf.rebuilding = true;
         tf.cooldown = TITAN_REBUILD_SECS;
+        // A nuclear eject cut short (the Titan destroyed first): the core still goes.
+        if tf.nuke_flare.is_some() && tf.nuke.is_none() {
+            tf.nuke = Some((0.0, 0, Vec3::from(titan.state.pos.to_array())));
+        }
         tf.eject = None;
         tf.self_destruct = false;
         if matches!(
@@ -539,8 +565,50 @@ pub fn control_transitions(
             log::info!("EJECT");
         }
     }
-    // An ejected Titan destroys itself (titanEjectExplosion) once the doomed protection allows.
-    if tf.self_destruct && bt_health.dead_for.is_none() {
+    // Nuclear Ejection: the core goes NUKE_DELAY after the Pilot is out, and the blasts follow.
+    if let Some((t, done, at)) = tf.nuke {
+        let t = t + dt;
+        if done == 0 && t >= NUKE_DELAY {
+            if let Some(f) = tf.nuke_flare.take() {
+                commands.entity(f).despawn();
+            }
+            crate::audio::event_at(&mut commands, "titan_nuclear_death_explode", at);
+            crate::net::event(crate::net::EV_NUKE, at, Vec3::Z);
+            crate::pfx::emit_named(
+                &mut commands,
+                "P_xo_exp_nuke_3P_alt",
+                crate::player::to_bevy(at - Vec3::Z * 100.0),
+                Vec3::Y,
+            );
+            bt_health.damage(1.0e9, false);
+            shake.0 = shake.0.max(1.0);
+            log::info!("nuclear ejection: detonated");
+        }
+        let mut done = done;
+        while done < NUKE_BLASTS && t >= NUKE_DELAY + done as f32 * NUKE_INTERVAL {
+            let (titan_dmg, outer) = if done == 0 {
+                (0.0, NUKE_FIRST_OUTER)
+            } else {
+                (NUKE_TITAN, NUKE_OUTER)
+            };
+            for mut e in &mut dummies {
+                if !e.alive() {
+                    continue;
+                }
+                let d = ((e.pos + Vec3::Z * e.height * 0.5) - at).length() - e.radius;
+                if d < outer {
+                    let k = 1.0 - ((d - NUKE_INNER) / (outer - NUKE_INNER)).clamp(0.0, 1.0);
+                    let amount = if e.infantry { NUKE_PILOT } else { titan_dmg } * k;
+                    e.damage(amount, false);
+                }
+            }
+            done += 1;
+        }
+        tf.nuke = (done < NUKE_BLASTS).then_some((t, done, at));
+    }
+    // An ejected Titan destroys itself (titanEjectExplosion) once the doomed protection allows
+    // (a nuclear one when its core goes).
+    if tf.self_destruct && bt_health.dead_for.is_none() && tf.nuke.is_none() {
         bt_health.damage(1.0e9, false);
     }
     let interact = std::mem::take(&mut input.interact);
@@ -557,7 +625,9 @@ pub fn control_transitions(
     let eject_key = input.utility;
     let eject_hit = eject_key && !tf.prev_eject_key;
     tf.prev_eject_key = eject_key;
-    if prompt {
+    // The eject button does nothing else while the prompt is up or the eject runs (the last
+    // press held on would otherwise reach the Titan's utility, e.g. Ronin's Phase Dash).
+    if prompt || (in_titan && tf.eject.is_some()) {
         input.utility = false;
     }
     if tf.since_eject_press > EJECT_MAX_PRESS_DELAY || !prompt {
@@ -571,6 +641,38 @@ pub fn control_transitions(
         crate::audio::event(&mut commands, "hud_boost_card_radar_jammer_redtextbeep_1p");
         log::info!("eject press {}/{EJECT_PRESSES}", tf.eject_presses);
         eject_now = tf.eject_presses >= EJECT_PRESSES;
+    }
+    // Auto-Eject (PAS_AUTO_EJECT, HandleAutoEject): doomed with the player inside, the Titan
+    // ejects at once, and the Pilot cloaks for 7 s from 1 s later (2 s with a nuclear payload).
+    let auto_eject = doomed
+        && *control == Control::Titan
+        && tf.eject.is_none()
+        && crate::kits::has("pas_auto_eject");
+    let nuclear = doomed && crate::kits::has("pas_build_up_nuclear_core");
+    if auto_eject && !eject_now {
+        log::info!("Auto-Eject");
+        eject_now = true;
+    }
+    if eject_now && crate::kits::has("pas_auto_eject") && doomed {
+        pilot_status.eject_cloak_in = Some(if nuclear { 2.0 } else { 1.0 });
+    }
+    if eject_now && nuclear {
+        // TITAN_NUCLEAR_CORE_NUKE_FX on CHESTFOCUS and titan_nuclear_death_charge.
+        let chest = Vec3::from(titan.state.pos.to_array()) + Vec3::Z * 150.0;
+        crate::audio::event_at(&mut commands, "titan_nuclear_death_charge", chest);
+        if let Some(f) = tf.nuke_flare.take() {
+            commands.entity(f).despawn();
+        }
+        tf.nuke_flare = Some(
+            commands
+                .spawn((
+                    Transform::from_translation(crate::player::to_bevy(chest)),
+                    Visibility::default(),
+                    crate::pfx::PfxTrail::oriented("P_xo_nuke_warn_flare"),
+                ))
+                .id(),
+        );
+        log::info!("nuclear ejection: charging");
     }
     if eject_now {
         if let Control::Disembark(_) = *control {
@@ -872,8 +974,17 @@ pub fn control_transitions(
     if let Some(t) = tf.eject {
         let t = t + dt;
         titan.override_anim = Some((EJECT_ANIM.into(), t));
-        if t >= EJECT_SECS {
+        // With a nuclear payload the eject takes twice as long (TITAN_PLAYEREJECT_DURATION * 2).
+        let len = if tf.nuke_flare.is_some() {
+            EJECT_SECS + 0.8
+        } else {
+            EJECT_SECS
+        };
+        if t >= len {
             fpseq.stop();
+            if tf.nuke_flare.is_some() {
+                tf.nuke = Some((0.0, 0, Vec3::from(titan.state.pos.to_array())));
+            }
             eject_pilot(&mut commands, &mut pilot, &mut input, &titan, gravity_scale);
             crate::audio::event_at(
                 &mut commands,

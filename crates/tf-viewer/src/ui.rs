@@ -814,6 +814,8 @@ pub enum Action {
     Tactical,
     Ordnance,
     TitanLoadout,
+    /// Kit slots (kits.rs).
+    Kit(crate::kits::KitSlot),
     Map,
     Campaign,
     Mission(usize),
@@ -861,6 +863,7 @@ impl Action {
                 | Action::Tactical
                 | Action::Ordnance
                 | Action::TitanLoadout
+                | Action::Kit(_)
                 | Action::Map
                 | Action::MouseSens
                 | Action::AdsSens
@@ -1033,6 +1036,10 @@ impl Menu {
 #[derive(Component)]
 pub struct LobbyText;
 
+/// The focused kit's description on the LOADOUT page.
+#[derive(Component)]
+pub struct KitDesc;
+
 #[derive(Component)]
 pub struct MenuButton {
     action: Action,
@@ -1071,15 +1078,23 @@ fn actions(page: Page, missions: usize, host: bool) -> Vec<Action> {
             Resume, Restart, Loadout, Difficulty, Settings, MainMenu, Quit,
         ],
         Page::GameOver => vec![Restart, Loadout, Difficulty, MainMenu, Quit],
-        Page::Loadout => vec![
-            Primary,
-            Sidearm,
-            AntiTitan,
-            Tactical,
-            Ordnance,
-            TitanLoadout,
-            Back,
-        ],
+        Page::Loadout => {
+            use crate::kits::KitSlot;
+            vec![
+                Primary,
+                Sidearm,
+                AntiTitan,
+                Tactical,
+                Ordnance,
+                Kit(KitSlot::Pilot1),
+                Kit(KitSlot::Pilot2),
+                TitanLoadout,
+                Kit(KitSlot::TitanOwn),
+                Kit(KitSlot::Titan),
+                Kit(KitSlot::Titanfall),
+                Back,
+            ]
+        }
         Page::Settings => vec![
             MouseSens, AdsSens, InvertY, CrouchMode, Fov, Volume, Graphics, Bindings, PadLook,
             PadLookAds, PadCurve, PadInvert, AimAssist, PadLayout, Back,
@@ -1259,7 +1274,23 @@ fn build_page(
         }
         Page::Loadout => {
             let t = title(commands, "LOADOUT");
-            commands.entity(column).add_child(t);
+            // The focused kit's description, as the game's loadout menu shows it.
+            let desc = text(
+                commands,
+                "",
+                &ui.bold_font,
+                1.8,
+                Color::srgba(1.0, 1.0, 1.0, 0.7),
+            );
+            commands.entity(desc).insert((
+                Node {
+                    margin: UiRect::bottom(vh(1.5)),
+                    min_height: vh(2.4),
+                    ..default()
+                },
+                KitDesc,
+            ));
+            commands.entity(column).add_children(&[t, desc]);
         }
         Page::Settings => {
             let t = title(commands, "SETTINGS");
@@ -1614,6 +1645,7 @@ pub fn menu_input(
         strings,
         tracks,
         mut net,
+        kit_table,
     ): (
         MessageWriter<AppExit>,
         ResMut<crate::pilotability::PilotStatus>,
@@ -1624,6 +1656,7 @@ pub fn menu_input(
         Res<crate::pilotweapon::Strings>,
         Query<(&SliderTrack, &bevy::ui::RelativeCursorPosition)>,
         ResMut<crate::net::Net>,
+        Option<Res<crate::kits::KitTable>>,
     ),
 ) {
     // The host plays another map (net.rs): restart on it, joining the same host again.
@@ -1874,6 +1907,11 @@ pub fn menu_input(
             Action::TitanLoadout => {
                 titan_kit.0 = step(titan_kit.0, crate::weapons::TITAN_ARSENAL.len())
             }
+            Action::Kit(slot) => {
+                if let Some(t) = kit_table.as_deref() {
+                    crate::kits::cycle(t, &mut settings, slot, titan_kit.0, change);
+                }
+            }
             Action::Graphics => {
                 let all = [Quality::Low, Quality::Medium, Quality::High];
                 let i = all.iter().position(|q| *q == *quality).unwrap_or(2);
@@ -2038,19 +2076,21 @@ pub fn menu_visuals(
     strings: Res<crate::pilotweapon::Strings>,
     map: Res<MapChoice>,
     pilot_status: Res<crate::pilotability::PilotStatus>,
-    (settings, titan_kit, ui): (
+    (settings, titan_kit, ui, kit_table): (
         Res<crate::settings::Settings>,
         Res<crate::weapons::TitanKit>,
         Res<UiAssets>,
+        Option<Res<crate::kits::KitTable>>,
     ),
     mut buttons: Query<(&MenuButton, &Children, &mut BackgroundColor)>,
     mut bars: Query<&mut BackgroundColor, (With<FocusBar>, Without<MenuButton>)>,
     mut labels: Query<(&mut Text, &mut TextColor), With<MenuLabel>>,
     mut icons: Query<&mut ImageNode, With<MenuIcon>>,
     mut fills: Query<(&SliderFill, &mut Node)>,
-    (net, mut lobby): (
+    (net, mut lobby, mut kit_desc): (
         Res<crate::net::Net>,
         Query<&mut Text, (With<LobbyText>, Without<MenuLabel>)>,
+        Query<&mut Text, (With<KitDesc>, Without<MenuLabel>, Without<LobbyText>)>,
     ),
 ) {
     use crate::pilotweapon::{Slot, ARSENAL};
@@ -2081,6 +2121,23 @@ pub fn menu_visuals(
             lines.push(net.status.clone());
         }
         let s = lines.join("\n");
+        if t.0 != s {
+            t.0 = s;
+        }
+    }
+    for mut t in &mut kit_desc {
+        let focused = actions(menu.page, 0, false).get(menu.focus).copied();
+        let s = match (focused, kit_table.as_deref()) {
+            (Some(Action::Kit(slot)), Some(table)) => {
+                let id = crate::kits::picked(&settings, slot, titan_kit.0);
+                table
+                    .get(&id)
+                    .and_then(|k| strings.0.get(&k.desc))
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            _ => String::new(),
+        };
         if t.0 != s {
             t.0 = s;
         }
@@ -2116,6 +2173,8 @@ pub fn menu_visuals(
         };
         let titan = &crate::weapons::TITAN_ARSENAL
             [titan_kit.0.min(crate::weapons::TITAN_ARSENAL.len() - 1)];
+        let kit_label =
+            |slot| crate::kits::label(kit_table.as_deref(), &strings, &settings, slot, titan_kit.0);
         let icon_path: Option<String> = match b.action {
             Action::Primary => ui.weapon_icons.get(gun_id(Slot::Primary)).cloned(),
             Action::Sidearm => ui.weapon_icons.get(gun_id(Slot::Sidearm)).cloned(),
@@ -2131,6 +2190,7 @@ pub fn menu_visuals(
                     .to_string(),
             ),
             Action::TitanLoadout => ui.weapon_icons.get(titan.id).cloned(),
+            Action::Kit(slot) => kit_label(slot).1,
             _ => None,
         };
         let capturing = menu.capture.is_some()
@@ -2143,11 +2203,18 @@ pub fn menu_visuals(
                     Color::NONE
                 };
             }
-            if let (Ok(mut img), Some(path)) = (icons.get_mut(c), icon_path.as_ref()) {
-                if let Some(new) = ui.image(path) {
-                    if img.rect != new.rect || img.image != new.image {
-                        *img = new;
+            if let Ok(mut img) = icons.get_mut(c) {
+                match icon_path.as_ref().and_then(|p| ui.image(p)) {
+                    Some(new) => {
+                        if img.rect != new.rect || img.image != new.image {
+                            *img = new;
+                        }
                     }
+                    // A kit slot left empty shows no icon.
+                    None if matches!(b.action, Action::Kit(_)) && img.rect.is_some() => {
+                        *img = ImageNode::default();
+                    }
+                    None => {}
                 }
             }
             if let Ok((mut t, mut col)) = labels.get_mut(c) {
@@ -2203,6 +2270,17 @@ pub fn menu_visuals(
                         crate::pilotability::ORDNANCE[pilot_status.ordnance].3,
                     ),
                     Action::TitanLoadout => opt("TITAN LOADOUT", titan.kit.to_uppercase()),
+                    Action::Kit(slot) => {
+                        use crate::kits::KitSlot;
+                        let title = match slot {
+                            KitSlot::Pilot1 => "KIT 1".to_string(),
+                            KitSlot::Pilot2 => "KIT 2".to_string(),
+                            KitSlot::TitanOwn => format!("{} KIT", titan.kit.to_uppercase()),
+                            KitSlot::Titan => "TITAN KIT".to_string(),
+                            KitSlot::Titanfall => "TITANFALL KIT".to_string(),
+                        };
+                        opt(&title, kit_label(slot).0)
+                    }
                     Action::Map => opt("MAP", map_name(&strings, &map.0)),
                     Action::Mission(i) => mission_list
                         .get(i)

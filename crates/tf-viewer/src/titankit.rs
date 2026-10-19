@@ -68,6 +68,9 @@ const HOVER_HORIZ: f32 = 250.0;
 /// PROTO_FlightCore horizontalVelocity (350 with PAS_NORTHSTAR_FLIGHTCORE), and its takeoff
 /// before the rockets deploy.
 const FLIGHT_CORE_HORIZ: f32 = 200.0;
+/// Both with Viper Thrusters (PAS_NORTHSTAR_FLIGHTCORE, mp_titanability_hover.nut and
+/// mp_titancore_flight_core.nut).
+const VIPER_THRUSTERS_HORIZ: f32 = 350.0;
 const FLIGHT_CORE_TAKEOFF: f32 = 1.0;
 const HOVER_FADE: f32 = 0.75;
 const SLOW_TRAP_LIFETIME: f32 = 12.0;
@@ -676,6 +679,8 @@ pub struct KitNumbers {
     pub tether_hold: f32,
     // Ronin
     pub arc_cd: f32,
+    /// Charges (ammo_clip_size / ammo_per_shot): 2 with Thunderstorm (pas_ronin_arcwave).
+    pub arc_charges: u32,
     pub arc_titan: f32,
     pub arc_pilot: f32,
     pub arc_step: f32,
@@ -695,6 +700,8 @@ pub struct KitNumbers {
     pub wall_life: f32,
     // Legion
     pub power_cd: f32,
+    /// 2 with Hidden Compartment (pas_legion_chargeshot).
+    pub power_charges: u32,
     pub power_titan: f32,
     pub power_pilot: f32,
     pub power_radius: f32,
@@ -738,6 +745,26 @@ fn num(s: &PlayerSettings, k: &str, d: f32) -> f32 {
     d
 }
 
+/// The cooldown time held by an ordnance's spare charges (per-charge time x (charges - 1)).
+fn ord_spare(ord: OrdKind, n: &KitNumbers) -> f32 {
+    match ord {
+        OrdKind::ArcWave => n.arc_cd * n.arc_charges.saturating_sub(1) as f32,
+        OrdKind::PowerShot => n.power_cd * n.power_charges.saturating_sub(1) as f32,
+        _ => 0.0,
+    }
+}
+
+/// How many shots a full ammo-regen ability holds (ammo_clip_size / ammo_per_shot).
+fn ammo_charges(s: &PlayerSettings) -> u32 {
+    let per = num(s, "ammo_per_shot", 0.0);
+    let clip = num(s, "ammo_clip_size", per);
+    if per > 0.0 {
+        ((clip / per).floor() as u32).max(1)
+    } else {
+        1
+    }
+}
+
 /// Seconds to refill an ammo-regen ability (ammo_per_shot / regen_ammo_refill_rate).
 fn regen_cd(s: &PlayerSettings, d: f32) -> f32 {
     let per = num(s, "ammo_per_shot", 0.0);
@@ -751,13 +778,16 @@ fn regen_cd(s: &PlayerSettings, d: f32) -> f32 {
 
 impl KitNumbers {
     fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
+        // With the fitted kits' mods (pas_ion_tripwire, pas_scorch_firewall, ...).
         let mut w = |n: &str| {
-            PlayerSettings::load(
-                &format!("scripts/weapons/{n}.txt"),
-                crate::gamedata::sp(),
-                read,
+            crate::kits::apply(
+                PlayerSettings::load(
+                    &format!("scripts/weapons/{n}.txt"),
+                    crate::gamedata::sp(),
+                    read,
+                )
+                .unwrap_or_default(),
             )
-            .unwrap_or_default()
         };
         let laser = w("mp_titanweapon_laser_lite");
         let firewall = w("mp_titanweapon_flame_wall");
@@ -774,6 +804,7 @@ impl KitNumbers {
         let laser_core = w("mp_titancore_laser_cannon");
         let flame = w("mp_titancore_flame_wave");
         let salvo = w("mp_titancore_salvo_core");
+        let enhanced_payload = crate::kits::has("pas_northstar_cluster");
         let mut core_timing = HashMap::new();
         for (id, _, _, _) in CORES {
             let s = w(id);
@@ -833,12 +864,17 @@ impl KitNumbers {
             cluster_pilot: num(&cluster, "explosion_damage", 66.0),
             cluster_inner: num(&cluster, "explosion_inner_radius", 150.0),
             cluster_radius: num(&cluster, "explosionradius", 220.0),
-            cluster_bursts: 20,    // CLUSTER_ROCKET_BURST_COUNT
-            cluster_duration: 5.0, // CLUSTER_ROCKET_DURATION
-            cluster_range: 250.0,  // CLUSTER_ROCKET_BURST_RANGE
+            // CLUSTER_ROCKET_BURST_COUNT, CLUSTER_ROCKET_DURATION, CLUSTER_ROCKET_BURST_RANGE;
+            // Enhanced Payload (pas_northstar_cluster, ClusterRocketBursts):
+            // CLUSTER_ROCKET_BURST_COUNT_BURN 32, PAS_NORTHSTAR_CLUSTER_ROCKET_DURATION 8 and
+            // x1.5 range.
+            cluster_bursts: if enhanced_payload { 32 } else { 20 },
+            cluster_duration: if enhanced_payload { 8.0 } else { 5.0 },
+            cluster_range: if enhanced_payload { 250.0 * 1.5 } else { 250.0 },
             tether_cd: regen_cd(&tether, 20.0),
             tether_hold: 4.0,
             arc_cd: regen_cd(&arc, 10.0),
+            arc_charges: ammo_charges(&arc),
             arc_titan: num(&arc, "damage_near_value_titanarmor", 1500.0),
             arc_pilot: num(&arc, "damage_near_value", 250.0),
             arc_step: num(&arc, "wave_step_dist", 112.0),
@@ -853,15 +889,38 @@ impl KitNumbers {
             tracker_damage: num(&tracker, "damage_near_value", 350.0),
             tracker_delay: num(&tracker, "burst_fire_delay", 0.7),
             wall_cd: regen_cd(&wall, 14.0),
-            wall_hp: 1750.0, // SHIELD_WALL_HEALTH (SP)
-            wall_life: 8.0,  // SHIELD_WALL_DURATION
+            // SHIELD_WALL_HEALTH (SP) and SHIELD_WALL_DURATION; Reinforced Particle Wall
+            // (PAS_TONE_WALL, _particle_wall.gnut): PAS_TONE_WALL_HEALTH and x1.5 duration.
+            wall_hp: if crate::kits::has("pas_tone_wall") {
+                3000.0
+            } else {
+                1750.0
+            },
+            wall_life: if crate::kits::has("pas_tone_wall") {
+                8.0 * 1.5
+            } else {
+                8.0
+            },
             power_cd: regen_cd(&power, 8.0),
-            power_titan: num(&power, "damage_near_value_titanarmor", 2000.0),
+            power_charges: ammo_charges(&power),
+            // Hidden Compartment also gives the shot pas_Close/LongRangePowerShot: x0.85 to
+            // Titans.
+            power_titan: num(&power, "damage_near_value_titanarmor", 2000.0)
+                * if crate::kits::has("pas_legion_chargeshot") {
+                    0.85
+                } else {
+                    1.0
+                },
             power_pilot: num(&power, "damage_near_value", 200.0),
             power_radius: num(&power, "explosionradius", 150.0),
             power_inner: num(&power, "explosion_inner_radius", 50.0),
             gun_shield_cd: regen_cd(&gun, 8.0),
-            gun_shield_hp: 2500.0, // TITAN_GUN_SHIELD_HEALTH
+            // TITAN_GUN_SHIELD_HEALTH; PAS_LEGION_SHEILD_HEALTH with Bulwark.
+            gun_shield_hp: if crate::kits::has("pas_legion_gunshield") {
+                5000.0
+            } else {
+                2500.0
+            },
             gun_shield_life: num(&gun, "fire_duration", 6.0),
             core_timing,
             flight_rate: num(&flight, "fire_rate", 12.0),
@@ -1238,6 +1297,8 @@ pub struct KitState {
     prev_util: bool,
     /// Phase Dash: seconds left phased (and the fade of its move_slow after).
     pub phase: f32,
+    /// BT was doomed last frame (Phase Reflex starts on the change).
+    was_doomed: bool,
     phase_slow: f32,
     /// Hover: seconds flown so far and the flight's length (0 = not hovering), then the
     /// dodge_speed_slow fade.
@@ -1302,6 +1363,7 @@ impl Default for KitState {
             util_charges: 1,
             prev_util: false,
             phase: 0.0,
+            was_doomed: false,
             phase_slow: 0.0,
             hover_t: 0.0,
             hover_len: 0.0,
@@ -1748,7 +1810,9 @@ pub fn meteor_thermite(
 /// Firewall, gas fire and Flame Core patches is full in MP (zero with PAS_SCORCH_SELFDMG,
 /// Tempered Plating) and 20% in SP.
 fn scorch_self_damage() -> f32 {
-    if crate::gamedata::multiplayer() {
+    if crate::kits::has("pas_scorch_selfdmg") {
+        0.0
+    } else if crate::gamedata::multiplayer() {
         1.0
     } else {
         0.2
@@ -2146,6 +2210,18 @@ pub fn kit_input(
 
     st.ord_cd = (st.ord_cd - dt).max(0.0);
     st.def_cd = (st.def_cd - dt).max(0.0);
+    // Phase Reflex (PAS_RONIN_AUTOSHIFT, OnTitanDoomed): doomed with the player inside, BT
+    // phases out for 3 s (PhaseShift( titan, 0, 3.0 )).
+    let doomed = health.v.doomed.is_some();
+    if doomed
+        && !st.was_doomed
+        && *control == crate::pilotctl::Control::Titan
+        && crate::kits::has("pas_ronin_autoshift")
+    {
+        st.phase = st.phase.max(3.0);
+        log::info!("Phase Reflex: phased out on doom");
+    }
+    st.was_doomed = doomed;
     // Ion's energy regenerates after a short pause from the last use.
     if st.energy_delay > 0.0 {
         st.energy_delay -= dt;
@@ -2183,9 +2259,12 @@ pub fn kit_input(
     // draw meanwhile). The Multi-Target Missiles lock on while held, and Tracker Rockets check
     // for a full lock when pressed.
     let deferred = !matches!(active.ord, OrdKind::Missiles | OrdKind::Tracker);
-    let mut fire_now = pressed && st.ord_cd <= 0.0 && !deferred;
+    // With more than one charge, the cooldown is the time to a full stock: a shot is there
+    // while it is within the spare charges' time.
+    let spare = ord_spare(active.ord, n);
+    let mut fire_now = pressed && st.ord_cd <= spare && !deferred;
     if pressed
-        && st.ord_cd <= 0.0
+        && st.ord_cd <= spare
         && st.ord_pending.is_none()
         && deferred
         && (active.ord != OrdKind::LaserShot || st.energy >= n.laser_cost)
@@ -2314,7 +2393,7 @@ pub fn kit_input(
             }
             OrdKind::ArcWave => {
                 st.ord_cd_max = n.arc_cd;
-                st.ord_cd = n.arc_cd;
+                st.ord_cd += n.arc_cd;
                 let group = next_group();
                 crate::net::event(crate::net::EV_ARC_WAVE, Vec3::from(s.pos.to_array()), fwd);
                 commands.spawn(Wave {
@@ -2384,7 +2463,7 @@ pub fn kit_input(
                     false
                 } else {
                     st.ord_cd_max = n.power_cd;
-                    st.ord_cd = n.power_cd;
+                    st.ord_cd += n.power_cd;
                     st.power = Some(0.0);
                     weapon.set_alt_shot(true);
                     true
@@ -2620,11 +2699,15 @@ pub fn kit_input(
             DefKind::Tether => {
                 st.def_cd_max = n.tether_cd;
                 st.def_cd = n.tether_cd;
-                // Two tethers (SP), thrown up 0.3 and right ±0.2 of the view at 1000 u/s.
+                // Two tethers (SP, or MP with Twin Traps, pas_northstar_trap), thrown up 0.3
+                // and right ±0.2 of the view at 1000 u/s; else one, straight along the view.
                 let right = Vec3::new(dir.y, -dir.x, 0.0).normalize_or(Vec3::Y);
-                for side in [-1.0, 1.0] {
-                    let d = (dir + Vec3::Z * TETHER_OFFSET_UP + right * TETHER_OFFSET_RIGHT * side)
-                        .normalize();
+                let twin =
+                    !crate::gamedata::multiplayer() || crate::kits::has("pas_northstar_trap");
+                let sides: &[f32] = if twin { &[-1.0, 1.0] } else { &[0.0] };
+                for &side in sides {
+                    let up = if twin { TETHER_OFFSET_UP } else { 0.0 };
+                    let d = (dir + Vec3::Z * up + right * TETHER_OFFSET_RIGHT * side).normalize();
                     let r = |k: f32| {
                         ((eye.x + eye.y * k + side * 31.0).sin() * 360.0).to_radians() * 2.0
                     };
@@ -2768,7 +2851,11 @@ pub fn kit_input(
                 // fixed 3 s (the script's fire_duration, 2.75, isn't what it flies).
                 st.hover_t = 0.0;
                 st.hover_len = HOVER_TIME;
-                st.hover_horiz = HOVER_HORIZ;
+                st.hover_horiz = if crate::kits::has("pas_northstar_flightcore") {
+                    VIPER_THRUSTERS_HORIZ
+                } else {
+                    HOVER_HORIZ
+                };
                 emit(
                     &mut commands,
                     Effect::DustRing {
@@ -3025,7 +3112,11 @@ pub fn kit_input(
                 // PROTO_FlightCore: FlyerHovers for the core's duration, rockets after takeoff.
                 st.hover_t = 0.0;
                 st.hover_len = core.duration.max(0.1);
-                st.hover_horiz = FLIGHT_CORE_HORIZ;
+                st.hover_horiz = if crate::kits::has("pas_northstar_flightcore") {
+                    VIPER_THRUSTERS_HORIZ
+                } else {
+                    FLIGHT_CORE_HORIZ
+                };
                 emit(
                     &mut commands,
                     Effect::DustRing {
@@ -4427,6 +4518,22 @@ pub fn kit_view(
                     1.0 - best as f32 / 3.0
                 },
                 format!("LOCK {best}/3"),
+            )
+        }
+        OrdKind::ArcWave | OrdKind::PowerShot if ord_spare(active.ord, n) > 0.0 => {
+            // Two charges: the count while any is up, else the wait for the first.
+            let spare = ord_spare(active.ord, n);
+            let max = st.ord_cd_max.max(1e-3);
+            let total = (spare / max).round() as u32 + 1;
+            let empty = (st.ord_cd / max).ceil() as u32;
+            let wait = st.ord_cd - spare;
+            (
+                frac(wait.max(0.0), st.ord_cd_max),
+                if wait > 0.0 {
+                    format!("{:.0}", wait.ceil())
+                } else {
+                    format!("x{}", total.saturating_sub(empty))
+                },
             )
         }
         _ => (

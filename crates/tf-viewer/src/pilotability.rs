@@ -384,13 +384,16 @@ impl PilotAbilityDefs {
             read,
         )
         .unwrap_or_default();
+        // With the fitted kits' mods (pas_power_cell, pas_ordnance_pack).
         let mut load = |w: &str| {
-            PlayerSettings::load(
-                &format!("scripts/weapons/{w}.txt"),
-                crate::gamedata::sp(),
-                read,
+            crate::kits::apply(
+                PlayerSettings::load(
+                    &format!("scripts/weapons/{w}.txt"),
+                    crate::gamedata::sp(),
+                    read,
+                )
+                .unwrap_or_default(),
             )
-            .unwrap_or_default()
         };
         let tactical: Vec<TacticalDef> = TACTICALS
             .iter()
@@ -712,6 +715,9 @@ const DECOY_SEQUENCES: &[&str] = &[
     "pt_wallrun_Pistol_hang_idle",
 ];
 
+/// EnableCloak( rider, 7.0 ) in HandleAutoEject (_titan_health.gnut).
+pub const AUTO_EJECT_CLOAK: f32 = 7.0;
+
 /// What the Pilot's abilities are doing right now (read by movement, enemies and damage).
 #[derive(Resource, Default)]
 pub struct PilotStatus {
@@ -744,6 +750,10 @@ pub struct PilotStatus {
     pub satchels: u32,
     /// Seconds left of Stim's speed_boost status effect.
     pub stim_boost: f32,
+    /// Seconds left of the cloak an Auto-Eject gives (EnableCloak( rider, 7.0 )).
+    pub eject_cloak: f32,
+    /// Seconds until that cloak starts (1 s after the eject, 2 with a nuclear payload).
+    pub eject_cloak_in: Option<f32>,
 }
 
 impl PilotStatus {
@@ -774,7 +784,7 @@ impl PilotStatus {
         self.is(Tactical::Stim)
     }
     pub fn cloaked(&self) -> bool {
-        self.is(Tactical::Cloak)
+        self.is(Tactical::Cloak) || self.eject_cloak > 0.0
     }
     pub fn phased(&self) -> bool {
         self.is(Tactical::PhaseShift)
@@ -1061,6 +1071,17 @@ pub fn pilot_abilities(
     let def = &defs.tactical[ti];
     let odef = &defs.ordnance[oi];
     status.stim_boost = (status.stim_boost - dt).max(0.0);
+    status.eject_cloak = (status.eject_cloak - dt).max(0.0);
+    if let Some(t) = status.eject_cloak_in {
+        if t <= dt {
+            status.eject_cloak_in = None;
+            status.eject_cloak = AUTO_EJECT_CLOAK;
+            log::info!("Auto-Eject: cloaked for {AUTO_EJECT_CLOAK} s");
+            crate::audio::event(&mut commands, "cloak_on_1P");
+        } else {
+            status.eject_cloak_in = Some(t - dt);
+        }
+    }
     if status.active > 0.0 {
         status.active -= dt;
         // The sustain loop the ability script keeps up while it runs (pilot_stimpack_loop_1P

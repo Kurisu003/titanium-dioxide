@@ -333,6 +333,14 @@ pub struct Settings {
     /// The game's `gamepad_button_layout_*.cfg` name ("default", "bumper_jumper", ...).
     pub gamepad_layout: String,
     pub binds: Vec<(Command, Bind)>,
+    /// Kits picked on the LOADOUT page (passive ids from the game's tables, empty for none):
+    /// the Pilot's two, the Titan kit and Titanfall kit, and each Titan's own (by its kit name,
+    /// ION, SCORCH, ...).
+    pub pilot_kit1: String,
+    pub pilot_kit2: String,
+    pub titan_kit: String,
+    pub titanfall_kit: String,
+    pub titan_own_kits: Vec<(String, String)>,
 }
 
 impl Default for Settings {
@@ -354,6 +362,11 @@ impl Default for Settings {
                 .iter()
                 .map(|c| (*c, c.default_bind()))
                 .collect(),
+            pilot_kit1: String::new(),
+            pilot_kit2: String::new(),
+            titan_kit: String::new(),
+            titanfall_kit: String::new(),
+            titan_own_kits: Vec::new(),
         }
     }
 }
@@ -371,6 +384,23 @@ pub const PAD_LAYOUTS: [&str; 6] = [
 ];
 
 impl Settings {
+    /// The kit fitted to a Titan (its kit name, ION, SCORCH, ...), or "".
+    pub fn titan_own_kit(&self, titan: &str) -> &str {
+        self.titan_own_kits
+            .iter()
+            .find(|(t, _)| t.eq_ignore_ascii_case(titan))
+            .map_or("", |(_, k)| k.as_str())
+    }
+
+    pub fn set_titan_own_kit(&mut self, titan: &str, kit: &str) {
+        self.titan_own_kits
+            .retain(|(t, _)| !t.eq_ignore_ascii_case(titan));
+        if !kit.is_empty() {
+            self.titan_own_kits
+                .push((titan.to_ascii_uppercase(), kit.to_string()));
+        }
+    }
+
     pub fn bind(&self, c: Command) -> Bind {
         self.binds
             .iter()
@@ -428,6 +458,21 @@ impl Settings {
         for (c, b) in &self.binds {
             s += &format!("bind \"{}\" \"{}\"\n", b.name(), c.cfg());
         }
+        for (key, v) in [
+            ("kit_pilot1", &self.pilot_kit1),
+            ("kit_pilot2", &self.pilot_kit2),
+            ("kit_titan", &self.titan_kit),
+            ("kit_titanfall", &self.titanfall_kit),
+        ] {
+            if !v.is_empty() {
+                s += &format!("{key} \"{v}\"\n");
+            }
+        }
+        for (t, k) in &self.titan_own_kits {
+            if !k.is_empty() {
+                s += &format!("kit_titan_own \"{t}\" \"{k}\"\n");
+            }
+        }
         s
     }
 
@@ -463,6 +508,15 @@ impl Settings {
                 "gamepad_button_layout" => {
                     if let Some(l) = toks.get(1).filter(|l| PAD_LAYOUTS.contains(&l.as_str())) {
                         s.gamepad_layout = l.clone();
+                    }
+                }
+                "kit_pilot1" => s.pilot_kit1 = toks.get(1).cloned().unwrap_or_default(),
+                "kit_pilot2" => s.pilot_kit2 = toks.get(1).cloned().unwrap_or_default(),
+                "kit_titan" => s.titan_kit = toks.get(1).cloned().unwrap_or_default(),
+                "kit_titanfall" => s.titanfall_kit = toks.get(1).cloned().unwrap_or_default(),
+                "kit_titan_own" => {
+                    if let (Some(t), Some(k)) = (toks.get(1), toks.get(2)) {
+                        s.set_titan_own_kit(t, k);
                     }
                 }
                 "bind" => {
