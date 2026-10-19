@@ -683,12 +683,32 @@ impl Conn {
         });
         let a = alive.clone();
         std::thread::spawn(move || {
-            for frame in rx_out {
-                let len = (frame.len() as u32).to_le_bytes();
-                if writer.write_all(&len).is_err()
-                    || writer.write_all(&frame).is_err()
-                    || writer.flush().is_err()
-                {
+            // Everything queued goes out in one write. When the link falls behind (a slow
+            // upload, a Wi-Fi stall) a backlog builds; of the states in it only the newest of
+            // each (a player's snapshot, the enemies) is still worth sending, so the delay
+            // can't keep growing.
+            let mut buf = Vec::new();
+            while let Ok(first) = rx_out.recv() {
+                let mut frames = vec![first];
+                frames.extend(rx_out.try_iter());
+                let key = |f: &[u8]| match f.first() {
+                    Some(7) if f.len() >= 5 => {
+                        Some((7u8, u32::from_le_bytes([f[1], f[2], f[3], f[4]])))
+                    }
+                    Some(8) => Some((8, 0)),
+                    _ => None,
+                };
+                buf.clear();
+                for (i, f) in frames.iter().enumerate() {
+                    let superseded =
+                        key(f).is_some_and(|k| frames[i + 1..].iter().any(|g| key(g) == Some(k)));
+                    if superseded {
+                        continue;
+                    }
+                    buf.extend_from_slice(&(f.len() as u32).to_le_bytes());
+                    buf.extend_from_slice(f);
+                }
+                if writer.write_all(&buf).is_err() {
                     break;
                 }
             }
@@ -711,7 +731,18 @@ impl Conn {
             while let Ok(b) = rx.try_recv() {
                 match Msg::decode(&b) {
                     Some(m) => out.push(m),
-                    None => log::warn!("net: bad message from {}", self.addr),
+                    None => {
+                        // Another version of the game (an update on one side only): say so
+                        // now and then, not every frame.
+                        static BAD: AtomicU32 = AtomicU32::new(0);
+                        if BAD.fetch_add(1, Ordering::Relaxed) % 300 == 0 {
+                            log::warn!(
+                                "net: unreadable message from {} (code {:?}; is the other player on another version?)",
+                                self.addr,
+                                b.first()
+                            );
+                        }
+                    }
                 }
             }
         }

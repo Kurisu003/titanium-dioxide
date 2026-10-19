@@ -982,12 +982,44 @@ impl Plugin for GameAudioPlugin {
             .insert_resource(MasterVolume::new(bevy::audio::Volume::Linear(
                 DEFAULT_VOLUME,
             )))
-            .add_systems(Update, (volume_keys, apply_master_volume).chain())
+            .add_systems(
+                Update,
+                (volume_keys, apply_master_volume, sweep_unplayed).chain(),
+            )
             .add_systems(
                 PostUpdate,
                 (crate::actor::actor_event_sounds, play_cues).chain(),
             );
     }
+}
+
+/// One-shots that never start (Bevy only gives a sound a sink when there is an audio output)
+/// would never finish and so never despawn; drop them after a while.
+#[allow(clippy::type_complexity)]
+fn sweep_unplayed(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut seen: Local<HashMap<Entity, f32>>,
+    waiting: Query<
+        (Entity, &PlaybackSettings),
+        (With<AudioPlayer<Sound>>, Without<bevy::audio::AudioSink>),
+    >,
+) {
+    const GIVE_UP: f32 = 10.0;
+    let now = time.elapsed_secs();
+    let mut live = HashMap::new();
+    for (e, settings) in &waiting {
+        if !matches!(settings.mode, bevy::audio::PlaybackMode::Despawn) {
+            continue;
+        }
+        let since = *seen.get(&e).unwrap_or(&now);
+        if now - since > GIVE_UP {
+            commands.entity(e).despawn();
+        } else {
+            live.insert(e, since);
+        }
+    }
+    *seen = live;
 }
 
 /// Voices playing, loops held, and ducking.
