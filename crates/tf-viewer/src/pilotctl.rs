@@ -1362,6 +1362,7 @@ pub fn simulate_pilot(
         let jumps = pilot.state.jumps;
         let fall = pilot.state.vel.z;
         let was_crouched = pilot.state.crouched;
+        let was_hovering = pilot.state.hovering;
         pilot::step(
             &mut pilot.state,
             &step_input,
@@ -1369,6 +1370,17 @@ pub fn simulate_pilot(
             &world.0,
             dt / n as f32,
         );
+        // The Hover kit (pilot_mp.set sound_hover_start / _body / _finish, 1P).
+        if pilot.state.hovering != was_hovering {
+            if pilot.state.hovering {
+                crate::audio::event(&mut commands, "Boost_Hover_Start_1P");
+                crate::audio::loop_start(&mut commands, "pilot_hover", "Boost_Hover_Body_1P", None);
+                log::info!("hover start");
+            } else {
+                crate::audio::loop_stop(&mut commands, "pilot_hover", Some("Boost_Hover_End_1P"));
+                log::info!("hover end");
+            }
+        }
         if input.crouch_toggle_mode && pilot::engine_enabled() {
             // The engine port owns the toggle; the viewer's copy follows it.
             input.crouch_toggled = pilot.state.crouch_toggled;

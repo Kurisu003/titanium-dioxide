@@ -861,6 +861,16 @@ pub(crate) fn pilot_params(gd: &GameData) -> tf_sim::pilot::PilotParams {
             .get("global.wallrunadstype")
             .is_some_and(|v| v.eq_ignore_ascii_case("wallhang"))
             || std::env::var_os("TF_WALLHANG").is_some(),
+        // pas_ads_hover (pilot_mp.set ClassMods: hoverEnabled 1).
+        hover: (s.f32("global.hoverenabled", 0.0) > 0.0).then(|| tf_sim::engine_move::Hover {
+            tight_v: s.f32("global.hovertightnessvertical", 0.15),
+            tight_h: s.f32("global.hovertightnesshorizontal", 0.08),
+            meter_rate: s.f32("global.hovermeterrate", 1.0),
+            safety: s.f32("global.hoversafety", 0.25),
+            glide_duration: s.f32("global.glideduration", 1.0),
+            glide_recharge_rate: s.f32("global.gliderechargerate", 0.0),
+            glide_recharge_delay: s.f32("global.gliderechargedelay", 0.0),
+        }),
         impact_speed: s.f32("global.impactspeed", d.impact_speed),
         viewkick_fall_min: s.f32("global.viewkickfalldistmin", d.viewkick_fall_min),
         viewkick_fall_max: s.f32("global.viewkickfalldistmax", d.viewkick_fall_max),

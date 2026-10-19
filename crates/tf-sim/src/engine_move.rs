@@ -136,6 +136,24 @@ pub struct Settings {
     pub stand_maxs: Vec3,
     pub duck_mins: Vec3,
     pub duck_maxs: Vec3,
+    /// ADS hover (`hoverEnabled` +0x1d8, the Hover kit's ClassMods), or None.
+    pub hover: Option<Hover>,
+}
+
+/// The hover settings (+0x1dc..+0x1ec) and the glide meter it runs on (+0x19c..+0x1a4).
+#[derive(Clone, Copy, Debug)]
+pub struct Hover {
+    /// hoverTightnessVertical / Horizontal: the velocity's half-life (s) while hovering.
+    pub tight_v: f32,
+    pub tight_h: f32,
+    /// hoverMeterRate: meter seconds used per second of hover.
+    pub meter_rate: f32,
+    /// hoverSafety: airborne this long (since leaving the ground or jumping) first.
+    pub safety: f32,
+    /// glideDuration, glideRechargeRate, glideRechargeDelay.
+    pub glide_duration: f32,
+    pub glide_recharge_rate: f32,
+    pub glide_recharge_delay: f32,
 }
 
 impl Default for Settings {
@@ -218,6 +236,7 @@ impl Default for Settings {
             stand_maxs: Vec3::new(16.0, 16.0, 72.0),
             duck_mins: Vec3::new(-16.0, -16.0, 0.0),
             duck_maxs: Vec3::new(16.0, 16.0, 47.0),
+            hover: None,
         }
     }
 }
@@ -421,6 +440,9 @@ pub struct Pm {
     pub retry_pos: Vec3,         // +0x24d0
     pub retry_normal: Vec3,      // +0x24dc
     pub hanging: bool,           // +0x2588 wall hang
+    pub hovering: bool,          // +0x2864 m_hovering
+    pub glide_meter: f32,        // +0x285c (below zero: not filled yet)
+    pub glide_since: f32,        // +0x2860 time on the ground since the last hover
     pub hang_start: f32,         // +0x24fc
     pub hang_time: f32,          // +0x2500
     pub last_walls: Vec<Vec3>,   // +0x19f0.. (count +0x1a0c): flattened normals of walls jumped off
@@ -512,6 +534,9 @@ impl Pm {
             retry_pos: Vec3::ZERO,
             retry_normal: Vec3::Z,
             hanging: false,
+            hovering: false,
+            glide_meter: -1.0,
+            glide_since: 0.0,
             hang_start: 0.0,
             hang_time: 0.0,
             last_walls: Vec::new(),
@@ -719,6 +744,7 @@ pub fn player_move(p: &mut Pm, cmd: &Cmd, s: &Settings, cv: &Cvars, w: &Collisio
     p.step_height = s.step_height;
     p.clip = s.clip;
     update_power(p, s, dt);
+    glide_meter_update(p, s, dt);
     // 0x180204303: m_flDucktime counts down in whole milliseconds.
     if p.ducktime > 0 {
         p.ducktime -= (dt * 1000.0) as i32;
@@ -744,7 +770,57 @@ pub fn player_move(p: &mut Pm, cmd: &Cmd, s: &Settings, cv: &Cvars, w: &Collisio
     // 0x180204807: mv.maxspeed = GetMaxSpeed x status multiplier (1).
     p.maxspeed = p.get_max_speed(s);
     full_walk_move(p, s, cv, w, dt);
+    hover(p, s, cv, dt);
     p.saved_vel = p.vel;
+}
+
+/// The glide meter (`0x1802cec80`): on the ground it refills at glideRechargeRate after
+/// glideRechargeDelay; hovering drains it at hoverMeterRate, the hover ending when it is out.
+fn glide_meter_update(p: &mut Pm, s: &Settings, dt: f32) {
+    let Some(h) = s.hover else { return };
+    if p.glide_meter < 0.0 {
+        p.glide_meter = h.glide_duration;
+    }
+    if !p.hovering {
+        if p.on_ground {
+            if p.glide_since < h.glide_recharge_delay {
+                p.glide_since += dt;
+            } else if p.glide_meter < h.glide_duration {
+                p.glide_meter = (p.glide_meter + dt * h.glide_recharge_rate).min(h.glide_duration);
+            }
+        }
+    } else if p.glide_meter > 0.0 {
+        p.glide_meter = (p.glide_meter - dt * h.meter_rate).max(0.0);
+    }
+}
+
+/// ADS hover (`0x1802c0ed0`, after the move): aiming down sights in the air, airborne for
+/// hoverSafety since leaving the ground or jumping, with glide meter left, the Pilot hovers:
+/// this frame's gravity is given back and the velocity halves every hoverTightness seconds
+/// (horizontal and vertical), off the ground. Accelerate is skipped while it lasts. (The engine
+/// does not check for the ground itself; the kit hovers "while airborne".)
+fn hover(p: &mut Pm, s: &Settings, cv: &Cvars, dt: f32) {
+    let Some(h) = s.hover else {
+        p.hovering = false;
+        return;
+    };
+    let ads = p.buttons & IN_ZOOM != 0 || p.zoom_toggle;
+    let airborne = p.now - p.leave_ground_time.max(p.jump_time);
+    let can = ads && !p.on_ground && airborne > h.safety && p.glide_meter > 0.0;
+    if !p.hovering && can {
+        p.hovering = true;
+        p.glide_since = 0.0;
+    }
+    if !can {
+        p.hovering = false;
+        return;
+    }
+    p.vel.z += dt * cv.sv_gravity;
+    let k = |half: f32| (-std::f32::consts::LN_2 / half.max(1e-4) * dt).exp();
+    p.vel.x *= k(h.tight_h);
+    p.vel.y *= k(h.tight_h);
+    p.vel.z *= k(h.tight_v);
+    p.set_ground(false);
 }
 
 /// FullWalkMove (`0x1801f93c0`).
@@ -1507,6 +1583,9 @@ fn friction(p: &mut Pm, wishdir: Vec3, wishspeed: f32, s: &Settings, dt: f32) {
 
 /// Accelerate (`0x1801f0ac0`).
 fn accelerate(p: &mut Pm, wishdir: Vec3, wishspeed: f32, accel: f32, dt: f32) {
+    if p.hovering {
+        return;
+    }
     let cap2 = p.vel.length_squared().max(wishspeed * wishspeed);
     let add = wishspeed - wishdir.dot(p.vel);
     if add > 0.0 {

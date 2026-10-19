@@ -107,6 +107,8 @@ pub struct PilotParams {
     /// wallrunAdsType "wallhang" (the MP wall-hang kit): aiming on a wall hangs there. The
     /// campaign's "ADS" type just aims.
     pub wallhang_on_ads: bool,
+    /// ADS hover (pas_ads_hover: hoverEnabled), or None.
+    pub hover: Option<engine_move::Hover>,
     /// impactSpeed: landings faster than this are hard landings (no fall damage in the game).
     pub impact_speed: f32,
     /// The landing view kick (client.dll 0x1801f10c0): viewkickFallDistMin / Max are fall
@@ -588,6 +590,7 @@ impl Default for PilotParams {
             wallrun_accel_v: 360.0,   // wallrunAccelerateVertical
             wallrun_hang_time: 4.0,   // wallrun_hangTimeLimit (pilot_base.set)
             wallhang_on_ads: false,   // pilot_mp.set wallrunAdsType "ADS"
+            hover: None,              // pilot_mp.set hoverEnabled 0
             impact_speed: 380.0,      // impactSpeed
             viewkick_fall_min: 10.0,  // viewkickFallDistMin (pilot_mp.set)
             viewkick_fall_max: 70.0,  // viewkickFallDistMax
@@ -666,6 +669,8 @@ pub struct PilotState {
     pub yaw: f32,
     pub pitch: f32,
     pub mode: PilotMove,
+    /// Hovering (the engine port's m_hovering).
+    pub hovering: bool,
     pub crouched: bool,
     /// The engine port's toggle-crouch state (duck_toggle), for the viewer to mirror.
     pub crouch_toggled: bool,
@@ -768,6 +773,7 @@ impl PilotState {
             yaw,
             pitch: 0.0,
             mode: PilotMove::Air,
+            hovering: false,
             crouched: false,
             crouch_toggled: false,
             sprinting: false,
@@ -1755,6 +1761,7 @@ fn engine_settings(p: &PilotParams) -> engine_move::Settings {
     st.pose_sprint_speed[0] = p.sprint_speed;
     st.pose_speed[1] = p.crouch_speed;
     st.wallrun_ads_type = if p.wallhang_on_ads { 1 } else { 0 };
+    st.hover = p.hover;
     st.sprint_start_delay = p.sprint_start_delay;
     st.sprint_start_duration = p.sprint_start;
     st.sprint_start_fast_duration = p.sprint_start_fast;
@@ -1866,6 +1873,7 @@ fn engine_step(s: &mut PilotState, input: &PilotInput, p: &PilotParams, world: &
     // The sprint fraction (view offset, the viewmodel's sprintfrac pose parameter) is the
     // engine's GetSprintFrac.
     s.sprint_frac = pm.sprint_frac(&st);
+    s.hovering = pm.hovering;
     s.engine = Some(pm);
     s.engine_ran = true;
 
