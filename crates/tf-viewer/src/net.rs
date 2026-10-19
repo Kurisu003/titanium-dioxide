@@ -113,6 +113,8 @@ pub const F_PHASE: u16 = 32;
 pub const F_BULWARK: u16 = 64;
 /// Fitted with Low Profile (pas_stealth_movement): the rodeo climb is silent.
 pub const F_LOW_PROFILE: u16 = 128;
+/// Fitted with Tempered Plating (pas_scorch_selfdmg): the Titan takes no crits.
+pub const F_NO_CRIT: u16 = 256;
 
 /// `Msg::Event` kinds: a Titan's Arc Wave, Firewall or Flame Core (from its feet, along its
 /// facing), a Gravity Star popping (at `pos`).
@@ -126,6 +128,9 @@ pub const EV_EXECUTION: u8 = 4;
 /// A Titan's nuclear core going off (Nuclear Ejection), at `pos`: its sound and blast here
 /// (the damage comes from the owner's hits).
 pub const EV_NUKE: u8 = 5;
+/// A Dome Shield going up at `pos` (Titanfall with pas_bubbleshield), and coming down.
+pub const EV_DOME: u8 = 6;
+pub const EV_DOME_END: u8 = 7;
 
 /// `Msg::Wall` kinds.
 pub const WALL_PARTICLE: u8 = 0;
@@ -1223,12 +1228,17 @@ pub fn update(
     mut titans: Query<(&mut PlayerTitan, &mut crate::combat::TitanHealth)>,
     mut enemies: Query<(Entity, &mut Enemy)>,
     mut damage_from: ResMut<crate::hud::DamageFrom>,
-    (mut feed, rodeo): (ResMut<crate::feed::Feed>, Res<crate::rodeo::Rodeo>),
+    (mut feed, rodeo, domes): (
+        ResMut<crate::feed::Feed>,
+        Res<crate::rodeo::Rodeo>,
+        Res<crate::pilotctl::Domes>,
+    ),
     weapons: Query<&crate::weapons::Weapon, With<PlayerTitan>>,
     mut rodeo_seen: Local<HashMap<u32, u8>>,
     mut pilot_alive: Local<HashMap<u32, bool>>,
 ) {
     let dt = time.delta_secs();
+    let domes_now: Vec<(Vec3, bool)> = domes.0.iter().map(|d| (d.center, d.local())).collect();
     // The walls put up and abilities used since last frame (sent below when online).
     let walls: Vec<(Vec3, Vec3, f32, f32, u8)> = WALLS
         .lock()
@@ -1518,8 +1528,20 @@ pub fn update(
                 // Phased out (Phase Shift, Phase Dash), nothing touches us.
                 let flags = LOCAL_FLAGS.load(Ordering::Relaxed) as u16;
                 let phased = flags & if titan { F_TITAN_PHASE } else { F_PHASE } != 0;
+                // Our Titan under its Dome Shield: rounds from outside stop on the dome.
+                let domed = titan
+                    && titans.iter().any(|(t, _)| {
+                        domes_now.iter().any(|&(c, local)| {
+                            local
+                                && c.distance(Vec3::from(t.state.pos.to_array()))
+                                    <= crate::pilotctl::DOME_RADIUS
+                                && c.distance(at) > crate::pilotctl::DOME_RADIUS
+                        })
+                    });
                 if id == net.my_id && phased {
                     log::info!("net: phased, ignoring {dmg:.0} from player {from}");
+                } else if id == net.my_id && domed {
+                    log::info!("net: dome shield stopped {dmg:.0} from player {from}");
                 } else if id == net.my_id {
                     // AI damage comes from the host, PvP damage from whoever hit us.
                     if titan {
@@ -2346,6 +2368,9 @@ pub fn local_flags(
     if crate::kits::has("pas_stealth_movement") {
         f |= F_LOW_PROFILE;
     }
+    if crate::kits::has("pas_scorch_selfdmg") {
+        f |= F_NO_CRIT;
+    }
     if *control == Control::Pilot {
         if status.cloaked() {
             f |= F_CLOAK;
@@ -2378,6 +2403,7 @@ pub fn remote_states(
     titans: Query<&PlayerTitan>,
     mut stars: Local<Vec<RemoteStar>>,
     mut executed: ResMut<crate::executions::BeingExecuted>,
+    mut domes: ResMut<crate::pilotctl::Domes>,
 ) {
     use crate::pilotability::{
         GRAV_PULL_ACCEL, GRAV_PULL_DELAY, GRAV_PULL_RADIUS, GRAV_PULL_SPEED,
@@ -2407,6 +2433,7 @@ pub fn remote_states(
         let Some(s) = r.snap else { continue };
         if let Some(mut e) = r.titan.and_then(|t| enemies.get_mut(t).ok()) {
             e.hidden = s.flags & F_TITAN_PHASE != 0;
+            e.prevent_crits = s.flags & F_NO_CRIT != 0;
             // A teammate's shields (PvE) don't stop our rounds.
             let kind = if !pvp || !s.titan_alive {
                 None
@@ -2492,6 +2519,8 @@ pub fn remote_states(
                     Vec3::Y,
                 );
             }
+            EV_DOME => domes.spawn(&mut commands, pos, false),
+            EV_DOME_END => domes.end_remote(&mut commands, pos),
             EV_GRAVITY_STAR => {
                 crate::audio::event_at(&mut commands, "weapon_gravitystar_preexplo", pos);
                 stars.push(RemoteStar(pos, 0.0));

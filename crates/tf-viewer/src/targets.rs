@@ -524,6 +524,8 @@ pub struct Enemy {
     pub hidden: bool,
     /// Drawn cloaked (a remote Pilot's Cloak, cloak.rs).
     pub cloaked: bool,
+    /// Its crit boxes don't crit (a remote Scorch with Tempered Plating: SetPreventCrits).
+    pub prevent_crits: bool,
     /// The defensive a remote player's snapshot last showed up.
     remote_defense: Option<DefenseKind>,
 }
@@ -681,6 +683,7 @@ impl Enemy {
             hidden: false,
             cloaked: false,
             remote_defense: None,
+            prevent_crits: false,
         }
     }
     /// Driven from the network (a remote player's body, or a mirrored enemy on a client).
@@ -2441,10 +2444,11 @@ pub fn update_bolts(
     mut damage_from: ResMut<crate::hud::DamageFrom>,
     status: Res<crate::pilotability::PilotStatus>,
     mode: Res<crate::player::CameraMode>,
-    (mut walls, mut shields, mut net): (
+    (mut walls, mut shields, mut net, domes): (
         ResMut<crate::titankit::BoltShields>,
         ResMut<crate::pilotability::Shields>,
         ResMut<crate::net::Net>,
+        Res<crate::pilotctl::Domes>,
     ),
 ) {
     let dt = time.delta_secs().min(0.1);
@@ -2553,6 +2557,23 @@ pub fn update_bolts(
                     }
                 }
             }
+        }
+        // Dome Shields stop every round crossing them.
+        if let Some(t) = domes.block(b.pos, dir, t_end) {
+            let at = b.pos + dir * t;
+            commands.entity(id).despawn();
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Hit {
+                    at: to_bevy(at),
+                    normal: -to_bevy(dir),
+                    table: w.impact_table,
+                    surface: crate::particles::Surface::Shield,
+                    victim: false,
+                    scale: 1.0,
+                },
+            );
+            continue;
         }
         // A-Walls stop enemy rounds and take their damage.
         if let Some((i, t)) = shields.block(b.pos, dir, t_end) {

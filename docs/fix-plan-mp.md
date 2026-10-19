@@ -55,3 +55,21 @@ Groups: **N** network/multiplayer, **T** Titan, **P** Pilot, **W** weapon, **U**
 | 43 | Lag starts midway through a session | N | Something grows each frame (entities, ghost rounds, queues). |
 | 44 | Pilot abilities/weapons missing (e.g. Smart Pistol) | P/W | Roster vs the game. |
 | 45 | Titan and Pilot customization screen (consistent upgrades) | U | Loadout menu; kits pick upgrades inconsistently. |
+
+## Status (2026-10-19)
+
+All 45 items were worked through; the user's play test is still to come.
+
+- 25 (recoil) and 26 (grapple pull) were checked against the decompiled client and left as they
+  are: they already match the game.
+- 44: every Pilot weapon (Smart Pistol included), all seven tacticals and all six ordnance are in.
+  Boosts (the earn-meter rewards) are not implemented yet.
+- 45: the LOADOUT page picks two Pilot kits, the Titan's own kit, a general Titan kit and a
+  Titanfall kit from the game's passive tables (`titan_passives`, `pilot_passives`, plus the six
+  later Titan kits), saved in settings.cfg. Each kit is applied the way `_passives.gnut` does it:
+  the same-named weapon mod or `ClassMods` block, or the script logic behind it.
+  - Not done yet: Threat Optics (the engine's threat-scope highlight), Counter Ready (it adds a
+    charge to the core-meter Electric Smoke, which comes with Boosts), Hover (needs the engine's
+    hover movement), Assault Chip (auto-Titan AI).
+  - Dome Shield: the dome, its pulses and its fade work; its colour for an enemy viewer is the
+    system's own (the engine's team colour constants are not in the scripts).

@@ -2111,6 +2111,8 @@ pub fn pilot_weapon_fire(
                     } else {
                         crate::particles::Surface::Titan
                     };
+                    let mut h = h;
+                    h.crit &= !e.prevent_crits;
                     let dmg = crate::hitbox::damage(shot, &h, hit_t, e.infantry);
                     log::debug!(
                         "{} hit {} group {} crit {} for {dmg:.0}",
@@ -2475,7 +2477,7 @@ pub fn update_pilot_bolts(
                     let base = b.dmg.direct(b.travelled, e.infantry);
                     let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD {
                         b.headshot
-                    } else if !e.infantry && h.crit {
+                    } else if !e.infantry && h.crit && !e.prevent_crits {
                         b.crit
                     } else {
                         1.0
@@ -2535,9 +2537,10 @@ pub fn update_pilot_bolts(
                 let base = b.dmg.direct(b.travelled, e.infantry);
                 // Pilot values on Pilots, Titan-armour values on Titans; headshots and crits
                 // multiply them.
+                let crit = h.crit && !e.prevent_crits;
                 let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD {
                     b.headshot
-                } else if !e.infantry && h.crit {
+                } else if !e.infantry && crit {
                     b.crit
                 } else {
                     1.0
@@ -2545,7 +2548,7 @@ pub fn update_pilot_bolts(
                 let hit = e.damage(base * k, b.stops_regen);
                 if hit.dealt > 0.0 && !e.infantry {
                     damaged.push(eid);
-                    if h.crit {
+                    if crit {
                         if b.crit_mark {
                             damaged.push(eid);
                         }

@@ -6,7 +6,6 @@ use crate::player::{
     to_bevy, CameraMode, Collision, MainCamera, PlayerInput, PlayerTitan, TitanSettings,
 };
 use crate::targets::Enemy;
-use crate::weapons::FxAssets;
 use bevy::prelude::*;
 use tf_sim::glam::Vec3 as SVec3;
 use tf_sim::pilot::{self, PilotInput, PilotMove, PilotParams, PilotState};
@@ -468,7 +467,7 @@ pub fn control_transitions(
     mut shake: ResMut<Shake>,
     world: Res<Collision>,
     pilot_settings: Res<PilotSettings>,
-    _fx: Res<FxAssets>,
+    mut domes: ResMut<Domes>,
     mut titans: Query<(
         &mut PlayerTitan,
         &mut Titanfall,
@@ -1163,6 +1162,11 @@ pub fn control_transitions(
         if !tf.impacted && t >= impact {
             tf.impacted = true;
             shake.0 = 1.0;
+            if crate::kits::has("pas_bubbleshield") {
+                let at = Vec3::from(titan.state.pos.to_array());
+                domes.spawn(&mut commands, at, true);
+                crate::net::event(crate::net::EV_DOME, at, Vec3::Z);
+            }
             crate::audio::cue(
                 &mut commands,
                 crate::audio::Cue::TitanLand,
@@ -1926,5 +1930,201 @@ pub fn cockpit_boot(
     }
     if stops.is_none() {
         base.clear();
+    }
+}
+
+// ---- Dome Shield ----
+//
+// PAS_BUBBLESHIELD (_titan_hotdrop.gnut, _bubble_shield.gnut): at the Titanfall's impact a dome
+// goes up around the Titan (xo_shield.mdl, solid to weapons only: rounds and projectiles stop
+// on it, players and AI walk through) with P_shield_hld_01_CP 25 up and BubbleShield_Sustain_Loop.
+// It lasts embark timeout + fade delay + end cap (13 + 3 + 1 s) at most; once the Pilot is in
+// and the Titan stands it holds SHIELD_FADE_ARBITRARY_DELAY more, broken early if the Titan
+// moves 40 units or its Pilot fires. Enemies inside take a pulse every 0.5-0.8 s, growing
+// with each touch (floor + a quadratic in the count, EvaluatePolynomial).
+
+/// TITAN_BUBBLE_SHIELD_INVULNERABILITY_RANGE.
+pub const DOME_RADIUS: f32 = 240.0;
+const DOME_EMBARK_TIMEOUT: f32 = 13.0;
+const DOME_FADE_DELAY: f32 = 3.0;
+const DOME_ENDCAP_DELAY: f32 = 1.0;
+const DOME_MOVE_BREAK: f32 = 40.0;
+
+pub struct Dome {
+    pub center: Vec3,
+    fx: Entity,
+    key: String,
+    /// The local Titan's (its lifecycle runs here); a remote player's ends with their event.
+    local: Option<LocalDome>,
+}
+
+impl Dome {
+    pub fn local(&self) -> bool {
+        self.local.is_some()
+    }
+}
+
+#[derive(Default)]
+struct LocalDome {
+    age: f32,
+    /// Since the Pilot got in, and where the Titan stood then.
+    stood: Option<(f32, Vec3)>,
+    /// The Titan gun's shot count when the Pilot got in (a shot breaks the dome).
+    shots: Option<u32>,
+    pulse: f32,
+    touches: std::collections::HashMap<Entity, u32>,
+}
+
+#[derive(Resource, Default)]
+pub struct Domes(pub Vec<Dome>);
+
+impl Domes {
+    pub fn spawn(&mut self, commands: &mut Commands, center: Vec3, local: bool) {
+        // StartParticleEffectInWorld at angles 0 (control point 1, the team colour, left at
+        // the system's own).
+        let fx = commands
+            .spawn((
+                Transform::from_translation(to_bevy(center + Vec3::Z * 25.0))
+                    .looking_to(to_bevy(Vec3::X).normalize(), Vec3::Y),
+                Visibility::default(),
+                crate::pfx::PfxTrail::oriented("P_shield_hld_01_CP"),
+            ))
+            .id();
+        let key = format!("dome_{}", fx.index());
+        crate::audio::loop_start(commands, &key, "BubbleShield_Sustain_Loop", Some(center));
+        if local {
+            self.0.retain(|d| d.local.is_none());
+        }
+        self.0.push(Dome {
+            center,
+            fx,
+            key,
+            local: local.then(LocalDome::default),
+        });
+        log::info!("dome shield up at {center:.0}");
+    }
+
+    fn end(commands: &mut Commands, d: &Dome) {
+        commands.entity(d.fx).despawn();
+        crate::audio::loop_stop(commands, &d.key, None);
+        crate::audio::event_at(commands, "BubbleShield_End", d.center);
+        log::info!("dome shield down at {:.0}", d.center);
+    }
+
+    /// A remote player's dome went down (their EV_DOME_END).
+    pub fn end_remote(&mut self, commands: &mut Commands, center: Vec3) {
+        self.0.retain(|d| {
+            let gone = d.local.is_none() && d.center.distance(center) < 1.0;
+            if gone {
+                Self::end(commands, d);
+            }
+            !gone
+        });
+    }
+
+    /// Where a round from `from` along `dir` (unit) first meets a dome within `max_t`.
+    pub fn block(&self, from: Vec3, dir: Vec3, max_t: f32) -> Option<f32> {
+        let mut best: Option<f32> = None;
+        for d in &self.0 {
+            let o = from - d.center;
+            let b = o.dot(dir);
+            let c = o.length_squared() - DOME_RADIUS * DOME_RADIUS;
+            let disc = b * b - c;
+            if disc < 0.0 {
+                continue;
+            }
+            for t in [-b - disc.sqrt(), -b + disc.sqrt()] {
+                if t > 0.0 && t < max_t && best.is_none_or(|bt| t < bt) {
+                    // The dome is a hemisphere on the ground.
+                    if (from + dir * t).z >= d.center.z - 8.0 {
+                        best = Some(t);
+                    }
+                }
+            }
+        }
+        best
+    }
+}
+
+/// The local dome's lifecycle and its pulses on the enemies inside.
+#[allow(clippy::too_many_arguments)]
+pub fn update_domes(
+    mut commands: Commands,
+    time: Res<Time>,
+    control: Res<Control>,
+    mut domes: ResMut<Domes>,
+    titans: Query<(&PlayerTitan, &crate::combat::TitanHealth)>,
+    guns: Query<&crate::weapons::Weapon, With<PlayerTitan>>,
+    mut enemies: Query<(Entity, &mut Enemy)>,
+    net: Res<crate::net::Net>,
+) {
+    let dt = time.delta_secs();
+    let Ok((titan, health)) = titans.single() else {
+        return;
+    };
+    let pos = Vec3::from(titan.state.pos.to_array());
+    let shots = guns.single().map_or(0, |w| w.shots);
+    let pvp = net.pvp();
+    let mut ended = Vec::new();
+    for (i, d) in domes.0.iter_mut().enumerate() {
+        let center = d.center;
+        let Some(l) = d.local.as_mut() else {
+            continue;
+        };
+        l.age += dt;
+        if *control == Control::Titan && l.stood.is_none() {
+            l.stood = Some((0.0, pos));
+            l.shots = Some(shots);
+        }
+        let mut down = l.age >= DOME_EMBARK_TIMEOUT + DOME_FADE_DELAY + DOME_ENDCAP_DELAY
+            || health.dead_for.is_some();
+        if let Some((t, at)) = l.stood.as_mut() {
+            *t += dt;
+            down |= *t >= DOME_FADE_DELAY
+                || pos.distance(*at) > DOME_MOVE_BREAK
+                || l.shots.is_some_and(|s| shots != s);
+        }
+        if down {
+            ended.push(i);
+            continue;
+        }
+        // BubbleShieldDamageEnemies: a trigger cylinder (radius 240, 290 up) and within 240.
+        l.pulse -= dt;
+        if l.pulse > 0.0 {
+            continue;
+        }
+        let r = ((time.elapsed_secs() * 12.9898).sin() * 43758.547)
+            .fract()
+            .abs();
+        l.pulse = 0.5 + 0.3 * r;
+        let mut hit = false;
+        for (id, mut e) in &mut enemies {
+            if !e.alive() || (e.remote.is_some() && !pvp) {
+                continue;
+            }
+            if e.pos.z < center.z - 1.0 || e.pos.distance(center) > DOME_RADIUS {
+                continue;
+            }
+            let n = l.touches.entry(id).or_insert(0);
+            *n += 1;
+            let x = *n as f32;
+            // Titans: 250 + (12x² + 5x + 2); Pilots and AI: 30 + (2x² + x + 1).
+            let dmg = if e.infantry {
+                30.0 + 2.0 * x * x + x + 1.0
+            } else {
+                250.0 + 12.0 * x * x + 5.0 * x + 2.0
+            };
+            e.damage_unblockable(dmg, true);
+            log::info!("dome shield: {dmg:.0} to an enemy inside");
+            hit = true;
+        }
+        if hit {
+            crate::audio::event_at(&mut commands, "titan_energyshield_damage", center);
+        }
+    }
+    for i in ended.into_iter().rev() {
+        let d = domes.0.remove(i);
+        Domes::end(&mut commands, &d);
+        crate::net::event(crate::net::EV_DOME_END, d.center, Vec3::Z);
     }
 }

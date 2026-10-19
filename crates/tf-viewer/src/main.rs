@@ -466,6 +466,7 @@ fn main() {
     .init_resource::<executions::PilotMelee>()
     .init_resource::<pilotability::OrdnanceThrow>()
     .init_resource::<pilotability::Shields>()
+    .init_resource::<pilotctl::Domes>()
     .init_resource::<game::Game>()
     .init_resource::<net::Net>()
     .init_resource::<update::Updater>()
@@ -608,6 +609,7 @@ fn main() {
                 (
                     zipline::zipline_grab,
                     pilotctl::control_transitions,
+                    pilotctl::update_domes,
                     autotitan::auto_titan_think,
                 )
                     .chain(),
