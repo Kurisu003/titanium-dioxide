@@ -100,8 +100,27 @@ pub fn grenade_arc(
     cams: Query<&GlobalTransform, With<MainCamera>>,
     mut arcs: Query<(&Mesh3d, &mut Visibility), With<GrenadeArcMesh>>,
     mut scroll: Local<f32>,
+    (ability_defs, status, throw): (
+        Option<Res<crate::pilotability::PilotAbilityDefs>>,
+        Res<crate::pilotability::PilotStatus>,
+        Res<crate::pilotability::OrdnanceThrow>,
+    ),
 ) {
     *scroll = (*scroll + time.delta_secs() * DOT_SCROLL).fract();
+    // A held grenade with a trajectory preview (Ordnance Expert).
+    let held = (*control == Control::Pilot)
+        .then(|| pilots.single().ok())
+        .flatten()
+        .zip(ability_defs.as_deref())
+        .and_then(|((p, _), defs)| {
+            let eye = Vec3::from(p.state.eye(&settings.0).to_array());
+            crate::pilotability::ordnance_preview(&world, defs, &status, &throw, &p.state, eye)
+        });
+    if let (Some((pts, end)), Ok(cam)) = (held, cams.single()) {
+        let mesh = build(&pts, end, cam.translation(), *scroll);
+        show(&mut commands, &mut meshes, &mut materials, &mut arcs, mesh);
+        return;
+    }
     let shown = (*control == Control::Pilot)
         .then(|| pilots.single().ok())
         .flatten()
@@ -144,6 +163,17 @@ pub fn grenade_arc(
         arc.bounces,
     );
     let mesh = build(&pts, end, cam.translation(), *scroll);
+    show(&mut commands, &mut meshes, &mut materials, &mut arcs, mesh);
+}
+
+/// Put this frame's arc mesh up (made the first time).
+fn show(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    arcs: &mut Query<(&Mesh3d, &mut Visibility), With<GrenadeArcMesh>>,
+    mesh: Mesh,
+) {
     match arcs.iter_mut().next() {
         Some((m, mut v)) => {
             if let Some(slot) = meshes.get_mut(&m.0) {

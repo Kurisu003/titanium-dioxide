@@ -315,6 +315,9 @@ pub struct OrdnanceDef {
     /// `projectilemodel` and `projectile_trail_effect_0`.
     pub model: String,
     pub trail: String,
+    /// The trajectory preview while held (`grenade_arc_indicator_effect`, which Ordnance
+    /// Expert's pas_ordnance_pack mod sets): the bounces it follows.
+    pub arc_bounces: Option<u32>,
 }
 
 /// An ordnance throw in progress: pull it out, hold it while the button is held (the fuse
@@ -332,7 +335,7 @@ pub enum ThrowPhase {
 pub struct OrdnanceThrow {
     pub phase: Option<(ThrowPhase, f32)>,
     /// Seconds held (cooking) before the toss.
-    cooked: f32,
+    pub cooked: f32,
     /// A thrown tactical (Pulse Blade, A-Wall) rather than the ordnance.
     pub tactical: bool,
 }
@@ -378,12 +381,16 @@ fn charges(s: &PlayerSettings) -> u32 {
 
 impl PilotAbilityDefs {
     pub fn load(read: &mut dyn FnMut(&str) -> Option<String>) -> Self {
-        let pilot = PlayerSettings::load(
-            "scripts/players/mp/pilot_base.set",
-            crate::gamedata::sp(),
-            read,
-        )
-        .unwrap_or_default();
+        // pilot_mp.set (over pilot_base.set), with the kits' ClassMods (Power Cell's
+        // grapple_power_regen_rate).
+        let pilot = crate::kits::apply(
+            PlayerSettings::load(
+                "scripts/players/mp/pilot_mp.set",
+                crate::gamedata::sp(),
+                read,
+            )
+            .unwrap_or_default(),
+        );
         // With the fitted kits' mods (pas_power_cell, pas_ordnance_pack).
         let mut load = |w: &str| {
             crate::kits::apply(
@@ -462,6 +469,11 @@ impl PilotAbilityDefs {
                     charges: charges(&s),
                     bounce_shallow: mp(&s, "grenade_bounce_vel_frac_shallow", 0.5),
                     bounce_sharp: mp(&s, "grenade_bounce_vel_frac_sharp", 0.3),
+                    arc_bounces: s
+                        .get(".grenade_arc_indicator_effect")
+                        .or_else(|| s.get("mp_base.grenade_arc_indicator_effect"))
+                        .filter(|v| !v.trim().is_empty())
+                        .map(|_| mp(&s, "grenade_arc_indicator_bounce_count", 0.0) as u32),
                     viewmodel: s.get(".viewmodel").unwrap_or("").trim().to_string(),
                     pullout: mp(&s, "toss_pullout_time", 0.35),
                     toss: mp(&s, "toss_time", 0.33),
@@ -1033,6 +1045,76 @@ fn game_tf(pos: Vec3, yaw: f32) -> Transform {
     root.mul_transform(Transform::from_translation(pos).with_rotation(Quat::from_rotation_z(yaw)))
 }
 
+/// The path the held ordnance would take if thrown now (game units), and the normal it ends
+/// on, as `update_grenades` flies it: GRENADE_GRAVITY, the frag's bounces (the rest stick), the
+/// fuse left after cooking. None unless the ordnance has a trajectory preview.
+pub fn ordnance_preview(
+    world: &crate::player::Collision,
+    defs: &PilotAbilityDefs,
+    status: &PilotStatus,
+    throw: &OrdnanceThrow,
+    pilot: &tf_sim::pilot::PilotState,
+    eye: Vec3,
+) -> Option<(Vec<Vec3>, Option<Vec3>)> {
+    if throw.tactical
+        || !matches!(
+            throw.phase,
+            Some((ThrowPhase::Pullout | ThrowPhase::Hold, _))
+        )
+    {
+        return None;
+    }
+    let oi = status.ordnance.min(ORDNANCE.len() - 1);
+    let d = defs.ordnance.get(oi)?;
+    let mut bounces = d.arc_bounces?;
+    let frag = ORDNANCE[oi].0 == Ordnance::Frag;
+    let dir = view_dir(pilot, d.pitch_offset);
+    let mut pos = eye + dir * 20.0;
+    let mut vel = dir * d.speed + Vec3::from(pilot.vel.to_array());
+    let flight = if d.fuse > 0.0 {
+        (d.fuse - throw.cooked).max(0.05)
+    } else {
+        4.0
+    };
+    let dt = 1.0 / 60.0;
+    let mut pts = vec![pos];
+    let mut t = 0.0;
+    while t < flight {
+        vel.z -= GRENADE_GRAVITY * dt;
+        let step = vel * dt;
+        let len = step.length();
+        if len > 1e-4 {
+            let dir = step / len;
+            match world.0.raycast(
+                SVec3::from(pos.to_array()),
+                SVec3::from(dir.to_array()),
+                len + GRENADE_RADIUS,
+            ) {
+                Some(h) => {
+                    let n = Vec3::from(h.normal.to_array());
+                    pos += dir * (h.t - GRENADE_RADIUS).max(0.0);
+                    pts.push(pos);
+                    if !frag || bounces == 0 {
+                        return Some((pts, Some(n)));
+                    }
+                    bounces -= 1;
+                    let into = -dir.dot(n);
+                    let keep = d.bounce_shallow
+                        + (d.bounce_sharp - d.bounce_shallow) * into.clamp(0.0, 1.0);
+                    vel = (vel - 2.0 * vel.dot(n) * n) * keep;
+                    pos += n * 0.5;
+                }
+                None => {
+                    pos += step;
+                    pts.push(pos);
+                }
+            }
+        }
+        t += dt;
+    }
+    Some((pts, None))
+}
+
 fn view_dir(s: &tf_sim::pilot::PilotState, pitch_offset_deg: f32) -> Vec3 {
     let pitch = s.pitch - pitch_offset_deg.to_radians();
     Vec3::new(
@@ -1281,7 +1363,7 @@ pub fn pilot_abilities(
         throw_state.phase = Some((phase, t));
         match phase {
             ThrowPhase::Pullout if t >= pullout => {
-                if input.ordnance && !throw_state.tactical {
+                if input.pilot_ordnance && !throw_state.tactical {
                     throw_state.phase = Some((ThrowPhase::Hold, 0.0));
                 } else {
                     throw_state.phase = Some((ThrowPhase::Toss, 0.0));
@@ -1291,7 +1373,7 @@ pub fn pilot_abilities(
             ThrowPhase::Hold => {
                 throw_state.cooked = t;
                 // A fused grenade held past its fuse goes off in hand.
-                if !input.ordnance || (odef.fuse > 0.0 && t >= odef.fuse) {
+                if !input.pilot_ordnance || (odef.fuse > 0.0 && t >= odef.fuse) {
                     throw_state.phase = Some((ThrowPhase::Toss, 0.0));
                     launch = true;
                 }

@@ -284,6 +284,9 @@ pub struct PlayerInput {
     pub reload: bool,
     /// Ordnance button held (lock on while held, fire on release).
     pub ordnance: bool,
+    /// The same button held on foot (the Pilot holds a grenade while it is down); `ordnance`
+    /// itself is the Titan's and is cleared outside it.
+    pub pilot_ordnance: bool,
     /// Core requested (latched).
     pub core: bool,
     /// Vortex Shield held.
@@ -1733,6 +1736,7 @@ impl DashTilt {
 
 /// Outside the Titan, the Titan's own inputs (guns, abilities) are ignored.
 pub fn route_input(control: Res<crate::pilotctl::Control>, mut input: ResMut<PlayerInput>) {
+    input.pilot_ordnance = *control == crate::pilotctl::Control::Pilot && input.ordnance;
     if *control != crate::pilotctl::Control::Pilot {
         input.pilot_fire = false;
         input.pilot_ads = false;
