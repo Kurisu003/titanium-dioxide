@@ -602,7 +602,7 @@ pub fn material(
         perceptual_roughness: 0.6,
         reflectance: 0.3,
         flip_normal_map_y: true,
-        lightmap_exposure: crate::env::LIGHTMAP_EXPOSURE,
+        lightmap_exposure: crate::env::nits_for_white(),
         ..default()
     };
     // TF_NO_SPEC: debug toggle, the flat roughness/reflectance used before gloss/spec maps.
@@ -697,8 +697,11 @@ pub fn material(
                 mat.perceptual_roughness = 0.6;
                 mat.reflectance = 0.5;
             }
+            // Both faces drawn, but lit with the mesh's own normal on either side: the game's
+            // pixel shaders never flip it for back faces (no SV_IsFrontFace input), so grass
+            // and leaf cards are lit the same from behind instead of going dark.
             if m.two_sided() || alpha_tested {
-                mat.double_sided = true;
+                mat.double_sided = false;
                 mat.cull_mode = None;
             }
             if mat.base_color_texture.is_none() {

@@ -46,6 +46,7 @@ pub fn spawn_camera(commands: &mut Commands) {
             ev100: crate::env::ev100(),
         },
         crate::env::tonemapping(),
+        crate::colorcorr::GameTonemap,
         // Bevy 0.18 also clips at `near_clip_plane`, whose default is the 0.1 near plane.
         Projection::Perspective({
             // TF_VM_NEAR=metres overrides the near plane (testing).

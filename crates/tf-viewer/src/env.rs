@@ -5,16 +5,10 @@
 use crate::gamedata::GameData;
 use bevy::prelude::*;
 
-/// Brightness of the camera: Bevy's physical units (lux) against the game's 0-255 light values.
-/// One `_light` brightness unit maps to this many lux.
-const LUX_PER_UNIT: f32 = 22.0;
-/// Lightmap texels are display-referred (sRGB 8-bit) indirect light; this multiplier brings a
-/// texel of 1.0 to roughly "white" at the camera exposure below.
-pub const LIGHTMAP_EXPOSURE: f32 = 26000.0;
-/// Camera exposure (EV100) used for the whole game (TF_EV100 overrides it, for calibration).
-/// The game auto-exposes (mat_autoexposure_min/max 0.5..2 around the map's tonemap scale) and
-/// sits a stop or two brighter than EV 13 did: against Forwardbase Kodai gameplay frames the
-/// same view measured 0.6x their brightness at EV 13 (and the ground 0.5x), so EV 12.
+/// Camera exposure (EV100) for every camera. It only sets the unit: light is given in the
+/// game's own linear units times [`nits_for_white`], so after Bevy's exposure the HDR picture
+/// holds the values the game's shaders write, and the game's auto exposure and tonemapping
+/// (colorcorr.rs) take it from there. TF_EV100 overrides it.
 pub fn ev100() -> f32 {
     static EV: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *EV.get_or_init(|| {
@@ -25,21 +19,15 @@ pub fn ev100() -> f32 {
     })
 }
 
-/// The tonemapper (TF_TONEMAP=tony|aces|agx|reinhard|none|sbdt|blender, for calibration).
+/// Bevy's tonemapping, off on every camera: the game's own exposure, tonemapping and colour
+/// correction run once, on the camera that draws last (colorcorr.rs). With several cameras
+/// drawing into the same textures, each one's tonemapping would grade the picture again.
 pub fn tonemapping() -> bevy::core_pipeline::tonemapping::Tonemapping {
-    use bevy::core_pipeline::tonemapping::Tonemapping as T;
-    match std::env::var("TF_TONEMAP").unwrap_or_default().as_str() {
-        "aces" => T::AcesFitted,
-        "agx" => T::AgX,
-        "reinhard" => T::ReinhardLuminance,
-        "none" => T::None,
-        "sbdt" => T::SomewhatBoringDisplayTransform,
-        "blender" => T::BlenderFilmic,
-        _ => T::TonyMcMapface,
-    }
+    bevy::core_pipeline::tonemapping::Tonemapping::None
 }
 
-/// Emissive luminance that shows as white at the camera exposure.
+/// One unit of the game's linear light in Bevy's units (the inverse of the camera exposure):
+/// emissive luminance, lightmap and irradiance intensities, and (times pi) illuminance.
 pub fn nits_for_white() -> f32 {
     1.2 * 2f32.powf(ev100())
 }
@@ -48,10 +36,13 @@ pub fn nits_for_white() -> f32 {
 pub struct MapEnv {
     /// Direction the sunlight travels, in game space (Z up).
     pub sun_dir: Vec3,
-    pub sun_color: Color,
-    pub sun_brightness: f32,
-    pub ambient_color: Color,
-    pub ambient_brightness: f32,
+    /// The sun (`c_sunColor`) and the sky ambient (`c_skyColor`) in the game's linear units,
+    /// as the map compiler stores them in the BSP's world lights: `(colour / 255)^2.2 *
+    /// brightness / 255` of `_light` and `_ambient` (Forwardbase Kodai: sun (8.0, 6.81,
+    /// 5.27), sky (1.05, 1.21, 1.30)). engine.dll hands them to the shaders scaled by
+    /// mat_sun_scale / mat_sky_scale (1).
+    pub sun_light: Vec3,
+    pub sky_light: Vec3,
     pub fog: Option<Fog>,
     /// The 3D skybox camera (sky_camera) for the playable level, game space.
     pub sky_camera: Option<Vec3>,
@@ -77,10 +68,8 @@ impl Default for MapEnv {
     fn default() -> Self {
         Self {
             sun_dir: Vec3::new(-0.4, 0.6, -0.7).normalize(),
-            sun_color: Color::WHITE,
-            sun_brightness: 600.0,
-            ambient_color: Color::WHITE,
-            ambient_brightness: 100.0,
+            sun_light: Vec3::splat(4.0),
+            sky_light: Vec3::splat(0.5),
             fog: None,
             sky_camera: None,
             sky_scale: 1000.0,
@@ -99,6 +88,17 @@ fn rgb_and_brightness(v: &str) -> (Color, f32) {
         Color::srgb(c(0), c(1), c(2)),
         n.get(3).copied().unwrap_or(200.0),
     )
+}
+
+/// A light value ("r g b brightness") in the game's linear units, as the map compiler
+/// converts it.
+fn light_value(v: &str) -> Vec3 {
+    let n: Vec<f32> = v
+        .split_whitespace()
+        .filter_map(|x| x.parse().ok())
+        .collect();
+    let c = |i: usize| (n.get(i).copied().unwrap_or(255.0) / 255.0).powf(2.2);
+    Vec3::new(c(0), c(1), c(2)) * n.get(3).copied().unwrap_or(200.0) / 255.0
 }
 
 fn color(v: &str) -> Color {
@@ -150,10 +150,10 @@ impl MapEnv {
             // the lightmaps), so the light travels the opposite way, downwards.
             env.sun_dir = forward(pitch, yaw + 180.0).normalize();
             if let Some(l) = get(sun, "_light") {
-                (env.sun_color, env.sun_brightness) = rgb_and_brightness(&l);
+                env.sun_light = light_value(&l);
             }
             if let Some(a) = get(sun, "_ambient") {
-                (env.ambient_color, env.ambient_brightness) = rgb_and_brightness(&a);
+                env.sky_light = light_value(&a);
             }
         }
         if let Some(f) = ents
@@ -212,14 +212,17 @@ impl MapEnv {
         env
     }
 
-    /// Bevy's sun: shines along the game-space sun direction.
+    /// Bevy's sun: shines along the game-space sun direction. The world shader lights with
+    /// `albedo * c_sunColor * N.L` where Bevy's diffuse is `albedo / pi * illuminance * N.L`.
     pub fn sun(&self) -> (DirectionalLight, Transform) {
         let d = self.sun_dir;
         let dir = Vec3::new(d.x, d.z, -d.y);
+        let peak = self.sun_light.max_element().max(1e-6);
+        let c = self.sun_light / peak;
         (
             DirectionalLight {
-                illuminance: self.sun_brightness * LUX_PER_UNIT,
-                color: self.sun_color,
+                illuminance: peak * std::f32::consts::PI * nits_for_white(),
+                color: Color::linear_rgb(c.x, c.y, c.z),
                 shadows_enabled: std::env::var_os("TF_NO_SHADOWS").is_none(),
                 ..default()
             },
@@ -227,16 +230,23 @@ impl MapEnv {
         )
     }
 
-    /// Ambient fill for everything without a lightmap (Titans, props, the pilot's arms).
+    /// Ambient fill for everything without a lightmap or probes: the sky light of an open
+    /// upward-facing surface (the world shader's sky term is `c_skyColor` there).
     pub fn ambient(&self) -> GlobalAmbientLight {
+        let peak = self.sky_light.max_element().max(1e-6);
+        let c = self.sky_light / peak;
         GlobalAmbientLight {
-            color: self.ambient_color,
-            brightness: self.ambient_brightness * LUX_PER_UNIT * 1.0,
+            color: Color::linear_rgb(c.x, c.y, c.z),
+            brightness: peak * nits_for_white(),
             affects_lightmapped_meshes: false,
         }
     }
 
+    /// TF_NO_FOG=1 leaves it out (for calibration).
     pub fn distance_fog(&self) -> Option<DistanceFog> {
+        if std::env::var_os("TF_NO_FOG").is_some() {
+            return None;
+        }
         let f = self.fog.as_ref()?;
         let half_m = f.half_dist * crate::player::UNIT;
         let dir = f.dir_color.to_linear() * f.dir_strength.min(1.0);
@@ -254,24 +264,36 @@ impl MapEnv {
 // ---------------------------------------------------------------------------------------------
 // Baked light probes and cubemaps.
 
-/// Probe SH values per unit of lightmap texel (linear), from comparing the two over Forwardbase
-/// Kodai (median probe DC 458 against a median lightmap texel of 0.198).
-const PROBE_UNITS: f32 = 2500.0;
+/// Probe values (int16) per unit of the game's linear light (engine.dll 0x1800cd050).
+const PROBE_UNITS: f32 = 8192.0;
 /// Largest irradiance volume, in voxels per axis (x, y, z), and the smallest voxel (units).
 const VOLUME_MAX: [usize; 3] = [112, 112, 40];
 const VOXEL_MIN: f32 = 128.0;
 
+/// The world and model shaders' sky light for a surface facing `n`, with `v` the baked sky
+/// visibility vector (a lightmap B texel or a probe's): `saturate((max(|v|^2, n.v) + n.v) *
+/// |v| / 2)`, times `c_skyColor`.
+pub fn sky_term(n: Vec3, v: Vec3) -> f32 {
+    let (len2, nv) = (v.length_squared(), n.dot(v));
+    ((len2.max(nv) + nv) * len2.sqrt() * 0.5).clamp(0.0, 1.0)
+}
+
 /// Give everything without a lightmap (props, Titans, the pilot's arms) the map's baked
-/// indirect light: the LIGHTPROBES resampled onto a Bevy irradiance volume covering the
-/// probes. Returns false (keep the flat ambient light) when the map has no probes.
+/// light: the LIGHTPROBES resampled onto a Bevy irradiance volume covering the probes. The
+/// model shader (uber*_skn/_fix ps_5_0) lights a normal `n` with `max(c.n + dc, 0)` per
+/// channel plus the sky term of the probe's sky vector times `sky` (`c_skyColor`); the sun
+/// is Bevy's directional light. Returns false (keep the flat ambient light) when the map has
+/// no probes.
 pub fn spawn_irradiance_volume(
     commands: &mut Commands,
     root: Entity,
     bsp: &tf_assets::bsp::Bsp,
     images: &mut Assets<Image>,
+    sky: Vec3,
 ) -> bool {
     let t = std::time::Instant::now();
     let probes = bsp.light_probes();
+    let probe_sky = bsp.light_probe_sky();
     let refs: Vec<([f32; 3], u32)> = bsp
         .light_probe_refs()
         .into_iter()
@@ -298,12 +320,14 @@ pub fn spawn_irradiance_volume(
     // no probe reached (inside rock, open sky) the value of the nearest voxel that has one.
     let n = dims[0] * dims[1] * dims[2];
     let vidx = |x: usize, y: usize, z: usize| (z * dims[1] + y) * dims[0] + x;
-    let mut acc = vec![[[0f32; 4]; 3]; n];
+    // Rows: the three colour channels' SH, then the sky vector.
+    let mut acc = vec![[[0f32; 4]; 4]; n];
     let mut weight = vec![0f32; n];
     for r in &refs {
         let p = Vec3::from(r.0);
         let c = ((p - lo) / cell - 0.5).floor().as_ivec3();
         let sh = &probes[r.1 as usize];
+        let sv = probe_sky.get(r.1 as usize).copied().unwrap_or_default();
         for dz in 0..2 {
             for dy in 0..2 {
                 for dx in 0..2 {
@@ -322,6 +346,9 @@ pub fn spawn_irradiance_volume(
                         for k in 0..4 {
                             acc[i][ch][k] += sh[ch][k] as f32 * wgt;
                         }
+                    }
+                    for k in 0..3 {
+                        acc[i][3][k] += sv[k] as f32 * wgt;
                     }
                     weight[i] += wgt;
                 }
@@ -374,13 +401,15 @@ pub fn spawn_irradiance_volume(
         for y in 0..dims[1] {
             for x in 0..dims[0] {
                 let sh = acc[vidx(x, y, z)];
+                let sky_vec = Vec3::new(sh[3][0], sh[3][1], sh[3][2]) / PROBE_UNITS;
                 for (f, dir) in faces.iter().enumerate() {
                     let (slab, neg) = (f / 2, f % 2);
                     let idx = (((slab * dims[2] + z) * h) + neg * dims[1] + y) * w + x;
+                    let sky_light = sky * sky_term(*dir, sky_vec);
                     for ch in 0..3 {
                         let [cx, cy, cz, dc] = sh[ch];
-                        let e =
-                            (dc - (cx * dir.x + cy * dir.y + cz * dir.z)).max(0.0) / PROBE_UNITS;
+                        let e = (dc + cx * dir.x + cy * dir.y + cz * dir.z).max(0.0) / PROBE_UNITS
+                            + sky_light[ch];
                         data[idx * 4 + ch] = f32_to_half(e);
                     }
                     data[idx * 4 + 3] = 0x3C00;
@@ -410,7 +439,7 @@ pub fn spawn_irradiance_volume(
         .spawn((
             bevy::light::IrradianceVolume {
                 voxels,
-                intensity: LIGHTMAP_EXPOSURE * gain,
+                intensity: nits_for_white() * gain,
                 affects_lightmapped_meshes: false,
             },
             Transform::from_translation((lo + hi) * 0.5).with_scale(size),
@@ -421,7 +450,7 @@ pub fn spawn_irradiance_volume(
     true
 }
 
-fn f32_to_half(v: f32) -> u16 {
+pub fn f32_to_half(v: f32) -> u16 {
     let v = v.clamp(0.0, 65000.0);
     if v < 6.1e-5 {
         return (v / 5.96e-8).round() as u16;

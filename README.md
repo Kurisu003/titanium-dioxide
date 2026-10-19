@@ -866,19 +866,36 @@ The hand-built effects are particles drawn with the game's SpriteCard textures
 
 Everything here comes from the install:
 
-- **Lighting:**
-  - The BSP's own baked lightmaps (LIGHTMAP_HEADERS + LIGHTMAP_DATA_SKY) supply the indirect light.
-  - The sun, ambient light and fog come from the map's `_env.ent`. Its yaw points *at* the sun,
-    which I checked against the baked sun-visibility channel.
-  - Props, Titans and the pilot's arms take their indirect light from the map's baked light
-    probes (LIGHTPROBES / LIGHTPROBE_REFERENCES). Each probe is an L1 spherical harmonic per
-    colour channel, and they're resampled onto a Bevy irradiance volume, so a prop in shade
-    is no longer lit like one in the open.
+- **Lighting** follows the game's own world and model pixel shaders (disassembled from the
+  `shdr` assets), in the game's linear units:
+  - The sun (`c_sunColor`) and sky ambient (`c_skyColor`) are the map's `_light` / `_ambient`
+    as the map compiler stores them: `(colour / 255)^2.2 * brightness / 255` (Forwardbase
+    Kodai's sun is 8.0, its sky about 1.2). Its yaw points *at* the sun.
+  - World surfaces add the BSP's two baked lightmap layers (LIGHTMAP_DATA_SKY): layer A is
+    sRGB indirect light times its alpha scale `a * 3.98 + 0.016` (materialsystem creates it as
+    an `_SRGB` texture), and layer B is a sky-visibility vector that lights the surface with
+    `c_skyColor` by its normal. Both are baked into one HDR page per lightmap at load (the sky
+    term needs each texel's normal, so the page's triangles are rasterized in lightmap space).
+  - Props, Titans and the pilot's arms take theirs from the map's baked light probes
+    (LIGHTPROBES / LIGHTPROBE_REFERENCES, values / 8192): `max(c.n + dc, 0)` per colour
+    channel plus the same sky term from each probe's sky vector, resampled onto a Bevy
+    irradiance volume.
+  - Alpha-tested and two-sided surfaces (grass, leaves) keep their mesh normal on back faces,
+    as the game's shaders do. Translucent and effect surfaces (fog sheets, godrays) cast no sun
+    shadow.
   - Reflections come from the map's baked cubemaps (`cubemaps.hdr.vtf` in the BSP's PAKFILE,
     BC6H, one frame per CUBEMAPS entry). The camera uses the one captured nearest to it.
   - Materials use their gloss (`_gls`/`_exp`, roughness = 1 - gloss) and spec (`_spc`, F0)
     maps.
-  - Rendering uses physical exposure, bloom and SSAO, with a Graphics option of High, Medium or Low.
+  - Exposure, tonemapping and colour correction are the game's (colorcorr.rs, after
+    `exposure_adaptation_ps40` and `engine_post_ps50`): auto exposure from the geometric mean
+    luminance of the middle 80% of the screen (`key / L`, `key = 1.03 - 2 / (2 + ln(L + 1))`),
+    adapting per frame at `mat_autoexposure_speed` 0.1 and held to `mat_autoexposure_min/max`
+    0.5..2; then `x (10x + 0.3) / (x (10x + 0.5) + 1.5)`; then the map's 32^3 colour
+    correction table. Bevy's own tonemapping is off on every camera (each camera drawing into
+    the shared picture would grade it again). `TF_EXPOSURE=x` holds the exposure,
+    `TF_NO_CC=1` leaves out the colour correction and `TF_NO_FOG=1` the fog.
+  - Bloom and SSAO come from Bevy, with a Graphics option of High, Medium or Low.
   - Debug toggles: `TF_NO_SPEC`, `TF_NO_PROBES` and `TF_NO_CUBEMAPS` turn these off.
     `TF_PROBE_GAIN` and `TF_CUBEMAP_GAIN` scale them, and `TF_MIRROR` makes every surface a
     mirror for checking cubemap orientation.

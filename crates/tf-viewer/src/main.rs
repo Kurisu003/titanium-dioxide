@@ -1122,9 +1122,11 @@ fn setup_world(
     ph.mark("vpks and rpaks");
     let map_env = env::MapEnv::load(&gd, &args.map);
     commands.insert_resource(map_env.ambient());
+    // TF_NO_CC=1 leaves the map's colour correction out (for calibration).
     let map_lut = map_env
         .color_correction
         .as_deref()
+        .filter(|_| std::env::var_os("TF_NO_CC").is_none())
         .and_then(|f| match gd.read_file(f) {
             Ok(raw) => colorcorr::lut_image(&raw).map(|img| images.add(img)),
             Err(e) => {
@@ -1294,6 +1296,7 @@ fn setup_world(
                 &mut materials,
                 &mut blends,
                 &mut collision,
+                map_env.sky_light,
             );
             if let Some(m) = minimap::Minimap::load(&gd, &args.map, &mut cache, &mut images) {
                 commands.insert_resource(m);
@@ -1338,7 +1341,13 @@ fn setup_world(
             ph.mark("props and sky");
             // Baked probes replace the flat ambient term for everything without a lightmap.
             if std::env::var_os("TF_NO_PROBES").is_none()
-                && env::spawn_irradiance_volume(&mut commands, static_root, &bsp, &mut images)
+                && env::spawn_irradiance_volume(
+                    &mut commands,
+                    static_root,
+                    &bsp,
+                    &mut images,
+                    map_env.sky_light,
+                )
             {
                 commands.insert_resource(GlobalAmbientLight {
                     brightness: 0.0,

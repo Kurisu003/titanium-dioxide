@@ -40,6 +40,7 @@ pub fn spawn_sky_camera(commands: &mut Commands) {
         bevy::render::view::Hdr,
         // Explicit so the cockpit boot (pilotctl::cockpit_boot) can dim it with the others.
         bevy::camera::Exposure::default(),
+        crate::env::tonemapping(),
         Msaa::Off,
         bevy::camera::visibility::RenderLayers::layer(SKY_LAYER),
         Transform::default(),

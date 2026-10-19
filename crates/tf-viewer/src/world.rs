@@ -21,6 +21,7 @@ pub fn spawn_world(
     materials: &mut Assets<StandardMaterial>,
     blends: &mut Assets<convert::BlendMaterial>,
     collision: &mut CollisionWorld,
+    sky_light: Vec3,
 ) {
     let t = std::time::Instant::now();
     let bsp_meshes = bsp.meshes();
@@ -40,38 +41,9 @@ pub fn spawn_world(
         idx: Vec<u32>,
         blend: bool,
     }
-    // Baked lighting: one image per lightmap page (sky A: indirect + sky light).
-    let pages: Vec<Handle<Image>> = bsp
-        .lightmaps()
-        .into_iter()
-        .map(|p| {
-            let mut data = p.sky_a;
-            if std::env::var_os("TF_LM_SUNVIS").is_some() {
-                for (px, b) in data.chunks_exact_mut(4).zip(p.sky_b.chunks_exact(4)) {
-                    px[0] = b[3];
-                    px[1] = b[3];
-                    px[2] = b[3];
-                }
-            }
-            for px in data.chunks_exact_mut(4) {
-                px[3] = 255;
-            }
-            let mut img = Image::new(
-                bevy::render::render_resource::Extent3d {
-                    width: p.width,
-                    height: p.height,
-                    depth_or_array_layers: 1,
-                },
-                bevy::render::render_resource::TextureDimension::D2,
-                data,
-                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-                bevy::asset::RenderAssetUsages::RENDER_WORLD,
-            );
-            img.sampler = bevy::image::ImageSampler::linear();
-            images.add(img)
-        })
-        .collect();
-    log::info!("{} lightmap pages", pages.len());
+    // Baked lighting: one image per lightmap page, made after the meshes are gathered (the
+    // sky term needs their normals).
+    let raw_pages = bsp.lightmaps();
     let mut batches: HashMap<(i16, bool, i16), Batch> = HashMap::new();
     let skip = mesh_flags::SKY | mesh_flags::SKY_2D | mesh_flags::SKIP | mesh_flags::TRIGGER;
     let mut tris = 0usize;
@@ -101,7 +73,7 @@ pub fn spawn_world(
             continue;
         }
         let blend = m.flags & mesh_flags::TRANSLUCENT != 0;
-        let page = if (sort.lightmap as usize) < pages.len() && sort.lightmap >= 0 {
+        let page = if (sort.lightmap as usize) < raw_pages.len() && sort.lightmap >= 0 {
             sort.lightmap
         } else {
             -1
@@ -136,6 +108,45 @@ pub fn spawn_world(
         tris += m.num_triangles as usize;
     }
     let n = batches.len();
+    let pages: Vec<Handle<Image>> = {
+        let tl = std::time::Instant::now();
+        let mut tris: Vec<Vec<[([f32; 2], Vec3); 3]>> = vec![Vec::new(); raw_pages.len()];
+        for ((_, _, page), b) in &batches {
+            if *page < 0 {
+                continue;
+            }
+            for tri in b.idx.chunks_exact(3) {
+                tris[*page as usize].push(std::array::from_fn(|k| {
+                    let i = tri[k] as usize;
+                    (b.lm[i], Vec3::from(b.nrm[i]))
+                }));
+            }
+        }
+        let jobs: Vec<(&tf_assets::bsp::LightmapPage, &Vec<[([f32; 2], Vec3); 3]>)> =
+            raw_pages.iter().zip(&tris).collect();
+        let baked = parallel_map(&jobs, |(p, t)| bake_lightmap(p, t, sky_light));
+        let pages = baked
+            .into_iter()
+            .zip(&raw_pages)
+            .map(|(data, p)| {
+                let mut img = Image::new(
+                    bevy::render::render_resource::Extent3d {
+                        width: p.width,
+                        height: p.height,
+                        depth_or_array_layers: 1,
+                    },
+                    bevy::render::render_resource::TextureDimension::D2,
+                    data.unwrap_or_else(|| vec![0; (p.width * p.height * 8) as usize]),
+                    bevy::render::render_resource::TextureFormat::Rgba16Float,
+                    bevy::asset::RenderAssetUsages::RENDER_WORLD,
+                );
+                img.sampler = bevy::image::ImageSampler::linear();
+                images.add(img)
+            })
+            .collect::<Vec<_>>();
+        log::info!("{} lightmap pages baked in {:?}", pages.len(), tl.elapsed());
+        pages
+    };
     // In key order, so the collision triangles (and with them the BVH, the nav grids' probes
     // and anything else that breaks ties by triangle order) are the same on every run: a
     // HashMap's order changes from run to run.
@@ -220,6 +231,11 @@ pub fn spawn_world(
             // Translucent world surfaces (dirt and grime overlays on the ground, decals, glass)
             // draw before every other translucent thing (see `convert::TransparentOrder`).
             commands.entity(e).insert(convert::TransparentOrder::WORLD);
+        }
+        // Translucent surfaces and effect cards (fog sheets, godrays) cast no sun shadow: the
+        // atmosphere cards hanging over Forwardbase Kodai shaded the whole play area.
+        if blend || crate::uber::info(gd, name).is_some() {
+            commands.entity(e).insert(bevy::light::NotShadowCaster);
         }
         commands.entity(root).add_child(e);
     }
@@ -333,6 +349,102 @@ struct PropModel {
     /// The convex collision hulls as triangles (`Model::collision_hull_tris`): what movement hits.
     hull: Vec<[[f32; 3]; 3]>,
     radius: f32,
+}
+
+/// One lightmap page in the game's linear light (RGBA16F), the indirect term the world shader
+/// (uber*_wld ps_5_0) adds up before the sun:
+/// - lightmap A (`lightmapTexture0`, created sRGB: materialsystem_dx11.dll 0x18006c360 passes
+///   flag 0x20000, which turns DXGI 28 into 28's _SRGB 29 at 0x18002847f) times its alpha
+///   scale `a * 3.984375 + 0.015625`, times `N . N_vertex` (1 here: no normal maps);
+/// - plus `c_skyColor` times the sky term of lightmap B (`lightmapTexture1`, linear UNORM):
+///   the sky visibility vector `rgb * 2.00787 - 1` (see `env::sky_term`), for the surface's
+///   normal. That needs each texel's normal, so the page's triangles are rasterized in
+///   lightmap space (vertex normals, interpolated); texels no triangle centre covers (chart
+///   borders, read by bilinear filtering) take their neighbours'.
+fn bake_lightmap(
+    p: &tf_assets::bsp::LightmapPage,
+    tris: &[[([f32; 2], Vec3); 3]],
+    sky: Vec3,
+) -> Vec<u8> {
+    let (w, h) = (p.width as usize, p.height as usize);
+    let mut nrm = vec![Vec3::ZERO; w * h];
+    for t in tris {
+        let pt = t.map(|(uv, _)| Vec2::new(uv[0] * w as f32 - 0.5, uv[1] * h as f32 - 0.5));
+        let area = (pt[1] - pt[0]).perp_dot(pt[2] - pt[0]);
+        if area.abs() < 1e-8 {
+            continue;
+        }
+        let lo = pt[0].min(pt[1]).min(pt[2]).floor().max(Vec2::ZERO);
+        let hi = pt[0]
+            .max(pt[1])
+            .max(pt[2])
+            .ceil()
+            .min(Vec2::new(w as f32 - 1.0, h as f32 - 1.0));
+        for y in lo.y as usize..=hi.y.max(lo.y) as usize {
+            for x in lo.x as usize..=hi.x.max(lo.x) as usize {
+                let c = Vec2::new(x as f32, y as f32);
+                let b = [
+                    (pt[2] - pt[1]).perp_dot(c - pt[1]) / area,
+                    (pt[0] - pt[2]).perp_dot(c - pt[2]) / area,
+                    (pt[1] - pt[0]).perp_dot(c - pt[0]) / area,
+                ];
+                if b.iter().any(|&v| v < -1e-4) {
+                    continue;
+                }
+                nrm[y * w + x] =
+                    (t[0].1 * b[0] + t[1].1 * b[1] + t[2].1 * b[2]).normalize_or_zero();
+            }
+        }
+    }
+    // Spread normals into the uncovered border texels.
+    for _ in 0..4 {
+        let prev = nrm.clone();
+        for y in 0..h {
+            for x in 0..w {
+                if prev[y * w + x] != Vec3::ZERO {
+                    continue;
+                }
+                let mut sum = Vec3::ZERO;
+                for (dx, dy) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+                    let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                    if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
+                        sum += prev[ny as usize * w + nx as usize];
+                    }
+                }
+                nrm[y * w + x] = sum.normalize_or_zero();
+            }
+        }
+    }
+    let srgb: [f32; 256] = std::array::from_fn(|i| {
+        let c = i as f32 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    });
+    let mut out = Vec::with_capacity(w * h * 8);
+    for i in 0..w * h {
+        let a = &p.sky_a[i * 4..i * 4 + 4];
+        let b = &p.sky_b[i * 4..i * 4 + 4];
+        let scale = a[3] as f32 / 255.0 * 3.984375 + 0.015625;
+        let indirect = Vec3::new(
+            srgb[a[0] as usize],
+            srgb[a[1] as usize],
+            srgb[a[2] as usize],
+        ) * scale;
+        let v = Vec3::new(b[0] as f32, b[1] as f32, b[2] as f32) / 255.0 * 2.007874 - 1.0;
+        let n = if nrm[i] == Vec3::ZERO {
+            Vec3::Z
+        } else {
+            nrm[i]
+        };
+        let c = indirect + sky * crate::env::sky_term(n, v);
+        for v in [c.x, c.y, c.z, 1.0] {
+            out.extend_from_slice(&crate::env::f32_to_half(v).to_le_bytes());
+        }
+    }
+    out
 }
 
 /// Map `f` over `items` on every core, keeping the order (None where a worker panicked).
