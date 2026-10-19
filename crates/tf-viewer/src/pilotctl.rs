@@ -83,6 +83,16 @@ const EMBARK_SECS: f32 = 2.77;
 /// back from straight up (times sqrt(gravityscale)), looking 80 degrees down at the Titan.
 const EJECT_ANIM: &str = "at_MP_eject_stand_start";
 const EJECT_SECS: f32 = 0.15 + 0.8;
+/// TitanEjectPlayer's other sequences (titanEjectAnimPlayer, then titanEjectAnimTitan once the
+/// Pilot is out): standing, with a nuclear payload, and crouched.
+const EJECT_ANIMS_STAND: (&str, &str) = (EJECT_ANIM, "at_MP_eject_stand_end");
+const EJECT_ANIMS_NUCLEAR: (&str, &str) = (
+    "at_nuclear_eject_standing",
+    "at_nuclear_eject_standing_idle",
+);
+const EJECT_ANIMS_CROUCH: (&str, &str) = ("at_MP_eject_crouch_idle", "at_MP_eject_crouch_start");
+/// A nuclear payload launches the Pilot 400 u/s faster.
+const NUCLEAR_EJECT_EXTRA_SPEED: f32 = 400.0;
 /// Nuclear Ejection (NuclearCoreExplosion, NuclearCoreExplosionChainReaction in sh_titan.gnut,
 /// payload 1): the core goes 1.3 s after the Pilot is out, then 10 blasts (plus a first one
 /// that only reaches Pilots) 0.1 s apart: 75 to Pilots and 2500 to Titans, full within 350,
@@ -284,6 +294,7 @@ fn eject_pilot(
     input: &mut PlayerInput,
     titan: &PlayerTitan,
     gravity_scale: f32,
+    extra_speed: f32,
 ) {
     let yaw = titan.state.yaw;
     let mut s = PilotState::new(titan.state.pos + SVec3::Z * 260.0, yaw);
@@ -292,7 +303,7 @@ fn eject_pilot(
         .sin()
         .abs()
         .fract();
-    s.vel = eject_launch(yaw, gravity_scale, roll);
+    s.vel = eject_launch(yaw, gravity_scale, roll, extra_speed);
     // player_look_angles.x = 80: looking down at the Titan.
     s.pitch = 80f32.to_radians();
     pilot.state = s;
@@ -302,8 +313,9 @@ fn eject_pilot(
 }
 
 /// Launch velocity for an ejecting pilot (TitanEjectPlayer).
-fn eject_launch(yaw: f32, gravity_scale: f32, roll: f32) -> SVec3 {
-    let speed = (EJECT_SPEED.0 + (EJECT_SPEED.1 - EJECT_SPEED.0) * roll) * gravity_scale.sqrt();
+fn eject_launch(yaw: f32, gravity_scale: f32, roll: f32, extra_speed: f32) -> SVec3 {
+    let speed = (EJECT_SPEED.0 + (EJECT_SPEED.1 - EJECT_SPEED.0) * roll + extra_speed)
+        * gravity_scale.sqrt();
     // Pitch 265 in Source angles: 95 degrees up, i.e. 5 degrees back past vertical.
     let up = 95f32.to_radians();
     SVec3::new(up.cos() * yaw.cos(), up.cos() * yaw.sin(), up.sin()) * speed
@@ -341,6 +353,12 @@ pub struct Titanfall {
     /// (twice as long), then seconds since the Pilot launched, the blasts so far and where.
     nuke_flare: Option<Entity>,
     nuke: Option<(f32, u32, Vec3)>,
+    /// The eject's sequences (EJECT_ANIMS_*), and the Titan's pose once the Pilot is out, held
+    /// until it goes.
+    eject_anims: (&'static str, &'static str),
+    ejected_pose: Option<&'static str>,
+    /// The drop point marker while the Titan is on its way down.
+    marker: Option<Entity>,
 }
 
 impl Titanfall {
@@ -592,25 +610,42 @@ pub fn control_transitions(
         if tf.nuke_flare.is_some() && tf.nuke.is_none() {
             tf.nuke = Some((0.0, 0, Vec3::from(titan.state.pos.to_array())));
         }
+        let ejecting = tf.eject.is_some();
         tf.eject = None;
         tf.self_destruct = false;
         if matches!(
             *control,
             Control::Titan | Control::Embark(_) | Control::Disembark(_)
         ) {
-            // Auto-eject: no time for the sequence.
             fpseq.stop();
-            eject_pilot(&mut commands, &mut pilot, &mut input, &titan, gravity_scale);
+            // In multiplayer the player is the Titan: destroyed with them inside, they die
+            // with it. Only an eject gets them out, Auto-Eject's at the doom
+            // (HandleAutoEject) or one already under way; an execution's victim never gets
+            // out. Climbing in or out, and BT in the campaign, put the Pilot out instead.
+            let executed =
+                crate::executions::BEING_EXECUTED.load(std::sync::atomic::Ordering::Relaxed);
+            let dies = executed
+                || (*control == Control::Titan && !ejecting && crate::gamedata::multiplayer());
             *pilot_health = PilotHealth::default();
-            // Executed: the Pilot goes down with the Titan.
-            if crate::executions::BEING_EXECUTED.load(std::sync::atomic::Ordering::Relaxed) {
+            if dies {
+                pilot.state = PilotState::new(titan.state.pos + SVec3::Z * 60.0, titan.state.yaw);
                 pilot_health.damage(1.0e9);
-                log::info!("executed: the Pilot dies with the Titan");
+                log::info!("the Pilot dies with the Titan");
+            } else {
+                // Auto-eject: no time for the sequence.
+                eject_pilot(
+                    &mut commands,
+                    &mut pilot,
+                    &mut input,
+                    &titan,
+                    gravity_scale,
+                    0.0,
+                );
+                log::info!("EJECT");
             }
             titan.override_anim = None;
             *control = Control::Pilot;
             shake.0 = 0.8;
-            log::info!("EJECT");
         }
     }
     // Nuclear Ejection: the core goes NUKE_DELAY after the Pilot is out, and the blasts follow.
@@ -653,6 +688,15 @@ pub fn control_transitions(
             done += 1;
         }
         tf.nuke = (done < NUKE_BLASTS).then_some((t, done, at));
+    }
+    // Out of the Titan: it holds the eject's last pose (titanEjectAnimTitan) until it goes.
+    if let Some(pose) = tf.ejected_pose {
+        if bt_health.dead_for.is_none() && *control == Control::Pilot {
+            titan.override_anim = Some((pose.into(), 0.0));
+        } else {
+            tf.ejected_pose = None;
+            titan.override_anim = None;
+        }
     }
     // An ejected Titan destroys itself (titanEjectExplosion) once the doomed protection allows
     // (a nuclear one when its core goes).
@@ -708,6 +752,7 @@ pub fn control_transitions(
         // TITAN_NUCLEAR_CORE_NUKE_FX on CHESTFOCUS and titan_nuclear_death_charge.
         let chest = Vec3::from(titan.state.pos.to_array()) + Vec3::Z * 150.0;
         crate::audio::event_at(&mut commands, "titan_nuclear_death_charge", chest);
+        crate::net::event(crate::net::EV_NUKE_CHARGE, chest, Vec3::Z);
         if let Some(f) = tf.nuke_flare.take() {
             commands.entity(f).despawn();
         }
@@ -730,6 +775,13 @@ pub fn control_transitions(
             *control = Control::Titan;
         }
         tf.eject = Some(0.0);
+        tf.eject_anims = if titan.state.crouched {
+            EJECT_ANIMS_CROUCH
+        } else if tf.nuke_flare.is_some() {
+            EJECT_ANIMS_NUCLEAR
+        } else {
+            EJECT_ANIMS_STAND
+        };
         tf.eject_presses = 0;
         tf.eject_window = 0.0;
         crate::audio::event_at(
@@ -971,6 +1023,22 @@ pub fn control_transitions(
                 // A fresh Titan.
                 bt_health.reset();
                 log::info!("titanfall at {ground:?}");
+                // ReplacementTitanSpawnpointThread: the drop point marker (control point 1 its
+                // colour) until the impact.
+                if let Some(m) = tf.marker.take() {
+                    commands.entity(m).despawn();
+                }
+                tf.marker = Some(
+                    commands
+                        .spawn((
+                            Transform::from_translation(to_bevy(Vec3::from(ground.to_array())))
+                                .looking_to(to_bevy(Vec3::X).normalize(), Vec3::Y),
+                            Visibility::default(),
+                            crate::pfx::PfxTrail::oriented("P_ar_titan_droppoint"),
+                            crate::pfx::PfxColor(Vec3::new(128.0, 188.0, 255.0)),
+                        ))
+                        .id(),
+                );
             }
         }
         Control::Embark(t) => {
@@ -1044,7 +1112,7 @@ pub fn control_transitions(
     // Manual eject: BT's eject sequence, then the pilot launches and BT self-destructs.
     if let Some(t) = tf.eject {
         let t = t + dt;
-        titan.override_anim = Some((EJECT_ANIM.into(), t));
+        titan.override_anim = Some((tf.eject_anims.0.into(), t));
         // With a nuclear payload the eject takes twice as long (TITAN_PLAYEREJECT_DURATION * 2).
         let len = if tf.nuke_flare.is_some() {
             EJECT_SECS + 0.8
@@ -1053,10 +1121,23 @@ pub fn control_transitions(
         };
         if t >= len {
             fpseq.stop();
-            if tf.nuke_flare.is_some() {
+            let nuclear = tf.nuke_flare.is_some();
+            if nuclear {
                 tf.nuke = Some((0.0, 0, Vec3::from(titan.state.pos.to_array())));
             }
-            eject_pilot(&mut commands, &mut pilot, &mut input, &titan, gravity_scale);
+            let extra = if nuclear {
+                NUCLEAR_EJECT_EXTRA_SPEED
+            } else {
+                0.0
+            };
+            eject_pilot(
+                &mut commands,
+                &mut pilot,
+                &mut input,
+                &titan,
+                gravity_scale,
+                extra,
+            );
             crate::audio::event_at(
                 &mut commands,
                 "Titan_Eject_PilotLaunch_3P",
@@ -1064,7 +1145,8 @@ pub fn control_transitions(
             );
             tf.eject = None;
             tf.self_destruct = true;
-            titan.override_anim = None;
+            tf.ejected_pose = Some(tf.eject_anims.1);
+            titan.override_anim = Some((tf.eject_anims.1.into(), 0.0));
             *control = Control::Pilot;
             shake.0 = 0.8;
             log::info!("EJECT");
@@ -1162,6 +1244,9 @@ pub fn control_transitions(
         if !tf.impacted && t >= impact {
             tf.impacted = true;
             shake.0 = 1.0;
+            if let Some(m) = tf.marker.take() {
+                commands.entity(m).despawn();
+            }
             if crate::kits::has("pas_bubbleshield") {
                 let at = Vec3::from(titan.state.pos.to_array());
                 domes.spawn(&mut commands, at, true);

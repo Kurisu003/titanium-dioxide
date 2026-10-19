@@ -427,6 +427,8 @@ pub struct Enemy {
     /// death sequence afterwards (the victim sequence already ends the body).
     pub held: bool,
     pub executed: bool,
+    /// A remote player's Titan with its Pilot inside (net.rs): an execution pulls them out.
+    pub piloted: bool,
     stand: Option<f32>,
     landed: bool,
     /// Prefix for the model's typed sound events ("ion", "scorch", ...).
@@ -622,6 +624,7 @@ impl Enemy {
             drop: None,
             held: false,
             executed: false,
+            piloted: false,
             stand: None,
             landed: false,
             sound_type: enemy_sound_type(&kit.name),

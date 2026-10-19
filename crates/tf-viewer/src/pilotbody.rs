@@ -51,6 +51,7 @@ pub fn spawn_pilot_body(
     *done = true;
     let mut sequences: Vec<&str> = BODY_SEQUENCES.to_vec();
     sequences.extend(crate::executions::PILOT_EXECUTIONS.iter().map(|e| e.0));
+    sequences.extend_from_slice(crate::executions::TITAN_EXEC_PILOT_SEQUENCES);
     let anchor = commands
         .spawn((Transform::IDENTITY, Visibility::Hidden))
         .id();
@@ -97,7 +98,10 @@ pub fn update_pilot_body(
     mut actors: Query<&mut Actor>,
 ) {
     let Some(mut body) = body else { return };
-    if exec.active() {
+    // An execution plays it (a pilot execution, or the Pilot pulled out of a Titan).
+    if exec.active()
+        || crate::executions::BODY_IN_EXECUTION.load(std::sync::atomic::Ordering::Relaxed)
+    {
         return;
     }
     let Ok(pilot) = pilots.single() else { return };

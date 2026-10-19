@@ -318,6 +318,33 @@ impl Actor {
         Some(tf)
     }
 
+    /// Model-space transform of a bone in `clip` alone at `cycle` (a full-pose clip).
+    pub fn clip_bone_model_transform(
+        &self,
+        clip: usize,
+        cycle: f32,
+        name: &str,
+    ) -> Option<Transform> {
+        let target = self
+            .bone_names
+            .iter()
+            .position(|b| b.eq_ignore_ascii_case(name))?;
+        let pose = self.clips.get(clip)?.sample(cycle.clamp(0.0, 0.9999));
+        let mut chain = vec![target];
+        while let Some(&b) = chain.last() {
+            match self.parents[b] {
+                p if p >= 0 => chain.push(p as usize),
+                _ => break,
+            }
+        }
+        let mut tf = Transform::IDENTITY;
+        for &b in chain.iter().rev() {
+            let (p, q) = pose.get(b).copied()?;
+            tf = tf * Transform::from_translation(p).with_rotation(q);
+        }
+        Some(tf)
+    }
+
     /// Add a clip to `layers` (full pose) or `additive` (delta), depending on how it's stored.
     pub fn push_clip(
         &self,

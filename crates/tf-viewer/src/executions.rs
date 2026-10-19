@@ -20,24 +20,85 @@ use crate::MainCamera;
 use bevy::prelude::*;
 use tf_sim::glam::Vec3 as SVec3;
 
-/// BT's executions: (campaign ref, attacker sequence, victim sequence).
-pub const BT_EXECUTIONS: [(&str, &str, &str); 3] = [
-    (
-        "execution_bt_flip",
-        "bt_synced_titan_execute_flip_takedown_A",
-        "titan_synced_bt_execute_flip_takedown_V",
-    ),
-    (
-        "execution_bt_kickshoot",
-        "bt_synced_titan_execute_kickshoot_A",
-        "titan_synced_bt_execute_kickshoot_V",
-    ),
-    (
-        "execution_bt_pilotrip",
-        "bt_synced_titan_execute_pilot_rip_A",
-        "titan_synced_bt_execute_pilot_rip_V",
-    ),
+/// A Titan execution from `datatable/titan_executions.rpak` (TitanVsTitan_3p): the attacker's
+/// sequence against a Titan with its Pilot inside and against an empty one, the victim's by its
+/// chassis (light, medium, heavy: victimAnim_lt/_md/_hv), the sequence of the Pilot pulled out
+/// of a player's Titan (victimAnim_pt_*, none for BT's), and the sounds (sound_1p for the
+/// attacker, sound_3p for everyone else).
+pub struct TitanExecutionDef {
+    pub attacker: &'static str,
+    pub attacker_vs_auto: &'static str,
+    pub victim: [&'static str; 3],
+    pub victim_pilot: &'static str,
+    pub sound_1p: &'static str,
+    pub sound_3p: &'static str,
+}
+
+/// Tone's execution (titan_atlas_tracker, the players' chassis), then BT's three (titan_buddy;
+/// the campaign picks one per level, `_sp_loadouts.nut` titanExecution).
+pub const TITAN_EXECUTIONS: [TitanExecutionDef; 4] = [
+    TitanExecutionDef {
+        attacker: "mt_execution_attacker_tone",
+        attacker_vs_auto: "mt_execution_attacker_tone_auto",
+        victim: [
+            "lt_execution_victim_tone",
+            "mt_execution_victim_tone",
+            "ht_execution_victim_tone",
+        ],
+        victim_pilot: "pt_execution_victim_tone",
+        sound_1p: "Atlas_1p_Sync_Melee",
+        sound_3p: "Atlas_3p_Sync_Melee",
+    },
+    TitanExecutionDef {
+        attacker: "bt_synced_titan_execute_flip_takedown_A",
+        attacker_vs_auto: "bt_synced_titan_execute_flip_takedown_A",
+        victim: ["titan_synced_bt_execute_flip_takedown_V"; 3],
+        victim_pilot: "",
+        sound_1p: "Atlas_1p_Sync_Melee",
+        sound_3p: "Atlas_3p_Sync_Melee",
+    },
+    TitanExecutionDef {
+        attacker: "bt_synced_titan_execute_kickshoot_A",
+        attacker_vs_auto: "bt_synced_titan_execute_kickshoot_A",
+        victim: ["titan_synced_bt_execute_kickshoot_V"; 3],
+        victim_pilot: "",
+        sound_1p: "Atlas_1p_Sync_Melee",
+        sound_3p: "Atlas_3p_Sync_Melee",
+    },
+    TitanExecutionDef {
+        attacker: "bt_synced_titan_execute_pilot_rip_A",
+        attacker_vs_auto: "bt_synced_titan_execute_pilot_rip_A",
+        victim: ["titan_synced_bt_execute_pilot_rip_V"; 3],
+        victim_pilot: "",
+        sound_1p: "Atlas_1p_Sync_Melee",
+        sound_3p: "Atlas_3p_Sync_Melee",
+    },
 ];
+
+/// The victim Pilot sequences, for the Pilot body.
+pub const TITAN_EXEC_PILOT_SEQUENCES: &[&str] = &["pt_execution_victim_tone"];
+
+/// Where in `pt_execution_victim_tone` its "pink_mist" event fires (MeleePinkMistFakeBody):
+/// the Pilot's body dissolves in a pink mist.
+const PINK_MIST_CYCLE: f32 = 0.815;
+
+/// The player's execution: Tone's on Tone's chassis, BT's campaign one on the buddy model.
+pub fn player_execution(map: &str) -> usize {
+    if crate::PLAYER_TITAN_MODEL.contains("buddy") {
+        1 + bt_execution_for_map(map)
+    } else {
+        0
+    }
+}
+
+/// The datatable's victim column (light, medium, heavy) for a Titan model.
+fn chassis_index(model: &str) -> usize {
+    match crate::net::chassis_name(model) {
+        "stryder" => 0,
+        "ogre" => 2,
+        _ => 1,
+    }
+}
 
 /// Pilot executions on humans that need no extra props: (attacker, victim).
 pub const PILOT_EXECUTIONS: [(&str, &str); 2] = [
@@ -66,9 +127,12 @@ const HUMAN_EXECUTION_RANGE: f32 = 115.0;
 const HUMAN_EXECUTION_ANGLE: f32 = 40.0;
 const HUMAN_EXECUTION_MIN_DOT: f32 = 0.2;
 
-/// Every Titan victim sequence, for the enemy actors' sequence lists.
-pub fn titan_victim_sequences() -> Vec<&'static str> {
-    BT_EXECUTIONS.iter().map(|e| e.2).collect()
+/// The victim sequences a Titan model plays, for the enemy actors' sequence lists.
+pub fn titan_victim_sequences(model: &str) -> Vec<&'static str> {
+    let c = chassis_index(model);
+    let mut v: Vec<&str> = TITAN_EXECUTIONS.iter().map(|e| e.victim[c]).collect();
+    v.dedup();
+    v
 }
 
 /// Grunt victim sequences.
@@ -155,14 +219,20 @@ impl PilotMeleeDef {
 pub struct Running {
     pub victim: Entity,
     pub t: f32,
-    /// The shared reference: the victim's position and the facing both sequences start from.
+    /// The shared reference: the victim's position and the facing both sequences start from
+    /// (for a Titan execution, the victim facing the attacker).
     origin: Vec3,
     yaw: f32,
     attacker: &'static str,
     victim_seq: &'static str,
+    /// The sequence of the Pilot pulled out of the victim Titan (played on the Pilot body), and
+    /// whether their body is gone in a pink mist.
+    pilot_seq: Option<&'static str>,
+    mist: bool,
     duration: f32,
     /// Where the attacker was, for the blend in.
     start: Vec3,
+    start_yaw: f32,
     prev_mode: CameraMode,
     /// BT's health when it started (the attacker is invulnerable).
     health: Option<crate::vitals::Vitals>,
@@ -174,78 +244,238 @@ pub struct TitanExecution(pub Option<Running>);
 #[derive(Resource, Default)]
 pub struct PilotExecution(pub Option<Running>);
 
-/// Another player is executing our Titan (net.rs EV_EXECUTION): seconds in, the shared
-/// reference (our spot and the facing), the sequence, and the view to go back to.
+/// Another player is executing our Titan (net.rs EV_EXECUTION).
+pub struct Executed {
+    t: f32,
+    /// The shared reference: our spot and the facing (toward the attacker).
+    origin: Vec3,
+    yaw: f32,
+    seq: &'static str,
+    pilot_seq: Option<&'static str>,
+    mist: bool,
+    sound: &'static str,
+    /// The view to go back to.
+    prev: CameraMode,
+}
+
 #[derive(Resource, Default)]
-pub struct BeingExecuted(Option<(f32, Vec3, f32, &'static str, CameraMode)>);
+pub struct BeingExecuted(pub Option<Executed>);
 
 /// While set, the Titan's death kills its Pilot instead of ejecting them (pilotctl.rs).
 pub static BEING_EXECUTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// While set, our Titan is executing another: no control until it is over (game.rs gate_input).
+pub static EXECUTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While set, a Titan execution is playing the victim Pilot's sequence on the Pilot body
+/// (pilotbody.rs leaves it alone).
+pub static BODY_IN_EXECUTION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 impl BeingExecuted {
+    /// `idx` is the attacker's TITAN_EXECUTIONS entry; our half is its victim sequence for our
+    /// chassis, and our Pilot is pulled out.
     pub fn start(&mut self, origin: Vec3, yaw: f32, idx: usize) {
-        let seq = BT_EXECUTIONS[idx.min(BT_EXECUTIONS.len() - 1)].2;
-        self.0 = Some((0.0, origin, yaw, seq, CameraMode::Cockpit));
+        let def = &TITAN_EXECUTIONS[idx.min(TITAN_EXECUTIONS.len() - 1)];
+        self.0 = Some(Executed {
+            t: 0.0,
+            origin,
+            yaw,
+            seq: def.victim[chassis_index(crate::PLAYER_TITAN_MODEL)],
+            pilot_seq: (!def.victim_pilot.is_empty()).then_some(def.victim_pilot),
+            mist: false,
+            sound: def.sound_3p,
+            prev: CameraMode::Cockpit,
+        });
         BEING_EXECUTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn active(&self) -> bool {
+        self.0.is_some()
     }
 }
 
-/// Our Titan's half of another player's execution: it rides the victim sequence from the shared
-/// reference, seen from outside, with no control (no moving, firing, disembarking or ejecting:
-/// the execution's victim can't get out), until the attacker's last blow destroys it, which
-/// kills the Pilot inside rather than ejecting them.
-#[allow(clippy::type_complexity)]
+/// A root-motion sequence's frame at `t` seconds, played from `start` (game space).
+fn moved(actor: &Actor, clip: usize, t: f32, start: Transform) -> Transform {
+    let m = actor.clips[clip].movement_at(t).unwrap_or([0.0; 4]);
+    start
+        * Transform::from_xyz(m[0], m[1], m[2])
+            .with_rotation(Quat::from_rotation_z(m[3].to_radians()))
+}
+
+/// The cycle of `clip` at `t` seconds.
+fn cycle_at(actor: &Actor, clip: usize, t: f32) -> f32 {
+    (t / actor.clips[clip].duration.max(1e-3)).min(0.999)
+}
+
+/// The reference the other halves play from: the victim's `ref` attachment (on its jx_c_start
+/// bone) as its sequence moves it (FirstPersonSequence's useAnimatedRefAttachment).
+fn animated_ref(actor: &Actor, clip: usize, t: f32, start: Transform) -> Transform {
+    let root = moved(actor, clip, t, start);
+    match actor.clip_bone_model_transform(clip, cycle_at(actor, clip, t), "jx_c_start") {
+        Some(b) => root * b,
+        None => root,
+    }
+}
+
+/// Where an actor playing `clip` stands at `t` so that its own jx_c_start meets `reference`.
+fn root_on_ref(actor: &Actor, clip: usize, t: f32, reference: Transform) -> (Vec3, f32) {
+    let root = match actor.clip_bone_model_transform(clip, cycle_at(actor, clip, t), "jx_c_start") {
+        Some(b) => reference.compute_affine() * b.compute_affine().inverse(),
+        None => reference.compute_affine(),
+    };
+    let (_, rot, pos) = root.to_scale_rotation_translation();
+    let fwd = rot * Vec3::X;
+    (pos, fwd.y.atan2(fwd.x))
+}
+
+/// Play one layer of `clip` at `t` on an actor, nothing else.
+fn play(actor: &mut Actor, clip: usize, t: f32) {
+    let cycle = cycle_at(actor, clip, t);
+    actor.autoplay = false;
+    actor.aim = None;
+    actor.additive.clear();
+    actor.overlays.clear();
+    actor.layers = vec![Layer {
+        clip,
+        cycle,
+        weight: 1.0,
+    }];
+}
+
+/// The victim Pilot's half (TitanVsTitan_3p's targetViewBody): the Pilot body plays its
+/// sequence on the victim Titan's animated reference, until the pink mist takes it.
+fn drive_victim_pilot(
+    commands: &mut Commands,
+    actors: &mut Query<&mut Actor>,
+    anchors: &mut Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
+    body: Option<&crate::pilotbody::PilotBody>,
+    seq: Option<&'static str>,
+    mist: &mut bool,
+    t: f32,
+    reference: Transform,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let (Some(body), Some(seq)) = (body, seq) else {
+        return;
+    };
+    let Ok(mut a) = actors.get_mut(body.actor) else {
+        return;
+    };
+    let Some(c) = a.clip(seq) else { return };
+    BODY_IN_EXECUTION.store(true, Relaxed);
+    let (pos, yaw) = root_on_ref(&a, c, t, reference);
+    play(&mut a, c, t);
+    let gone = *mist || cycle_at(&a, c, t) >= PINK_MIST_CYCLE;
+    if let Ok((mut tf, mut vis)) = anchors.get_mut(body.anchor) {
+        tf.translation = pos;
+        tf.rotation = Quat::from_rotation_z(yaw);
+        vis.set_if_neq(if gone {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+    }
+    if gone && !*mist {
+        *mist = true;
+        // ENTITY_DISSOLVE_PINKMIST: the body bursts.
+        let at = pos + Vec3::Z * 40.0;
+        crate::pfx::emit_named(commands, "death_pinkmist", to_bevy(at), Vec3::Y);
+        crate::audio::event_at(commands, "death_pinkmist", at);
+    }
+}
+
+/// The Pilot body back to its own systems.
+fn release_body(
+    anchors: &mut Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
+    body: Option<&crate::pilotbody::PilotBody>,
+) {
+    if !BODY_IN_EXECUTION.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if let Some((_, mut vis)) = body.and_then(|b| anchors.get_mut(b.anchor).ok()) {
+        vis.set_if_neq(Visibility::Hidden);
+    }
+}
+
+/// Our Titan's half of another player's execution: it rides the victim sequence from the
+/// shared reference with no control (no moving, firing, disembarking or ejecting: the
+/// execution's victim can't get out), seen from its own animated camera, while our Pilot is
+/// pulled out and crushed, until the attacker's last blow destroys it, which kills the Pilot
+/// inside rather than ejecting them.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn executed_victim(
+    mut commands: Commands,
     time: Res<Time>,
     mut run: ResMut<BeingExecuted>,
     mut mode: ResMut<CameraMode>,
     mut input: ResMut<PlayerInput>,
+    body: Option<Res<crate::pilotbody::PilotBody>>,
     mut titans: Query<(&mut PlayerTitan, &mut Transform, &TitanHealth), Without<Enemy>>,
+    mut anchors: Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
     mut actors: Query<&mut Actor>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
-    let Some((t, origin, yaw, seq, prev)) = run.0.as_mut() else {
+    let Some(r) = run.0.as_mut() else {
         return;
     };
     let Ok((mut titan, mut tf, health)) = titans.single_mut() else {
         return;
     };
-    if *t == 0.0 {
-        *prev = *mode;
+    if r.t == 0.0 {
+        r.prev = *mode;
         *mode = CameraMode::Third;
+        // EmitDifferentSoundsOnEntityForPlayerAndWorld: the victim hears the world's.
+        crate::audio::event_at(&mut commands, r.sound, r.origin);
     }
-    *t += time.delta_secs().min(0.1);
+    r.t += time.delta_secs().min(0.1);
+    let t = r.t;
     let (yaw_in, pitch_in) = (input.yaw, input.pitch);
     *input = PlayerInput {
         yaw: yaw_in,
         pitch: pitch_in,
         ..default()
     };
+    let start = Transform::from_translation(r.origin).with_rotation(Quat::from_rotation_z(r.yaw));
     let mut duration = 5.0;
+    let mut reference = None;
     if let Ok(mut a) = actors.get_mut(titan.actor) {
-        if let Some((c, pos, y, d)) = place(&a, seq, *t, *origin, *yaw) {
-            duration = d;
-            a.layers = vec![Layer {
-                clip: c,
-                cycle: (*t / d.max(1e-3)).min(0.999),
-                weight: 1.0,
-            }];
-            titan.state.pos = SVec3::new(pos.x, pos.y, pos.z);
+        if let Some(c) = a.clip(r.seq) {
+            duration = a.clips[c].duration;
+            let root = moved(&a, c, t, start);
+            reference = Some(animated_ref(&a, c, t, start));
+            play(&mut a, c, t);
+            let fwd = root.rotation * Vec3::X;
+            let yaw = fwd.y.atan2(fwd.x);
+            titan.state.pos =
+                SVec3::new(root.translation.x, root.translation.y, root.translation.z);
             titan.state.vel = SVec3::ZERO;
-            titan.state.yaw = y;
-            tf.translation = pos;
-            tf.rotation = Quat::from_rotation_z(y);
+            titan.state.yaw = yaw;
+            tf.translation = root.translation;
+            tf.rotation = Quat::from_rotation_z(yaw);
         }
     }
-    titan.override_anim = Some((seq.to_string(), (*t).min(duration)));
+    if let Some(reference) = reference {
+        drive_victim_pilot(
+            &mut commands,
+            &mut actors,
+            &mut anchors,
+            body.as_deref(),
+            r.pilot_seq,
+            &mut r.mist,
+            t,
+            reference,
+        );
+    }
+    titan.override_anim = Some((r.seq.to_string(), t.min(duration)));
     // Over once the Titan is gone (the attacker's blow), or a little after the sequence if
     // that never comes.
-    if health.dead_for.is_some() || *t > duration + 3.0 {
+    if health.dead_for.is_some() || t > duration + 3.0 {
         titan.override_anim = None;
-        *mode = *prev;
+        *mode = r.prev;
         run.0 = None;
         BEING_EXECUTED.store(false, Relaxed);
+        release_body(&mut anchors, body.as_deref());
     }
 }
 
@@ -270,7 +500,7 @@ fn place(
     Some((c, pos, yaw + m[3].to_radians(), cl.duration))
 }
 
-/// Drive one enemy through its victim sequence.
+/// Drive one enemy through its victim sequence; returns its animated reference.
 fn drive_victim(
     actors: &mut Query<&mut Actor>,
     e: &mut Enemy,
@@ -279,26 +509,31 @@ fn drive_victim(
     t: f32,
     origin: Vec3,
     yaw: f32,
-) {
+) -> Option<Transform> {
     let Ok(mut a) = actors.get_mut(e.actor) else {
-        return;
+        return None;
     };
-    let Some((c, pos, y, d)) = place(&a, seq, t, origin, yaw) else {
-        return;
-    };
-    a.autoplay = false;
-    a.aim = None;
-    a.layers = vec![Layer {
-        clip: c,
-        cycle: (t / d.max(1e-3)).min(0.999),
-        weight: 1.0,
-    }];
+    let c = a.clip(seq)?;
+    let start = Transform::from_translation(origin).with_rotation(Quat::from_rotation_z(yaw));
+    let root = moved(&a, c, t, start);
+    let reference = animated_ref(&a, c, t, start);
+    play(&mut a, c, t);
+    let fwd = root.rotation * Vec3::X;
+    let y = fwd.y.atan2(fwd.x);
+    let pos = root.translation;
     e.pos = pos;
     e.state.pos = SVec3::new(pos.x, pos.y, pos.z);
     e.state.vel = SVec3::ZERO;
     e.state.yaw = y;
     etf.translation = pos;
     etf.rotation = Quat::from_rotation_z(y);
+    Some(reference)
+}
+
+/// Shortest-way blend between two angles.
+fn lerp_angle(a: f32, b: f32, k: f32) -> f32 {
+    let d = (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    a + d * k
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -307,13 +542,17 @@ pub fn titan_execution(
     time: Res<Time>,
     control: Res<Control>,
     args: Res<crate::Args>,
+    kits: Res<crate::targets::EnemyKits>,
+    body: Option<Res<crate::pilotbody::PilotBody>>,
     mut mode: ResMut<CameraMode>,
     mut input: ResMut<PlayerInput>,
     mut exec: ResMut<TitanExecution>,
     mut titans: Query<(&mut PlayerTitan, &mut Transform, &mut TitanHealth), Without<Enemy>>,
     mut enemies: Query<(Entity, &mut Enemy, &mut Transform), Without<PlayerTitan>>,
+    mut anchors: Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
     mut actors: Query<&mut Actor>,
 ) {
+    use std::sync::atomic::Ordering::Relaxed;
     let dt = time.delta_secs().min(0.1);
     let Ok((mut titan, mut tf, mut health)) = titans.single_mut() else {
         return;
@@ -383,38 +622,44 @@ pub fn titan_execution(
         // The melee press starts the execution instead of a punch.
         input.melee = false;
         let (_, mut e, _) = enemies.get_mut(victim).unwrap();
-        let (_, a, v) = BT_EXECUTIONS[bt_execution_for_map(&args.map)];
-        let to = (e.pos - bt).truncate();
+        let idx = player_execution(&args.map);
+        let def = &TITAN_EXECUTIONS[idx];
+        let model = kits.0.get(e.kit).map(|k| k.model.as_str()).unwrap_or("");
+        let v = def.victim[chassis_index(model)];
+        // A player's Titan with its Pilot inside: they are pulled out (targetViewBody), and the
+        // attacker plays the version with them; an empty Titan gets attackerAnimVsAutoTitan.
+        let pilot_seq = (e.piloted && !def.victim_pilot.is_empty()).then_some(def.victim_pilot);
+        let a = if pilot_seq.is_some() {
+            def.attacker
+        } else {
+            def.attacker_vs_auto
+        };
+        // GetRefAnglesBetweenEnts: the victim turns to face the attacker.
+        let to = (bt - e.pos).truncate();
         let yaw = to.y.atan2(to.x);
         e.held = true;
         let duration = actors
-            .get(e.actor)
+            .get(titan.actor)
             .ok()
-            .and_then(|ac| ac.clip(v).map(|c| ac.clips[c].duration))
+            .and_then(|ac| ac.clip(a).map(|c| ac.clips[c].duration))
             .unwrap_or(5.0);
         log::info!(
-            "titan execution: {a} / {v} ({duration:.2}s); BT at {bt:.0}, victim at {:.0}",
+            "titan execution: {a} / {v}{} ({duration:.2}s); BT at {bt:.0}, victim at {:.0}",
+            if pilot_seq.is_some() {
+                " with its Pilot"
+            } else {
+                ""
+            },
             e.pos
         );
-        for (who, actor_e, clip) in [("attacker", titan.actor, a), ("victim", e.actor, v)] {
-            if let Some((ac, c)) = actors
-                .get(actor_e)
-                .ok()
-                .and_then(|ac| ac.clip(clip).map(|c| (ac, c)))
-            {
-                let cl = &ac.clips[c];
-                let p0 = cl.sample(0.0);
-                let p1 = cl.sample(0.999);
-                log::info!("  {who} {clip}: {} frames, root bone0 {:.0} -> {:.0}, bone1 {:.0} -> {:.0}, movement {:?} -> {:?}", cl.frames.len(), p0[0].0, p1[0].0, p0[1].0, p1[1].0, cl.movement.first(), cl.movement.last());
-            }
-        }
-        crate::audio::event_at(&mut commands, "Atlas_3p_Sync_Melee", e.pos);
+        // EmitDifferentSoundsOnEntityForPlayerAndWorld( sound_1p, sound_3p, attacker ).
+        crate::audio::event(&mut commands, def.sound_1p);
         // Another player's Titan: they play their half (executed_victim).
         if let Some(pid) = e.remote {
             crate::net::event(
                 crate::net::EV_EXECUTION,
                 e.pos,
-                Vec3::new(pid as f32, bt_execution_for_map(&args.map) as f32, yaw),
+                Vec3::new(pid as f32, idx as f32, yaw),
             );
         }
         exec.0 = Some(Running {
@@ -424,39 +669,27 @@ pub fn titan_execution(
             yaw,
             attacker: a,
             victim_seq: v,
+            pilot_seq,
+            mist: false,
             duration,
             start: bt,
+            start_yaw: titan.state.yaw,
             prev_mode: *mode,
             health: Some(health.v.clone()),
         });
         *mode = CameraMode::Third;
+        EXECUTING.store(true, Relaxed);
     }
     let Some(run) = exec.0.as_mut() else { return };
     run.t += dt;
     let t = run.t;
     input.melee = false;
-    // BT rides the attacker sequence's root motion from the shared reference.
-    if let Some((_, pos, yaw, _)) = actors
-        .get(titan.actor)
-        .ok()
-        .and_then(|a| place(a, run.attacker, t, run.origin, run.yaw))
-    {
-        let k = (t / BLEND_TIME).min(1.0);
-        let pos = run.start.lerp(pos, k);
-        titan.state.pos = SVec3::new(pos.x, pos.y, pos.z);
-        titan.state.vel = SVec3::ZERO;
-        titan.state.yaw = yaw;
-        tf.translation = pos;
-        tf.rotation = Quat::from_rotation_z(yaw);
-    }
-    titan.override_anim = Some((run.attacker.to_string(), t));
-    if let Some(v) = &run.health {
-        health.v = v.clone();
-    }
     let done = t >= run.duration;
-    match enemies.get_mut(run.victim) {
+    // The victim plays its sequence from the shared reference; its animated reference carries
+    // the attacker and the Pilot pulled out of it.
+    let reference = match enemies.get_mut(run.victim) {
         Ok((_, mut e, mut etf)) => {
-            drive_victim(
+            let r = drive_victim(
                 &mut actors,
                 &mut e,
                 &mut etf,
@@ -470,13 +703,50 @@ pub fn titan_execution(
                 e.executed = true;
                 e.damage_bypass(1e9);
             }
+            r
         }
-        Err(_) => {}
+        Err(_) => None,
+    }
+    .unwrap_or_else(|| {
+        Transform::from_translation(run.origin).with_rotation(Quat::from_rotation_z(run.yaw))
+    });
+    // BT stands where his own jx_c_start meets that reference, blending in from where he was.
+    if let Ok(mut a) = actors.get_mut(titan.actor) {
+        if let Some(c) = a.clip(run.attacker) {
+            let (pos, yaw) = root_on_ref(&a, c, t, reference);
+            play(&mut a, c, t);
+            let k = (t / BLEND_TIME).min(1.0);
+            let pos = run.start.lerp(pos, k);
+            let yaw = lerp_angle(run.start_yaw, yaw, k);
+            titan.state.pos = SVec3::new(pos.x, pos.y, pos.z);
+            titan.state.vel = SVec3::ZERO;
+            titan.state.yaw = yaw;
+            input.yaw = yaw;
+            input.pitch = 0.0;
+            tf.translation = pos;
+            tf.rotation = Quat::from_rotation_z(yaw);
+        }
+    }
+    drive_victim_pilot(
+        &mut commands,
+        &mut actors,
+        &mut anchors,
+        body.as_deref(),
+        run.pilot_seq,
+        &mut run.mist,
+        t,
+        reference,
+    );
+    titan.override_anim = Some((run.attacker.to_string(), t));
+    if let Some(v) = &run.health {
+        health.v = v.clone();
     }
     if done {
         titan.override_anim = None;
         *mode = run.prev_mode;
         exec.0 = None;
+        EXECUTING.store(false, Relaxed);
+        release_body(&mut anchors, body.as_deref());
     }
 }
 
@@ -631,8 +901,11 @@ pub fn pilot_execution(
                     yaw: e.state.yaw,
                     attacker: a,
                     victim_seq: v,
+                    pilot_seq: None,
+                    mist: false,
                     duration,
                     start: me,
+                    start_yaw: pilot.state.yaw,
                     prev_mode: CameraMode::Third,
                     health: None,
                 });
@@ -717,12 +990,14 @@ pub fn pilot_execution(
     }
 }
 
-/// During an execution the camera rides the attacker's animated camera bone, looking at the
-/// victim (the scripts' thirdPersonCameraAttachments).
-#[allow(clippy::type_complexity)]
+/// During an execution the camera rides the animated camera bone (jx_c_camera, the
+/// `vehicle_driver_eyes` attachment first in the datatable's camAttach) of the attacker, or
+/// of the victim's own Titan for the victim (thirdPersonCameraEntity = target).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn execution_camera(
     titan_exec: Res<TitanExecution>,
     pilot_exec: Res<PilotExecution>,
+    executed: Res<BeingExecuted>,
     body: Option<Res<crate::pilotbody::PilotBody>>,
     titans: Query<&PlayerTitan>,
     enemies: Query<&Enemy>,
@@ -732,13 +1007,17 @@ pub fn execution_camera(
     mut cams: Query<&mut Transform, With<MainCamera>>,
     mut hud_hidden: ResMut<crate::hud::HudHidden>,
 ) {
-    let executing = titan_exec.0.is_some() || pilot_exec.0.is_some();
+    let executing = titan_exec.0.is_some() || pilot_exec.0.is_some() || executed.active();
     if hud_hidden.0 != executing {
         hud_hidden.0 = executing;
     }
-    let (actor_entity, run, height) = if let Some(r) = titan_exec.0.as_ref() {
+    let (actor_entity, target, t) = if let Some(r) = titan_exec.0.as_ref() {
         let Ok(t) = titans.single() else { return };
-        (t.actor, r, 150.0)
+        let Ok(e) = enemies.get(r.victim) else { return };
+        (t.actor, e.pos + Vec3::Z * 150.0, r.t)
+    } else if let Some(r) = executed.0.as_ref() {
+        let Ok(t) = titans.single() else { return };
+        (t.actor, r.origin + Vec3::Z * 150.0, r.t)
     } else if let (Some(r), Some(b)) = (pilot_exec.0.as_ref(), body.as_ref()) {
         // Hide the first-person guns while the body plays the execution.
         for lo in &loadouts {
@@ -753,14 +1032,12 @@ pub fn execution_camera(
         if let Ok(mut v) = vis.get_mut(b.anchor) {
             v.set_if_neq(Visibility::Inherited);
         }
-        (b.actor, r, 50.0)
+        let Ok(e) = enemies.get(r.victim) else { return };
+        (b.actor, e.pos + Vec3::Z * 50.0, r.t)
     } else {
         return;
     };
     let Ok((actor, gt)) = actors.get(actor_entity) else {
-        return;
-    };
-    let Ok(e) = enemies.get(run.victim) else {
         return;
     };
     let Some(bone) = actor.bone_model_transform("jx_c_camera") else {
@@ -772,10 +1049,10 @@ pub fn execution_camera(
     // `CAMERA` attachment's local matrix on `jx_c_camera`, as the rodeo arms confirmed).
     let rot = gt.rotation() * bone.rotation;
     let (fwd, up) = (rot * Vec3::Z, rot * Vec3::Y);
-    let target = to_bevy(e.pos + Vec3::Z * height);
+    let target = to_bevy(target);
     log::debug!(
         "exec cam t={:.2}: bone {:.0} eye(bevy) {:.2} fwd {:.2} up {:.2} victim(bevy) {:.2}",
-        run.t,
+        t,
         bone.translation,
         eye,
         fwd,

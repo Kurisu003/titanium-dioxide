@@ -123,7 +123,7 @@ pub const EV_FIREWALL: u8 = 1;
 pub const EV_FLAME_CORE: u8 = 2;
 pub const EV_GRAVITY_STAR: u8 = 3;
 /// A Titan execution: `pos` the victim's spot (the shared reference), `dir` (victim player
-/// id, BT_EXECUTIONS index, facing).
+/// id, executions::TITAN_EXECUTIONS index, the victim's facing toward the attacker).
 pub const EV_EXECUTION: u8 = 4;
 /// A Titan's nuclear core going off (Nuclear Ejection), at `pos`: its sound and blast here
 /// (the damage comes from the owner's hits).
@@ -131,6 +131,12 @@ pub const EV_NUKE: u8 = 5;
 /// A Dome Shield going up at `pos` (Titanfall with pas_bubbleshield), and coming down.
 pub const EV_DOME: u8 = 6;
 pub const EV_DOME_END: u8 = 7;
+/// A nuclear eject starting at `pos` (the Titan's chest): TITAN_NUCLEAR_CORE_NUKE_FX and
+/// titan_nuclear_death_charge there until the core goes (EV_NUKE).
+pub const EV_NUKE_CHARGE: u8 = 8;
+/// The longest a remote nuclear eject's warning runs without its EV_NUKE (the eject's 1.75 s
+/// plus NuclearCoreExplosion's 1.3 s, and some slack).
+const NUKE_CHARGE_MAX_SECS: f32 = 4.0;
 
 /// `Msg::Wall` kinds.
 pub const WALL_PARTICLE: u8 = 0;
@@ -180,6 +186,17 @@ pub const TITAN_ANIMS: &[&str] = &[
     "at_mount_kneel_right_fast",
     "at_mount_kneel_above_fast",
     "at_mount_kneel_airgrab_fast",
+    // Tone's execution (titan_atlas_tracker in titan_executions.rpak).
+    "mt_execution_attacker_tone",
+    "mt_execution_attacker_tone_auto",
+    "mt_execution_victim_tone",
+    // TitanEjectPlayer's other eject sequences: crouched, and with a nuclear payload; the
+    // Titan's pose once the Pilot is out.
+    "at_MP_eject_crouch_idle",
+    "at_nuclear_eject_standing",
+    "at_nuclear_eject_standing_idle",
+    "at_MP_eject_stand_end",
+    "at_MP_eject_crouch_start",
 ];
 const RODEO_PANEL_ANIM: &str = "at_rodeo_ride_R_hijack_battery";
 
@@ -1782,7 +1799,11 @@ pub fn update(
                     e.activate(s.titan_pos, s.titan_yaw, kit);
                     e.cancel_arrival();
                 }
-                if s.titan_alive {
+                e.piloted = s.titan_alive && !s.on_foot && s.pilot_health > 0.0;
+                // Executed here: its owner hasn't taken the killing blow yet, so a snapshot
+                // or two still has it alive; don't bring it back.
+                let stale = e.executed && !e.alive() && e.dead_for < 3.0;
+                if s.titan_alive && !stale {
                     e.set_remote_pose(s.titan_pos, s.titan_vel, s.titan_yaw, s.titan_pitch);
                     e.sprint = s.titan_sprint;
                     // Its main gun's shots: the fire gesture, flash, sound and a harmless round
@@ -2403,6 +2424,7 @@ pub fn remote_states(
     mut pilots: Query<&mut PlayerPilot>,
     titans: Query<&PlayerTitan>,
     mut stars: Local<Vec<RemoteStar>>,
+    mut nuke_flares: Local<Vec<(Entity, Vec3, f32)>>,
     mut executed: ResMut<crate::executions::BeingExecuted>,
     mut domes: ResMut<crate::pilotctl::Domes>,
 ) {
@@ -2413,6 +2435,9 @@ pub fn remote_states(
     let dt = time.delta_secs();
     if !net.active() {
         stars.clear();
+        for (flare, ..) in nuke_flares.drain(..) {
+            commands.entity(flare).despawn();
+        }
         net.events_in.clear();
         return;
     }
@@ -2511,7 +2536,27 @@ pub fn remote_states(
                 log::info!("net: being executed (sequence {})", dir.y);
                 executed.start(pos, dir.z, dir.y as usize);
             }
+            EV_NUKE_CHARGE => {
+                crate::audio::event_at(&mut commands, "titan_nuclear_death_charge", pos);
+                let flare = commands
+                    .spawn((
+                        Transform::from_translation(crate::player::to_bevy(pos)),
+                        Visibility::default(),
+                        crate::pfx::PfxTrail::oriented("P_xo_nuke_warn_flare"),
+                    ))
+                    .id();
+                nuke_flares.push((flare, pos, 0.0));
+            }
             EV_NUKE => {
+                // The warning ends where the core goes.
+                if let Some(i) = nuke_flares
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1 .1.distance(pos).total_cmp(&b.1 .1.distance(pos)))
+                    .map(|(i, _)| i)
+                {
+                    commands.entity(nuke_flares.swap_remove(i).0).despawn();
+                }
                 crate::audio::event_at(&mut commands, "titan_nuclear_death_explode", pos);
                 crate::pfx::emit_named(
                     &mut commands,
@@ -2529,6 +2574,14 @@ pub fn remote_states(
             _ => {}
         }
     }
+    nuke_flares.retain_mut(|(flare, _, t)| {
+        *t += dt;
+        if *t > NUKE_CHARGE_MAX_SECS {
+            commands.entity(*flare).despawn();
+            return false;
+        }
+        true
+    });
     stars.retain_mut(|star| {
         star.1 += dt;
         if star.1 >= GRAV_PULL_DELAY {

@@ -733,7 +733,7 @@ pub fn enemy_sequences(kit: &targets::EnemyKit) -> Vec<&'static str> {
         if kit.model.contains("titan_medium") {
             seq_list.push("at_rodeo_ride_R_hijack_battery");
         }
-        seq_list.extend(executions::titan_victim_sequences());
+        seq_list.extend(executions::titan_victim_sequences(&kit.model));
     }
     seq_list
 }
@@ -1500,7 +1500,10 @@ fn setup(
             "bt_synced_titan_execute_flip_takedown_A",
             "bt_synced_titan_execute_kickshoot_A",
             "bt_synced_titan_execute_pilot_rip_A",
+            "mt_execution_attacker_tone",
+            "mt_execution_attacker_tone_auto",
             // Executed by another player (executions::executed_victim).
+            "mt_execution_victim_tone",
             "titan_synced_bt_execute_flip_takedown_V",
             "titan_synced_bt_execute_kickshoot_V",
             "titan_synced_bt_execute_pilot_rip_V",

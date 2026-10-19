@@ -4690,6 +4690,13 @@ fn decode_material(
         .trim_end_matches(".psd");
     let mut v = vtf::decode(&read(&format!("materials/{tex}.vtf"))?, 512).ok()?;
     let flag = |k: &str| kv.get(k).is_some_and(|v| v.trim() != "0");
+    // `$texAlphaFromColor`: the texture is a grey shape without alpha (the soft glows); its
+    // brightness is the alpha.
+    if flag("$texalphafromcolor") {
+        for px in v.rgba.chunks_exact_mut(4) {
+            px[3] = px[0].max(px[1]).max(px[2]);
+        }
+    }
     if let Some(r) = kv
         .get("$ramptexture")
         .filter(|_| flag("$texcolorfromalpha"))
