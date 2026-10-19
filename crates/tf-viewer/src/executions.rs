@@ -174,6 +174,81 @@ pub struct TitanExecution(pub Option<Running>);
 #[derive(Resource, Default)]
 pub struct PilotExecution(pub Option<Running>);
 
+/// Another player is executing our Titan (net.rs EV_EXECUTION): seconds in, the shared
+/// reference (our spot and the facing), the sequence, and the view to go back to.
+#[derive(Resource, Default)]
+pub struct BeingExecuted(Option<(f32, Vec3, f32, &'static str, CameraMode)>);
+
+/// While set, the Titan's death kills its Pilot instead of ejecting them (pilotctl.rs).
+pub static BEING_EXECUTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+impl BeingExecuted {
+    pub fn start(&mut self, origin: Vec3, yaw: f32, idx: usize) {
+        let seq = BT_EXECUTIONS[idx.min(BT_EXECUTIONS.len() - 1)].2;
+        self.0 = Some((0.0, origin, yaw, seq, CameraMode::Cockpit));
+        BEING_EXECUTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Our Titan's half of another player's execution: it rides the victim sequence from the shared
+/// reference, seen from outside, with no control (no moving, firing, disembarking or ejecting:
+/// the execution's victim can't get out), until the attacker's last blow destroys it, which
+/// kills the Pilot inside rather than ejecting them.
+#[allow(clippy::type_complexity)]
+pub fn executed_victim(
+    time: Res<Time>,
+    mut run: ResMut<BeingExecuted>,
+    mut mode: ResMut<CameraMode>,
+    mut input: ResMut<PlayerInput>,
+    mut titans: Query<(&mut PlayerTitan, &mut Transform, &TitanHealth), Without<Enemy>>,
+    mut actors: Query<&mut Actor>,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let Some((t, origin, yaw, seq, prev)) = run.0.as_mut() else {
+        return;
+    };
+    let Ok((mut titan, mut tf, health)) = titans.single_mut() else {
+        return;
+    };
+    if *t == 0.0 {
+        *prev = *mode;
+        *mode = CameraMode::Third;
+    }
+    *t += time.delta_secs().min(0.1);
+    let (yaw_in, pitch_in) = (input.yaw, input.pitch);
+    *input = PlayerInput {
+        yaw: yaw_in,
+        pitch: pitch_in,
+        ..default()
+    };
+    let mut duration = 5.0;
+    if let Ok(mut a) = actors.get_mut(titan.actor) {
+        if let Some((c, pos, y, d)) = place(&a, seq, *t, *origin, *yaw) {
+            duration = d;
+            a.layers = vec![Layer {
+                clip: c,
+                cycle: (*t / d.max(1e-3)).min(0.999),
+                weight: 1.0,
+            }];
+            titan.state.pos = SVec3::new(pos.x, pos.y, pos.z);
+            titan.state.vel = SVec3::ZERO;
+            titan.state.yaw = y;
+            tf.translation = pos;
+            tf.rotation = Quat::from_rotation_z(y);
+        }
+    }
+    titan.override_anim = Some((seq.to_string(), (*t).min(duration)));
+    // Over once the Titan is gone (the attacker's blow), or a little after the sequence if
+    // that never comes.
+    if health.dead_for.is_some() || *t > duration + 3.0 {
+        titan.override_anim = None;
+        *mode = *prev;
+        run.0 = None;
+        BEING_EXECUTED.store(false, Relaxed);
+    }
+}
+
 impl PilotExecution {
     pub fn active(&self) -> bool {
         self.0.is_some()
@@ -334,6 +409,14 @@ pub fn titan_execution(
             }
         }
         crate::audio::event_at(&mut commands, "Atlas_3p_Sync_Melee", e.pos);
+        // Another player's Titan: they play their half (executed_victim).
+        if let Some(pid) = e.remote {
+            crate::net::event(
+                crate::net::EV_EXECUTION,
+                e.pos,
+                Vec3::new(pid as f32, bt_execution_for_map(&args.map) as f32, yaw),
+            );
+        }
         exec.0 = Some(Running {
             victim,
             t: 0.0,

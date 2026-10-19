@@ -121,6 +121,15 @@ const MELEE_DAMAGE: f32 = 500.0;
 const MELEE_HIT_TIME: f32 = 0.25;
 pub const MELEE_ANIM: f32 = 0.8;
 const MELEE_RECOVERY: f32 = 1.0;
+/// Ronin's sword (melee_titan_sword, MP): melee_attack_animtime 0.9, the blow at the first
+/// AE_MELEE_ATTACK of sword_melee_seq1 (0.481 of the swing), melee_raise_recovery_animtime 0.5;
+/// with Sword Core's super_charged mod, melee_angle 45.
+pub const SWORD_ANIM: f32 = 0.9;
+const SWORD_HIT_TIME: f32 = 0.481 * SWORD_ANIM;
+const SWORD_RECOVERY: f32 = 0.5;
+const SWORD_CORE_ANGLE: f32 = 45.0;
+/// Sword Core (OnAbilityStart_Shift_Core): dash power full, and it refills 6.5 times as fast.
+const SWORD_CORE_POWER_REGEN_SCALE: f32 = 6.5;
 
 #[derive(Component, Clone)]
 pub struct TitanHealth {
@@ -308,6 +317,8 @@ pub struct Melee {
     pub t: Option<f32>,
     hit_done: bool,
     pub cooldown: f32,
+    /// Sword Core was running last frame.
+    sword_core: bool,
 }
 
 fn rand(state: &mut u64) -> f32 {
@@ -800,18 +811,44 @@ pub fn player_combat(
         }
     }
 
-    // --- Titan punch ---
+    // --- Titan punch (Ronin: the sword) ---
+    let sword = kit_state.as_ref().is_some_and(|k| k.sword);
+    let sword_core = kit_state.as_ref().is_some_and(|k| k.sword_core);
+    if sword_core {
+        if !melee.sword_core {
+            titan.state.power = 100.0;
+        }
+        let extra = settings.0.power_regen * (SWORD_CORE_POWER_REGEN_SCALE - 1.0) * dt;
+        titan.state.power = (titan.state.power + extra).min(100.0);
+    }
+    melee.sword_core = sword_core;
+    let (hit_time, anim, recovery, angle) = if sword {
+        (
+            SWORD_HIT_TIME,
+            SWORD_ANIM,
+            SWORD_RECOVERY,
+            if sword_core {
+                SWORD_CORE_ANGLE
+            } else {
+                MELEE_ANGLE
+            },
+        )
+    } else {
+        (MELEE_HIT_TIME, MELEE_ANIM, MELEE_RECOVERY, MELEE_ANGLE)
+    };
     melee.cooldown = (melee.cooldown - dt).max(0.0);
-    if input.melee && melee.t.is_none() && melee.cooldown <= 0.0 && !frozen {
+    // Sword Core: the fire button swings the sword (attack_button_presses_melee).
+    let swing = input.melee || (sword_core && input.fire);
+    if swing && melee.t.is_none() && melee.cooldown <= 0.0 && !frozen {
         melee.t = Some(0.0);
         melee.hit_done = false;
         audio::cue(&mut commands, Cue::BtPunch, None);
-        melee.cooldown = MELEE_ANIM + MELEE_RECOVERY;
+        melee.cooldown = anim + recovery;
     }
     input.melee = false;
     if let Some(t) = melee.t {
         let t = t + dt;
-        if t >= MELEE_HIT_TIME && !melee.hit_done {
+        if t >= hit_time && !melee.hit_done {
             melee.hit_done = true;
             let fwd = Vec3::new(s.yaw.cos(), s.yaw.sin(), 0.0);
             for mut d in &mut dummies {
@@ -830,7 +867,7 @@ pub fn player_combat(
                     .as_ref()
                     .map(|k| (k.melee_range, k.melee_damage))
                     .unwrap_or((MELEE_RANGE, MELEE_DAMAGE));
-                if dist < range && ang < MELEE_ANGLE {
+                if dist < range && ang < angle {
                     let hit = d.damage_unblockable(damage, false);
                     if let Some(c) = core.as_mut() {
                         c.credit_inflicted(hit);
@@ -844,6 +881,6 @@ pub fn player_combat(
                 }
             }
         }
-        melee.t = if t >= MELEE_ANIM { None } else { Some(t) };
+        melee.t = if t >= anim { None } else { Some(t) };
     }
 }

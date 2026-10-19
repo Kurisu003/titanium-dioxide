@@ -25,6 +25,19 @@ use crate::weapons::Weapon;
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+/// Ronin's melee weapon: its sword viewmodel swings for each melee (sword_melee_seq1) and,
+/// through Sword Core, stays in hand.
+const SWORD_MELEE: &str = "melee_titan_sword";
+
+/// The kit's offhand scripts: its four slots, and Ronin's sword.
+fn offhand_scripts(kit: &crate::titankit::ActiveKit) -> Vec<&'static str> {
+    let mut v = crate::titankit::kit_scripts(kit).to_vec();
+    if kit.def == crate::titankit::DefKind::SwordBlock {
+        v.push(SWORD_MELEE);
+    }
+    v
+}
+
 /// An offhand weapon's first-person data from its script.
 #[derive(Clone, Debug)]
 struct OffhandDef {
@@ -67,6 +80,8 @@ pub struct Offhands {
     /// Last frame's ordnance and defensive cooldowns, utility charges and whether the core
     /// was building, for spotting a use.
     prev: Option<(f32, f32, u32, bool, bool)>,
+    /// A melee was under way last frame.
+    prev_melee: bool,
 }
 
 fn load_def(gd: &crate::gamedata::GameData, script: &str) -> Option<OffhandDef> {
@@ -141,7 +156,7 @@ pub fn spawn_offhand_viewmodels(
     if titans.single().is_err() {
         return;
     }
-    let scripts = crate::titankit::kit_scripts(&kit);
+    let scripts = offhand_scripts(&kit);
     let Some(root) = root else { return };
     let o = &mut *offhands;
     for script in scripts {
@@ -171,7 +186,13 @@ pub fn spawn_offhand_viewmodels(
         commands.entity(root.0).add_child(anchor);
         let spec = ActorSpec {
             path: &def.path,
-            sequences: &["?draw_seq", "?charge_seq", "?attack_seq", "?holster_seq"],
+            sequences: &[
+                "?draw_seq",
+                "?charge_seq",
+                "?attack_seq",
+                "?holster_seq",
+                "?sword_melee_seq1",
+            ],
             grids: &[],
             body: &[],
         };
@@ -247,6 +268,7 @@ pub fn offhand_viewmodels(
             &crate::abilities::Ordnance,
             &crate::abilities::TitanCore,
             &crate::titankit::KitState,
+            &crate::combat::Melee,
         ),
         With<PlayerTitan>,
     >,
@@ -255,10 +277,10 @@ pub fn offhand_viewmodels(
     merges: Query<(Entity, &BoneMergeTo, Has<BoneMergeSplit>)>,
 ) {
     use crate::titankit::{DefKind, OrdKind};
-    let Ok((mut w, vortex, ord, core, st)) = titans.single_mut() else {
+    let Ok((mut w, vortex, ord, core, st, melee)) = titans.single_mut() else {
         return;
     };
-    let scripts = crate::titankit::kit_scripts(&kit);
+    let scripts = offhand_scripts(&kit);
     if root.is_none() {
         return;
     }
@@ -288,11 +310,16 @@ pub fn offhand_viewmodels(
         kit.core,
         crate::titankit::CoreKind::Laser | crate::titankit::CoreKind::Salvo
     ) && matches!(core.state, crate::abilities::CoreState::Active(_));
+    // The sword: in hand through Sword Core, swung for each melee.
+    let swinging = melee.t.is_some();
+    let swung = swinging && !o.prev_melee;
+    o.prev_melee = swinging;
     let signals = [
         (ord_held, ord_used, false),
         (def_held, st.def_cd > p_def + 1e-3, false),
         (false, st.util_charges < p_util, false),
         (core_charging, p_build && !building, core_firing),
+        (st.sword_core, swung, false),
     ];
 
     // The gun viewmodel's eye frame: its anchor plus its camera bone.
@@ -328,12 +355,49 @@ pub fn offhand_viewmodels(
             actor.clip("attack_seq"),
             actor.clip("holster_seq"),
         );
+        let is_sword = inst.script == SWORD_MELEE;
+        let (charge, attack) = if is_sword {
+            (None, actor.clip("sword_melee_seq1"))
+        } else {
+            (charge, attack)
+        };
         let dur = |c: Option<usize>| c.map(|c| actor.clips[c].duration).unwrap_or(0.0);
         let delta = |c: Option<usize>| c.is_some_and(|c| actor.clips[c].delta);
         let (deploy, holster_time) = (inst.def.deploy.max(0.05), inst.def.holster.max(0.05));
         let was_held = inst.phase == Phase::Hold
             || (matches!(inst.phase, Phase::Draw | Phase::PrimaryHolster) && held);
-        if used
+        if is_sword {
+            // Each swing starts at once (the melee doesn't wait for a draw); Sword Core draws it
+            // and holds it between swings; the gun comes back after the last.
+            if used {
+                inst.phase = Phase::Attack;
+                inst.t = 0.0;
+            } else if held && matches!(inst.phase, Phase::Hidden | Phase::Holster) {
+                inst.phase = Phase::Draw;
+                inst.t = 0.0;
+            }
+            inst.t += dt;
+            match inst.phase {
+                Phase::Draw if inst.t >= deploy => {
+                    inst.phase = Phase::Hold;
+                    inst.t = 0.0;
+                }
+                Phase::Hold if !held => {
+                    inst.phase = Phase::Holster;
+                    inst.t = 0.0;
+                }
+                Phase::Attack if inst.t >= dur(attack).min(crate::combat::SWORD_ANIM) => {
+                    inst.phase = if held { Phase::Hold } else { Phase::Hidden };
+                    inst.t = 0.0;
+                    redeploy |= !held;
+                }
+                Phase::Holster if inst.t >= holster_time => {
+                    inst.phase = Phase::Hidden;
+                    redeploy = true;
+                }
+                _ => {}
+            }
+        } else if used
             || (held
                 && !was_held
                 && matches!(inst.phase, Phase::Hidden | Phase::Attack | Phase::Holster))
@@ -346,9 +410,12 @@ pub fn offhand_viewmodels(
             };
             inst.t = 0.0;
         }
-        inst.t += dt;
         let gun_holster = w.def.holster_time.max(0.05);
+        if !is_sword {
+            inst.t += dt;
+        }
         match inst.phase {
+            _ if is_sword => {}
             Phase::PrimaryHolster if inst.t >= gun_holster => {
                 inst.phase = Phase::Draw;
                 inst.t = 0.0;
@@ -357,8 +424,14 @@ pub fn offhand_viewmodels(
                 inst.phase = if held { Phase::Hold } else { Phase::Attack };
                 inst.t = 0.0;
             }
+            // Letting go of the Sword Block lowers the sword (an offhand held with no fire of
+            // its own: charge_time -1); the others fire on release.
             Phase::Hold if !held => {
-                inst.phase = Phase::Attack;
+                inst.phase = if inst.script == "mp_titanability_basic_block" {
+                    Phase::Holster
+                } else {
+                    Phase::Attack
+                };
                 inst.t = 0.0;
             }
             Phase::Attack if inst.t >= dur(attack) && !firing => {

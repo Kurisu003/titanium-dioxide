@@ -117,6 +117,67 @@ pub fn cloak_viewmodel(
     }
 }
 
+/// A remote Pilot body mesh drawn cloaked, with its own material to put back.
+#[derive(Component)]
+pub struct RemoteCloaked(Handle<StandardMaterial>);
+
+/// Another player's Cloak (net.rs sets `Enemy::cloaked` from their snapshot): their body's
+/// meshes draw with the same cloak material as the local viewmodel, the picture behind
+/// showing through.
+#[allow(clippy::type_complexity)]
+pub fn cloak_remote(
+    mut commands: Commands,
+    mut mats: ResMut<Assets<CloakMaterial>>,
+    mut shared: Local<Option<Handle<CloakMaterial>>>,
+    enemies: Query<&crate::targets::Enemy>,
+    children: Query<&Children>,
+    plain: Query<&MeshMaterial3d<StandardMaterial>, Without<RemoteCloaked>>,
+    cloaked: Query<&RemoteCloaked>,
+) {
+    for e in &enemies {
+        if e.remote.is_none() || !e.infantry {
+            continue;
+        }
+        if e.cloaked {
+            let mat = shared
+                .get_or_insert_with(|| {
+                    mats.add(CloakMaterial {
+                        base: StandardMaterial {
+                            specular_transmission: 1.0,
+                            unlit: true,
+                            alpha_mode: AlphaMode::Opaque,
+                            ..default()
+                        },
+                        extension: CloakExt {
+                            params: CloakParams {
+                                params: tuned(Vec4::new(0.012, 0.25, 1.2, 0.02)),
+                                tints: Vec4::new(0.35 / 1.5, 0.5 / 1.5, 0.65 / 1.5, 0.6),
+                            },
+                        },
+                    })
+                })
+                .clone();
+            for c in children.iter_descendants(e.actor) {
+                if let Ok(m) = plain.get(c) {
+                    commands
+                        .entity(c)
+                        .remove::<MeshMaterial3d<StandardMaterial>>()
+                        .insert((MeshMaterial3d(mat.clone()), RemoteCloaked(m.0.clone())));
+                }
+            }
+        } else {
+            for c in children.iter_descendants(e.actor) {
+                if let Ok(rc) = cloaked.get(c) {
+                    commands
+                        .entity(c)
+                        .remove::<(MeshMaterial3d<CloakMaterial>, RemoteCloaked)>()
+                        .insert(MeshMaterial3d(rc.0.clone()));
+                }
+            }
+        }
+    }
+}
+
 /// Phase Shift's first-person look, as sh_phase_shift.gnut plays it: the game's colour
 /// correction (`materials/correction/mp_ability_shifter.raw`) over the picture while phased,
 /// `P_phase_shift_screen` running and `P_phase_shift_screen_start` when it starts and ends, and

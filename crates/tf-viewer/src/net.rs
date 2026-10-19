@@ -97,7 +97,32 @@ pub struct PlayerSnap {
     pub pilot_shots: u16,
     pub pilot_gun: u8,
     pub titan_sprint: bool,
+    /// What the player has up (F_*).
+    pub flags: u16,
 }
+
+/// `PlayerSnap::flags`: the Titan's Vortex, Thermal Shield, Gun Shield or Phase Dash, the
+/// Pilot's Cloak or Phase Shift.
+pub const F_VORTEX: u16 = 1;
+pub const F_HEAT: u16 = 2;
+pub const F_GUN_SHIELD: u16 = 4;
+pub const F_TITAN_PHASE: u16 = 8;
+pub const F_CLOAK: u16 = 16;
+pub const F_PHASE: u16 = 32;
+
+/// `Msg::Event` kinds: a Titan's Arc Wave, Firewall or Flame Core (from its feet, along its
+/// facing), a Gravity Star popping (at `pos`).
+pub const EV_ARC_WAVE: u8 = 0;
+pub const EV_FIREWALL: u8 = 1;
+pub const EV_FLAME_CORE: u8 = 2;
+pub const EV_GRAVITY_STAR: u8 = 3;
+/// A Titan execution: `pos` the victim's spot (the shared reference), `dir` (victim player
+/// id, BT_EXECUTIONS index, facing).
+pub const EV_EXECUTION: u8 = 4;
+
+/// `Msg::Wall` kinds.
+pub const WALL_PARTICLE: u8 = 0;
+pub const WALL_AWALL: u8 = 1;
 
 /// `rodeo_target` bit for a pooled AI Titan.
 pub const POOL_TARGET: u32 = 0x8000_0000;
@@ -124,6 +149,9 @@ pub const TITAN_ANIMS: &[&str] = &[
     "at_hotdrop_quickstand",
     "at_rodeo_ride_R_hijack_battery",
     "at_mount_kneel_airgrab",
+    "bt_synced_titan_execute_flip_takedown_A",
+    "bt_synced_titan_execute_kickshoot_A",
+    "bt_synced_titan_execute_pilot_rip_A",
 ];
 const RODEO_PANEL_ANIM: &str = "at_rodeo_ride_R_hijack_battery";
 
@@ -208,13 +236,23 @@ pub enum Msg {
         dmg: f32,
         from: Vec3,
     },
-    /// A player put up a Particle Wall (relayed by the host): where, facing, life and health.
+    /// A player put up a Particle Wall or an A-Wall (`kind`, relayed by the host): where,
+    /// facing, life and health.
     Wall {
         id: u32,
+        kind: u8,
         origin: Vec3,
         normal: Vec3,
         life: f32,
         hp: f32,
+    },
+    /// A player's one-off ability (EV_*, relayed by the host): drawn by the others, and an
+    /// opponent's Gravity Star pulls them in.
+    Event {
+        id: u32,
+        kind: u8,
+        pos: Vec3,
+        dir: Vec3,
     },
 }
 
@@ -328,6 +366,7 @@ impl PlayerSnap {
         w.u16(self.pilot_shots);
         w.u8(self.pilot_gun);
         w.b(self.titan_sprint);
+        w.u16(self.flags);
     }
     fn read(r: &mut R) -> Option<Self> {
         Some(Self {
@@ -359,6 +398,7 @@ impl PlayerSnap {
             pilot_shots: r.u16()?,
             pilot_gun: r.u8()?,
             titan_sprint: r.b()?,
+            flags: r.u16()?,
         })
     }
 }
@@ -489,6 +529,7 @@ impl Msg {
             }
             Msg::Wall {
                 id,
+                kind,
                 origin,
                 normal,
                 life,
@@ -496,10 +537,18 @@ impl Msg {
             } => {
                 w.u8(12);
                 w.u32(*id);
+                w.u8(*kind);
                 w.v3(*origin);
                 w.v3(*normal);
                 w.f(*life);
                 w.f(*hp);
+            }
+            Msg::Event { id, kind, pos, dir } => {
+                w.u8(13);
+                w.u32(*id);
+                w.u8(*kind);
+                w.v3(*pos);
+                w.v3(*dir);
             }
         }
         w.0
@@ -574,10 +623,17 @@ impl Msg {
             },
             12 => Msg::Wall {
                 id: r.u32()?,
+                kind: r.u8()?,
                 origin: r.v3()?,
                 normal: r.v3()?,
                 life: r.f()?,
                 hp: r.f()?,
+            },
+            13 => Msg::Event {
+                id: r.u32()?,
+                kind: r.u8()?,
+                pos: r.v3()?,
+                dir: r.v3()?,
             },
             _ => return None,
         })
@@ -741,13 +797,28 @@ pub struct Net {
     pub map: String,
     /// The host plays another map: restart on it and join this address again (ui.rs).
     pub relaunch: Option<(String, String)>,
+    /// Other players' one-off abilities received this frame (player, EV_*, position,
+    /// direction), for `remote_states`.
+    pub events_in: Vec<(u32, u8, Vec3, Vec3)>,
 }
 
 /// Enemy shots the host fired this frame (targets.rs pushes, `update` sends).
 pub static SHOTS: Mutex<Vec<(Vec3, Vec3, f32, usize)>> = Mutex::new(Vec::new());
 pub static HOSTING: AtomicBool = AtomicBool::new(false);
-/// Particle Walls the local player put up this frame (titankit.rs): origin, normal, life, hp.
-pub static WALLS: Mutex<Vec<(Vec3, Vec3, f32, f32)>> = Mutex::new(Vec::new());
+/// Walls the local player put up this frame (titankit.rs, pilotability.rs): origin, normal,
+/// life, hp and kind (WALL_*).
+pub static WALLS: Mutex<Vec<(Vec3, Vec3, f32, f32, u8)>> = Mutex::new(Vec::new());
+/// The local player's one-off abilities this frame (EV_*, position, direction).
+pub static EVENTS: Mutex<Vec<(u8, Vec3, Vec3)>> = Mutex::new(Vec::new());
+/// What the local player has up (F_*), gathered by `local_flags`.
+pub static LOCAL_FLAGS: AtomicU32 = AtomicU32::new(0);
+
+/// Note one of the local player's one-off abilities for the others (EV_*).
+pub fn event(kind: u8, pos: Vec3, dir: Vec3) {
+    if let Ok(mut e) = EVENTS.lock() {
+        e.push((kind, pos, dir));
+    }
+}
 /// Rounds the local Pilot has fired (pilotweapon.rs), for `PlayerSnap::pilot_shots`.
 pub static PILOT_SHOTS: AtomicU32 = AtomicU32::new(0);
 /// The local Pilot's gun (pilotweapon::ARSENAL index), for `PlayerSnap::pilot_gun`.
@@ -756,6 +827,9 @@ pub static PILOT_GUN: AtomicU32 = AtomicU32::new(0);
 /// A remote Titan's extra clips: the side walks and sprint of the player's blend and the fire
 /// gesture (targets.rs animate_remote_titan).
 const REMOTE_TITAN_SEQUENCES: &[&str] = &[
+    "bt_synced_titan_execute_flip_takedown_A",
+    "bt_synced_titan_execute_kickshoot_A",
+    "bt_synced_titan_execute_pilot_rip_A",
     "Walk_aim_all_left",
     "Walk_aim_all_right",
     "Sprint_mp_forward",
@@ -840,6 +914,7 @@ impl Default for Net {
             panel_open: false,
             map: String::new(),
             relaunch: None,
+            events_in: Vec::new(),
         }
     }
 }
@@ -1078,10 +1153,14 @@ pub fn update(
     weapons: Query<&crate::weapons::Weapon, With<PlayerTitan>>,
 ) {
     let dt = time.delta_secs();
-    // The Particle Walls put up since last frame (sent below when online).
-    let walls: Vec<(Vec3, Vec3, f32, f32)> = WALLS
+    // The walls put up and abilities used since last frame (sent below when online).
+    let walls: Vec<(Vec3, Vec3, f32, f32, u8)> = WALLS
         .lock()
         .map(|mut w| std::mem::take(&mut *w))
+        .unwrap_or_default();
+    let events: Vec<(u8, Vec3, Vec3)> = EVENTS
+        .lock()
+        .map(|mut e| std::mem::take(&mut *e))
         .unwrap_or_default();
     if !net.active() {
         net.was_in_play = game.in_play();
@@ -1360,10 +1439,23 @@ pub fn update(
                 dmg,
                 from: at,
             } => {
-                if id == net.my_id {
+                // Phased out (Phase Shift, Phase Dash), nothing touches us.
+                let flags = LOCAL_FLAGS.load(Ordering::Relaxed) as u16;
+                let phased = flags & if titan { F_TITAN_PHASE } else { F_PHASE } != 0;
+                if id == net.my_id && phased {
+                    log::info!("net: phased, ignoring {dmg:.0} from player {from}");
+                } else if id == net.my_id {
                     // AI damage comes from the host, PvP damage from whoever hit us.
                     if titan {
                         for (_, mut h) in &mut titans {
+                            // Another Titan landing on ours (damagedef_titan_fall) bypasses the
+                            // shield and the doomed state.
+                            if dmg >= crate::pilotctl::TITANFALL_DAMAGE_HEAVY * 0.5 {
+                                h.v.shield = 0.0;
+                                if h.v.doomed.is_none() {
+                                    h.v.doomed = Some(1.0);
+                                }
+                            }
                             h.damage_from(dmg, false, at);
                         }
                     } else {
@@ -1390,6 +1482,7 @@ pub fn update(
             }
             Msg::Wall {
                 id,
+                kind,
                 origin,
                 normal,
                 life,
@@ -1400,6 +1493,7 @@ pub fn update(
                     net.broadcast(
                         &Msg::Wall {
                             id,
+                            kind,
                             origin,
                             normal,
                             life,
@@ -1418,8 +1512,26 @@ pub fn update(
                         life,
                         hp,
                         net.pvp(),
+                        kind == WALL_AWALL,
                     );
-                    log::info!("net: player {id} put up a Particle Wall at {origin:.0}");
+                    log::info!(
+                        "net: player {id} put up {} at {origin:.0}",
+                        if kind == WALL_AWALL {
+                            "an A-Wall"
+                        } else {
+                            "a Particle Wall"
+                        }
+                    );
+                }
+            }
+            Msg::Event { id, kind, pos, dir } => {
+                let id = if is_host { from } else { id };
+                if is_host {
+                    net.broadcast(&Msg::Event { id, kind, pos, dir }, Some(id));
+                }
+                if id != net.my_id {
+                    log::info!("net: player {id} event {kind} at {pos:.0}");
+                    net.events_in.push((id, kind, pos, dir));
                 }
             }
             _ => {}
@@ -1449,9 +1561,23 @@ pub fn update(
     }
     net.was_in_play = in_play;
     if in_play {
-        for (origin, normal, life, hp) in walls {
+        for (kind, pos, dir) in events {
+            let m = Msg::Event {
+                id: net.my_id,
+                kind,
+                pos,
+                dir,
+            };
+            if is_host {
+                net.broadcast(&m, None);
+            } else {
+                net.to_host(m);
+            }
+        }
+        for (origin, normal, life, hp, kind) in walls {
             let m = Msg::Wall {
                 id: net.my_id,
+                kind,
                 origin,
                 normal,
                 life,
@@ -1816,6 +1942,7 @@ pub fn update(
                 pilot_shots: PILOT_SHOTS.load(Ordering::Relaxed) as u16,
                 pilot_gun: PILOT_GUN.load(Ordering::Relaxed) as u8,
                 titan_sprint: ts.sprinting,
+                flags: LOCAL_FLAGS.load(Ordering::Relaxed) as u16,
             };
             let m = Msg::Player {
                 id: net.my_id,
@@ -2070,4 +2197,174 @@ pub fn remote_kits(read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<crate::t
     pilot.vitals.doomed_health = 0.0;
     pilot.remote = true;
     vec![titan, pilot]
+}
+
+/// What the local player has up, for the snapshot's flags (F_*).
+pub fn local_flags(
+    control: Res<Control>,
+    status: Res<crate::pilotability::PilotStatus>,
+    mods: Res<crate::titankit::TitanMoveMods>,
+    titans: Query<(&crate::combat::Vortex, &crate::titankit::KitState), With<PlayerTitan>>,
+) {
+    let mut f = 0u16;
+    if let Ok((v, k)) = titans.single() {
+        if v.active {
+            f |= if v.mode == crate::combat::VortexMode::Heat {
+                F_HEAT
+            } else {
+                F_VORTEX
+            };
+        }
+        if k.gun_shield > 0.0 && k.gun_shield_hp > 0.0 {
+            f |= F_GUN_SHIELD;
+        }
+        if mods.phased || k.phase > 0.0 {
+            f |= F_TITAN_PHASE;
+        }
+    }
+    if *control == Control::Pilot {
+        if status.cloaked() {
+            f |= F_CLOAK;
+        }
+        if status.phased() {
+            f |= F_PHASE;
+        }
+    }
+    LOCAL_FLAGS.store(f as u32, Ordering::Relaxed);
+}
+
+/// A remote Gravity Star pulling the local Pilot: where, and seconds since it popped.
+#[derive(Default)]
+pub struct RemoteStar(Vec3, f32);
+
+/// The others' states on their bodies here: an opponent's Vortex, Thermal Shield or Gun Shield
+/// stops our rounds (targets::Enemy::set_remote_defense), a phased player isn't drawn, a
+/// cloaked Pilot is drawn cloaked (cloak.rs). Their one-off abilities play here: Arc Waves,
+/// Firewalls and Flame Cores as harmless copies (their damage comes from the owner's hits), an
+/// opponent's Gravity Star pulling the local Pilot in (the intense pull after the pop,
+/// GRAV_PULL_ACCEL up to GRAV_PULL_SPEED within GRAV_PULL_RADIUS).
+#[allow(clippy::too_many_arguments)]
+pub fn remote_states(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut net: ResMut<Net>,
+    control: Res<Control>,
+    mut enemies: Query<&mut Enemy>,
+    mut pilots: Query<&mut PlayerPilot>,
+    titans: Query<&PlayerTitan>,
+    mut stars: Local<Vec<RemoteStar>>,
+    mut executed: ResMut<crate::executions::BeingExecuted>,
+) {
+    use crate::pilotability::{
+        GRAV_PULL_ACCEL, GRAV_PULL_DELAY, GRAV_PULL_RADIUS, GRAV_PULL_SPEED,
+    };
+    use crate::targets::DefenseKind;
+    let dt = time.delta_secs();
+    if !net.active() {
+        stars.clear();
+        net.events_in.clear();
+        return;
+    }
+    let pvp = net.pvp();
+    let on_foot = *control == Control::Pilot;
+    let me = if on_foot {
+        pilots
+            .single()
+            .ok()
+            .map(|p| Vec3::from(p.state.pos.to_array()))
+    } else {
+        titans
+            .single()
+            .ok()
+            .map(|t| Vec3::from(t.state.pos.to_array()))
+    }
+    .unwrap_or(Vec3::ZERO);
+    for r in net.remotes.values() {
+        let Some(s) = r.snap else { continue };
+        if let Some(mut e) = r.titan.and_then(|t| enemies.get_mut(t).ok()) {
+            e.hidden = s.flags & F_TITAN_PHASE != 0;
+            // A teammate's shields (PvE) don't stop our rounds.
+            let kind = if !pvp || !s.titan_alive {
+                None
+            } else if s.flags & F_VORTEX != 0 {
+                Some(DefenseKind::Vortex)
+            } else if s.flags & F_HEAT != 0 {
+                Some(DefenseKind::Heat)
+            } else if s.flags & F_GUN_SHIELD != 0 {
+                Some(DefenseKind::GunShield)
+            } else {
+                None
+            };
+            e.set_remote_defense(&mut commands, kind, me, s.titan_yaw);
+        }
+        if let Some(mut e) = r.pilot.and_then(|p| enemies.get_mut(p).ok()) {
+            // Riding our Titan: from the cockpit the rider is out of sight and out of reach
+            // on its back (only Electric Smoke or getting out deals with them); on foot we see
+            // them up on its back, where we can shoot them off.
+            let on_ours = s.on_foot && s.rodeo != 0 && s.rodeo_target == net.my_id;
+            e.hidden = s.on_foot && (s.flags & F_PHASE != 0 || (on_ours && !on_foot));
+            e.cloaked = s.on_foot && s.flags & F_CLOAK != 0;
+            if on_ours && on_foot {
+                if let Ok(t) = titans.single() {
+                    let fwd = Vec3::new(t.state.yaw.cos(), t.state.yaw.sin(), 0.0);
+                    let back = Vec3::from(t.state.pos.to_array()) - fwd * 60.0 + Vec3::Z * 160.0;
+                    e.set_remote_pose(back, Vec3::ZERO, t.state.yaw, 0.0);
+                }
+            }
+        }
+    }
+    for (_, kind, pos, dir) in std::mem::take(&mut net.events_in) {
+        use crate::titankit::WaveKind;
+        match kind {
+            EV_ARC_WAVE | EV_FIREWALL | EV_FLAME_CORE => {
+                let wave = match kind {
+                    EV_ARC_WAVE => WaveKind::Arc,
+                    EV_FIREWALL => WaveKind::Firewall,
+                    _ => WaveKind::Flame,
+                };
+                crate::titankit::spawn_remote_wave(&mut commands, wave, pos, dir, pvp);
+            }
+            EV_EXECUTION if dir.x as u32 == net.my_id && *control == Control::Titan => {
+                log::info!("net: being executed (sequence {})", dir.y);
+                executed.start(pos, dir.z, dir.y as usize);
+            }
+            EV_GRAVITY_STAR => {
+                crate::audio::event_at(&mut commands, "weapon_gravitystar_preexplo", pos);
+                stars.push(RemoteStar(pos, 0.0));
+            }
+            _ => {}
+        }
+    }
+    stars.retain_mut(|star| {
+        star.1 += dt;
+        if star.1 >= GRAV_PULL_DELAY {
+            crate::particles::emit(
+                &mut commands,
+                crate::particles::Effect::Explosion {
+                    at: crate::player::to_bevy(star.0),
+                    scale: 1.0,
+                },
+            );
+            return false;
+        }
+        // An opponent's star pulls the local Pilot (a teammate's doesn't).
+        if pvp && on_foot {
+            if let Ok(mut p) = pilots.single_mut() {
+                let at = Vec3::from(p.state.pos.to_array()) + Vec3::Z * 36.0;
+                let to = star.0 - at;
+                let dist = to.length();
+                if dist < GRAV_PULL_RADIUS && dist > 20.0 {
+                    let dir = to / dist;
+                    let speed = (GRAV_PULL_ACCEL * star.1).min(GRAV_PULL_SPEED);
+                    let vel = Vec3::from(p.state.vel.to_array());
+                    let toward = vel.dot(dir);
+                    if toward < speed {
+                        let v = vel + dir * (speed - toward);
+                        p.state.vel = tf_sim::glam::Vec3::new(v.x, v.y, v.z);
+                    }
+                }
+            }
+        }
+        true
+    });
 }

@@ -516,6 +516,12 @@ pub struct Enemy {
     pub blend_dir: Vec2,
     pub sprint: bool,
     pub sprint_blend: f32,
+    /// Not drawn (a remote player phased out: Phase Shift, Phase Dash).
+    pub hidden: bool,
+    /// Drawn cloaked (a remote Pilot's Cloak, cloak.rs).
+    pub cloaked: bool,
+    /// The defensive a remote player's snapshot last showed up.
+    remote_defense: Option<DefenseKind>,
 }
 
 /// A remote Pilot's rodeo, as sent: the Titan it rides, the chassis name for the clips, the
@@ -667,11 +673,86 @@ impl Enemy {
             blend_dir: Vec2::X,
             sprint: false,
             sprint_blend: 0.0,
+            hidden: false,
+            cloaked: false,
+            remote_defense: None,
         }
     }
     /// Driven from the network (a remote player's body, or a mirrored enemy on a client).
     pub fn mirrored(&self, client: bool) -> bool {
         self.remote.is_some() || (client && self.pool.is_some())
+    }
+    /// A remote player's defensive as their snapshot shows it (net.rs): while `kind` is up,
+    /// rounds arriving from `threat` (the local player) inside its cone are caught, eaten or
+    /// soaked here as the AI's are (`damage`), so they never reach the owner; the game's
+    /// third-person system is drawn on it, facing `yaw`. A Gun Shield shot down stays down
+    /// until its owner raises it again.
+    pub fn set_remote_defense(
+        &mut self,
+        commands: &mut Commands,
+        kind: Option<DefenseKind>,
+        threat: Vec3,
+        yaw: f32,
+    ) {
+        self.threat = threat;
+        if kind != self.remote_defense {
+            log::info!("remote player {:?}: defensive {kind:?}", self.remote);
+            self.remote_defense = kind;
+            if let Some(fx) = self.defense_fx.take() {
+                commands.entity(fx).despawn();
+            }
+            self.defense = kind.map(|kind| Defense {
+                kind,
+                hold: 3.0,
+                cooldown: 0.0,
+            });
+            self.defense_left = if kind.is_some() { f32::MAX } else { 0.0 };
+            self.shield_hp = GUN_SHIELD_HEALTH;
+            let system = match kind {
+                Some(DefenseKind::Vortex) => Some("wpn_vortex_chargingCP_titan"),
+                Some(DefenseKind::Heat) => Some("P_wpn_HeatShield"),
+                Some(DefenseKind::GunShield) => Some("P_titan_gun_shield_3P"),
+                _ => None,
+            };
+            if let Some(name) = system {
+                self.defense_fx = Some(
+                    commands
+                        .spawn((
+                            Transform::IDENTITY,
+                            Visibility::default(),
+                            crate::pfx::PfxTrail::oriented(name),
+                        ))
+                        .id(),
+                );
+                if kind == Some(DefenseKind::Vortex) {
+                    crate::audio::event_at(commands, "vortex_3p_shield_start_1_long", self.pos);
+                }
+            }
+        }
+        let Some(d) = self.defense else {
+            return;
+        };
+        if self.defense_left <= 0.0 || self.hidden {
+            if let Some(fx) = self.defense_fx.take() {
+                commands.entity(fx).despawn();
+            }
+            return;
+        }
+        if let Some(fx) = self.defense_fx {
+            let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+            let spot = self.pos + Vec3::Z * 150.0 + facing * 130.0;
+            commands.entity(fx).insert(
+                Transform::from_translation(to_bevy(defense_fx_spot(d.kind, spot)))
+                    .looking_to(to_bevy(facing).normalize(), Vec3::Y),
+            );
+            if d.kind == DefenseKind::GunShield {
+                commands
+                    .entity(fx)
+                    .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(
+                        1.0 - self.shield_hp / GUN_SHIELD_HEALTH,
+                    )));
+            }
+        }
     }
     /// No Titanfall drop for a body that just appeared (remote players).
     pub fn cancel_arrival(&mut self) {
@@ -768,6 +849,22 @@ impl Enemy {
     pub fn doomed(&self) -> bool {
         self.v.doomed.is_some()
     }
+    /// Whether a round from the threat's side is caught whole (a Vortex, Thermal Shield or
+    /// Gun Shield up and facing it): it does no damage and doesn't go off.
+    pub fn catches_round(&self) -> bool {
+        self.defense.is_some_and(|d| {
+            self.defense_left > 0.0
+                && matches!(
+                    d.kind,
+                    DefenseKind::Vortex | DefenseKind::Heat | DefenseKind::GunShield
+                )
+                && (self.threat - self.pos)
+                    .truncate()
+                    .normalize_or_zero()
+                    .dot(Vec2::new(self.state.yaw.cos(), self.state.yaw.sin()))
+                    >= 60f32.to_radians().cos()
+        })
+    }
     pub fn damage(&mut self, amount: f32, stops_regen: bool) -> Hit {
         if !self.alive() {
             return Hit::default();
@@ -827,7 +924,8 @@ impl Enemy {
     }
     /// Damage no defensive stops (melee, executions: `shouldPassThroughDamage`).
     pub fn damage_unblockable(&mut self, amount: f32, stops_regen: bool) -> Hit {
-        if !self.alive() {
+        // A hidden body (a phased player, a rider out of reach on our back) can't be hit.
+        if !self.alive() || self.hidden {
             return Hit::default();
         }
         let hit = self.v.damage(amount, stops_regen);
@@ -1193,9 +1291,15 @@ pub fn update_enemies(
             vis.set_if_neq(Visibility::Hidden);
             continue;
         }
-        vis.set_if_neq(Visibility::Inherited);
-        // BT crushes grunts he walks into (on his own too).
-        if e.infantry && e.alive() && !e.mirrored(client) {
+        vis.set_if_neq(if e.hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+        // BT crushes grunts he walks into (on his own too), and an opponent's Pilot (PvP:
+        // the hit reaches them through net.rs like any other).
+        let crushable = !e.mirrored(client) || (e.remote.is_some() && net.pvp());
+        if e.infantry && e.alive() && crushable {
             let tp = Vec3::from(titan.state.pos.to_array());
             let moving = Vec2::new(titan.state.vel.x, titan.state.vel.y).length() > 40.0;
             if moving
@@ -3083,7 +3187,7 @@ pub fn update_health_bars(
             .unwrap_or(0);
         let top = to_bevy(e.pos + Vec3::Z * (e.height + 60.0));
         match camera.world_to_viewport(cam_tf, top) {
-            Ok(p) if e.alive() && !hidden.0 && seen(e) => {
+            Ok(p) if e.alive() && !e.hidden && !hidden.0 && seen(e) => {
                 vis.set_if_neq(Visibility::Inherited);
                 crate::hud::set(&mut node, |n| &mut n.left, px(p.x));
                 crate::hud::set(&mut node, |n| &mut n.top, px(p.y));

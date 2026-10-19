@@ -96,7 +96,7 @@ const DROP_ANIM: &str = "at_hotdrop_drop_2knee_turbo";
 const STAND_ANIM: &str = "at_hotdrop_quickstand";
 /// damagedef_titan_fall: crushes what is under BT (heavy armor 23000, bypasses shields and
 /// the doomed state). damagedef_titan_hotdrop: the impact blast.
-const TITANFALL_DAMAGE_HEAVY: f32 = 23000.0;
+pub const TITANFALL_DAMAGE_HEAVY: f32 = 23000.0;
 const TITANFALL_INNER_RADIUS: f32 = 90.0;
 const TITANFALL_OUTER_RADIUS: f32 = 120.0;
 const HOTDROP_DAMAGE: f32 = 150.0;
@@ -528,6 +528,11 @@ pub fn control_transitions(
             fpseq.stop();
             eject_pilot(&mut commands, &mut pilot, &mut input, &titan, gravity_scale);
             *pilot_health = PilotHealth::default();
+            // Executed: the Pilot goes down with the Titan.
+            if crate::executions::BEING_EXECUTED.load(std::sync::atomic::Ordering::Relaxed) {
+                pilot_health.damage(1.0e9);
+                log::info!("executed: the Pilot dies with the Titan");
+            }
             titan.override_anim = None;
             *control = Control::Pilot;
             shake.0 = 0.8;
@@ -962,6 +967,19 @@ pub fn control_transitions(
                         HOTDROP_DAMAGE * fall(HOTDROP_INNER_RADIUS, HOTDROP_RADIUS),
                         false,
                     );
+                }
+            }
+            // The crush (damagedef_titan_fall) hits whoever is under BT, his own Pilot too.
+            if *control == Control::Pilot {
+                let pp = Vec3::from(pilot.state.pos.to_array());
+                let dist = ((pp - at).truncate().length() - 16.0).max(0.0);
+                if dist < TITANFALL_OUTER_RADIUS && (pp.z - at.z).abs() < 300.0 {
+                    let k = 1.0
+                        - ((dist - TITANFALL_INNER_RADIUS)
+                            / (TITANFALL_OUTER_RADIUS - TITANFALL_INNER_RADIUS))
+                            .clamp(0.0, 1.0);
+                    pilot_health.damage(TITANFALL_DAMAGE_HEAVY * k);
+                    log::info!("titanfall crushed its own Pilot");
                 }
             }
             let b = to_bevy(at);

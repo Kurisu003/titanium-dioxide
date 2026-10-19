@@ -1116,6 +1116,19 @@ impl BoltShield {
         }
     }
 
+    /// A Pilot's A-Wall around `center` facing `facing` (DEPLOYABLE_SHIELD_RADIUS 84, _HEIGHT
+    /// 89, _FOV 150; pilotability.rs).
+    fn awall(center: Vec3, facing: Vec3, owner: Option<Entity>) -> Self {
+        let n = Vec3::new(facing.x, facing.y, 0.0).normalize_or(Vec3::X);
+        Self {
+            center,
+            normal: n,
+            radius: 84.0,
+            owner,
+            arc: Some((75f32.to_radians().cos(), 89.0)),
+        }
+    }
+
     /// Where the segment `from + dir * t, t < max` meets the shield from its front.
     fn hit_t(&self, from: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         let t = match self.arc {
@@ -1251,6 +1264,10 @@ pub struct KitState {
     gun_vis_fp: bool,
     pub melee_damage: f32,
     pub melee_range: f32,
+    /// Ronin: the melee is the sword (melee_titan_sword), and Sword Core is running (its
+    /// super_charged mod: the fire button swings it, the gun is put away).
+    pub sword: bool,
+    pub sword_core: bool,
     prev_ord: bool,
     /// Time left until a pressed ordnance fires (its deploy).
     pub ord_pending: Option<f32>,
@@ -1302,6 +1319,8 @@ impl Default for KitState {
             gun_vis_fp: false,
             melee_damage: 500.0,
             melee_range: 280.0,
+            sword: false,
+            sword_core: false,
             prev_ord: false,
             ord_pending: None,
             power: None,
@@ -1349,6 +1368,75 @@ static ENEMY_WAVE_GROUP: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomi
 /// An enemy Scorch's Firewall or Ronin's Arc Wave from `from` along `dir` (WeaponAttackWave
 /// with the weapon files' wave_step_dist / wave_max_count; the Arc Wave's npc damage 50 to
 /// Pilots and 1000 to Titans over its 112 radius, the Firewall's thermite patches).
+/// Wave groups with this bit are another player's waves drawn here (net.rs): they burn and
+/// slow but deal no damage, which comes from the owner's own hits.
+pub const GHOST_GROUP: u32 = 1 << 31;
+
+/// Another player's Arc Wave, Firewall or Flame Core (net.rs), from their Titan's feet along
+/// its facing, as their kit throws it: drawn here, and an opponent's (`enemy`) Arc Wave slows
+/// BT.
+pub fn spawn_remote_wave(
+    commands: &mut Commands,
+    kind: WaveKind,
+    feet: Vec3,
+    dir: Vec3,
+    enemy: bool,
+) {
+    let dir = dir.with_z(0.0).normalize_or(Vec3::X);
+    let group = ENEMY_WAVE_GROUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed) | GHOST_GROUP;
+    let wave = |kind, pos: Vec3, step, left, radius, row| Wave {
+        kind,
+        pos,
+        head: pos,
+        first: true,
+        dir,
+        step,
+        left,
+        timer: 0.0,
+        radius,
+        titan: 0.0,
+        pilot: 0.0,
+        group,
+        enemy,
+        trap: None,
+        row,
+    };
+    let start = feet + dir * 25.0 + Vec3::Z * 40.0;
+    match kind {
+        WaveKind::Arc => {
+            commands.spawn(wave(
+                kind,
+                start,
+                ENEMY_ARC_STEP,
+                ENEMY_ARC_COUNT,
+                112.0,
+                false,
+            ));
+        }
+        WaveKind::Firewall => {
+            commands.spawn(wave(
+                kind,
+                start,
+                ENEMY_FIREWALL_STEP,
+                ENEMY_FIREWALL_COUNT,
+                60.0,
+                false,
+            ));
+            crate::audio::event_at(commands, "flamewall_flame_start", feet);
+        }
+        WaveKind::Flame => {
+            // Three waves side by side (the Flame Core's spread), the middle one carrying
+            // each row's effects.
+            let right = Vec3::new(dir.y, -dir.x, 0.0);
+            for off in [-1.0, 0.0, 1.0] {
+                let at = feet + dir * 25.0 + right * off * 128.0;
+                commands.spawn(wave(kind, at, 120.0, 15, 180.0, off == 0.0));
+            }
+            crate::audio::event_at(commands, "flamewave_blast_middle", feet);
+        }
+    }
+}
+
 pub fn spawn_enemy_wave(commands: &mut Commands, kind: WaveKind, from: Vec3, dir: Vec3) {
     let dir = dir.with_z(0.0).normalize_or(Vec3::X);
     let group = ENEMY_WAVE_GROUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1724,6 +1812,9 @@ pub struct ParticleWall {
     hp: f32,
     /// An enemy Tone's wall: it stops the player's shots instead of enemy rounds.
     enemy: bool,
+    /// Another player's A-Wall (a Pilot's arc shield, P_pilot_amped_shield) rather than a
+    /// Particle Wall.
+    awall: bool,
 }
 
 impl ParticleWall {
@@ -1735,10 +1826,12 @@ impl ParticleWall {
             life: 8.0,
             hp: 1750.0,
             enemy: true,
+            awall: false,
         }
     }
 
-    /// Put up another player's wall (net.rs): `enemy` when it is an opponent's.
+    /// Put up another player's wall (net.rs): `enemy` when it is an opponent's, `awall` for a
+    /// Pilot's A-Wall (`origin` the foot of its arc's centre).
     pub fn spawn(
         commands: &mut Commands,
         origin: Vec3,
@@ -1746,6 +1839,7 @@ impl ParticleWall {
         life: f32,
         hp: f32,
         enemy: bool,
+        awall: bool,
     ) {
         commands.spawn((
             Transform::from_translation(to_bevy(origin)),
@@ -1756,6 +1850,7 @@ impl ParticleWall {
                 life,
                 hp,
                 enemy,
+                awall,
             },
         ));
     }
@@ -2168,6 +2263,7 @@ pub fn kit_input(
                 st.ord_cd_max = n.firewall_cd;
                 st.ord_cd = n.firewall_cd;
                 let group = next_group();
+                crate::net::event(crate::net::EV_FIREWALL, Vec3::from(s.pos.to_array()), fwd);
                 commands.spawn(Wave {
                     kind: WaveKind::Firewall,
                     pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0,
@@ -2220,6 +2316,7 @@ pub fn kit_input(
                 st.ord_cd_max = n.arc_cd;
                 st.ord_cd = n.arc_cd;
                 let group = next_group();
+                crate::net::event(crate::net::EV_ARC_WAVE, Vec3::from(s.pos.to_array()), fwd);
                 commands.spawn(Wave {
                     kind: WaveKind::Arc,
                     pos: Vec3::from(s.pos.to_array()) + fwd * 25.0 + Vec3::Z * 40.0,
@@ -2498,7 +2595,13 @@ pub fn kit_input(
                 log::debug!("particle wall up at {origin:.0} facing {normal:.2}");
                 // The other players get it too (net.rs).
                 if let Ok(mut w) = crate::net::WALLS.lock() {
-                    w.push((origin, normal, n.wall_life, n.wall_hp));
+                    w.push((
+                        origin,
+                        normal,
+                        n.wall_life,
+                        n.wall_hp,
+                        crate::net::WALL_PARTICLE,
+                    ));
                 }
                 commands.spawn((
                     Transform::from_translation(to_bevy(origin)),
@@ -2509,6 +2612,7 @@ pub fn kit_input(
                         life: n.wall_life,
                         hp: n.wall_hp,
                         enemy: false,
+                        awall: false,
                     },
                 ));
                 true
@@ -2856,6 +2960,7 @@ pub fn kit_input(
         match core.kind {
             CoreKind::FlameWave => {
                 let group = next_group();
+                crate::net::event(crate::net::EV_FLAME_CORE, Vec3::from(s.pos.to_array()), fwd);
                 let base = Vec3::from(s.pos.to_array()) + fwd * 25.0;
                 for (off, sfx) in [
                     (-1.0, "flamewave_blast_right"),
@@ -2946,6 +3051,8 @@ pub fn kit_input(
     } else {
         500.0
     };
+    st.sword = active.def == DefKind::SwordBlock;
+    st.sword_core = st.sword && sword_core;
     if core_on && !frozen {
         match core.kind {
             CoreKind::Flight if matches!(core.state, CoreState::Active(t) if t < FLIGHT_CORE_TAKEOFF) =>
@@ -3348,8 +3455,12 @@ pub fn kit_world(
                         && (bp.z - w.pos.z) < w.radius
                     {
                         hit.push(bid);
-                        health.damage_from(w.titan * scale, true, w.pos);
-                        mods.arc_slow = ARC_SLOW_SECS;
+                        if w.group & GHOST_GROUP == 0 {
+                            health.damage_from(w.titan * scale, true, w.pos);
+                        }
+                        if w.kind == WaveKind::Arc {
+                            mods.arc_slow = ARC_SLOW_SECS;
+                        }
                         log::info!("enemy arc wave hit BT for {:.0}", w.titan * scale);
                     }
                 }
@@ -3363,10 +3474,12 @@ pub fn kit_world(
                             && (pp.z - w.pos.z) < w.radius
                         {
                             hit.push(pid);
-                            health.damage_capped(
-                                w.pilot * scale,
-                                difficulty.max_pilot_damage_per_hit(),
-                            );
+                            if w.group & GHOST_GROUP == 0 {
+                                health.damage_capped(
+                                    w.pilot * scale,
+                                    difficulty.max_pilot_damage_per_hit(),
+                                );
+                            }
                             log::info!("enemy arc wave hit the Pilot for {:.0}", w.pilot * scale);
                         }
                     }
@@ -3439,6 +3552,10 @@ pub fn kit_world(
             *wait += FIRE_TRAP_TICK;
             key = center.x.to_bits() ^ center.y.to_bits().rotate_left(13);
             trap_center = Some(*center);
+        }
+        if t.group & GHOST_GROUP != 0 {
+            // Another player's fire drawn here: its burn comes from the owner's hits.
+            continue;
         }
         if t.enemy {
             // An enemy Scorch's fire: BT and the Pilot on foot take the thermite tick.
@@ -3920,7 +4037,11 @@ pub fn kit_world(
                     .spawn((
                         Transform::IDENTITY,
                         Visibility::default(),
-                        crate::pfx::PfxTrail::oriented("P_xo_shield_wall"),
+                        crate::pfx::PfxTrail::oriented(if w.awall {
+                            "P_pilot_amped_shield"
+                        } else {
+                            "P_xo_shield_wall"
+                        }),
                     ))
                     .id();
                 commands.entity(id).add_child(fx);
@@ -3954,21 +4075,24 @@ pub fn kit_world(
         // UpdateShieldWallColorForFrac( shieldWallFX, GetHealthFrac( vortexSphere ) ): control
         // point 1 carries GetShieldTriLerpColor( 1 - health fraction ), so the wall goes from
         // blue through orange to red as it takes damage.
-        for &c in children.into_iter().flatten() {
-            commands
-                .entity(c)
-                .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(
-                    1.0 - w.hp / 1750.0,
-                )));
+        if !w.awall {
+            for &c in children.into_iter().flatten() {
+                commands
+                    .entity(c)
+                    .insert(crate::pfx::PfxColor(crate::fxuber::shield_color(
+                        1.0 - w.hp / 1750.0,
+                    )));
+            }
         }
-        if w.enemy {
-            enemy_walls
-                .walls
-                .push(BoltShield::wall(w.origin, w.normal, Some(id)));
+        let shape = if w.awall {
+            BoltShield::awall(w.origin, w.normal, Some(id))
         } else {
-            shields
-                .shields
-                .push(BoltShield::wall(w.origin, w.normal, Some(id)));
+            BoltShield::wall(w.origin, w.normal, Some(id))
+        };
+        if w.enemy {
+            enemy_walls.walls.push(shape);
+        } else {
+            shields.shields.push(shape);
         }
     }
 

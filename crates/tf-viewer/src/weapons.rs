@@ -1398,7 +1398,7 @@ pub fn weapon_fire(
     let busy = vortex.is_some_and(|v| v.active)
         || melee.is_some_and(|m| m.t.is_some())
         || health.is_some_and(|h| h.dead_for.is_some())
-        || kit.is_some_and(|k| k.blocking);
+        || kit.is_some_and(|k| k.blocking || k.sword_core);
     let frozen = *mode == CameraMode::Free || busy;
     // Burst Core: faster fire, fixed damage, no ammo use.
     let burst = core

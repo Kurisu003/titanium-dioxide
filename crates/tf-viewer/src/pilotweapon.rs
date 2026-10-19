@@ -2456,8 +2456,10 @@ pub fn update_pilot_bolts(
         } else {
             crate::particles::Surface::World
         };
+        let mut caught = false;
         if let Some((eid, h)) = victim {
             if let Ok((_, mut e)) = enemies.get_mut(eid) {
+                caught = e.catches_round();
                 surface = if e.infantry {
                     crate::particles::Surface::Flesh
                 } else {
@@ -2480,8 +2482,9 @@ pub fn update_pilot_bolts(
                 hits.push(hit);
             }
         }
-        // A round a Particle Wall catches is absorbed whole: no blast behind the wall.
-        let absorbed = wall.is_some() && victim.is_none();
+        // A round a Particle Wall, Vortex, Thermal Shield or Gun Shield catches is absorbed
+        // whole: no blast.
+        let absorbed = (wall.is_some() && victim.is_none()) || caught;
         let (exp, radius) = if absorbed {
             (0.0, 0.0)
         } else {

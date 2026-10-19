@@ -15,6 +15,7 @@
 mod abilities;
 mod actor;
 mod aimassist;
+mod diag;
 mod audio;
 mod autotitan;
 mod bindcache;
@@ -457,6 +458,7 @@ fn main() {
     .init_resource::<hitbox::RecentHits>()
     .init_resource::<pilotability::PilotStatus>()
     .init_resource::<executions::TitanExecution>()
+    .init_resource::<executions::BeingExecuted>()
     .init_resource::<executions::PilotExecution>()
     .init_resource::<executions::PilotMelee>()
     .init_resource::<pilotability::OrdnanceThrow>()
@@ -591,8 +593,10 @@ fn main() {
                 (
                     targets::script_aim,
                     net::auto_session,
+                    net::local_flags,
                     net::update,
                     net::spawn_remotes,
+                    net::remote_states,
                     game::director,
                     update::update,
                 )
@@ -612,7 +616,12 @@ fn main() {
                     fparms::fp_seq_update,
                 )
                     .chain(),
-                (executions::titan_execution, executions::pilot_execution).chain(),
+                (
+                    executions::titan_execution,
+                    executions::pilot_execution,
+                    executions::executed_victim,
+                )
+                    .chain(),
                 weapons::weapon_fire,
                 pilotweapon::pilot_weapon_fire,
                 (
@@ -685,6 +694,7 @@ fn main() {
                 (
                     pilotability::update_pilot_slots,
                     cloak::cloak_viewmodel,
+                    cloak::cloak_remote,
                     cloak::phase_shift_fx,
                 ),
                 (pilotability::update_pulse_markers, rodeo::battery_hud).chain(),
@@ -694,6 +704,7 @@ fn main() {
             .chain()
             .run_if(ui::loaded),
     )
+    .add_systems(Last, diag::diag)
     .run();
 }
 
@@ -1465,6 +1476,10 @@ fn setup(
             "bt_synced_titan_execute_flip_takedown_A",
             "bt_synced_titan_execute_kickshoot_A",
             "bt_synced_titan_execute_pilot_rip_A",
+            // Executed by another player (executions::executed_victim).
+            "titan_synced_bt_execute_flip_takedown_V",
+            "titan_synced_bt_execute_kickshoot_V",
+            "titan_synced_bt_execute_pilot_rip_V",
             "at_dismount_stand",
             "at_dismount_crouch",
             "at_MP_disembark_back2idle",

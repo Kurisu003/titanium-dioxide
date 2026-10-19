@@ -129,12 +129,12 @@ const SHIELD_FOV: f32 = 150.0;
 const THERMITE_BURN_TIME: f32 = 6.0;
 const THERMITE_TICK: f32 = 0.2;
 /// Gravity Star (mp_weapon_grenade_gravity.nut).
-const GRAV_POP_DELAY: f32 = 0.8;
-const GRAV_PULL_DELAY: f32 = 2.0;
+pub const GRAV_POP_DELAY: f32 = 0.8;
+pub const GRAV_PULL_DELAY: f32 = 2.0;
 const GRAV_POP_HEIGHT: f32 = 60.0;
-const GRAV_PULL_RADIUS: f32 = 300.0;
-const GRAV_PULL_ACCEL: f32 = 2000.0;
-const GRAV_PULL_SPEED: f32 = 400.0;
+pub const GRAV_PULL_RADIUS: f32 = 300.0;
+pub const GRAV_PULL_ACCEL: f32 = 2000.0;
+pub const GRAV_PULL_SPEED: f32 = 400.0;
 /// Electric smokescreen lifetime, damage delay and tick (smokescreen.nut and the grenade).
 const SMOKE_LIFETIME: f32 = 5.0;
 const SMOKE_DELAY: f32 = 1.0;
@@ -1679,6 +1679,16 @@ pub fn update_grenades(
                 };
                 if let Some(e) = e {
                     log::info!("a-wall up at {center:.0}");
+                    // The other players get it too (net.rs).
+                    if let Ok(mut w) = crate::net::WALLS.lock() {
+                        w.push((
+                            center,
+                            fwd,
+                            SHIELD_DURATION,
+                            SHIELD_HEALTH,
+                            crate::net::WALL_AWALL,
+                        ));
+                    }
                     shields.0.push(Shield {
                         center,
                         facing: fwd,
@@ -1834,6 +1844,7 @@ pub fn update_grenades(
                                 "weapon_gravitystar_preexplo",
                                 g.pos,
                             );
+                            crate::net::event(crate::net::EV_GRAVITY_STAR, g.pos, Vec3::Z);
                         }
                         // Pull grunts in (the intense pull: accel 2000 up to 400 u/s).
                         for (_, mut e) in enemies.iter_mut() {

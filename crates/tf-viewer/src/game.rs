@@ -71,8 +71,9 @@ pub fn gate_input(
 ) {
     // In a match only a dead player (online, waiting to respawn) is held still: no moving,
     // shooting or abilities until the respawn. Paused online (the clock keeps running) the
-    // player stands still behind the menu too.
-    if game.in_play() && !menu.paused && !pilots.iter().any(|h| h.dead()) {
+    // player stands still behind the menu too, and a Titan being executed has no control.
+    let executed = crate::executions::BEING_EXECUTED.load(std::sync::atomic::Ordering::Relaxed);
+    if game.in_play() && !menu.paused && !executed && !pilots.iter().any(|h| h.dead()) {
         return;
     }
     let (start, pause, menu_nav) = (input.start, input.pause, input.menu_nav);
