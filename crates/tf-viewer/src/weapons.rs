@@ -236,6 +236,16 @@ pub struct WeaponDef {
     pub rui: Vec<(String, String)>,
     /// The weapon with its burn mod (amped through an A-Wall); player weapons only.
     pub burn: Option<Box<WeaponDef>>,
+    /// `shared_energy_cost` (Ion's Splitter Rifle: what a split shot takes from the energy).
+    pub shared_energy_cost: f32,
+    /// This shot is the Splitter Rifle's split shot (its crits restore less energy).
+    pub split_shot: bool,
+    /// `projectile_ricochet_max_count`: bounces off the world before it stops (Leadwall's
+    /// Ricochet Rounds, pas_ronin_weapon: 1).
+    pub ricochets: u32,
+    /// `pass_through_depth`: it goes on through what it hits (the Railgun's Piercing Shot,
+    /// pas_northstar_weapon: 500).
+    pub pass_through: f32,
     /// `bodygroup_ads_scope_name/set`: the scope interior shown at the eye in ADS, and
     /// `zoom_scope_frac_start/end`: the zoom at which it appears and the rest of the gun goes.
     pub ads_scope: Option<(String, usize)>,
@@ -687,6 +697,10 @@ impl WeaponDef {
                 })
                 .collect(),
             burn: None,
+            shared_energy_cost: f("shared_energy_cost", 0.0),
+            split_shot: false,
+            ricochets: f("projectile_ricochet_max_count", 0.0) as u32,
+            pass_through: f("pass_through_depth", 0.0),
             rui: (1..=10)
                 .filter_map(|i| {
                     let on = s
@@ -1348,7 +1362,7 @@ pub fn weapon_fire(
         Option<&crate::combat::Vortex>,
         Option<&crate::combat::Melee>,
         Option<&crate::combat::TitanHealth>,
-        Option<&crate::titankit::KitState>,
+        Option<&mut crate::titankit::KitState>,
     )>,
     mut dummies: Query<&mut Enemy>,
     actors: Query<&Actor>,
@@ -1373,7 +1387,7 @@ pub fn weapon_fire(
     if let Ok((_, w, ..)) = titans.single() {
         punch.step(dt, Some(&w.def.kick), w.ads);
     }
-    let Ok((titan, mut w, mut core, vortex, melee, health, kit)) = titans.single_mut() else {
+    let Ok((titan, mut w, mut core, vortex, melee, health, mut kit)) = titans.single_mut() else {
         return;
     };
     gun_muzzle.cockpit = *mode == CameraMode::Cockpit && piloted;
@@ -1400,7 +1414,7 @@ pub fn weapon_fire(
     let busy = vortex.is_some_and(|v| v.active)
         || melee.is_some_and(|m| m.t.is_some())
         || health.is_some_and(|h| h.dead_for.is_some())
-        || kit.is_some_and(|k| k.blocking || k.sword_core);
+        || kit.as_deref().is_some_and(|k| k.blocking || k.sword_core);
     let frozen = *mode == CameraMode::Free || busy;
     // Burst Core: faster fire, fixed damage, no ammo use.
     let burst = core
@@ -1785,10 +1799,33 @@ pub fn weapon_fire(
                             .normalize()
                     })
                     .collect(),
-                // Splitter Rifle in ADS: ADS_SHOT_COUNT_NORMAL (3) bolts along the view's right
-                // vector at boltOffsets 0, 0.022, -0.022 (the shared-energy cost isn't modelled).
-                None if gun.id == "mp_titanweapon_particle_accelerator" && ads >= 0.99 => {
-                    [0.0, 0.022, -0.022]
+                // Splitter Rifle in ADS with the energy for it (shared_energy_cost, x1.15 with
+                // Refraction Lens): ADS_SHOT_COUNT_NORMAL (3, ADS_SHOT_COUNT_UPGRADE 5 with the
+                // lens) bolts along the view's right vector at boltOffsets 0, ±0.022, ±0.044,
+                // each at proto_particle_accelerator's x0.7 damage (_pas: x0.55). Without the
+                // energy it fires one plain bolt for free.
+                None if gun.id == "mp_titanweapon_particle_accelerator"
+                    && ads >= 0.99
+                    && kit
+                        .as_deref()
+                        .is_some_and(|k| k.energy >= w.def.shared_energy_cost.max(1.0)) =>
+                {
+                    let lens = crate::kits::has("pas_ion_weapon_ads");
+                    if let Some(k) = kit.as_deref_mut() {
+                        k.spend_energy(w.def.shared_energy_cost);
+                    }
+                    let scale = if lens { 0.55 } else { 0.7 };
+                    shot_def.damage_near *= scale;
+                    shot_def.damage_far *= scale;
+                    shot_def.damage_near_pilot *= scale;
+                    shot_def.damage_far_pilot *= scale;
+                    shot_def.split_shot = true;
+                    let offsets: &[f32] = if lens {
+                        &[0.0, 0.022, -0.022, 0.044, -0.044]
+                    } else {
+                        &[0.0, 0.022, -0.022]
+                    };
+                    offsets
                         .iter()
                         .map(|o| (fwd + right * *o).normalize())
                         .collect()

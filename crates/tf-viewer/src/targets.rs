@@ -188,6 +188,8 @@ const HEAT_RANGE: f32 = 300.0;
 const HEAT_TITAN: f32 = 200.0;
 const HEAT_PILOT: f32 = 25.0;
 const HEAT_RATE: f32 = 5.0;
+/// Enemy Titans the player has destroyed, counted for Highlander (abilities.rs takes them).
+pub static TITAN_KILLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 const GUN_SHIELD_HEALTH: f32 = 2500.0;
 const BLOCK_DAMAGE_REDUCTION: f32 = 0.3;
 
@@ -944,6 +946,9 @@ impl Enemy {
             self.dead_for = 0.0;
             self.just_died = true;
             log::info!("enemy titan destroyed");
+            if !self.infantry {
+                TITAN_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         hit
     }
@@ -965,6 +970,9 @@ impl Enemy {
             self.dead_for = 0.0;
             self.just_died = true;
             log::info!("enemy titan destroyed");
+            if !self.infantry {
+                TITAN_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
     /// Bring this Titan into the fight at `pos`, facing `yaw`.

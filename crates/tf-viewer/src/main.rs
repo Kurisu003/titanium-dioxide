@@ -1506,6 +1506,7 @@ fn setup(
             "at_mount_kneel_airgrab",
             "at_MP_eject_stand_start",
             "at_hotdrop_drop_2knee_turbo",
+            "?at_hotdrop_drop_2knee_turbo_upgraded",
             "at_hotdrop_quickstand",
             "?CQB_CrouchIdle_MP",
             "?bt_vortex_arm_pose_add",

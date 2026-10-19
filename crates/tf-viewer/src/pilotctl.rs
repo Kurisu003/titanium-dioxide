@@ -105,6 +105,13 @@ const EMBARK_AIRGRAB_RANGE: f32 = 275.0;
 /// The player's Titanfall (_titan_hotdrop.gnut): BT rides this sequence's root motion down
 /// from the sky, then stands with the quickstand.
 const DROP_ANIM: &str = "at_hotdrop_drop_2knee_turbo";
+/// Warpfall (pas_warpfall, _replacement_titans.gnut): BT warps in WARPFALL_SOUND_DELAY +
+/// WARPFALL_FX_DELAY after the call (Titan_1P_Warpfall_CallIn, then Titan_1P_Warpfall_Start and
+/// TURBO_WARP_FX P_warp_in_atlas 104 below the drop's start), and drops with the short
+/// _upgraded sequence, turned round (TitanHotDrop composes 180 degrees of yaw).
+const WARP_DROP_ANIM: &str = "at_hotdrop_drop_2knee_turbo_upgraded";
+const WARPFALL_SOUND_DELAY: f32 = 1.1;
+const WARPFALL_FX_DELAY: f32 = 0.9;
 const STAND_ANIM: &str = "at_hotdrop_quickstand";
 /// damagedef_titan_fall: crushes what is under BT (heavy armor 23000, bypasses shields and
 /// the doomed state). damagedef_titan_hotdrop: the impact blast.
@@ -270,6 +277,8 @@ pub struct Titanfall {
     /// While dropping: BT's offset from where he lands (game units).
     pub offset: Option<Vec3>,
     impacted: bool,
+    /// This drop is a Warpfall (its time runs from -(the warp-in delay)).
+    warp: bool,
     pub landing: Option<f32>,
     /// Seconds into a manual eject (BT's eject sequence before the pilot launches).
     pub eject: Option<f32>,
@@ -898,8 +907,24 @@ pub fn control_transitions(
                     .raycast(aim + SVec3::Z * 600.0, -SVec3::Z, 4000.0)
                     .map(|h| h.point)
                     .unwrap_or(aim);
-                titan.state = tf_sim::titan::TitanState::new(ground, p.yaw);
-                tf.drop = Some(0.0);
+                let warp = crate::kits::has("pas_warpfall");
+                let yaw = if warp {
+                    p.yaw + std::f32::consts::PI
+                } else {
+                    p.yaw
+                };
+                titan.state = tf_sim::titan::TitanState::new(ground, yaw);
+                tf.warp = warp;
+                tf.drop = Some(if warp {
+                    crate::audio::event_at(
+                        &mut commands,
+                        "Titan_1P_Warpfall_CallIn",
+                        Vec3::from(ground.to_array()),
+                    );
+                    -(WARPFALL_SOUND_DELAY + WARPFALL_FX_DELAY)
+                } else {
+                    0.0
+                });
                 tf.impacted = false;
                 tf.cooldown = 0.0;
                 tf.rebuilding = false;
@@ -1024,10 +1049,49 @@ pub fn control_transitions(
     }
 
     // Titanfall: ride the drop sequence's root motion down, impact, then stand up.
-    if let Some(t) = tf.drop {
+    let drop_anim = if tf.warp { WARP_DROP_ANIM } else { DROP_ANIM };
+    // A Warpfall's warp-in: BT isn't there yet (held far out of the world).
+    if let Some(t0) = tf.drop.filter(|t| *t < 0.0) {
+        let t = t0 + dt;
+        let ground = Vec3::from(titan.state.pos.to_array());
+        if t0 < -WARPFALL_FX_DELAY && t >= -WARPFALL_FX_DELAY {
+            crate::audio::event_at(&mut commands, "Titan_1P_Warpfall_Start", ground);
+            let start = clip_of(drop_anim)
+                .map(|(clips, c)| {
+                    let clip = &clips[c];
+                    let total = clip.movement.last().copied().unwrap_or_default();
+                    let first = clip.movement.first().copied().unwrap_or_default();
+                    Quat::from_rotation_z(titan.state.yaw)
+                        * Vec3::new(
+                            first[0] - total[0],
+                            first[1] - total[1],
+                            first[2] - total[2],
+                        )
+                })
+                .unwrap_or_default();
+            crate::pfx::emit_named(
+                &mut commands,
+                "P_warp_in_atlas",
+                to_bevy(ground + start - Vec3::Z * 104.0),
+                to_bevy(Vec3::new(titan.state.yaw.cos(), titan.state.yaw.sin(), 0.0)),
+            );
+        }
+        if t >= 0.0 {
+            crate::audio::event_at(
+                &mut commands,
+                "Titan_1P_Warpfall_WarpToLanding_fast",
+                ground,
+            );
+            tf.drop = Some(0.0);
+        } else {
+            titan.override_anim = Some((drop_anim.into(), 0.0));
+            tf.offset = Some(Vec3::Z * 1.0e5);
+            tf.drop = Some(t);
+        }
+    } else if let Some(t) = tf.drop {
         let t = t + dt;
-        titan.override_anim = Some((DROP_ANIM.into(), t));
-        let (offset, duration, impact) = match clip_of(DROP_ANIM) {
+        titan.override_anim = Some((drop_anim.into(), t));
+        let (offset, duration, impact) = match clip_of(drop_anim) {
             Some((clips, c)) => {
                 let clip = &clips[c];
                 let total = clip.movement.last().copied().unwrap_or_default();

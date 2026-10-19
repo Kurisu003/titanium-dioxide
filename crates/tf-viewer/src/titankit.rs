@@ -649,6 +649,8 @@ pub struct KitNumbers {
     pub energy_max: f32,
     pub energy_regen: f32,
     pub energy_delay: f32,
+    /// Laser Tripwire's shared_energy_cost.
+    pub trip_cost: f32,
     pub laser_cost: f32,
     pub laser_titan: f32,
     pub laser_pilot: f32,
@@ -841,8 +843,14 @@ impl KitNumbers {
             util,
             energy_max: 1000.0,  // ION_ENERGY_MAX / sharedEnergyTotal
             energy_regen: 100.0, // titan_atlas_stickybomb.set sharedEnergyRegenRate [$sp]
-            energy_delay: 0.2,   // sharedEnergyRegenDelay
+            energy_delay: SHARED_ENERGY_REGEN_DELAY,
             laser_cost: num(&laser, "shared_energy_cost", 500.0),
+            // 0 with Zero-Point Tripwire (pas_ion_tripwire).
+            trip_cost: num(
+                &w("mp_titanability_laser_trip"),
+                "shared_energy_cost",
+                350.0,
+            ),
             laser_titan: num(&laser, "damage_near_value_titanarmor", 1500.0),
             laser_pilot: num(&laser, "damage_near_value", 300.0),
             laser_interval: 1.0 / num(&laser, "fire_rate", 1.5).max(0.1),
@@ -1255,6 +1263,13 @@ impl BoltShields {
 #[derive(Resource, Default)]
 pub struct TitanBoltHits(pub Vec<Entity>);
 
+/// Energy BT's bolts gave back this frame (Entangled Energy's critical hits), added to Ion's
+/// energy by kit_input.
+pub static RESTORE_ENERGY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// sharedEnergyRegenDelay (titan_atlas_stickybomb.set): the energy waits this long after use.
+pub const SHARED_ENERGY_REGEN_DELAY: f32 = 0.2;
+
 /// What the HUD shows for the Q and E slots.
 #[derive(Resource, Default)]
 pub struct KitView {
@@ -1402,6 +1417,11 @@ impl Default for KitState {
 }
 
 impl KitState {
+    /// Take shared energy (Ion), holding its regen off for the delay.
+    pub fn spend_energy(&mut self, cost: f32) {
+        self.energy = (self.energy - cost).max(0.0);
+        self.energy_delay = SHARED_ENERGY_REGEN_DELAY;
+    }
     fn rand(&mut self) -> f32 {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 7;
@@ -1462,6 +1482,7 @@ pub fn spawn_remote_wave(
         enemy,
         trap: None,
         row,
+        thermite: None,
     };
     let start = feet + dir * 25.0 + Vec3::Z * 40.0;
     match kind {
@@ -1519,6 +1540,7 @@ pub fn spawn_enemy_wave(commands: &mut Commands, kind: WaveKind, from: Vec3, dir
             enemy: true,
             trap: None,
             row: false,
+            thermite: None,
         },
         _ => Wave {
             kind: WaveKind::Firewall,
@@ -1536,6 +1558,7 @@ pub fn spawn_enemy_wave(commands: &mut Commands, kind: WaveKind, from: Vec3, dir
             enemy: true,
             trap: None,
             row: false,
+            thermite: None,
         },
     };
     log::info!("enemy {kind:?} wave from {:?}", from.round());
@@ -1580,6 +1603,8 @@ pub struct Wave {
     trap: Option<Vec3>,
     /// The Flame Core's middle wave, which carries each row's effects.
     row: bool,
+    /// A Firewall wave's thermite life when not the Firewall's own (Scorched Earth's 1.5 s).
+    thermite: Option<f32>,
 }
 
 /// A patch of Firewall thermite.
@@ -1670,7 +1695,14 @@ pub fn spawn_meteor_thermite(
         crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp"),
         piece(at, v, METEOR_THERMITE_LIFE.1, on_world),
     ));
-    for _ in 0..4 {
+    // OnProjectileCollision_Meteor: 4 trails thrown at 50, 8 at 200 with Wildfire Launcher
+    // (pas_scorch_weapon).
+    let (count, speed) = if crate::kits::has("pas_scorch_weapon") {
+        (8, 200.0)
+    } else {
+        (4, 50.0)
+    };
+    for _ in 0..count {
         // AnglesToForward / AnglesToUp of random angles in -360..360.
         let (p, y, r) = (
             rand(-360.0, 360.0).to_radians(),
@@ -1684,7 +1716,7 @@ pub fn spawn_meteor_thermite(
         commands.spawn((
             Transform::from_translation(to_bevy(at)),
             crate::pfx::PfxTrail::oriented("P_wpn_meteor_exp_trail"),
-            piece(at, v + fwd * 50.0 + up * 50.0, life, false),
+            piece(at, v + fwd * speed + up * speed, life, false),
         ));
     }
 }
@@ -2222,6 +2254,10 @@ pub fn kit_input(
         log::info!("Phase Reflex: phased out on doom");
     }
     st.was_doomed = doomed;
+    let restored = RESTORE_ENERGY.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if restored > 0 {
+        st.energy = (st.energy + restored as f32).min(n.energy_max);
+    }
     // Ion's energy regenerates after a short pause from the last use.
     if st.energy_delay > 0.0 {
         st.energy_delay -= dt;
@@ -2359,6 +2395,7 @@ pub fn kit_input(
                     enemy: false,
                     trap: None,
                     row: false,
+                    thermite: None,
                 });
                 crate::audio::event(&mut commands, "flamewall_flame_start");
                 true
@@ -2412,6 +2449,7 @@ pub fn kit_input(
                     enemy: false,
                     trap: None,
                     row: false,
+                    thermite: None,
                 });
                 true
             }
@@ -2779,7 +2817,10 @@ pub fn kit_input(
     let util_pressed = util_held && !st.prev_util;
     st.prev_util = util_held;
     let bt_pos = Vec3::from(s.pos.to_array());
-    if util_pressed && st.util_charges > 0 && st.phase <= 0.0 && st.hover_len <= 0.0 {
+    // Ion's Tripwire also needs its energy (FlashEnergyNeeded_Bar when short).
+    let util_energy = active.util != UtilKind::LaserTrip || st.energy >= n.trip_cost;
+    if util_pressed && st.util_charges > 0 && st.phase <= 0.0 && st.hover_len <= 0.0 && util_energy
+    {
         let used = match active.util {
             UtilKind::Smoke => {
                 // TitanSmokescreen: 240 units ahead when the line there is clear, else on BT.
@@ -2883,6 +2924,7 @@ pub fn kit_input(
                 true
             }
             UtilKind::LaserTrip => {
+                st.spend_energy(n.trip_cost);
                 // OnWeaponPrimaryAttack_titanweapon_laser_trip: three deployables along the view
                 // minus, along and plus right = dir x up (as long as the view's level part, so
                 // the sides are always 45 degrees out), the view tipped down to at least z -0.2;
@@ -3070,7 +3112,30 @@ pub fn kit_input(
                         enemy: false,
                         trap: None,
                         row: off == 0.0,
+                        thermite: None,
                     });
+                    // Scorched Earth (pas_scorch_flamecore, BeginScorchedEarth): each row also
+                    // lays a Firewall's thermite (CreateThermiteWallSegment), lasting 1.5 s.
+                    if crate::kits::has("pas_scorch_flamecore") {
+                        commands.spawn(Wave {
+                            kind: WaveKind::Firewall,
+                            pos: base + right * off * 128.0,
+                            head: base + right * off * 128.0,
+                            first: true,
+                            dir: fwd,
+                            step: n.flame_step,
+                            left: n.flame_count,
+                            timer: 0.0,
+                            radius: n.thermite_radius,
+                            titan: 0.0,
+                            pilot: 0.0,
+                            group,
+                            enemy: false,
+                            trap: None,
+                            row: false,
+                            thermite: Some(1.5),
+                        });
+                    }
                     crate::audio::event(&mut commands, sfx);
                 }
             }
@@ -3480,7 +3545,9 @@ pub fn kit_world(
                 // where the wave is.
                 WaveKind::Firewall => {
                     if let Some(prev) = prev {
-                        let life = if w.enemy {
+                        let life = if let Some(life) = w.thermite {
+                            life
+                        } else if w.enemy {
                             ENEMY_FIREWALL_THERMITE_SECS
                         } else {
                             n.thermite_life
@@ -3813,6 +3880,7 @@ pub fn kit_world(
                 enemy: false,
                 trap: Some(origin),
                 row: false,
+                thermite: None,
             });
         }
         log::info!(
@@ -4671,8 +4739,33 @@ pub fn sonar_shots(
     mut shots: Query<(Entity, &mut SonarShot, &mut Transform)>,
     enemies: Query<(Entity, &Enemy)>,
     mut kits: Query<&mut KitState, With<PlayerTitan>>,
+    mut echoes: Local<Vec<(Vec3, f32)>>,
 ) {
     let dt = time.delta_secs().min(0.1);
+    // Pulse Echo (pas_tone_sonar, DelayedPulseLocation): the spot pulses again 2 s later.
+    let mut pulses: Vec<Vec3> = Vec::new();
+    echoes.retain_mut(|(at, t)| {
+        *t -= dt;
+        if *t <= 0.0 {
+            pulses.push(*at);
+            false
+        } else {
+            true
+        }
+    });
+    for at in pulses {
+        status.pulse = Some((at, SONAR_PULSE_DURATION));
+        crate::audio::event_at(&mut commands, "Titan_Tone_SonarLock_Impact_Pulse_1P", at);
+        if active.ord == OrdKind::Tracker {
+            if let Ok(mut kit) = kits.single_mut() {
+                for (e_id, e) in enemies.iter() {
+                    if e.alive() && !e.infantry && e.pos.distance(at) < SONAR_PULSE_RADIUS {
+                        apply_tracker_mark(&mut commands, &mut kit.locks, e_id);
+                    }
+                }
+            }
+        }
+    }
     for (id, mut sh, mut tf) in &mut shots {
         sh.age += dt;
         sh.vel.z -= SONAR_SHOT_GRAVITY * dt;
@@ -4728,6 +4821,9 @@ pub fn sonar_shots(
             },
         );
         crate::audio::event_at(&mut commands, "Titan_Tone_SonarLock_Impact_Pulse_1P", at);
+        if crate::kits::has("pas_tone_sonar") {
+            echoes.push((at, 2.0));
+        }
         if active.ord == OrdKind::Tracker {
             if let Ok(mut kit) = kits.single_mut() {
                 for (e_id, e) in enemies.iter() {

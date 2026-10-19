@@ -255,6 +255,19 @@ pub fn update_abilities(
     let frozen = *mode == CameraMode::Free;
     let s = &titan.state;
 
+    // Highlander (pas_ronin_swordcore, SwordCore_OnPlayedOrNPCKilled): each Titan killed while
+    // Sword Core runs gives it 8 s more, up to its full length.
+    let kills = crate::targets::TITAN_KILLS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if let CoreState::Active(t) = core.state {
+        if kills > 0
+            && core.kind == crate::titankit::CoreKind::Sword
+            && crate::kits::has("pas_ronin_swordcore")
+        {
+            let left = (core.duration - t + 8.0 * kills as f32).min(core.duration);
+            core.state = CoreState::Active(core.duration - left);
+            log::info!("Highlander: Sword Core extended to {left:.1} s");
+        }
+    }
     // --- Burst Core ---
     core.state = match core.state {
         CoreState::Building => {

@@ -551,6 +551,12 @@ pub fn player_combat(
                 | 1;
             let rounds = std::mem::take(&mut vortex.rounds);
             let from = eye + view * VORTEX_DIST;
+            // Vortex Amplifier (pas_ion_vortex on Ion's Vortex): x1.35 to all it returns.
+            let amp = if vortex.mode == VortexMode::Ion && crate::kits::has("pas_ion_vortex") {
+                1.35
+            } else {
+                1.0
+            };
             for &(refire, kit) in &rounds {
                 let jitter = |rng: &mut u64, xy: f32, z: f32| {
                     Vec3::new(
@@ -587,7 +593,7 @@ pub fn player_combat(
                         }
                         if let Some(i) = victim {
                             if let Some(mut d) = dummies.iter_mut().nth(i) {
-                                let hit = d.damage(VORTEX_RETURN_DAMAGE, false);
+                                let hit = d.damage(VORTEX_RETURN_DAMAGE * amp, false);
                                 if let Some(c) = core.as_mut() {
                                     c.credit_inflicted(hit);
                                 }
@@ -628,12 +634,12 @@ pub fn player_combat(
                         };
                         let mut def = w.clone();
                         def.name = "mp_titanweapon_vortex_shield".to_string();
-                        def.damage_near = VORTEX_RETURN_DAMAGE;
-                        def.damage_far = VORTEX_RETURN_DAMAGE;
-                        def.damage_near_pilot = VORTEX_RETURN_PILOT_DAMAGE;
-                        def.damage_far_pilot = VORTEX_RETURN_PILOT_DAMAGE;
-                        def.explosion_damage = VORTEX_RETURN_EXPLOSION;
-                        def.npc_explosion_damage_heavy = VORTEX_RETURN_EXPLOSION;
+                        def.damage_near = VORTEX_RETURN_DAMAGE * amp;
+                        def.damage_far = VORTEX_RETURN_DAMAGE * amp;
+                        def.damage_near_pilot = VORTEX_RETURN_PILOT_DAMAGE * amp;
+                        def.damage_far_pilot = VORTEX_RETURN_PILOT_DAMAGE * amp;
+                        def.explosion_damage = VORTEX_RETURN_EXPLOSION * amp;
+                        def.npc_explosion_damage_heavy = VORTEX_RETURN_EXPLOSION * amp;
                         def.explosion_inner_radius = VORTEX_RETURN_EXPLOSION_INNER;
                         def.explosion_radius = VORTEX_RETURN_EXPLOSION_RADIUS;
                         def.crit = false;

@@ -1197,6 +1197,17 @@ pub struct PilotBolt {
     thermite: bool,
     /// The Thunderbolt's ball lightning: seconds to its next zap (BallLightningThink).
     zap: Option<f32>,
+    /// Energy a critical hit on a Titan gives back (the Splitter Rifle with Entangled Energy,
+    /// OnHit_TitanWeaponParticleAccelerator: CRITICAL_ENERGY_RESTORE_AMOUNT 30, 8 for a split
+    /// shot), and whether a crit adds a tracker mark (Tone's 40mm with Enhanced Tracker
+    /// Rounds, pas_tone_weapon).
+    crit_energy: u32,
+    crit_mark: bool,
+    /// World bounces left (projectile_ricochet_max_count).
+    ricochets: u32,
+    /// Goes on through what it hits (pass_through_depth), and what it has gone through.
+    pierce: bool,
+    pierced: Vec<Entity>,
     /// Where it is drawn relative to its simulated position at launch (Bevy units): a Pilot's
     /// shot leaves the gun barrel (projectile_adjust_to_gun_barrel) while it flies from the
     /// eye, and the offset closes over BOLT_BARREL_BLEND seconds.
@@ -1317,6 +1328,26 @@ impl PilotBolt {
             damages_owner: def.explosion_damages_owner && !from_titan,
             thermite: from_titan && def.name == "mp_titanweapon_meteor",
             zap: is_arc_ball(def).then_some(0.0),
+            crit_energy: match def.name.as_str() {
+                "mp_titanweapon_particle_accelerator"
+                    if from_titan
+                        && (!crate::gamedata::multiplayer()
+                            || crate::kits::has("pas_ion_weapon")) =>
+                {
+                    if def.split_shot {
+                        8
+                    } else {
+                        30
+                    }
+                }
+                _ => 0,
+            },
+            ricochets: def.ricochets,
+            pierce: from_titan && def.pass_through > 0.0,
+            pierced: Vec::new(),
+            crit_mark: from_titan
+                && def.name == "mp_titanweapon_sticky_40mm"
+                && crate::kits::has("pas_tone_weapon"),
             barrel: Vec3::ZERO,
             age: 0.0,
             grenade: def.grenade.filter(|_| !from_titan),
@@ -2354,7 +2385,7 @@ pub fn update_pilot_bolts(
         }
         let mut victim = None;
         for (eid, e) in enemies.iter() {
-            if e.alive() && b.stuck.is_none() {
+            if e.alive() && b.stuck.is_none() && !b.pierced.contains(&eid) {
                 if let Some(h) =
                     crate::hitbox::trace(b.pos, dir, t_end, e, hitboxes, &actors, &globals)
                 {
@@ -2437,6 +2468,42 @@ pub fn update_pilot_bolts(
                 commands.entity(id).despawn();
             }
             continue;
+        } else if let (true, Some((eid, h)), None) = (b.pierce && b.life > 0.0, victim, wall) {
+            // Through it: the hit lands and the round goes on.
+            if let Ok((_, mut e)) = enemies.get_mut(eid) {
+                if !e.catches_round() {
+                    let base = b.dmg.direct(b.travelled, e.infantry);
+                    let k = if e.infantry && h.group == crate::hitbox::HITGROUP_HEAD {
+                        b.headshot
+                    } else if !e.infantry && h.crit {
+                        b.crit
+                    } else {
+                        1.0
+                    };
+                    let hit = e.damage(base * k, b.stops_regen);
+                    for mut c in &mut cores {
+                        c.credit_inflicted(hit);
+                    }
+                    if hit.dealt > 0.0 && !e.infantry {
+                        titan_hits.0.push(eid);
+                    }
+                    b.pierced.push(eid);
+                    b.pos += dir * 1.0;
+                    continue;
+                }
+            }
+        } else if victim.is_none() && wall.is_none() && b.ricochets > 0 && b.life > 0.0 {
+            // A ricochet: the round glances off the world, mirrored about its surface.
+            let n = if world_normal.dot(dir) > 0.0 {
+                -world_normal
+            } else {
+                world_normal
+            };
+            let vn = b.vel.dot(n);
+            b.vel -= 2.0 * vn * n;
+            b.pos += n * 1.0;
+            b.ricochets -= 1;
+            continue;
         }
         commands.entity(id).despawn();
         // A grenade going off hits nothing directly (its impact was dealt on contact).
@@ -2478,6 +2545,15 @@ pub fn update_pilot_bolts(
                 let hit = e.damage(base * k, b.stops_regen);
                 if hit.dealt > 0.0 && !e.infantry {
                     damaged.push(eid);
+                    if h.crit {
+                        if b.crit_mark {
+                            damaged.push(eid);
+                        }
+                        if b.crit_energy > 0 {
+                            crate::titankit::RESTORE_ENERGY
+                                .fetch_add(b.crit_energy, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
                 }
                 hits.push(hit);
             }
