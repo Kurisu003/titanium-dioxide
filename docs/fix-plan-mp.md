@@ -74,3 +74,30 @@ All 45 items were worked through; the user's play test is still to come.
     or without it.
   - Dome Shield: the dome, its pulses and its fade work; its colour for an enemy viewer is the
     system's own (the engine's team colour constants are not in the scripts).
+
+## Audit (2026-10-19)
+
+The user's second play test found items 2 and 28 not working, so every item was checked again,
+with two-player headless runs where the item is about multiplayer.
+
+- 2, 28: the code assumed the game's default binds, but older settings.cfg files had X on Use
+  and the Titan call on `+scriptcommand1`. Binds now migrate once (`binds_version 2`): E use,
+  X eject, middle mouse Titan utility. V on foot calls the Titan or switches Follow/Guard.
+  The HUD key boxes show the bound keys.
+- 3: cloak stays 15 s (MP_BASE `fire_duration`), but a Pilot gun's shot now ends it
+  (`breaks_cloak`, on by default in the engine's weapon table, off only on the tacticals).
+- 36: Tone's Particle Wall used the campaign's health and duration; MP is 2000 for 6 s.
+  Other campaign-only rules found the same way: Firewall and T-203 thermite duration scales,
+  the T-203 thermite throw (0.25 in MP), Multi-Target Missile speed (2200 in MP).
+- 42: every class played Tone's execution, which only the medium chassis has. Executions now
+  come from `titan_executions.rpak` per class, and other players' Titans use their class's
+  model (they were all Tone's). The local Titan is still Tone's chassis in play; a stand-in of
+  the class's model plays the execution.
+- Verified in pair runs: 31 (a paused host still takes damage), 34 (a cloaked Pilot is a faint
+  outline for the other player), 36 (shots stop at the Particle Wall until it breaks), 37 (an
+  anti-Titan weapon dooms and kills), 39 (a Titan kills a Pilot by walking into them), 42 (no
+  disembark or eject during an execution; the Pilot dies with the Titan), 43 (61 fps on both
+  sides through three minutes of fire), the nametag of a player who left.
+- Found, not on the list: players and Titans don't block each other's movement (no
+  character-to-character collision); the player's own Titan, seen from outside, is always
+  Tone's model and Tone's cockpit is used for every class.
