@@ -870,7 +870,8 @@ Everything here comes from the install:
   `shdr` assets), in the game's linear units:
   - The sun (`c_sunColor`) and sky ambient (`c_skyColor`) are the map's `_light` / `_ambient`
     as the map compiler stores them: `(colour / 255)^2.2 * brightness / 255` (Forwardbase
-    Kodai's sun is 8.0, its sky about 1.2). Its yaw points *at* the sun.
+    Kodai's sun is 8.0, its sky about 1.2). Its angles are the direction the light travels
+    (the BSP's compiled sun normal).
   - World surfaces add the BSP's two baked lightmap layers (LIGHTMAP_DATA_SKY): layer A is
     sRGB indirect light times its alpha scale `a * 3.98 + 0.016` (materialsystem creates it as
     an `_SRGB` texture), and layer B is a sky-visibility vector that lights the surface with

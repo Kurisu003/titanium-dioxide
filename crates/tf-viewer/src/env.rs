@@ -146,9 +146,11 @@ impl MapEnv {
                 .map(|p| -p)
                 .or(angles.first().copied())
                 .unwrap_or(45.0);
-            // The angles' yaw points at the sun (checked against the baked sun visibility in
-            // the lightmaps), so the light travels the opposite way, downwards.
-            env.sun_dir = forward(pitch, yaw + 180.0).normalize();
+            // The angles are the direction the light travels: the map compiler stores exactly
+            // this as the sun's world-light normal (Forwardbase Kodai: (-0.335, 0.703, -0.628)),
+            // and engine.dll hands the shaders its negation as `c_sunDir`, which they dot
+            // with the surface normal (so it points at the sun: its z is positive).
+            env.sun_dir = forward(pitch, yaw).normalize();
             if let Some(l) = get(sun, "_light") {
                 env.sun_light = light_value(&l);
             }
