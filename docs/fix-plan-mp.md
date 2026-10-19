@@ -69,7 +69,8 @@ All 45 items were worked through; the user's play test is still to come.
   later Titan kits), saved in settings.cfg. Each kit is applied the way `_passives.gnut` does it:
   the same-named weapon mod or `ClassMods` block, or the script logic behind it.
   - Not done yet: Threat Optics (the engine's threat-scope highlight), Counter Ready (it adds a
-    charge to the core-meter Electric Smoke, which comes with Boosts), Assault Chip (auto-Titan
-    AI).
+    charge to the core-meter Electric Smoke, which comes with Boosts). Assault Chip only raises
+    the auto-Titan's proficiency (AVERAGE to GOOD); the auto-Titan uses no abilities yet, with
+    or without it.
   - Dome Shield: the dome, its pulses and its fade work; its colour for an enemy viewer is the
     system's own (the engine's team colour constants are not in the scripts).

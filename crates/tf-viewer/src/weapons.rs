@@ -1466,6 +1466,16 @@ pub fn weapon_fire(
     w.spread_kick = w.def.spread.decayed(w.spread_kick, w.since_fire, dt);
     let stance = titan_stance(s);
     w.cur_spread = w.def.spread.base(stance, w.ads) + w.spread_kick;
+    // The auto-Titan shoots as an NPC: the hip spread times its proficiency's spread scale,
+    // AVERAGE, or GOOD with Assault Chip (_ai_lethality.gnut, PAS_ENHANCED_TITAN_AI).
+    if auto_fire {
+        let prof = if crate::kits::has("pas_enhanced_titan_ai") {
+            crate::vitals::Proficiency::Good
+        } else {
+            crate::vitals::Proficiency::Average
+        };
+        w.cur_spread = w.def.spread_hip * w.def.proficiency[prof as usize].0;
+    }
     // The looping fire sound ends with the weapon's tail (burst_or_looping_fire_sound_end).
     if w.firing_audio && w.since_fire > 1.6 / w.def.fire_rate.max(0.1) {
         w.firing_audio = false;
