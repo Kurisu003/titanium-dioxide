@@ -106,6 +106,14 @@ const HEAT_CONE: f32 = 70.0;
 const HEAT_MUZZLE: Vec3 = Vec3::new(105.0, 24.0, -20.0);
 /// StartHeatShield: CreateVortexSphere( weapon, false, false, 120, HEAT_SHIELD_FOV 120 ).
 const HEAT_SPHERE_RADIUS: f32 = 120.0;
+/// Inferno Shield (pas_scorch_shield): charge_time and charge_cooldown_time x1.5, damage x1.2.
+fn inferno(k: f32) -> f32 {
+    if crate::kits::has("pas_scorch_shield") {
+        k
+    } else {
+        1.0
+    }
+}
 /// Ion's Vortex needs some energy to raise.
 const ION_VORTEX_MIN: f32 = 100.0;
 
@@ -257,7 +265,7 @@ impl Default for Vortex {
 impl Vortex {
     fn hold(&self) -> f32 {
         if self.mode == VortexMode::Heat {
-            HEAT_HOLD
+            HEAT_HOLD * inferno(1.5)
         } else {
             VORTEX_HOLD
         }
@@ -402,7 +410,11 @@ pub fn player_combat(
         )
     });
     let (hold, recover, delay) = match vortex.mode {
-        VortexMode::Heat => (HEAT_HOLD, HEAT_RECOVER, HEAT_DELAY),
+        VortexMode::Heat => (
+            HEAT_HOLD * inferno(1.5),
+            HEAT_RECOVER * inferno(1.5),
+            HEAT_DELAY,
+        ),
         _ => (VORTEX_HOLD, VORTEX_RECOVER, VORTEX_DELAY),
     };
     let frozen = *mode == CameraMode::Free;
@@ -482,7 +494,8 @@ pub fn player_combat(
                     let facing = (center - eye).normalize_or_zero().dot(view)
                         >= HEAT_CONE.to_radians().cos();
                     if side.hypot(up) < HEAT_RADIUS && facing {
-                        let amount = if d.infantry { HEAT_PILOT } else { HEAT_TITAN };
+                        let amount =
+                            if d.infantry { HEAT_PILOT } else { HEAT_TITAN } * inferno(1.2);
                         let hit = d.damage_radius(amount, false);
                         if let Some(c) = core.as_mut() {
                             c.credit_inflicted(hit);
