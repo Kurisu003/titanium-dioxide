@@ -923,6 +923,13 @@ pub fn simulate(
                 dt / n as f32,
             );
         }
+        // An opponent's Tether Trap holds BT on the spot it caught him (netfx.rs).
+        if let (Some(a), true) = (mods.tethered, piloted) {
+            titan.state.pos.x = a.x;
+            titan.state.pos.y = a.y;
+            titan.state.vel.x = 0.0;
+            titan.state.vel.y = 0.0;
+        }
         let s = &titan.state;
         let feet = to_bevy(bv(s.pos));
         if s.dashes != dashes {

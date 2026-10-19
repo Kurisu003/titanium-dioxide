@@ -186,7 +186,11 @@ pub fn director(
                     w.ammo = w.def.clip;
                     *o = Ordnance::default();
                     *c = TitanCore::default();
+                    // The kit's shield (Ion's, Scorch's Thermal Shield) stays: apply_kit only
+                    // sets it when the loadout changes.
+                    let mode = v.mode;
                     *v = Vortex::default();
+                    v.mode = mode;
                     *m = Melee::default();
                 }
                 for (_, mut ph) in &mut pilots {

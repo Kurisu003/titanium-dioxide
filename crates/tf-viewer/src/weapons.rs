@@ -1998,6 +1998,12 @@ pub fn weapon_fire(
         };
         let start = muzzle.unwrap_or(to_bevy(eye));
         let stop = to_bevy(end);
+        // The others draw it from this Titan's gun (netfx.rs).
+        crate::netfx::send_tracer(
+            muzzle_world(&actors, &globals, w.world_gun).map_or(eye, crate::player::from_bevy),
+            end,
+            w.arsenal,
+        );
         let seg = stop - start;
         let len = seg.length();
         let dir_b = to_bevy(dir).normalize_or(Vec3::NEG_Z);

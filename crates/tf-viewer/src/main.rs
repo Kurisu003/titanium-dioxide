@@ -44,6 +44,7 @@ mod minimap;
 mod music;
 mod nav;
 mod net;
+mod netfx;
 mod offhandvm;
 mod particles;
 mod pfx;
@@ -489,6 +490,9 @@ fn main() {
     .init_resource::<weapons::GunMuzzle>()
     .init_resource::<titankit::TitanBoltHits>()
     .init_resource::<titankit::FireSpots>()
+    .init_resource::<titankit::GhostEvents>()
+    .init_resource::<pilotability::GhostSatchels>()
+    .init_resource::<netfx::LaserCores>()
     .init_resource::<titankit::KitView>()
     .init_resource::<titankit::TitanMoveMods>()
     .init_resource::<rodeo::Rodeo>()
@@ -602,6 +606,11 @@ fn main() {
                     net::update,
                     net::spawn_remotes,
                     net::remote_states,
+                    netfx::track_local,
+                    netfx::receive,
+                    netfx::remote_laser_cores,
+                    netfx::remote_cables,
+                    netfx::remote_decoys,
                     game::director,
                     update::update,
                 )
@@ -637,7 +646,7 @@ fn main() {
                 )
                     .chain(),
                 abilities::update_abilities,
-                abilities::update_missiles,
+                (abilities::send_missiles, abilities::update_missiles).chain(),
                 titankit::kit_input,
                 (targets::update_enemies, weakpoints::update_weakpoints).chain(),
                 (
@@ -699,7 +708,12 @@ fn main() {
                     hud::update_tone_hud,
                     hud::update_death_icons,
                 ),
-                (pilotability::pilot_abilities, pilotability::update_decoy).chain(),
+                (
+                    pilotability::pilot_abilities,
+                    netfx::track_decoy,
+                    pilotability::update_decoy,
+                )
+                    .chain(),
                 (pilotability::update_grenades, pilotability::grenade_visuals).chain(),
                 (
                     pilotability::update_pilot_slots,

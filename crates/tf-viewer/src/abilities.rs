@@ -155,6 +155,10 @@ pub struct Missile {
     age: f32,
     out_dir: Vec3,
     spec: MissileSpec,
+    /// Another player's (netfx.rs): it flies and blows up harmlessly, homing on the local
+    /// Titan when `target_me`.
+    ghost: bool,
+    target_me: bool,
 }
 
 /// How a missile flies and hits: the Multi-Target Missile System's by default; Salvo Core,
@@ -189,6 +193,20 @@ pub fn spawn_missile(
     target: Option<Entity>,
     spec: MissileSpec,
 ) {
+    spawn_missile_as(commands, assets, pos, dir, target, spec, None);
+}
+
+/// [`spawn_missile`]; `ghost`: another player's (netfx.rs), homing on the local Titan when
+/// it holds true.
+pub fn spawn_missile_as(
+    commands: &mut Commands,
+    assets: &MissileAssets,
+    pos: Vec3,
+    dir: Vec3,
+    target: Option<Entity>,
+    spec: MissileSpec,
+    ghost: Option<bool>,
+) {
     let e = commands
         .spawn((
             Transform::from_translation(pos),
@@ -200,6 +218,8 @@ pub fn spawn_missile(
                 age: 0.0,
                 out_dir: dir,
                 spec,
+                ghost: ghost.is_some(),
+                target_me: ghost == Some(true),
             },
         ))
         .id();
@@ -228,6 +248,24 @@ fn view_dir(yaw: f32, pitch: f32) -> Vec3 {
         pitch.cos() * yaw.sin(),
         -pitch.sin(),
     )
+}
+
+/// The local Titan's new missiles go out to the others (netfx.rs): where, how fast, what they
+/// home on and how.
+pub fn send_missiles(new: Query<&Missile, Added<Missile>>, dummies: Query<&Enemy>) {
+    for m in &new {
+        if m.ghost {
+            continue;
+        }
+        let target = m
+            .target
+            .and_then(|t| dummies.get(t).ok())
+            .and_then(crate::netfx::code)
+            .unwrap_or(u32::MAX);
+        let how = (m.spec.homing.round().clamp(0.0, 65535.0) as u32)
+            | (((m.spec.out_time * 1000.0).round().clamp(0.0, 65535.0) as u32) << 16);
+        crate::netfx::send(crate::netfx::EV_MISSILE, m.pos, m.vel, [target, how]);
+    }
 }
 
 /// Lock-on, launch and the core trigger. Runs after the movement simulation.
@@ -411,11 +449,15 @@ pub fn update_missiles(
     for (e, mut m, mut tf) in &mut missiles {
         m.age += dt;
         // Fly out from the pods briefly, then home on the painted target.
+        let me = m.ghost.then(crate::netfx::local_body).flatten();
         let target_pos = m
             .target
             .and_then(|t| dummies.get(t).ok())
             .filter(|(_, d)| d.alive())
-            .map(|(_, d)| d.pos + Vec3::Z * d.height * 0.6);
+            .map(|(_, d)| d.pos + Vec3::Z * d.height * 0.6)
+            .or(me
+                .filter(|_| m.target_me)
+                .map(|(p, _, h, _)| p + Vec3::Z * h * 0.6));
         let spec = m.spec;
         let speed = spec.speed;
         if m.age < spec.out_time {
@@ -442,7 +484,20 @@ pub fn update_missiles(
             hit_world.unwrap_or(step.length()),
         ) {
             hit_world = Some(t);
-            enemy_walls.absorbed.push((we, spec.direct));
+            if !m.ghost {
+                enemy_walls.absorbed.push((we, spec.direct));
+            }
+        }
+        // Another player's missile strikes the local player's body here too.
+        if let Some((p, r, h, _)) = me {
+            let reach = hit_world.unwrap_or(step.length());
+            if let Some(t) =
+                crate::weapons::ray_cylinder(m.pos, step.normalize_or_zero(), p, r + 20.0, h)
+            {
+                if t < reach {
+                    hit_world = Some(t);
+                }
+            }
         }
         // The rocket strikes any living body it flies through this frame (the game's missiles
         // collide with entities), not only one that ends a frame near its target: at close
@@ -485,7 +540,7 @@ pub fn update_missiles(
             // Direct hit plus splash on anything within the explosion radius.
             let mut hits = Vec::new();
             for (de, mut d) in &mut dummies {
-                if !d.alive() {
+                if !d.alive() || m.ghost {
                     continue;
                 }
                 let center = d.pos + Vec3::Z * d.height * 0.5;

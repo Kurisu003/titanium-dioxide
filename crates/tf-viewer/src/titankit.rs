@@ -179,6 +179,29 @@ fn spawn_tether(
     }
 }
 
+/// Another player's tether (netfx.rs) from `pos` at `vel`: it flies and plants like the
+/// owner's; what it catches comes from them.
+pub fn spawn_ghost_tether(
+    commands: &mut Commands,
+    assets: Option<&TetherAssets>,
+    pos: Vec3,
+    vel: Vec3,
+) {
+    let r = |k: f32| ((pos.x + pos.y * k).sin() * 360.0).to_radians() * 2.0;
+    spawn_tether(
+        commands,
+        assets,
+        pos,
+        TetherShot {
+            pos,
+            vel,
+            life: 10.0,
+            spin: Vec3::new(r(1.7), r(2.3), r(3.1)),
+            ghost: true,
+        },
+    );
+}
+
 /// A tether grenade in flight (FireTether: FireWeaponGrenade at 1000 u/s).
 #[derive(Component)]
 pub struct TetherShot {
@@ -187,6 +210,8 @@ pub struct TetherShot {
     life: f32,
     /// Tumble (FireTether gives each a random angular velocity up to 360°/s per axis).
     spin: Vec3,
+    /// Another player's (netfx.rs): it plants, and catches only when its owner says so.
+    ghost: bool,
 }
 
 /// Electric Smoke cloud: damages after `delay`, every 0.1 s, out to the outer radius.
@@ -200,6 +225,8 @@ pub struct TitanSmoke {
     /// Deployed by an enemy Titan: hurts the Pilot and BT instead of the enemies.
     enemy: bool,
     hurt_pilot: bool,
+    /// Another player's cloud (netfx.rs): drawn only, its owner's hits do the damage.
+    ghost: bool,
 }
 
 /// TitanSmokescreen: an Electric Smoke cloud at `at`, facing `fwd` (`enemy` when an enemy
@@ -208,6 +235,11 @@ pub struct TitanSmoke {
 /// on control point 1 (what the system's operators read it as). The Smokescreen script isn't
 /// in the shipped scripts, so the plain variant (beside `_burn_mod` and `_heal`) is a guess.
 pub fn spawn_smoke(commands: &mut Commands, at: Vec3, fwd: Vec3, enemy: bool) {
+    spawn_smoke_as(commands, at, fwd, enemy, false);
+}
+
+/// [`spawn_smoke`]; `ghost`: another player's cloud (netfx.rs), drawn only.
+pub fn spawn_smoke_as(commands: &mut Commands, at: Vec3, fwd: Vec3, enemy: bool, ghost: bool) {
     commands.spawn((
         Transform::from_translation(to_bevy(at)),
         TitanSmoke {
@@ -218,6 +250,7 @@ pub fn spawn_smoke(commands: &mut Commands, at: Vec3, fwd: Vec3, enemy: bool) {
             puff: 0.0,
             enemy,
             hurt_pilot: false,
+            ghost,
         },
     ));
     if std::env::var_os("TF_OLD_FX").is_some() {
@@ -258,6 +291,87 @@ pub struct SlowTrap {
     build: f32,
     life: f32,
     puff: f32,
+    /// The throw's heading (proj.savedAngles keeps only the yaw): the planted canister's.
+    yaw: f32,
+    age: f32,
+    /// The canister model (a child, turned as it tumbles and as it stands) and its flight
+    /// trail.
+    body: Entity,
+    trail: Option<Entity>,
+    /// Another player's (netfx.rs): it slows the local Titan in PvP, and goes up in flames
+    /// when its owner's does.
+    ghost: bool,
+}
+
+/// SLOW_TRAP_MODEL (also the canister's projectilemodel). Its length runs from its origin
+/// (the base) 49 units along -X; DeploySlowTrap stands it on the ground at the throw's
+/// heading, pitched 90 ("rotate 90 to face up").
+const SLOW_TRAP_MODEL: &str = "models/weapons/titan_incendiary_trap/w_titan_incendiary_trap.mdl";
+/// ThrowDeployable's default angular velocity: 600 degrees/s of pitch (and a random yaw spin).
+const DEPLOYABLE_SPIN: f32 = 600.0;
+
+/// A Slow Trap canister thrown from `pos` at `vel` (ThrowDeployable at 1500 u/s): its model,
+/// tumbling, with the weapon's projectile_trail_effect_0 (P_meteor_trap_trail) until it lands.
+/// `ghost`: another player's (netfx.rs).
+pub fn spawn_slow_trap(commands: &mut Commands, pos: Vec3, vel: Vec3, ghost: bool) {
+    let old_fx = std::env::var_os("TF_OLD_FX").is_some();
+    let body = commands
+        .spawn((Transform::IDENTITY, Visibility::default()))
+        .id();
+    if old_fx {
+        commands
+            .entity(body)
+            .insert(Glow::new(Vec3::new(2.0, 1.2, 0.3), 0.3, true));
+    } else {
+        commands
+            .entity(body)
+            .insert(crate::pilotweapon::ProjectileModel(SLOW_TRAP_MODEL));
+    }
+    let trail = (!old_fx).then(|| {
+        commands
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::default(),
+                crate::pfx::PfxTrail::new("P_meteor_trap_trail"),
+            ))
+            .id()
+    });
+    let mut e = commands.spawn((
+        Transform::from_translation(to_bevy(pos)),
+        Visibility::default(),
+        SlowTrap {
+            pos,
+            vel,
+            landed: false,
+            build: SLOW_TRAP_BUILD_TIME,
+            life: SLOW_TRAP_LIFETIME,
+            puff: 0.0,
+            yaw: vel.y.atan2(vel.x),
+            age: 0.0,
+            body,
+            trail,
+            ghost,
+        },
+    ));
+    e.add_child(body);
+    if let Some(t) = trail {
+        e.add_child(t);
+    }
+}
+
+/// The planted canister's rotation (Bevy space) under a projectile-model holder: angles
+/// (90, yaw, 0) put the model's X down and its Z along the heading; the holder carries model X
+/// on its +Y, model Z on its -X and model Y on its -Z (pilotweapon::projectile_local).
+fn standing_canister(yaw: f32) -> Quat {
+    let fwd = to_bevy(Vec3::new(yaw.cos(), yaw.sin(), 0.0));
+    let left = to_bevy(Vec3::new(-yaw.sin(), yaw.cos(), 0.0));
+    Quat::from_mat3(&Mat3::from_cols(-fwd, Vec3::NEG_Y, -left))
+}
+
+/// A thrown deployable's holder turned along its flight and tumbling `spin` degrees/s of pitch.
+fn tumbling(vel: Vec3, age: f32, spin: f32) -> Quat {
+    Quat::from_rotation_arc(Vec3::Y, to_bevy(vel).normalize_or(Vec3::Y))
+        * Quat::from_rotation_x((age * spin).to_radians())
 }
 
 /// One Laser Tripwire pylon; beams run between the armed pylons of a group.
@@ -275,6 +389,53 @@ pub struct LaserPylon {
     yaw: f32,
     /// The pylon this one beams to and that pylon's beam point, once connected.
     link: Option<(Entity, Vec3)>,
+    /// Its projectile model and trail while it flies.
+    fly: Option<Entity>,
+    age: f32,
+    /// Another player's (netfx.rs): nothing trips it here, it goes when its owner's does.
+    ghost: bool,
+}
+
+/// The Laser Tripwire's projectilemodel and projectile_trail_effect_0.
+const LASER_TRIP_PROJECTILE: &str = "models/weapons/titan_trip_wire/titan_trip_wire_projectile.mdl";
+
+/// One Laser Tripwire deployable thrown from `pos` at `vel` (projectileID `id` of `group`).
+/// `ghost`: another player's (netfx.rs).
+pub fn spawn_pylon(commands: &mut Commands, pos: Vec3, vel: Vec3, group: u32, id: u8, ghost: bool) {
+    let old_fx = std::env::var_os("TF_OLD_FX").is_some();
+    let fly = commands
+        .spawn((Transform::IDENTITY, Visibility::default()))
+        .id();
+    if old_fx {
+        commands
+            .entity(fly)
+            .insert(Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false));
+    } else {
+        commands.entity(fly).insert((
+            crate::pilotweapon::ProjectileModel(LASER_TRIP_PROJECTILE),
+            crate::pfx::PfxTrail::new("P_wpn_laserTrip_trail"),
+        ));
+    }
+    commands
+        .spawn((
+            Transform::from_translation(to_bevy(pos)),
+            Visibility::default(),
+            LaserPylon {
+                pos,
+                vel,
+                landed: false,
+                build: LASER_TRIP_BUILD_TIME,
+                life: LASER_TRIP_LIFETIME,
+                group,
+                id,
+                yaw: vel.y.atan2(vel.x),
+                link: None,
+                fly: Some(fly),
+                age: 0.0,
+                ghost,
+            },
+        ))
+        .add_child(fly);
 }
 
 /// The tower model under a planted pylon; `actor` is set once the model is spawned.
@@ -1296,6 +1457,31 @@ pub struct TitanMoveMods {
     pub arc_slow: f32,
     /// Phase Dash in progress: BT isn't drawn (player::update_camera) and takes no damage.
     pub phased: bool,
+    /// An opponent's Tether Trap holds BT here (player.rs keeps him on the spot).
+    pub tethered: Option<Vec3>,
+    /// Seconds of an opponent's Slow Trap gas move_slow left.
+    pub trap_slow: f32,
+}
+
+/// What other players' kit objects do later, as their owners say (netfx.rs): Slow Traps going
+/// up in flames (at the trap), tripwire groups blowing, tethers catching a Titan.
+#[derive(Resource, Default)]
+pub struct GhostEvents {
+    pub ignite: Vec<Vec3>,
+    pub blow: Vec<u32>,
+    pub catch: Vec<GhostCatch>,
+}
+
+/// A tether trap of another player's catching a Titan.
+pub struct GhostCatch {
+    /// The trap (a direct hit's: where it lands).
+    pub at: Vec3,
+    /// The Titan caught here: the local one, or a body.
+    pub me: bool,
+    pub body: Option<Entity>,
+    pub hold: f32,
+    /// It struck the Titan in flight: the trap appears where the hit put it.
+    pub direct: bool,
 }
 
 /// Per-Titan kit state.
@@ -1645,6 +1831,8 @@ pub struct MeteorThermite {
     /// The shot it came from: CreateOncePerTickDamageInflictorHelper lets each target take one
     /// tick per server tick from all of a shot's pieces together.
     shot: u32,
+    /// Another player's thermite (netfx.rs): it burns for the eye only.
+    ghost: bool,
 }
 
 /// Fire this frame that can ignite Slow Trap gas from outside the kit systems: T-203 impact
@@ -1671,6 +1859,19 @@ pub fn spawn_meteor_thermite(
     on_world: bool,
     seed: u32,
 ) {
+    spawn_meteor_thermite_as(commands, at, vel, on_world, seed, None);
+}
+
+/// [`spawn_meteor_thermite`]; `ghost`: another player's shell (netfx.rs), with their Wildfire
+/// Launcher or not. Its thermite is drawn and does nothing.
+pub fn spawn_meteor_thermite_as(
+    commands: &mut Commands,
+    at: Vec3,
+    vel: Vec3,
+    on_world: bool,
+    seed: u32,
+    ghost: Option<bool>,
+) {
     let mut rng = seed | 1;
     let mut rand = move |lo: f32, hi: f32| {
         rng ^= rng << 13;
@@ -1689,6 +1890,7 @@ pub fn spawn_meteor_thermite(
         last: pos,
         tick: 0.2,
         shot,
+        ghost: ghost.is_some(),
     };
     commands.spawn((
         Transform::from_translation(to_bevy(at)),
@@ -1697,7 +1899,7 @@ pub fn spawn_meteor_thermite(
     ));
     // OnProjectileCollision_Meteor: 4 trails thrown at 50, 8 at 200 with Wildfire Launcher
     // (pas_scorch_weapon).
-    let (count, speed) = if crate::kits::has("pas_scorch_weapon") {
+    let (count, speed) = if ghost.unwrap_or_else(|| crate::kits::has("pas_scorch_weapon")) {
         (8, 200.0)
     } else {
         (4, 50.0)
@@ -1784,7 +1986,7 @@ pub fn meteor_thermite(
             tf.translation = to_bevy(t.pos);
         }
         // "thermite falls and ignites" after 0.2 s, then burns every 0.1 s.
-        if t.age < 0.2 {
+        if t.age < 0.2 || t.ghost {
             continue;
         }
         let radius = METEOR_THERMITE_RADIUS.max(t.pos.distance(t.last));
@@ -1860,6 +2062,37 @@ pub struct ClusterRocket {
     pos: Vec3,
     vel: Vec3,
     age: f32,
+    /// Another player's (netfx.rs): its bursts are drawn only.
+    ghost: bool,
+}
+
+/// A Cluster Missile from `from` at `vel`: the script's projectilemodel and trail.
+/// `ghost`: another player's (netfx.rs).
+pub fn spawn_cluster(commands: &mut Commands, from: Vec3, vel: Vec3, ghost: bool) {
+    let rocket = ClusterRocket {
+        pos: from,
+        vel,
+        age: 0.0,
+        ghost,
+    };
+    let at = Transform::from_translation(to_bevy(from)).with_rotation(Quat::from_rotation_arc(
+        Vec3::Y,
+        to_bevy(vel).normalize_or(Vec3::Y),
+    ));
+    if std::env::var_os("TF_OLD_FX").is_some() {
+        commands.spawn((at, Glow::new(Vec3::new(5.0, 3.0, 1.2), 0.5, true), rocket));
+    } else {
+        // The script's projectile: projectilemodel and projectile_trail_effect_0.
+        commands.spawn((
+            at,
+            Visibility::default(),
+            rocket,
+            crate::pfx::PfxTrail::new("Rocket_Smoke_SMALL_Titan_2"),
+            crate::pilotweapon::ProjectileModel(
+                "models/weapons/bullets/projectile_rocket_largest.mdl",
+            ),
+        ));
+    }
 }
 
 /// The Cluster Missile's bursts (StartClusterExplosions / ClusterRocketBursts): the
@@ -1876,6 +2109,7 @@ pub struct ClusterBursts {
     base: Option<Entity>,
     hops: Vec<ClusterHop>,
     rng: u64,
+    ghost: bool,
 }
 
 /// One burst projectile: flying ballistically (GetVelocityForDestOverTime, gravity 750) from
@@ -1982,6 +2216,10 @@ pub struct TetherTrap {
     arm: f32,
     victim: Option<(Entity, Vec3, f32)>,
     life: f32,
+    /// Another player's (netfx.rs): it catches what its owner's caught.
+    ghost: bool,
+    /// An opponent's trap holding the local Titan here: where, and seconds left.
+    holds_me: Option<(Vec3, f32)>,
 }
 
 fn view_dir(yaw: f32, pitch: f32) -> Vec3 {
@@ -2329,10 +2567,14 @@ pub fn kit_input(
                 // From the laser pod's muzzle_flash at the end of its draw (atpov_titan_bt_laser_pod:
                 // 62.5 ahead, 17.3 left and 11.8 above the camera bone): the script's
                 // P_wpn_hand_laser_beam, and its exp_laser_lite impact table.
-                let (a, b) = (
-                    to_bevy(eye + dir * 62.5 - right * 17.3 + Vec3::Z * 11.8),
-                    to_bevy(eye + dir * t),
+                let from = eye + dir * 62.5 - right * 17.3 + Vec3::Z * 11.8;
+                crate::netfx::send(
+                    crate::netfx::EV_LASER_SHOT,
+                    from,
+                    eye + dir * t,
+                    [who.is_some() as u32, 0],
                 );
+                let (a, b) = (to_bevy(from), to_bevy(eye + dir * t));
                 if std::env::var_os("TF_OLD_FX").is_none() {
                     crate::pfx::emit_beam(&mut commands, "P_wpn_hand_laser_beam", a, b);
                     let surface = if who.is_some() {
@@ -2404,28 +2646,9 @@ pub fn kit_input(
                 st.ord_cd_max = n.cluster_cd;
                 st.ord_cd = n.cluster_cd;
                 let from = eye + right * 60.0 + dir * 80.0;
-                let rocket = ClusterRocket {
-                    pos: from,
-                    vel: dir * n.cluster_speed,
-                    age: 0.0,
-                };
-                let at = Transform::from_translation(to_bevy(from)).with_rotation(
-                    Quat::from_rotation_arc(Vec3::Y, to_bevy(dir).normalize_or(Vec3::Y)),
-                );
-                if std::env::var_os("TF_OLD_FX").is_some() {
-                    commands.spawn((at, Glow::new(Vec3::new(5.0, 3.0, 1.2), 0.5, true), rocket));
-                } else {
-                    // The script's projectile: projectilemodel and projectile_trail_effect_0.
-                    commands.spawn((
-                        at,
-                        Visibility::default(),
-                        rocket,
-                        crate::pfx::PfxTrail::new("Rocket_Smoke_SMALL_Titan_2"),
-                        crate::pilotweapon::ProjectileModel(
-                            "models/weapons/bullets/projectile_rocket_largest.mdl",
-                        ),
-                    ));
-                }
+                let vel = dir * n.cluster_speed;
+                crate::netfx::send(crate::netfx::EV_CLUSTER, from, vel, [0, 0]);
+                spawn_cluster(&mut commands, from, vel, false);
                 true
             }
             OrdKind::ArcWave => {
@@ -2619,6 +2842,19 @@ pub fn kit_input(
                     }
                 }
                 let b = to_bevy(at);
+                let struck = match who.and_then(|id| enemies.get(id).ok()) {
+                    Some((_, e)) if e.infantry => 2,
+                    Some(_) => 1,
+                    None => 0,
+                };
+                crate::netfx::send(
+                    crate::netfx::EV_POWER_SHOT,
+                    gun_muzzle
+                        .frame
+                        .map_or(eye, |(a, _)| crate::player::from_bevy(a)),
+                    at,
+                    [weapon.long_range() as u32, struck],
+                );
                 match gun_muzzle
                     .frame
                     .filter(|_| std::env::var_os("TF_OLD_FX").is_none())
@@ -2749,6 +2985,7 @@ pub fn kit_input(
                     let r = |k: f32| {
                         ((eye.x + eye.y * k + side * 31.0).sin() * 360.0).to_radians() * 2.0
                     };
+                    crate::netfx::send(crate::netfx::EV_TETHER, eye, d * TETHER_SPEED, [0, 0]);
                     spawn_tether(
                         &mut commands,
                         tether_assets.as_deref(),
@@ -2758,6 +2995,7 @@ pub fn kit_input(
                             vel: d * TETHER_SPEED,
                             life: 10.0,
                             spin: Vec3::new(r(1.7), r(2.3), r(3.1)),
+                            ghost: false,
                         },
                     );
                 }
@@ -2835,6 +3073,7 @@ pub fn kit_input(
                     )
                     .is_none();
                 let at = if clear { ahead } else { bt_pos };
+                crate::netfx::send(crate::netfx::EV_SMOKE, at, fwd, [0, 0]);
                 spawn_smoke(&mut commands, at, fwd, false);
                 true
             }
@@ -2854,23 +3093,8 @@ pub fn kit_input(
                     .map_or(20000.0, |h| h.t);
                 let aim = (eye + dir * reach - from).normalize_or(dir);
                 let d = view_dir(aim.y.atan2(aim.x), (-aim.z).asin() - 1f32.to_radians());
-                let shot = SonarShot {
-                    pos: from,
-                    vel: d * SONAR_SHOT_SPEED,
-                    age: 0.0,
-                };
-                let at = Transform::from_translation(to_bevy(from)).with_rotation(
-                    Quat::from_rotation_arc(Vec3::Y, to_bevy(d).normalize_or(Vec3::Y)),
-                );
-                commands.spawn((
-                    at,
-                    Visibility::default(),
-                    shot,
-                    crate::pfx::PfxTrail::new("wpn_grenade_sonar_titan"),
-                    crate::pilotweapon::ProjectileModel(
-                        "models/weapons/kunai/w_kunai_projectile.mdl",
-                    ),
-                ));
+                crate::netfx::send(crate::netfx::EV_SONAR, from, d * SONAR_SHOT_SPEED, [0, 0]);
+                spawn_sonar(&mut commands, from, d * SONAR_SHOT_SPEED, false);
                 crate::audio::event(&mut commands, "Titan_Tone_SonarLock_Fired_ShoulderPod_1P");
                 true
             }
@@ -2909,18 +3133,8 @@ pub fn kit_input(
             UtilKind::SlowTrap => {
                 // ThrowDeployable at 1500 u/s; the canister builds for 1 s and gasses 240 units for 12 s.
                 let p = eye + dir * 40.0;
-                commands.spawn((
-                    Transform::from_translation(to_bevy(p)),
-                    Glow::new(Vec3::new(2.0, 1.2, 0.3), 0.3, true),
-                    SlowTrap {
-                        pos: p,
-                        vel: dir * 1500.0,
-                        landed: false,
-                        build: SLOW_TRAP_BUILD_TIME,
-                        life: SLOW_TRAP_LIFETIME,
-                        puff: 0.0,
-                    },
-                ));
+                crate::netfx::send(crate::netfx::EV_SLOW_TRAP, p, dir * 1500.0, [0, 0]);
+                spawn_slow_trap(&mut commands, p, dir * 1500.0, false);
                 true
             }
             UtilKind::LaserTrip => {
@@ -2954,22 +3168,8 @@ pub fn kit_input(
                     // spot below and right of the eye stands in for it.
                     let p = eye + Vec3::Z * -15.0 + right * 25.0;
                     let vel = view_dir(yaw, pitch.to_radians()) * power;
-                    commands.spawn((
-                        Transform::from_translation(to_bevy(p)),
-                        Visibility::default(),
-                        Glow::new(Vec3::new(1.5, 3.0, 6.0), 0.3, false),
-                        LaserPylon {
-                            pos: p,
-                            vel,
-                            landed: false,
-                            build: LASER_TRIP_BUILD_TIME,
-                            life: LASER_TRIP_LIFETIME,
-                            group,
-                            id: id as u8,
-                            yaw,
-                            link: None,
-                        },
-                    ));
+                    crate::netfx::send(crate::netfx::EV_PYLON, p, vel, [group, id as u32]);
+                    spawn_pylon(&mut commands, p, vel, group, id as u8, false);
                 }
                 true
             }
@@ -3070,13 +3270,19 @@ pub fn kit_input(
         st.hover_slow / HOVER_FADE
     };
     mods.arc_slow = (mods.arc_slow - dt).max(0.0);
+    mods.trap_slow = (mods.trap_slow - dt).max(0.0);
     st.laser_slow = (st.laser_slow - dt).max(0.0);
     let laser_k = LASER_CORE_SLOW * (st.laser_slow / LASER_CORE_SLOW_FADE).min(1.0);
     crate::player::set_turn_slow(laser_k);
     mods.speed_scale = (1.0 - 0.6 * phase_k)
         .min(1.0 - laser_k)
         .min(1.0 - 0.65 * hover_k)
-        .min(if mods.arc_slow > 0.0 { ARC_SLOW } else { 1.0 });
+        .min(if mods.arc_slow > 0.0 { ARC_SLOW } else { 1.0 })
+        .min(if mods.trap_slow > 0.0 {
+            SLOW_TRAP_SLOW
+        } else {
+            1.0
+        });
 
     // --- Cores ---
     // TF_CORE_FULL=1 keeps the meter full (testing cores in scripted runs).
@@ -3300,6 +3506,12 @@ pub fn kit_input(
                 st.core_tick -= dt;
                 if st.core_tick <= 0.0 {
                     st.core_tick += SERVER_FRAME;
+                    crate::netfx::send(
+                        crate::netfx::EV_LASER_CORE,
+                        eye + dir * 32.0 - Vec3::Z * 44.0,
+                        eye + dir * t,
+                        [0, 0],
+                    );
                     if let Some(id) = who {
                         if let Ok((_, mut e)) = enemies.get_mut(id) {
                             hurt(&mut e, n.laser_core_tick, n.laser_core_tick, &mut core);
@@ -3381,6 +3593,7 @@ pub fn kit_world(
             mode,
             gun_muzzle,
             mut spots,
+            mut ghost_events,
         ),
     ): (
         Local<f32>,
@@ -3406,6 +3619,7 @@ pub fn kit_world(
             Res<CameraMode>,
             Res<crate::weapons::GunMuzzle>,
             ResMut<FireSpots>,
+            ResMut<GhostEvents>,
         ),
     ),
 ) {
@@ -3817,29 +4031,50 @@ pub fn kit_world(
     // mp_titanweapon_meteor_thermite damage both ignite it).
     fire.extend(std::mem::take(&mut spots.blasts));
     fire.extend(spots.burning.iter().copied());
+    // Another player's trap goes up when its owner's does (they say where).
+    let mut lit_ghosts: Vec<(Entity, Vec3)> = Vec::new();
+    for at in std::mem::take(&mut ghost_events.ignite) {
+        let nearest = gas
+            .iter()
+            .filter(|(id, t)| t.ghost && !lit_ghosts.iter().any(|g| g.0 == *id))
+            .map(|(id, t)| (id, t.pos.distance(at)))
+            .filter(|(_, d)| *d < 150.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((id, _)) = nearest {
+            lit_ghosts.push((id, at));
+        }
+    }
     for (id, trap) in &gas {
-        if !trap.landed || trap.build > 0.0 {
+        let ghost_at = lit_ghosts.iter().find(|g| g.0 == id).map(|g| g.1);
+        if ghost_at.is_none() && (trap.ghost || !trap.landed || trap.build > 0.0) {
             continue;
         }
-        let lit = fire.iter().any(|(p, r)| {
-            (*p - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + r
-                && (p.z - trap.pos.z).abs() < 150.0
-        }) || waves.iter().any(|(_, w)| {
-            w.kind == WaveKind::Flame
-                && (w.pos - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + w.radius
-                && (w.pos.z - trap.pos.z).abs() < 150.0
-        }) || (vortex
-            .single()
-            .is_ok_and(|v| v.active && v.mode == VortexMode::Heat)
-            && (Vec3::from(titan.state.pos.to_array()) - trap.pos)
-                .truncate()
-                .length()
-                < SLOW_TRAP_RADIUS + 250.0);
+        let lit = ghost_at.is_some()
+            || fire.iter().any(|(p, r)| {
+                (*p - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + r
+                    && (p.z - trap.pos.z).abs() < 150.0
+            })
+            || waves.iter().any(|(_, w)| {
+                w.kind == WaveKind::Flame
+                    && (w.pos - trap.pos).truncate().length() < SLOW_TRAP_RADIUS + w.radius
+                    && (w.pos.z - trap.pos.z).abs() < 150.0
+            })
+            || (vortex
+                .single()
+                .is_ok_and(|v| v.active && v.mode == VortexMode::Heat)
+                && (Vec3::from(titan.state.pos.to_array()) - trap.pos)
+                    .truncate()
+                    .length()
+                    < SLOW_TRAP_RADIUS + 250.0);
         if !lit {
             continue;
         }
         commands.entity(id).despawn();
-        let origin = trap.pos + Vec3::Z * SLOW_TRAP_GAS_HEIGHT;
+        let trap_pos = ghost_at.unwrap_or(trap.pos);
+        if ghost_at.is_none() {
+            crate::netfx::send(crate::netfx::EV_TRAP_IGNITE, trap.pos, Vec3::ZERO, [0, 0]);
+        }
+        let origin = trap_pos + Vec3::Z * SLOW_TRAP_GAS_HEIGHT;
         // IgniteTrap: P_meteor_trap_center at the gas, killed after 3 s.
         if std::env::var_os("TF_OLD_FX").is_some() {
             emit(
@@ -3859,15 +4094,20 @@ pub fn kit_world(
         }
         crate::audio::event_at(&mut commands, "incendiary_trap_explode", origin);
         crate::audio::event_at(&mut commands, "incendiary_trap_burn", origin);
-        let group = next_group();
+        // Another player's lines burn here for the eye (GHOST_GROUP).
+        let group = if trap.ghost {
+            ENEMY_WAVE_GROUP.fetch_add(12, std::sync::atomic::Ordering::Relaxed) | GHOST_GROUP
+        } else {
+            next_group()
+        };
         for i in 0..12u32 {
             let yaw = (30.0 * i as f32).to_radians();
             let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
             let dir = if i > 5 { -fwd } else { fwd };
             commands.spawn(Wave {
                 kind: WaveKind::Firewall,
-                pos: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS,
-                head: trap.pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS,
+                pos: trap_pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS,
+                head: trap_pos + fwd * FIRE_TRAP_MINI_EXPLOSION_RADIUS,
                 first: true,
                 dir,
                 step: n.trap_step,
@@ -3884,7 +4124,7 @@ pub fn kit_world(
             });
         }
         log::info!(
-            "slow trap ignited ({} lines of {} x {:.0})",
+            "slow trap ignited at {origin:.0} ({} lines of {} x {:.0})",
             12,
             n.trap_count,
             n.trap_step
@@ -3914,14 +4154,18 @@ pub fn kit_world(
         if let Some(t) = hit {
             t_end = t;
         }
-        for (_, e) in enemies.iter() {
-            if e.alive() {
-                if let Some(t) = ray_cylinder(r.pos, dir, e.pos, e.radius, e.height) {
-                    if t < t_end {
-                        t_end = t;
-                        hit = Some(t);
-                        normal = -dir;
-                    }
+        let me = r.ghost.then(crate::netfx::local_body).flatten();
+        for (p, rad, h) in enemies
+            .iter()
+            .filter(|(_, e)| e.alive())
+            .map(|(_, e)| (e.pos, e.radius, e.height))
+            .chain(me.map(|m| (m.0, m.1, m.2)))
+        {
+            if let Some(t) = ray_cylinder(r.pos, dir, p, rad, h) {
+                if t < t_end {
+                    t_end = t;
+                    hit = Some(t);
+                    normal = -dir;
                 }
             }
         }
@@ -3933,15 +4177,17 @@ pub fn kit_world(
         }
         commands.entity(id).despawn();
         let at = r.pos - dir * 10.0;
-        splash(
-            &mut enemies,
-            at,
-            n.cluster_inner,
-            n.cluster_radius,
-            n.cluster_heavy,
-            n.cluster_pilot,
-            &mut core,
-        );
+        if !r.ghost {
+            splash(
+                &mut enemies,
+                at,
+                n.cluster_inner,
+                n.cluster_radius,
+                n.cluster_heavy,
+                n.cluster_pilot,
+                &mut core,
+            );
+        }
         let base = if old_fx {
             emit(
                 &mut commands,
@@ -3990,6 +4236,7 @@ pub fn kit_world(
             base,
             hops: Vec::new(),
             rng: (r.age.to_bits() as u64) | 1,
+            ghost: r.ghost,
         });
     }
     for (id, mut b) in &mut bursts {
@@ -4111,15 +4358,17 @@ pub fn kit_world(
             (h.to, h.vel, h.dur) = (to, vel, dur);
         }
         for at in pops {
-            splash(
-                &mut enemies,
-                at,
-                n.cluster_inner,
-                n.cluster_radius,
-                n.cluster_heavy,
-                n.cluster_pilot,
-                &mut core,
-            );
+            if !b.ghost {
+                splash(
+                    &mut enemies,
+                    at,
+                    n.cluster_inner,
+                    n.cluster_radius,
+                    n.cluster_heavy,
+                    n.cluster_pilot,
+                    &mut core,
+                );
+            }
             if old_fx {
                 emit(
                     &mut commands,
@@ -4358,6 +4607,7 @@ pub fn kit_world(
             let limit = world_hit.as_ref().map_or(len + 4.0, |h| h.t);
             let direct = enemies
                 .iter()
+                .filter(|_| !g.ghost)
                 .filter(|(_, e)| e.alive() && !e.infantry)
                 .filter_map(|(eid, e)| {
                     ray_cylinder(g.pos, dir, e.pos, e.radius + 4.0, e.height)
@@ -4379,6 +4629,18 @@ pub fn kit_world(
                     let pos = hit + probe.normalize() * h.t + ground * 2.0;
                     crate::audio::event_at(&mut commands, "Wpn_TetherTrap_PopOpen_3p", pos);
                     log::info!("tether trap struck an enemy Titan");
+                    if let Some(code) = enemies
+                        .get(eid)
+                        .ok()
+                        .and_then(|(_, e)| crate::netfx::code(e))
+                    {
+                        crate::netfx::send(
+                            crate::netfx::EV_TETHER_CATCH,
+                            pos,
+                            ground,
+                            [code, crate::netfx::catch_arg(n.tether_hold, true)],
+                        );
+                    }
                     let e = spawn_tether(
                         &mut commands,
                         tether_assets.as_deref(),
@@ -4388,6 +4650,8 @@ pub fn kit_world(
                             arm: 0.0,
                             victim: Some((eid, epos, n.tether_hold)),
                             life: TETHER_LIFETIME,
+                            ghost: false,
+                            holds_me: None,
                         },
                     );
                     if tether_assets.is_some() {
@@ -4421,6 +4685,8 @@ pub fn kit_world(
                                 arm: TETHER_ARM,
                                 victim: None,
                                 life: TETHER_LIFETIME,
+                                ghost: g.ghost,
+                                holds_me: None,
                             },
                         );
                         if tether_assets.is_some() {
@@ -4430,9 +4696,13 @@ pub fn kit_world(
                                     .with_rotation(Quat::from_rotation_arc(Vec3::Z, nrm)),
                             );
                         }
-                        // projectile_max_deployed: the oldest trap goes when a fifth lands.
-                        let mut planted: Vec<(Entity, f32)> =
-                            traps.iter().map(|(e, t)| (e, t.life)).collect();
+                        // projectile_max_deployed: the oldest trap goes when a fifth lands (each
+                        // player's own).
+                        let mut planted: Vec<(Entity, f32)> = traps
+                            .iter()
+                            .filter(|(_, t)| t.ghost == g.ghost)
+                            .map(|(e, t)| (e, t.life))
+                            .collect();
                         if planted.len() >= TETHERS_MAX {
                             planted.sort_by(|a, b| a.1.total_cmp(&b.1));
                             for (e, _) in planted.iter().take(planted.len() + 1 - TETHERS_MAX) {
@@ -4465,11 +4735,85 @@ pub fn kit_world(
         }
     }
 
+    // --- Other players' tethers catching what their owners say ---
+    let me_pos = player
+        .single()
+        .ok()
+        .map(|(_, bt, _)| Vec3::from(bt.state.pos.to_array()));
+    for c in std::mem::take(&mut ghost_events.catch) {
+        let target = if c.direct {
+            None
+        } else {
+            traps
+                .iter()
+                .filter(|(_, t)| t.ghost && t.victim.is_none() && t.holds_me.is_none())
+                .map(|(e, t)| (e, t.pos.distance(c.at)))
+                .filter(|(_, d)| *d < 100.0)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(e, _)| e)
+        };
+        let victim = c
+            .body
+            .and_then(|b| enemies.get(b).ok())
+            .map(|(b, e)| (b, e.pos, c.hold));
+        let holds_me = (c.me && *control == Control::Titan)
+            .then_some(me_pos)
+            .flatten()
+            .map(|p| (p, c.hold));
+        crate::audio::event_at(&mut commands, "Wpn_TetherTrap_PopOpen_3p", c.at);
+        if holds_me.is_some() {
+            log::info!("net: an opponent's tether trap caught BT");
+        }
+        match target.and_then(|e| traps.get_mut(e).ok()) {
+            Some((_, mut t)) => {
+                t.victim = victim;
+                t.holds_me = holds_me;
+            }
+            None => {
+                spawn_tether(
+                    &mut commands,
+                    tether_assets.as_deref(),
+                    c.at,
+                    TetherTrap {
+                        pos: c.at,
+                        arm: 0.0,
+                        victim,
+                        life: TETHER_LIFETIME,
+                        ghost: true,
+                        holds_me,
+                    },
+                );
+            }
+        }
+    }
+
     // --- Tether Trap: holds the first enemy Titan it sees within 450 units ---
+    mods.tethered = None;
     for (id, mut t) in &mut traps {
         t.life -= dt;
         t.arm -= dt;
+        // An opponent's trap holding BT here.
+        if let Some((anchor, left)) = t.holds_me {
+            let left = left - dt;
+            if left > 0.0 && *control == Control::Titan {
+                t.holds_me = Some((anchor, left));
+                mods.tethered = Some(anchor);
+                emit(
+                    &mut commands,
+                    Effect::Tracer {
+                        from: to_bevy(t.pos),
+                        to: to_bevy(anchor + Vec3::Z * 120.0),
+                        width: 0.08,
+                        color: Vec3::new(1.5, 3.0, 6.0),
+                    },
+                );
+            } else {
+                commands.entity(id).despawn();
+                continue;
+            }
+        }
         match t.victim {
+            None if t.arm <= 0.0 && t.ghost => {}
             None if t.arm <= 0.0 => {
                 let sees = |e: &Enemy| {
                     let eye = e.pos + Vec3::Z * (e.height - 40.0);
@@ -4493,16 +4837,36 @@ pub fn kit_world(
                     t.victim = Some((eid, p, n.tether_hold));
                     crate::audio::event_at(&mut commands, "Wpn_TetherTrap_PopOpen_3p", t.pos);
                     log::info!("tether trap caught an enemy Titan");
+                    if let Some(code) = enemies
+                        .get(eid)
+                        .ok()
+                        .and_then(|(_, e)| crate::netfx::code(e))
+                    {
+                        crate::netfx::send(
+                            crate::netfx::EV_TETHER_CATCH,
+                            t.pos,
+                            Vec3::Z,
+                            [code, crate::netfx::catch_arg(n.tether_hold, false)],
+                        );
+                    }
                 }
             }
             Some((eid, anchor, left)) => {
                 let left = left - dt;
                 match enemies.get_mut(eid) {
                     Ok((_, mut e)) if left > 0.0 && e.alive() => {
-                        // Pinned: undo whatever the AI moved this frame.
-                        e.pos = anchor;
-                        e.state.pos = SVec3::from(anchor.to_array());
-                        e.state.vel = SVec3::ZERO;
+                        // Pinned: undo whatever the AI moved this frame. Another player's
+                        // trap pins an AI Titan only where the AI runs (the host); a player's
+                        // Titan holds itself still on its owner's side.
+                        let pin = !t.ghost
+                            || (e.pool.is_some()
+                                && crate::net::HOSTING.load(std::sync::atomic::Ordering::Relaxed));
+                        if pin && e.remote.is_none() {
+                            e.pos = anchor;
+                            e.state.pos = SVec3::from(anchor.to_array());
+                            e.state.vel = SVec3::ZERO;
+                        }
+                        let anchor = if pin { anchor } else { e.pos };
                         t.victim = Some((eid, anchor, left));
                         emit(
                             &mut commands,
@@ -4723,6 +5087,29 @@ pub struct SonarShot {
     pos: Vec3,
     vel: Vec3,
     age: f32,
+    /// Another player's (netfx.rs): it pulses for the eye only.
+    ghost: bool,
+}
+
+/// A Sonar Pulse echo from `from` at `vel` (the weapon's trail and projectile model).
+/// `ghost`: another player's (netfx.rs).
+pub fn spawn_sonar(commands: &mut Commands, from: Vec3, vel: Vec3, ghost: bool) {
+    let at = Transform::from_translation(to_bevy(from)).with_rotation(Quat::from_rotation_arc(
+        Vec3::Y,
+        to_bevy(vel).normalize_or(Vec3::Y),
+    ));
+    commands.spawn((
+        at,
+        Visibility::default(),
+        SonarShot {
+            pos: from,
+            vel,
+            age: 0.0,
+            ghost,
+        },
+        crate::pfx::PfxTrail::new("wpn_grenade_sonar_titan"),
+        crate::pilotweapon::ProjectileModel("models/weapons/kunai/w_kunai_projectile.mdl"),
+    ));
 }
 
 /// Fly Sonar Pulse echoes; where one hits the world or a Titan it pulses
@@ -4788,14 +5175,22 @@ pub fn sonar_shots(
         if let Some(t) = hit {
             t_end = t;
         }
-        for (_, e) in enemies.iter() {
-            if e.alive() && !e.infantry {
-                if let Some(t) = ray_cylinder(sh.pos, dir, e.pos, e.radius, e.height) {
-                    if t < t_end {
-                        t_end = t;
-                        hit = Some(t);
-                        normal = -dir;
-                    }
+        let me = sh
+            .ghost
+            .then(crate::netfx::local_body)
+            .flatten()
+            .filter(|m| !m.3);
+        for (p, r, h) in enemies
+            .iter()
+            .filter(|(_, e)| e.alive() && !e.infantry)
+            .map(|(_, e)| (e.pos, e.radius, e.height))
+            .chain(me.map(|m| (m.0, m.1, m.2)))
+        {
+            if let Some(t) = ray_cylinder(sh.pos, dir, p, r, h) {
+                if t < t_end {
+                    t_end = t;
+                    hit = Some(t);
+                    normal = -dir;
                 }
             }
         }
@@ -4808,7 +5203,9 @@ pub fn sonar_shots(
         commands.entity(id).despawn();
         let at = sh.pos;
         log::debug!("sonar pulse at ({:.0}, {:.0}, {:.0})", at.x, at.y, at.z);
-        status.pulse = Some((at, SONAR_PULSE_DURATION));
+        if !sh.ghost {
+            status.pulse = Some((at, SONAR_PULSE_DURATION));
+        }
         emit(
             &mut commands,
             Effect::Hit {
@@ -4821,6 +5218,9 @@ pub fn sonar_shots(
             },
         );
         crate::audio::event_at(&mut commands, "Titan_Tone_SonarLock_Impact_Pulse_1P", at);
+        if sh.ghost {
+            continue;
+        }
         if crate::kits::has("pas_tone_sonar") {
             echoes.push((at, 2.0));
         }
@@ -4913,6 +5313,7 @@ pub fn utility_world(
         )>,
         Query<(&PlayerTitan, &mut TitanHealth)>,
     ),
+    (mut mods, mut ghost_events): (ResMut<TitanMoveMods>, ResMut<GhostEvents>),
 ) {
     let dt = time.delta_secs().min(0.1);
     // Electric Smoke: after damageDelay, dpsPilot / dpsTitan per second between the radii.
@@ -4949,7 +5350,7 @@ pub fn utility_world(
                 );
             }
         }
-        if sm.delay <= 0.0 {
+        if sm.delay <= 0.0 && !sm.ghost {
             sm.tick -= dt;
             while sm.tick <= 0.0 {
                 sm.tick += SERVER_FRAME;
@@ -5019,13 +5420,28 @@ pub fn utility_world(
     }
     // Slow Trap: lands, builds for a second, then its gas slows whoever stands in it.
     for (id, mut t, mut tf) in &mut traps {
+        t.age += dt;
         if !t.landed {
             let (mut p, mut v) = (t.pos, t.vel);
             t.landed = fly_deployable(&world, &mut p, &mut v, dt);
             t.pos = p;
             t.vel = v;
+            commands
+                .entity(t.body)
+                .insert(Transform::from_rotation(tumbling(
+                    t.vel,
+                    t.age,
+                    DEPLOYABLE_SPIN,
+                )));
             if t.landed {
                 crate::audio::event_at(&mut commands, "incendiary_trap_land", t.pos);
+                // DeploySlowTrap: the canister stands at the throw's heading.
+                commands
+                    .entity(t.body)
+                    .insert(Transform::from_rotation(standing_canister(t.yaw)));
+                if let Some(trail) = t.trail.take() {
+                    commands.entity(trail).despawn();
+                }
             }
         } else if t.build > 0.0 {
             t.build -= dt;
@@ -5061,13 +5477,27 @@ pub fn utility_world(
                     },
                 );
             }
-            for (_, mut e) in enemies.iter_mut() {
-                if e.alive()
-                    && (e.pos - t.pos).truncate().length() - e.radius < SLOW_TRAP_RADIUS
-                    && (e.pos.z - t.pos.z).abs() < 200.0
-                {
-                    e.slow = SLOW_TRAP_SLOW;
-                    e.slow_t = 0.3;
+            if t.ghost {
+                // An opponent's gas slows the local Titan (a teammate's doesn't).
+                if crate::netfx::pvp() && *control == Control::Titan {
+                    if let Ok((bt, _)) = player.single() {
+                        let bp = Vec3::from(bt.state.pos.to_array());
+                        if (bp - t.pos).truncate().length() - 60.0 < SLOW_TRAP_RADIUS
+                            && (bp.z - t.pos.z).abs() < 200.0
+                        {
+                            mods.trap_slow = 0.3;
+                        }
+                    }
+                }
+            } else {
+                for (_, mut e) in enemies.iter_mut() {
+                    if e.alive()
+                        && (e.pos - t.pos).truncate().length() - e.radius < SLOW_TRAP_RADIUS
+                        && (e.pos.z - t.pos.z).abs() < 200.0
+                    {
+                        e.slow = SLOW_TRAP_SLOW;
+                        e.slow_t = 0.3;
+                    }
                 }
             }
             if t.life <= 0.0 {
@@ -5090,13 +5520,22 @@ pub fn utility_world(
         .filter(|(_, p, _)| p.landed)
         .map(|(id, p, _)| (id, p.group, p.id, p.pos))
         .collect();
-    let mut blow: Vec<u32> = Vec::new();
+    // Another player's groups go when their owner's do.
+    let mut blow: Vec<u32> = std::mem::take(&mut ghost_events.blow);
     for (id, mut p, mut tf) in &mut pylons {
+        p.age += dt;
         if !p.landed {
             let (mut pos, mut v) = (p.pos, p.vel);
             p.landed = fly_deployable(&world, &mut pos, &mut v, dt);
             p.pos = pos;
             p.vel = v;
+            if let Some(f) = p.fly {
+                commands.entity(f).insert(Transform::from_rotation(tumbling(
+                    p.vel,
+                    p.age,
+                    DEPLOYABLE_SPIN,
+                )));
+            }
             if p.landed {
                 log::debug!(
                     "laser pylon {} landed at ({:.0}, {:.0}, {:.0})",
@@ -5105,7 +5544,9 @@ pub fn utility_world(
                     p.pos.y,
                     p.pos.z
                 );
-                commands.entity(id).remove::<Glow>();
+                if let Some(f) = p.fly.take() {
+                    commands.entity(f).despawn();
+                }
                 // The tower: upright, turned to the throw's heading, in game units.
                 let root =
                     Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
@@ -5165,9 +5606,14 @@ pub fn utility_world(
         }
         tf.translation = to_bevy(p.pos);
     }
-    // Keep at most LASER_TRIP_MAX pylons: the oldest group goes first.
-    if pylons.iter().count() > LASER_TRIP_MAX {
-        let oldest = pylons.iter().map(|(_, p, _)| p.group).min().unwrap_or(0);
+    // Keep at most LASER_TRIP_MAX of the player's pylons: the oldest group goes first.
+    if pylons.iter().filter(|(_, p, _)| !p.ghost).count() > LASER_TRIP_MAX {
+        let oldest = pylons
+            .iter()
+            .filter(|(_, p, _)| !p.ghost)
+            .map(|(_, p, _)| p.group)
+            .min()
+            .unwrap_or(0);
         if !blow.contains(&oldest) {
             blow.push(oldest);
         }
@@ -5185,6 +5631,9 @@ pub fn utility_world(
                     color: Vec3::new(1.0, 2.5, 6.0),
                 },
             );
+        }
+        if p.ghost {
+            continue;
         }
         let seg = b - a;
         let len = seg.length().max(1e-3);
@@ -5213,12 +5662,23 @@ pub fn utility_world(
             }
         }
     }
-    let blasts: Vec<(Entity, Vec3)> = pylons
+    let blasts: Vec<(Entity, Vec3, bool, u32)> = pylons
         .iter()
         .filter(|(_, p, _)| blow.contains(&p.group))
-        .map(|(id, p, _)| (id, p.pos))
+        .map(|(id, p, _)| (id, p.pos, p.ghost, p.group))
         .collect();
-    for (id, at) in blasts {
+    // The others' copies of the player's own groups go too.
+    for g in &blow {
+        if blasts.iter().any(|b| !b.2 && b.3 == *g) {
+            crate::netfx::send(
+                crate::netfx::EV_PYLONS_BLOW,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                [*g, 0],
+            );
+        }
+    }
+    for (id, at, ghost, _) in blasts {
         commands.entity(id).despawn();
         if old_fx {
             emit(
@@ -5236,7 +5696,7 @@ pub fn utility_world(
             );
         }
         crate::audio::event_at(&mut commands, "Wpn_LaserTripMine_MineDestroyed", at);
-        for (_, mut e) in enemies.iter_mut() {
+        for (_, mut e) in enemies.iter_mut().filter(|_| !ghost) {
             if e.alive()
                 && (e.pos + Vec3::Z * e.height * 0.5).distance(at) - e.radius < LASER_TRIP_RADIUS
             {

@@ -508,6 +508,8 @@ pub struct Enemy {
     pub pool: Option<usize>,
     /// A remote Pilot body's locomotion state (net::body_move).
     pub body_move: u8,
+    /// A remote player's Holo Pilot decoy (netfx::remote_decoys): hits on it stay here.
+    pub decoy: bool,
     /// The last position sent for a mirrored body and how long ago (the body eases to it).
     pub net_pos: Vec3,
     pub net_age: f32,
@@ -675,6 +677,7 @@ impl Enemy {
             remote: None,
             pool: None,
             body_move: 0,
+            decoy: false,
             net_pos: pos,
             net_age: 0.0,
             override_anim: None,
@@ -696,14 +699,15 @@ impl Enemy {
     /// A remote player's defensive as their snapshot shows it (net.rs): while `kind` is up,
     /// rounds arriving from `threat` (the local player) inside its cone are caught, eaten or
     /// soaked here as the AI's are (`damage`), so they never reach the owner; the game's
-    /// third-person system is drawn on it, facing `yaw`. A Gun Shield shot down stays down
-    /// until its owner raises it again.
+    /// third-person system is drawn on it where the owner's own third-person view has it:
+    /// along their aim (`yaw`, `pitch` positive down) from their `eye`. A Gun Shield shot
+    /// down stays down until its owner raises it again.
     pub fn set_remote_defense(
         &mut self,
         commands: &mut Commands,
         kind: Option<DefenseKind>,
         threat: Vec3,
-        yaw: f32,
+        (yaw, pitch, eye): (f32, f32, Vec3),
     ) {
         self.threat = threat;
         if kind != self.remote_defense {
@@ -750,11 +754,23 @@ impl Enemy {
             return;
         }
         if let Some(fx) = self.defense_fx {
-            let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-            let spot = self.pos + Vec3::Z * 150.0 + facing * 130.0;
+            // combat.rs (the Vortex and Thermal Shield out along the view) and titankit.rs
+            // (the Gun Shield before the gun, its 3P models hanging 80 below their point).
+            let view = Vec3::new(
+                pitch.cos() * yaw.cos(),
+                pitch.cos() * yaw.sin(),
+                -pitch.sin(),
+            );
+            let spot = match d.kind {
+                DefenseKind::GunShield => {
+                    let side = Vec3::new(yaw.sin(), -yaw.cos(), 0.0);
+                    eye + view * 220.0 + side * 45.0 - Vec3::Z * 45.0 + Vec3::Z * 80.0
+                }
+                _ => eye + view * crate::combat::VORTEX_RADIUS,
+            };
             commands.entity(fx).insert(
-                Transform::from_translation(to_bevy(defense_fx_spot(d.kind, spot)))
-                    .looking_to(to_bevy(facing).normalize(), Vec3::Y),
+                Transform::from_translation(to_bevy(spot))
+                    .looking_to(to_bevy(view).normalize(), Vec3::Y),
             );
             if d.kind == DefenseKind::GunShield {
                 commands
@@ -1606,10 +1622,9 @@ fn animate_remote_titan(actors: &mut Query<&mut Actor>, e: &mut Enemy, dt: f32) 
         });
     }
     actor.layers = layers;
-    let to = e.threat - e.pos;
-    let pitch = (to.z + 60.0)
-        .atan2(to.truncate().length().max(1.0))
-        .to_degrees();
+    // Where its owner aims (their snapshot's pitch, positive down); `threat` is the local
+    // player, for its shields.
+    let pitch = -e.state.pitch.to_degrees();
     let grid = e.aim_grids[(moving > 0.5) as usize];
     actor.aim = Some(Aim {
         grid: grid.into(),

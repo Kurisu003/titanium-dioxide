@@ -1780,21 +1780,31 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 exp: o.f("alpha_random_exponent", 1.0),
             },
             // `Color Lit Per Particle` (lit per particle, mostly campaign ambience) keeps its plain colours.
-            "Color Random" | "Color Lit Per Particle" => Init::Color {
-                c1: col(o.color("color1", [255; 4])),
-                c2: col(o.color("color2", [255; 4])),
-                tint: (o.function == "Color Random"
-                    && o.f("tint_perc", 0.0) != 0.0
-                    && std::env::var_os("TF_PFX_NO_TINT").is_none())
-                .then(|| Tint {
-                    perc: o.f("tint_perc", 0.0),
-                    cp: cpn(o, "tint control point"),
-                    threshold: o.f("tint update movement threshold", 32.0),
-                    mode: o.i("tint blend mode", 0),
-                    amp: o.f("light amplification amount", 1.0),
-                    sky: o.f("light sky scale", 1.0),
-                }),
-            },
+            // `Color Lit Per Particle` keeps its percentage as `tint perc` (the Slow Trap's
+            // pale yellow gas: 248 250 180 multiplied by the light at 80%, without which it
+            // draws as dark smoke). It lights each particle where it spawns; the light at
+            // control point 0 stands in for that.
+            "Color Random" | "Color Lit Per Particle" => {
+                let perc = if o.function == "Color Random" {
+                    o.f("tint_perc", 0.0)
+                } else {
+                    o.f("tint perc", 0.0)
+                };
+                Init::Color {
+                    c1: col(o.color("color1", [255; 4])),
+                    c2: col(o.color("color2", [255; 4])),
+                    tint: (perc != 0.0 && std::env::var_os("TF_PFX_NO_TINT").is_none()).then(
+                        || Tint {
+                            perc,
+                            cp: cpn(o, "tint control point"),
+                            threshold: o.f("tint update movement threshold", 32.0),
+                            mode: o.i("tint blend mode", 0),
+                            amp: o.f("light amplification amount", 1.0),
+                            sky: o.f("light sky scale", 1.0),
+                        },
+                    ),
+                }
+            }
             "Position Within Sphere Random" => Init::Sphere {
                 cp: cpn(o, "control_point_number"),
                 dmin: o.f("distance_min", 0.0),

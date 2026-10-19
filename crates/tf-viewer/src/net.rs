@@ -99,6 +99,19 @@ pub struct PlayerSnap {
     pub titan_sprint: bool,
     /// What the player has up (F_*).
     pub flags: u16,
+    /// The Titan's loadout: its main gun's weapons::TITAN_ARSENAL index (the others draw that
+    /// gun, its rounds and its kit's abilities).
+    pub titan: u8,
+    /// The grapple's rope beyond the hand (game space; the hook, or the bends then the
+    /// anchor), the first `rope_len` points.
+    pub rope: [Vec3; 4],
+    pub rope_len: u8,
+    /// The Holo Pilot decoy: 0 none, else its body move code (MOVE_*) + 1; then its feet,
+    /// velocity and facing yaw.
+    pub decoy: u8,
+    pub decoy_pos: Vec3,
+    pub decoy_vel: Vec3,
+    pub decoy_yaw: f32,
 }
 
 /// `PlayerSnap::flags`: the Titan's Vortex, Thermal Shield, Gun Shield or Phase Dash, the
@@ -115,6 +128,8 @@ pub const F_BULWARK: u16 = 64;
 pub const F_LOW_PROFILE: u16 = 128;
 /// Fitted with Tempered Plating (pas_scorch_selfdmg): the Titan takes no crits.
 pub const F_NO_CRIT: u16 = 256;
+/// Sword Block held (Ronin): the others' rounds from the front do less (DefenseKind::Block).
+pub const F_BLOCK: u16 = 512;
 
 /// `Msg::Event` kinds: a Titan's Arc Wave, Firewall or Flame Core (from its feet, along its
 /// facing), a Gravity Star popping (at `pos`).
@@ -298,6 +313,9 @@ pub enum Msg {
         kind: u8,
         pos: Vec3,
         dir: Vec3,
+        /// What else the kind needs (netfx.rs: a weapon, a target, a group).
+        arg: u32,
+        arg2: u32,
     },
 }
 
@@ -412,6 +430,17 @@ impl PlayerSnap {
         w.u8(self.pilot_gun);
         w.b(self.titan_sprint);
         w.u16(self.flags);
+        w.u8(self.titan);
+        w.u8(self.rope_len);
+        for p in &self.rope[..self.rope_len.min(4) as usize] {
+            w.v3(*p);
+        }
+        w.u8(self.decoy);
+        if self.decoy != 0 {
+            w.v3(self.decoy_pos);
+            w.v3(self.decoy_vel);
+            w.f(self.decoy_yaw);
+        }
     }
     fn read(r: &mut R) -> Option<Self> {
         Some(Self {
@@ -444,6 +473,26 @@ impl PlayerSnap {
             pilot_gun: r.u8()?,
             titan_sprint: r.b()?,
             flags: r.u16()?,
+            titan: r.u8()?,
+            rope: [Vec3::ZERO; 4],
+            rope_len: 0,
+            decoy: 0,
+            decoy_pos: Vec3::ZERO,
+            decoy_vel: Vec3::ZERO,
+            decoy_yaw: 0.0,
+        })
+        .and_then(|mut s| {
+            s.rope_len = r.u8()?.min(4);
+            for i in 0..s.rope_len as usize {
+                s.rope[i] = r.v3()?;
+            }
+            s.decoy = r.u8()?;
+            if s.decoy != 0 {
+                s.decoy_pos = r.v3()?;
+                s.decoy_vel = r.v3()?;
+                s.decoy_yaw = r.f()?;
+            }
+            Some(s)
         })
     }
 }
@@ -588,12 +637,21 @@ impl Msg {
                 w.f(*life);
                 w.f(*hp);
             }
-            Msg::Event { id, kind, pos, dir } => {
+            Msg::Event {
+                id,
+                kind,
+                pos,
+                dir,
+                arg,
+                arg2,
+            } => {
                 w.u8(13);
                 w.u32(*id);
                 w.u8(*kind);
                 w.v3(*pos);
                 w.v3(*dir);
+                w.u32(*arg);
+                w.u32(*arg2);
             }
         }
         w.0
@@ -679,6 +737,8 @@ impl Msg {
                 kind: r.u8()?,
                 pos: r.v3()?,
                 dir: r.v3()?,
+                arg: r.u32()?,
+                arg2: r.u32()?,
             },
             _ => return None,
         })
@@ -836,6 +896,11 @@ pub struct Remote {
     pub age: f32,
     /// The shot counters of the last snapshot drawn (Titan, Pilot).
     pub shots: Option<(u16, u16)>,
+    /// The loadout the Titan body was made for (`PlayerSnap::titan`) and the gun it holds.
+    pub class: u8,
+    pub gun: Option<Entity>,
+    /// A Pilot body for their Holo Pilot decoy (netfx::remote_decoys).
+    pub decoy: Option<Entity>,
 }
 
 #[derive(Resource)]
@@ -877,6 +942,9 @@ pub struct Net {
     /// Other players' one-off abilities received this frame (player, EV_*, position,
     /// direction), for `remote_states`.
     pub events_in: Vec<(u32, u8, Vec3, Vec3)>,
+    /// Other players' shots and ability objects received this frame (player, EV_* from
+    /// `netfx::FIRST`, position, direction or velocity, argument), for netfx.rs.
+    pub fx_in: Vec<(u32, u8, Vec3, Vec3, [u32; 2])>,
 }
 
 /// Enemy shots the host fired this frame (targets.rs pushes, `update` sends).
@@ -885,17 +953,28 @@ pub static HOSTING: AtomicBool = AtomicBool::new(false);
 /// Walls the local player put up this frame (titankit.rs, pilotability.rs): origin, normal,
 /// life, hp and kind (WALL_*).
 pub static WALLS: Mutex<Vec<(Vec3, Vec3, f32, f32, u8)>> = Mutex::new(Vec::new());
-/// The local player's one-off abilities this frame (EV_*, position, direction).
-pub static EVENTS: Mutex<Vec<(u8, Vec3, Vec3)>> = Mutex::new(Vec::new());
+/// The local player's one-off abilities this frame (EV_*, position, direction, argument).
+pub static EVENTS: Mutex<Vec<(u8, Vec3, Vec3, [u32; 2])>> = Mutex::new(Vec::new());
 /// What the local player has up (F_*), gathered by `local_flags`.
 pub static LOCAL_FLAGS: AtomicU32 = AtomicU32::new(0);
 
 /// Note one of the local player's one-off abilities for the others (EV_*).
 pub fn event(kind: u8, pos: Vec3, dir: Vec3) {
+    event_args(kind, pos, dir, [0, 0]);
+}
+
+/// [`event`] with its arguments (netfx.rs kinds). Nothing is queued outside a session.
+pub fn event_args(kind: u8, pos: Vec3, dir: Vec3, args: [u32; 2]) {
+    if !IN_SESSION.load(Ordering::Relaxed) {
+        return;
+    }
     if let Ok(mut e) = EVENTS.lock() {
-        e.push((kind, pos, dir));
+        e.push((kind, pos, dir, args));
     }
 }
+
+/// A session is on (set by `update`): only then do the local systems queue events.
+pub static IN_SESSION: AtomicBool = AtomicBool::new(false);
 /// Rounds the local Pilot has fired (pilotweapon.rs), for `PlayerSnap::pilot_shots`.
 pub static PILOT_SHOTS: AtomicU32 = AtomicU32::new(0);
 /// The local Pilot's gun (pilotweapon::ARSENAL index), for `PlayerSnap::pilot_gun`.
@@ -1012,6 +1091,7 @@ impl Default for Net {
             map: String::new(),
             relaunch: None,
             events_in: Vec::new(),
+            fx_in: Vec::new(),
         }
     }
 }
@@ -1262,10 +1342,11 @@ pub fn update(
         .lock()
         .map(|mut w| std::mem::take(&mut *w))
         .unwrap_or_default();
-    let events: Vec<(u8, Vec3, Vec3)> = EVENTS
+    let events: Vec<(u8, Vec3, Vec3, [u32; 2])> = EVENTS
         .lock()
         .map(|mut e| std::mem::take(&mut *e))
         .unwrap_or_default();
+    IN_SESSION.store(net.active() && game.in_play(), Ordering::Relaxed);
     if !net.active() {
         net.was_in_play = game.in_play();
         return;
@@ -1640,14 +1721,36 @@ pub fn update(
                     );
                 }
             }
-            Msg::Event { id, kind, pos, dir } => {
+            Msg::Event {
+                id,
+                kind,
+                pos,
+                dir,
+                arg,
+                arg2,
+            } => {
                 let id = if is_host { from } else { id };
                 if is_host {
-                    net.broadcast(&Msg::Event { id, kind, pos, dir }, Some(id));
+                    net.broadcast(
+                        &Msg::Event {
+                            id,
+                            kind,
+                            pos,
+                            dir,
+                            arg,
+                            arg2,
+                        },
+                        Some(id),
+                    );
                 }
                 if id != net.my_id {
-                    log::info!("net: player {id} event {kind} at {pos:.0}");
-                    net.events_in.push((id, kind, pos, dir));
+                    if kind >= crate::netfx::FIRST {
+                        log::debug!("net: player {id} fx {kind} at {pos:.0}");
+                        net.fx_in.push((id, kind, pos, dir, [arg, arg2]));
+                    } else {
+                        log::info!("net: player {id} event {kind} at {pos:.0}");
+                        net.events_in.push((id, kind, pos, dir));
+                    }
                 }
             }
             _ => {}
@@ -1677,12 +1780,14 @@ pub fn update(
     }
     net.was_in_play = in_play;
     if in_play {
-        for (kind, pos, dir) in events {
+        for (kind, pos, dir, [arg, arg2]) in events {
             let m = Msg::Event {
                 id: net.my_id,
                 kind,
                 pos,
                 dir,
+                arg,
+                arg2,
             };
             if is_host {
                 net.broadcast(&m, None);
@@ -1713,7 +1818,7 @@ pub fn update(
     let is_client = net.is_client();
     for (id, e) in &enemies {
         let owned_elsewhere = e.remote.is_some() || (is_client && e.pool.is_some());
-        if !owned_elsewhere {
+        if !owned_elsewhere || e.decoy {
             continue;
         }
         let cur = e.v.remaining();
@@ -1781,7 +1886,6 @@ pub fn update(
     // New shots since the last snapshot drawn (none on the first one), at most a few a frame.
     let fresh = |now: u16, last: Option<u16>| last.map_or(0, |l| now.wrapping_sub(l).min(6));
     let mut shot_marks: Vec<(u32, (u16, u16))> = Vec::new();
-    let mut ghosts: Vec<(Vec3, Vec3, f32, usize)> = Vec::new();
     for (pid, r) in net.remotes.iter() {
         let Some(s) = r.snap else { continue };
         shot_marks.push((*pid, (s.titan_shots, s.pilot_shots)));
@@ -1806,13 +1910,13 @@ pub fn update(
                 if s.titan_alive && !stale {
                     e.set_remote_pose(s.titan_pos, s.titan_vel, s.titan_yaw, s.titan_pitch);
                     e.sprint = s.titan_sprint;
-                    // Its main gun's shots: the fire gesture, flash, sound and a harmless round
-                    // (the owner's own rounds do the damage there).
+                    // Its main gun's shots: the fire gesture and sound. The rounds and the
+                    // muzzle flash come as their own events (netfx.rs; the owner's rounds do
+                    // the damage there).
                     let n = fresh(s.titan_shots, r.shots.map(|x| x.0));
                     if n > 0 {
                         log::debug!("net: player {pid}'s Titan fired {n}");
                         e.fire_t = 0.0;
-                        let dir = look_dir(s.titan_yaw, s.titan_pitch);
                         let fwd = Vec3::new(s.titan_yaw.cos(), s.titan_yaw.sin(), 0.0);
                         let muzzle = e.pos + Vec3::Z * 190.0 + fwd * 110.0;
                         for _ in 0..n {
@@ -1821,16 +1925,6 @@ pub fn update(
                                 crate::audio::Cue::EnemyGun(kit.arsenal as u8),
                                 Some(muzzle),
                             );
-                            crate::particles::emit(
-                                &mut commands,
-                                crate::particles::Effect::Muzzle {
-                                    at: crate::player::to_bevy(muzzle),
-                                    dir: crate::player::to_bevy(dir).normalize_or(Vec3::NEG_Z),
-                                    scale: 3.0,
-                                    energy: false,
-                                },
-                            );
-                            ghosts.push((muzzle, dir * kit.projectile, kit.gravity, e.kit));
                         }
                     }
                     e.override_anim = TITAN_ANIMS
@@ -1972,7 +2066,6 @@ pub fn update(
                                     energy: false,
                                 },
                             );
-                            ghosts.push((muzzle, dir * 12000.0, 0.0, e.kit));
                         }
                     }
                     if s.rodeo == 3 && s.rodeo_target == my_id {
@@ -2003,7 +2096,6 @@ pub fn update(
             r.shots = Some(marks);
         }
     }
-    net.shots.extend(ghosts);
     // A remote rider ripping our battery: our Titan opens its panel for them (its copy on the
     // rider's side plays the same clip, rodeo.rs).
     if let Ok((mut titan, _)) = titans.single_mut() {
@@ -2068,6 +2160,14 @@ pub fn update(
                     Some((phase, code, side, height, t))
                 })
                 .unwrap_or((0, 0, 0, 0, 0.0));
+            let decoy = crate::netfx::local_decoy();
+            let (mut rope, mut rope_len) = ([Vec3::ZERO; 4], 0u8);
+            if *control == Control::Pilot {
+                for (i, p) in ps.rope().into_iter().take(4).enumerate() {
+                    rope[i] = Vec3::from(p.to_array());
+                    rope_len = i as u8 + 1;
+                }
+            }
             let snap = PlayerSnap {
                 on_foot: *control == Control::Pilot,
                 pilot_pos: Vec3::from(ps.pos.to_array()),
@@ -2098,6 +2198,13 @@ pub fn update(
                 pilot_gun: PILOT_GUN.load(Ordering::Relaxed) as u8,
                 titan_sprint: ts.sprinting,
                 flags: LOCAL_FLAGS.load(Ordering::Relaxed) as u16,
+                titan: weapons.single().map_or(0, |w| w.arsenal as u8),
+                rope,
+                rope_len,
+                decoy: decoy.map_or(0, |d| d.3 + 1),
+                decoy_pos: decoy.map_or(Vec3::ZERO, |d| d.0),
+                decoy_vel: decoy.map_or(Vec3::ZERO, |d| d.1),
+                decoy_yaw: decoy.map_or(0.0, |d| d.2),
             };
             let m = Msg::Player {
                 id: net.my_id,
@@ -2215,7 +2322,7 @@ pub fn spawn_remotes(
         .collect();
     for id in gone {
         if let Some(r) = net.remotes.remove(&id) {
-            for e in [r.pilot, r.titan].into_iter().flatten() {
+            for e in [r.pilot, r.titan, r.decoy].into_iter().flatten() {
                 commands.entity(e).despawn();
             }
         }
@@ -2223,21 +2330,38 @@ pub fn spawn_remotes(
     if !active {
         return;
     }
-    let Some(titan_kit) = kits.0.iter().position(|k| k.remote && !k.infantry) else {
-        return;
-    };
     let Some(pilot_kit) = kits.0.iter().position(|k| k.remote && k.infantry) else {
         return;
     };
+    // A player who changed Titans: their Titan body goes and comes back with the new gun.
+    for r in net.remotes.values_mut() {
+        let Some(s) = r.snap else { continue };
+        if r.titan.is_some() && s.titan != r.class {
+            if let Some(e) = r.titan.take() {
+                commands.entity(e).despawn();
+            }
+            r.gun = None;
+        }
+    }
     let at = arena.map(|a| a.player_spawn).unwrap_or_default();
-    let ids: Vec<u32> = net
+    // Bodies wait for the first snapshot, which says the Titan's loadout.
+    let ids: Vec<(u32, u8)> = net
         .remotes
         .iter()
-        .filter(|(_, r)| r.pilot.is_none() || r.titan.is_none())
-        .map(|(id, _)| *id)
+        .filter(|(_, r)| r.pilot.is_none() || r.titan.is_none() || r.decoy.is_none())
+        .filter_map(|(id, r)| r.snap.map(|s| (*id, s.titan)))
         .collect();
-    for id in ids {
-        let mut spawn = |kit_index: usize, extra: &[&str]| -> Option<Entity> {
+    for (id, class) in ids {
+        let Some(titan_kit) = kits
+            .0
+            .iter()
+            .position(|k| k.remote && !k.infantry && k.arsenal == class as usize)
+            .or_else(|| kits.0.iter().position(|k| k.remote && !k.infantry))
+        else {
+            return;
+        };
+        let mut gun_actor = None;
+        let mut spawn = |kit_index: usize, extra: &[&str], decoy: bool| -> Option<Entity> {
             let kit = &kits.0[kit_index];
             let mut seqs = crate::enemy_sequences(kit);
             seqs.extend_from_slice(extra);
@@ -2271,7 +2395,7 @@ pub fn spawn_remotes(
                                 grids: &[],
                                 body: &[],
                             };
-                            if let Err(e) = crate::actor::spawn_actor(
+                            match crate::actor::spawn_actor(
                                 &mut commands,
                                 hand,
                                 &gd,
@@ -2282,13 +2406,15 @@ pub fn spawn_remotes(
                                 &mut materials,
                                 &mut bindposes,
                             ) {
-                                log::warn!("remote gun: {e:#}");
+                                Ok(g) => gun_actor = Some(g.entity),
+                                Err(e) => log::warn!("remote gun: {e:#}"),
                             }
                         }
                     }
                     let mut e =
                         Enemy::new(at, a.entity, 0x51ED_2704 * (id as u64 + 7), kit_index, kit);
                     e.remote = Some(id);
+                    e.decoy = decoy;
                     // Its owner pops their own smoke; no anti-rodeo charge here.
                     e.smoke_charges = 0;
                     commands.entity(anchor).insert(e);
@@ -2301,17 +2427,43 @@ pub fn spawn_remotes(
                 }
             }
         };
+        let (need_titan, need_pilot) = net
+            .remotes
+            .get(&id)
+            .map_or((false, false), |r| (r.titan.is_none(), r.pilot.is_none()));
+        let need_decoy = net.remotes.get(&id).is_some_and(|r| r.decoy.is_none());
         let mut titan_seqs: Vec<&str> = TITAN_ANIMS.to_vec();
         titan_seqs.extend_from_slice(REMOTE_TITAN_SEQUENCES);
-        let titan = spawn(titan_kit, &titan_seqs);
+        let titan = need_titan
+            .then(|| spawn(titan_kit, &titan_seqs, false))
+            .flatten();
         let mut pilot_seqs: Vec<&str> = crate::pilotbody::BODY_SEQUENCES.to_vec();
         pilot_seqs.extend_from_slice(crate::targets::PILOT_RODEO_SEQUENCES);
         pilot_seqs.extend_from_slice(REMOTE_PILOT_SEQUENCES);
-        let pilot = spawn(pilot_kit, &pilot_seqs);
+        let pilot = need_pilot
+            .then(|| spawn(pilot_kit, &pilot_seqs, false))
+            .flatten();
+        let decoy = need_decoy
+            .then(|| spawn(pilot_kit, &pilot_seqs, true))
+            .flatten();
         if let Some(r) = net.remotes.get_mut(&id) {
-            r.titan = titan;
-            r.pilot = pilot;
-            log::info!("net: spawned the bodies of player {id}");
+            if need_titan {
+                r.titan = titan;
+                r.class = class;
+                r.gun = gun_actor;
+            }
+            if need_pilot {
+                r.pilot = pilot;
+            }
+            if need_decoy {
+                r.decoy = decoy;
+            }
+            log::info!(
+                "net: spawned the bodies of player {id} ({})",
+                crate::weapons::TITAN_ARSENAL
+                    .get(class as usize)
+                    .map_or("?", |g| g.kit)
+            );
         }
     }
 }
@@ -2328,18 +2480,29 @@ pub fn chassis_name(model: &str) -> &'static str {
     }
 }
 
-/// The kits remote players' bodies use: the players' chassis (Tone) with its gun, and the
-/// Pilot body model.
+/// The kits remote players' bodies use: the players' chassis (Tone's model) with each
+/// loadout's main gun (one kit per weapons::TITAN_ARSENAL entry, `arsenal` its index), and
+/// the Pilot body model.
 pub fn remote_kits(read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<crate::targets::EnemyKit> {
     let tone = crate::targets::ENEMY_CLASSES
         .iter()
         .position(|c| c.3 == "TONE")
         .unwrap_or(0);
-    let mut titan = crate::targets::EnemyKit::class(tone, read);
-    titan.model = crate::PLAYER_TITAN_MODEL.into();
-    titan.ability = None;
-    titan.defense = None;
-    titan.remote = true;
+    let mut kits = Vec::new();
+    for (i, gun) in crate::weapons::TITAN_ARSENAL.iter().enumerate() {
+        let mut titan = crate::targets::EnemyKit::class(tone, read);
+        titan.model = crate::PLAYER_TITAN_MODEL.into();
+        titan.ability = None;
+        titan.defense = None;
+        titan.remote = true;
+        titan.weapon = crate::weapons::WeaponDef::load(gun.id, read);
+        titan.name = gun.kit.to_string();
+        titan.arsenal = i;
+        titan.projectile = gun.projectile.unwrap_or(30000.0);
+        titan.gravity = gun.gravity;
+        titan.pellets = gun.pellets;
+        kits.push(titan);
+    }
     let mut pilot = crate::targets::EnemyKit::infantry(read);
     pilot.model = crate::pilotbody::PILOT_BODY_MODEL.into();
     pilot.name = "PILOT".into();
@@ -2351,7 +2514,8 @@ pub fn remote_kits(read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<crate::t
     pilot.vitals.max_shield = 0.0;
     pilot.vitals.doomed_health = 0.0;
     pilot.remote = true;
-    vec![titan, pilot]
+    kits.push(pilot);
+    kits
 }
 
 /// What the local player has up, for the snapshot's flags (F_*).
@@ -2372,6 +2536,9 @@ pub fn local_flags(
         }
         if k.gun_shield > 0.0 && k.gun_shield_hp > 0.0 {
             f |= F_GUN_SHIELD;
+        }
+        if k.blocking {
+            f |= F_BLOCK;
         }
         if crate::kits::has("pas_legion_gunshield") {
             f |= F_BULWARK;
@@ -2427,6 +2594,7 @@ pub fn remote_states(
     mut nuke_flares: Local<Vec<(Entity, Vec3, f32)>>,
     mut executed: ResMut<crate::executions::BeingExecuted>,
     mut domes: ResMut<crate::pilotctl::Domes>,
+    kits: Res<EnemyKits>,
 ) {
     use crate::pilotability::{
         GRAV_PULL_ACCEL, GRAV_PULL_DELAY, GRAV_PULL_RADIUS, GRAV_PULL_SPEED,
@@ -2469,6 +2637,8 @@ pub fn remote_states(
                 Some(DefenseKind::Heat)
             } else if s.flags & F_GUN_SHIELD != 0 {
                 Some(DefenseKind::GunShield)
+            } else if s.flags & F_BLOCK != 0 {
+                Some(DefenseKind::Block)
             } else {
                 None
             };
@@ -2478,7 +2648,8 @@ pub fn remote_states(
             } else {
                 2500.0
             };
-            e.set_remote_defense(&mut commands, kind, me, s.titan_yaw);
+            let eye = e.pos + Vec3::Z * kits.0[e.kit.min(kits.0.len() - 1)].params.eye_height;
+            e.set_remote_defense(&mut commands, kind, me, (s.titan_yaw, s.titan_pitch, eye));
         }
         if let Some(mut e) = r.pilot.and_then(|p| enemies.get_mut(p).ok()) {
             // Riding our Titan: from the cockpit the rider is out of sight and out of reach
@@ -2567,10 +2738,8 @@ pub fn remote_states(
             }
             EV_DOME => domes.spawn(&mut commands, pos, false),
             EV_DOME_END => domes.end_remote(&mut commands, pos),
-            EV_GRAVITY_STAR => {
-                crate::audio::event_at(&mut commands, "weapon_gravitystar_preexplo", pos);
-                stars.push(RemoteStar(pos, 0.0));
-            }
+            // Its sound and blast come with the star itself (netfx.rs); here it pulls.
+            EV_GRAVITY_STAR => stars.push(RemoteStar(pos, 0.0)),
             _ => {}
         }
     }
@@ -2585,13 +2754,6 @@ pub fn remote_states(
     stars.retain_mut(|star| {
         star.1 += dt;
         if star.1 >= GRAV_PULL_DELAY {
-            crate::particles::emit(
-                &mut commands,
-                crate::particles::Effect::Explosion {
-                    at: crate::player::to_bevy(star.0),
-                    scale: 1.0,
-                },
-            );
             return false;
         }
         // An opponent's star pulls the local Pilot (a teammate's doesn't).

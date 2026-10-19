@@ -1219,6 +1219,10 @@ pub struct PilotBolt {
     fuse: f32,
     /// Stuck (the Softball): to an enemy (following it at this offset) or to the world.
     stuck: Option<(Option<Entity>, Vec3)>,
+    /// Another player's round drawn here (netfx.rs): it flies and strikes, harmlessly, and
+    /// its thermite (with their Wildfire Launcher's or not) is drawn only.
+    ghost: bool,
+    wildfire: bool,
 }
 
 /// Seconds a Pilot projectile takes to close from the barrel onto its path (a guess at the
@@ -1357,6 +1361,8 @@ impl PilotBolt {
                 .filter(|f| *f > 0.0)
                 .unwrap_or(f32::INFINITY),
             stuck: None,
+            ghost: false,
+            wildfire: from_titan && crate::kits::has("pas_scorch_weapon"),
         }
     }
 }
@@ -1371,10 +1377,39 @@ pub fn spawn_bolt(
     def: &WeaponDef,
     from_titan: bool,
 ) {
-    spawn_bolt_from(commands, fx, pos, vel, gravity, def, from_titan, None);
+    spawn_bolt_from(commands, fx, pos, vel, gravity, def, from_titan, None, None);
 }
 
-/// [`spawn_bolt`], drawn leaving `barrel` (Bevy space, the viewmodel's muzzle).
+/// Another player's round (netfx.rs), their Titan's or their Pilot's: drawn and flown like
+/// the owner's, harmless. `wildfire`: the owner's Wildfire Launcher (their thermite's eight
+/// trails).
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_ghost_bolt(
+    commands: &mut Commands,
+    fx: &FxAssets,
+    pos: Vec3,
+    vel: Vec3,
+    gravity: f32,
+    def: &WeaponDef,
+    from_titan: bool,
+    wildfire: bool,
+) {
+    spawn_bolt_from(
+        commands,
+        fx,
+        pos,
+        vel,
+        gravity,
+        def,
+        from_titan,
+        None,
+        Some(wildfire),
+    );
+}
+
+/// [`spawn_bolt`], drawn leaving `barrel` (Bevy space, the viewmodel's muzzle). `ghost`:
+/// another player's round (with their Wildfire Launcher or not); the local Titan's rounds go
+/// out to the others (netfx.rs).
 #[allow(clippy::too_many_arguments)]
 fn spawn_bolt_from(
     commands: &mut Commands,
@@ -1385,8 +1420,12 @@ fn spawn_bolt_from(
     def: &WeaponDef,
     from_titan: bool,
     barrel: Option<Vec3>,
+    ghost: Option<bool>,
 ) {
     let _ = fx;
+    if ghost.is_none() {
+        crate::netfx::send_bolt(pos, vel, gravity, def, from_titan);
+    }
     let size = if from_titan { 0.35 } else { 0.12 };
     let energy = [
         "particle_accelerator",
@@ -1415,6 +1454,16 @@ fn spawn_bolt_from(
             let mut b = PilotBolt::new(pos, vel, gravity, def, from_titan);
             if is_arc_ball(def) {
                 b.life = ARC_BALL_LIFE;
+            }
+            if let Some(wildfire) = ghost {
+                b.ghost = true;
+                b.wildfire = wildfire;
+                b.homing = None;
+                b.zap = None;
+                b.burn = None;
+                b.damages_owner = false;
+                b.crit_energy = 0;
+                b.crit_mark = false;
             }
             if let Some(m) = barrel {
                 b.barrel = m - to_bevy(pos);
@@ -2031,6 +2080,7 @@ pub fn pilot_weapon_fire(
                     &shot_def,
                     false,
                     Some(muzzle),
+                    None,
                 );
                 continue;
             }
@@ -2049,6 +2099,7 @@ pub fn pilot_weapon_fire(
                     &shot_def,
                     false,
                     Some(muzzle),
+                    None,
                 );
                 continue;
             }
@@ -2125,6 +2176,7 @@ pub fn pilot_weapon_fire(
                 }
             }
             let stop = to_bevy(eye + dir * hit_t);
+            crate::netfx::send_pilot_tracer(eye, eye + dir * hit_t, w.arsenal, amped.is_some());
             let dir_b = to_bevy(dir).normalize_or(Vec3::NEG_Z);
             if (stop - muzzle).length() > 0.3 {
                 // Charged shots are beams (P_wpn_defender_beam): thicker and hotter.
@@ -2396,6 +2448,19 @@ pub fn update_pilot_bolts(
                 }
             }
         }
+        // Another player's round strikes the local player's body here too.
+        let mut struck_me = None;
+        if b.ghost && b.stuck.is_none() {
+            if let Some((p, r, h, infantry)) = crate::netfx::local_body() {
+                if let Some(t) = crate::weapons::ray_cylinder(b.pos, dir, p, r, h) {
+                    if t < t_end {
+                        t_end = t;
+                        victim = None;
+                        struck_me = Some(infantry);
+                    }
+                }
+            }
+        }
         if b.burn.is_some() && shields.passes_out(b.pos, dir, t_end) {
             b.dmg = b.burn.take().unwrap();
         }
@@ -2427,7 +2492,10 @@ pub fn update_pilot_bolts(
                     .and_then(|t| enemies.get(t).ok())
                     .is_some_and(|(_, e)| !e.infantry);
                 // Its impact damage (damage_near_value) on whoever it hits.
-                if let Some((_, mut e)) = on.and_then(|t| enemies.get_mut(t).ok()) {
+                if let Some((_, mut e)) = on
+                    .filter(|_| !b.ghost)
+                    .and_then(|t| enemies.get_mut(t).ok())
+                {
                     let amount = b.dmg.direct(b.travelled, e.infantry);
                     e.damage(amount, b.stops_regen);
                 }
@@ -2465,13 +2533,18 @@ pub fn update_pilot_bolts(
             if b.fuse > 0.0 && b.life > 0.0 {
                 continue;
             }
-        } else if victim.is_none() && !hit_world {
+        } else if victim.is_none() && !hit_world && struck_me.is_none() {
             if b.life <= 0.0 {
                 commands.entity(id).despawn();
             }
             continue;
         } else if let (true, Some((eid, h)), None) = (b.pierce && b.life > 0.0, victim, wall) {
             // Through it: the hit lands and the round goes on.
+            if b.ghost {
+                b.pierced.push(eid);
+                b.pos += dir * 1.0;
+                continue;
+            }
             if let Ok((_, mut e)) = enemies.get_mut(eid) {
                 if !e.catches_round() {
                     let base = b.dmg.direct(b.travelled, e.infantry);
@@ -2510,6 +2583,17 @@ pub fn update_pilot_bolts(
         commands.entity(id).despawn();
         // A grenade going off hits nothing directly (its impact was dealt on contact).
         let victim = if b.grenade.is_some() { None } else { victim };
+        if b.ghost {
+            ghost_bolt_end(
+                &mut commands,
+                &b,
+                dir,
+                victim.is_some(),
+                struck_me,
+                wall.is_some(),
+            );
+            continue;
+        }
         if let (Some(we), None) = (wall, victim.as_ref()) {
             enemy_walls
                 .absorbed
@@ -2641,6 +2725,56 @@ pub fn update_pilot_bolts(
         };
         crate::particles::emit(&mut commands, effect);
     }
+}
+
+/// Where another player's round ends here (netfx.rs): its thermite and its blast or impact,
+/// drawn only. `on_body`: it struck a body (`struck_me`: the local player's, a Pilot or not).
+fn ghost_bolt_end(
+    commands: &mut Commands,
+    b: &PilotBolt,
+    dir: Vec3,
+    on_body: bool,
+    struck_me: Option<bool>,
+    on_wall: bool,
+) {
+    let radius = b.dmg.radius;
+    let exp = b.dmg.blast.max(b.dmg.blast_heavy);
+    if b.thermite {
+        crate::titankit::spawn_meteor_thermite_as(
+            commands,
+            b.pos - dir * 4.0,
+            b.vel,
+            !on_body && struck_me.is_none(),
+            b.pos.x.to_bits()
+                ^ b.pos.y.to_bits().rotate_left(11)
+                ^ b.travelled.to_bits().rotate_left(22),
+            Some(b.wildfire),
+        );
+    }
+    let at = to_bevy(b.pos);
+    let effect = if exp > 0.0 && radius > 0.0 && !on_wall {
+        audio::cue(commands, Cue::MissileExplode, Some(b.pos));
+        crate::particles::Effect::Explosion {
+            at,
+            scale: (radius * crate::player::UNIT / 2.5).clamp(0.4, 2.0),
+        }
+    } else {
+        crate::particles::Effect::Hit {
+            at,
+            normal: -to_bevy(b.vel).normalize_or(Vec3::NEG_Z),
+            table: b.impact_table,
+            surface: match struck_me {
+                Some(true) => crate::particles::Surface::Flesh,
+                Some(false) => crate::particles::Surface::Titan,
+                None if on_wall => crate::particles::Surface::Shield,
+                None if on_body => crate::particles::Surface::Titan,
+                None => crate::particles::Surface::World,
+            },
+            victim: false,
+            scale: 1.8,
+        }
+    };
+    crate::particles::emit(commands, effect);
 }
 
 /// `TF_VM_NO=walk,idle,jump,land,raise` turns viewmodel layers off (for comparisons).

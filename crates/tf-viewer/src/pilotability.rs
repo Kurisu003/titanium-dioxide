@@ -117,8 +117,10 @@ const DECOY_DURATION: f32 = 10.0;
 /// plays the `dissolve` system and "Death.Dissolve" on it. The model's own burn-out (the
 /// dissolve render effect) isn't drawn: it fades out over the second second instead, as
 /// Source's dissolve hides the model between 1.9 and 2 s.
-const DECOY_DISSOLVE_TOTAL: f32 = 3.0;
-const DECOY_DISSOLVE_FADE: (f32, f32) = (1.0, 2.0);
+pub const DECOY_DISSOLVE_TOTAL: f32 = 3.0;
+pub const DECOY_DISSOLVE_FADE: (f32, f32) = (1.0, 2.0);
+/// The decoy's health (mp_ability_holopilot.nut: SetMaxHealth( 50 )).
+pub const DECOY_HEALTH: f32 = 50.0;
 /// DEPLOYABLE_SHIELD_* (mp_weapon_deployable_cover.nut).
 const SHIELD_DURATION: f32 = 15.0;
 const SHIELD_HEALTH: f32 = 850.0;
@@ -293,6 +295,7 @@ pub struct TacticalDef {
     pub trail: String,
 }
 
+#[derive(Clone)]
 pub struct OrdnanceDef {
     pub damage: f32,
     pub damage_heavy: f32,
@@ -934,7 +937,48 @@ pub struct Grenade {
     wall: Option<f32>,
     /// Spin angle while flying (radians).
     spin: f32,
+    /// Another player's (netfx.rs; their id): it flies, sticks and goes off for the eye
+    /// only, their satchels when they say.
+    ghost: Option<u32>,
 }
+
+/// `EV_GRENADE` kind codes besides the ORDNANCE indices.
+pub const GHOST_PULSE_BLADE: u32 = 254;
+pub const GHOST_AWALL: u32 = 253;
+
+/// Another player's thrown ordnance, Pulse Blade or A-Wall (netfx.rs; `kind` an ORDNANCE
+/// index or a GHOST_* code), from `pos` at `vel` with `fuse` left.
+pub fn spawn_ghost_grenade(
+    commands: &mut Commands,
+    owner: u32,
+    kind: u32,
+    pos: Vec3,
+    vel: Vec3,
+    fuse: f32,
+) {
+    let ordnance = (kind as usize) < ORDNANCE.len();
+    commands.spawn((
+        Transform::from_translation(to_bevy(pos)),
+        crate::particles::Glow::new(Vec3::new(0.6, 2.0, 5.0), 0.12, false),
+        Grenade {
+            kind: ordnance.then_some(kind as usize),
+            pos,
+            vel,
+            fuse,
+            stuck: Stuck::No,
+            since: 0.0,
+            tick: 0.0,
+            first: true,
+            wall: (kind == GHOST_AWALL).then(|| vel.y.atan2(vel.x)),
+            spin: 0.0,
+            ghost: Some(owner),
+        },
+    ));
+}
+
+/// Other players' satchels to set off this frame (their ids; netfx.rs).
+#[derive(Resource, Default)]
+pub struct GhostSatchels(pub Vec<u32>);
 
 #[derive(Component)]
 pub struct DecoyActor;
@@ -1437,6 +1481,12 @@ pub fn pilot_abilities(
                 }
                 Tactical::PulseBlade => {
                     let dir = view_dir(&pilot.state, 2.0);
+                    crate::netfx::send(
+                        crate::netfx::EV_GRENADE,
+                        eye + dir * 20.0,
+                        dir * def.speed + pvel,
+                        [GHOST_PULSE_BLADE, 0],
+                    );
                     commands.spawn((
                         Transform::from_translation(to_bevy(eye)),
                         crate::particles::Glow::new(Vec3::new(0.6, 2.0, 5.0), 0.12, false),
@@ -1451,6 +1501,7 @@ pub fn pilot_abilities(
                             first: true,
                             wall: None,
                             spin: 0.0,
+                            ghost: None,
                         },
                     ));
                 }
@@ -1478,6 +1529,12 @@ pub fn pilot_abilities(
                         p.cos() * pilot.state.yaw.sin(),
                         -p.sin(),
                     );
+                    crate::netfx::send(
+                        crate::netfx::EV_GRENADE,
+                        eye + look * 15.0,
+                        dir * power,
+                        [GHOST_AWALL, 0],
+                    );
                     commands.spawn((
                         Transform::from_translation(to_bevy(eye)),
                         crate::particles::Glow::new(Vec3::new(0.6, 2.0, 5.0), 0.12, false),
@@ -1492,6 +1549,7 @@ pub fn pilot_abilities(
                             first: true,
                             wall: Some(pilot.state.yaw),
                             spin: 0.0,
+                            ghost: None,
                         },
                     ));
                 }
@@ -1506,6 +1564,12 @@ pub fn pilot_abilities(
             status.satchels = 0;
             crate::audio::event(&mut commands, "weapon_r1_satchel_armedbeep");
             commands.insert_resource(Detonate);
+            crate::netfx::send(
+                crate::netfx::EV_SATCHELS_BOOM,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                [0, 0],
+            );
         } else if status.ord_charges > 0 {
             throw_state.phase = Some((ThrowPhase::Pullout, 0.0));
             throw_state.cooked = 0.0;
@@ -1530,6 +1594,17 @@ pub fn pilot_abilities(
                 Ordnance::Satchel => Vec3::new(4.0, 0.3, 0.2),
                 _ => Vec3::new(3.0, 1.2, 0.4),
             };
+            let fuse = if odef.fuse > 0.0 {
+                (odef.fuse - throw_state.cooked).max(0.05)
+            } else {
+                0.0
+            };
+            crate::netfx::send(
+                crate::netfx::EV_GRENADE,
+                eye + dir * 20.0,
+                dir * odef.speed + pvel,
+                [oi as u32, (fuse * 1000.0).round() as u32],
+            );
             commands.spawn((
                 Transform::from_translation(to_bevy(eye)),
                 crate::particles::Glow::new(color, 0.12, false),
@@ -1537,17 +1612,14 @@ pub fn pilot_abilities(
                     kind: Some(oi),
                     pos: eye + dir * 20.0,
                     vel: dir * odef.speed + pvel,
-                    fuse: if odef.fuse > 0.0 {
-                        (odef.fuse - throw_state.cooked).max(0.05)
-                    } else {
-                        0.0
-                    },
+                    fuse,
                     stuck: Stuck::No,
                     since: 0.0,
                     tick: 0.0,
                     first: true,
                     wall: None,
                     spin: 0.0,
+                    ghost: None,
                 },
             ));
         }
@@ -1602,10 +1674,15 @@ pub fn update_grenades(
     mut enemies: Query<(Entity, &mut Enemy)>,
     control: Res<Control>,
     mut pilots: Query<(&PlayerPilot, &mut PilotHealth)>,
-    (kit, mut shields): (Option<Res<PilotKitAssets>>, ResMut<Shields>),
+    (kit, mut shields, mut ghost_satchels): (
+        Option<Res<PilotKitAssets>>,
+        ResMut<Shields>,
+        ResMut<GhostSatchels>,
+    ),
 ) {
     let dt = time.delta_secs().min(0.05);
     let boom = detonate.is_some();
+    let ghost_booms = std::mem::take(&mut ghost_satchels.0);
     // Your own ordnance hurts you too (the explosion's pilot damage, by distance).
     let god = std::env::var_os("TF_PILOT_GOD").is_some();
     let self_damage = |pilots: &mut Query<(&PlayerPilot, &mut PilotHealth)>,
@@ -1632,7 +1709,16 @@ pub fn update_grenades(
     }
     for (id, mut g, mut tf) in &mut grenades {
         let kind = g.kind.map(|i| ORDNANCE[i].0);
-        let def = g.kind.map(|i| &defs.ordnance[i]);
+        // Another player's: drawn with no damage (theirs comes from their own hits).
+        let ghost = g.ghost.is_some();
+        let harmless = g.kind.filter(|_| ghost).map(|i| {
+            let mut d = defs.ordnance[i].clone();
+            (d.damage, d.damage_heavy, d.impact, d.impact_heavy) = (0.0, 0.0, 0.0, 0.0);
+            d
+        });
+        let def = harmless
+            .as_ref()
+            .or_else(|| g.kind.map(|i| &defs.ordnance[i]));
         // Follow the enemy it's stuck to.
         if let Stuck::Enemy(who, off) = g.stuck {
             match enemies.get(who) {
@@ -1690,7 +1776,7 @@ pub fn update_grenades(
                             e.damage(dmg, false);
                         }
                     }
-                    if g.kind.is_none() {
+                    if g.kind.is_none() && !ghost {
                         // The Pulse Blade's 100 on a direct hit.
                         if let Ok((_, mut e)) = enemies.get_mut(eid) {
                             e.damage(100.0, false);
@@ -1753,7 +1839,10 @@ pub fn update_grenades(
         // behind the projectile (so its face stands at it) and 1 unit down, facing the throw
         // (DeployAmpedWall), drawn by P_pilot_amped_shield.
         if let Some(yaw) = g.wall {
-            if landed {
+            if landed && ghost {
+                // Its owner's wall comes on its own (Msg::Wall).
+                commands.entity(id).despawn();
+            } else if landed {
                 commands.entity(id).despawn();
                 let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
                 let center = g.pos - fwd * (SHIELD_RADIUS - 1.0) - Vec3::Z;
@@ -1809,7 +1898,9 @@ pub fn update_grenades(
         let Some(kind) = kind else {
             if landed && g.first {
                 g.first = false;
-                status.pulse = Some((g.pos, SONAR_DURATION));
+                if !ghost {
+                    status.pulse = Some((g.pos, SONAR_DURATION));
+                }
                 log::info!("pulse blade landed");
                 crate::audio::event_at(&mut commands, "Pilot_PulseBlade_Sonar_Pulse_1P", g.pos);
                 emit(
@@ -1882,7 +1973,7 @@ pub fn update_grenades(
                     );
                     self_damage(&mut pilots, g.pos, d.inner, d.radius, d.damage);
                     log::info!("arc grenade went off, {n} enemies hit");
-                    for (_, mut e) in enemies.iter_mut() {
+                    for (_, mut e) in enemies.iter_mut().filter(|_| !ghost) {
                         let dist = e.pos.distance(g.pos);
                         if e.alive() && dist < d.radius {
                             let k = 1.0 - dist / d.radius;
@@ -1947,10 +2038,12 @@ pub fn update_grenades(
                                 "weapon_gravitystar_preexplo",
                                 g.pos,
                             );
-                            crate::net::event(crate::net::EV_GRAVITY_STAR, g.pos, Vec3::Z);
+                            if !ghost {
+                                crate::net::event(crate::net::EV_GRAVITY_STAR, g.pos, Vec3::Z);
+                            }
                         }
                         // Pull grunts in (the intense pull: accel 2000 up to 400 u/s).
-                        for (_, mut e) in enemies.iter_mut() {
+                        for (_, mut e) in enemies.iter_mut().filter(|_| !ghost) {
                             if e.alive() && e.infantry {
                                 let to = g.pos - (e.pos + Vec3::Z * 36.0);
                                 let dist = to.length();
@@ -2035,6 +2128,10 @@ pub fn update_grenades(
                 }
             }
             Ordnance::Satchel => {
+                let boom = match g.ghost {
+                    Some(owner) => ghost_booms.contains(&owner),
+                    None => boom,
+                };
                 if boom {
                     commands.entity(id).despawn();
                     emit(
