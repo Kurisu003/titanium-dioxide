@@ -69,6 +69,17 @@ impl Vitals {
         self.health > 0.0
     }
 
+    /// Everything damage still has to take: shield, health and, before the doom, the doomed
+    /// health. It only falls with damage, so the drop is the damage even across the doom.
+    pub fn remaining(&self) -> f32 {
+        let doom = if self.doomed.is_none() && self.alive() {
+            self.doomed_health
+        } else {
+            0.0
+        };
+        self.health + self.shield + doom
+    }
+
     /// Fraction for a health bar: undoomed health, or what is left of the doomed health.
     pub fn fraction(&self) -> f32 {
         let max = if self.doomed.is_some() {

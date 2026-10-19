@@ -837,7 +837,8 @@ pub struct Net {
     /// The host has started the match.
     pub started: bool,
     pub remotes: HashMap<u32, Remote>,
-    /// Health (plus shield) of the enemies after the last frame, to find this frame's local hits.
+    /// What the enemies had left (`Vitals::remaining`) after the last frame, to find this frame's
+    /// local hits.
     synced: HashMap<Entity, f32>,
     player_tick: f32,
     enemy_tick: f32,
@@ -1698,7 +1699,7 @@ pub fn update(
         if !owned_elsewhere {
             continue;
         }
-        let cur = e.v.health + e.v.shield;
+        let cur = e.v.remaining();
         if let Some(last) = net.synced.get(&id) {
             let dmg = last - cur;
             if dmg > 0.5 && e.active {
@@ -1830,7 +1831,7 @@ pub fn update(
                     e.dead_for = 0.0;
                     kill_names.push(format!("{name}'S TITAN"));
                 }
-                synced_now.push((te, e.v.health + e.v.shield));
+                synced_now.push((te, e.v.remaining()));
             }
         }
         if let Some(pe) = r.pilot {
@@ -1969,7 +1970,7 @@ pub fn update(
                         e.active = false;
                     }
                 }
-                synced_now.push((pe, e.v.health + e.v.shield));
+                synced_now.push((pe, e.v.remaining()));
             }
         }
     }
@@ -2013,7 +2014,7 @@ pub fn update(
     // Everything else owned elsewhere: remember the health after this frame.
     for (id, e) in &enemies {
         if e.remote.is_some() || (is_client && e.pool.is_some()) {
-            net.synced.insert(id, e.v.health + e.v.shield);
+            net.synced.insert(id, e.v.remaining());
         }
     }
 
