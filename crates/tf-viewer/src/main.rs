@@ -692,7 +692,11 @@ fn main() {
                     .chain(),
                 hud::hit_feedback,
                 hud::update_damage_arcs,
-                (hud::update_smart_hud, hud::update_tone_hud),
+                (
+                    hud::update_smart_hud,
+                    hud::update_tone_hud,
+                    hud::update_death_icons,
+                ),
                 (pilotability::pilot_abilities, pilotability::update_decoy).chain(),
                 (pilotability::update_grenades, pilotability::grenade_visuals).chain(),
                 (

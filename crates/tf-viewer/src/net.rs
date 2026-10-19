@@ -1226,6 +1226,7 @@ pub fn update(
     (mut feed, rodeo): (ResMut<crate::feed::Feed>, Res<crate::rodeo::Rodeo>),
     weapons: Query<&crate::weapons::Weapon, With<PlayerTitan>>,
     mut rodeo_seen: Local<HashMap<u32, u8>>,
+    mut pilot_alive: Local<HashMap<u32, bool>>,
 ) {
     let dt = time.delta_secs();
     // The walls put up and abilities used since last frame (sent below when online).
@@ -1873,6 +1874,23 @@ pub fn update(
                 }
             } else if s.rodeo != 1 {
                 rodeo_seen.insert(*pid, s.rodeo);
+            }
+            // A player dying (on foot or in their Titan): DeathIcon_OnDeathCallback's skull at
+            // their origin, a teammate's always, an enemy's with Kill Report.
+            let alive = s.pilot_health > 0.0;
+            if pilot_alive.insert(*pid, alive) == Some(true) && !alive && in_play {
+                let enemy = net.pvp();
+                if !enemy || crate::kits::has("pas_enemy_death_icons") {
+                    let at = if s.on_foot { s.pilot_pos } else { s.titan_pos };
+                    log::info!("net: player {pid} died at {at:.0}: death icon");
+                    if let Ok(mut l) = crate::hud::DEATH_ICONS.lock() {
+                        l.push((
+                            at + Vec3::Z * crate::hud::DEATH_ICON_OFFSET,
+                            time.elapsed_secs(),
+                            enemy,
+                        ));
+                    }
+                }
             }
             let ride = ride.or(mount);
             let mounting = ride.as_ref().is_some_and(|r| r.clip.is_some());

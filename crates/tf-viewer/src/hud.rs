@@ -604,6 +604,7 @@ pub fn spawn_hud(mut commands: Commands, ui: Res<UiAssets>) {
     }
     spawn_smart_hud(&mut commands, &ui, root);
     spawn_tone_hud(&mut commands, &ui, root);
+    spawn_death_icons(&mut commands, &ui, root);
     // Charge meter: one pip per charge level (a single bar for a continuous charge).
     let charge_holder = commands
         .spawn(Node {
@@ -2633,6 +2634,110 @@ pub fn update_tone_hud(
         } else {
             Visibility::Hidden
         });
+    }
+}
+
+// ---- Death icons ----
+//
+// cl_indicators_hud.gnut: a player dying puts a skull (`ui/death_icons` RUI) at their origin plus
+// DEATH_ICON_OFFSET: a teammate's always, an enemy's only with Kill Report (PAS_ENEMY_DEATH_ICONS).
+// The RUI (ui.dll's death_icons) shows it for 7 s, fading over the last second, sized between
+// its sizeMin (34) at 3000 units and sizeMax (200) at 70 by the inverse distance, in 1080p
+// pixels. (It also dims icons near the crosshair by an engine global; that is left out.)
+
+/// Deaths to mark: where (game units, offset included), when (elapsed seconds), an enemy's.
+pub static DEATH_ICONS: std::sync::Mutex<Vec<(Vec3, f32, bool)>> =
+    std::sync::Mutex::new(Vec::new());
+pub const DEATH_ICON_OFFSET: f32 = 16.0;
+const DEATH_ICON_LIFE: f32 = 7.0;
+const DEATH_ICON_SLOTS: usize = 8;
+/// death_icon_enemy / _friendly art (219x250); `size` is its height.
+const DEATH_ICON_ASPECT: f32 = 219.0 / 250.0;
+
+#[derive(Component)]
+pub struct DeathIcon(usize, bool);
+
+fn spawn_death_icons(commands: &mut Commands, ui: &UiAssets, root: Entity) {
+    for i in 0..DEATH_ICON_SLOTS {
+        for (enemy, path) in [
+            (true, "rui/hud/death_icons/death_icon_enemy"),
+            (false, "rui/hud/death_icons/death_icon_friendly"),
+        ] {
+            let node = Node {
+                position_type: PositionType::Absolute,
+                ..default()
+            };
+            let e = image(commands, ui, path, node, Color::WHITE);
+            commands
+                .entity(e)
+                .insert((DeathIcon(i, enemy), Visibility::Hidden));
+            commands.entity(root).add_child(e);
+        }
+    }
+}
+
+pub fn update_death_icons(
+    time: Res<Time>,
+    windows: Query<&Window>,
+    cameras: Query<(&Camera, &GlobalTransform), With<crate::player::MainCamera>>,
+    mut icons: Query<(&DeathIcon, &mut Node, &mut ImageNode, &mut Visibility)>,
+    mut test: Local<bool>,
+) {
+    let now = time.elapsed_secs();
+    // TF_DEATH_ICON_TEST=dist: an enemy skull that far ahead of the view, 10 s in.
+    if let (false, Some(d), Ok((_, cam_tf))) = (
+        *test,
+        std::env::var("TF_DEATH_ICON_TEST")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok()),
+        cameras.single(),
+    ) {
+        if now > 10.0 {
+            *test = true;
+            let eye = crate::player::from_bevy(cam_tf.translation());
+            let fwd =
+                crate::player::from_bevy(cam_tf.translation() + cam_tf.forward().as_vec3()) - eye;
+            if let Ok(mut l) = DEATH_ICONS.lock() {
+                l.push((eye + fwd.normalize_or_zero() * d, now, true));
+            }
+        }
+    }
+    let list: Vec<(Vec3, f32, bool)> = DEATH_ICONS
+        .lock()
+        .map(|mut l| {
+            l.retain(|d| now - d.1 < DEATH_ICON_LIFE);
+            l.clone()
+        })
+        .unwrap_or_default();
+    let px = windows.single().map_or(1.0, |w| w.height() / 1080.0);
+    let mut spots: Vec<(Vec2, f32, f32, bool)> = Vec::new();
+    if let Ok((camera, cam_tf)) = cameras.single() {
+        let eye = crate::player::from_bevy(cam_tf.translation());
+        for (at, t, enemy) in list.iter().rev().take(DEATH_ICON_SLOTS) {
+            let Ok(p) = camera.world_to_viewport(cam_tf, crate::player::to_bevy(*at)) else {
+                continue;
+            };
+            let inv = 1.0 / at.distance(eye).max(1.0);
+            let k = ((inv - 1.0 / 3000.0) / (1.0 / 70.0 - 1.0 / 3000.0)).clamp(0.0, 1.0);
+            let size = (34.0 + (200.0 - 34.0) * k) * px;
+            let alpha = (DEATH_ICON_LIFE - (now - t)).clamp(0.0, 1.0);
+            spots.push((p, size, alpha, *enemy));
+        }
+    }
+    for (icon, mut node, mut img, mut vis) in &mut icons {
+        match spots.get(icon.0).filter(|s| s.3 == icon.1) {
+            Some(&(p, size, alpha, _)) => {
+                node.left = Val::Px(p.x - size * DEATH_ICON_ASPECT * 0.5);
+                node.top = Val::Px(p.y - size * 0.5);
+                node.width = Val::Px(size * DEATH_ICON_ASPECT);
+                node.height = Val::Px(size);
+                img.color = Color::WHITE.with_alpha(alpha);
+                vis.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+        }
     }
 }
 
