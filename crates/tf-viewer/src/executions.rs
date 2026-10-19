@@ -26,68 +26,327 @@ use tf_sim::glam::Vec3 as SVec3;
 /// of a player's Titan (victimAnim_pt_*, none for BT's), and the sounds (sound_1p for the
 /// attacker, sound_3p for everyone else).
 pub struct TitanExecutionDef {
+    /// The class (TitanGun::kit) whose execution this is ("" for BT's campaign ones).
+    pub kit: &'static str,
     pub attacker: &'static str,
     pub attacker_vs_auto: &'static str,
     pub victim: [&'static str; 3],
-    pub victim_pilot: &'static str,
+    pub victim_pilot: [&'static str; 3],
     pub sound_1p: &'static str,
     pub sound_3p: &'static str,
 }
 
-/// Tone's execution (titan_atlas_tracker, the players' chassis), then BT's three (titan_buddy;
-/// the campaign picks one per level, `_sp_loadouts.nut` titanExecution).
-pub const TITAN_EXECUTIONS: [TitanExecutionDef; 4] = [
+const fn mp_execution(
+    kit: &'static str,
+    attacker: &'static str,
+    attacker_vs_auto: &'static str,
+    victim: [&'static str; 3],
+    victim_pilot: [&'static str; 3],
+    chassis: &'static str,
+) -> TitanExecutionDef {
+    let (sound_1p, sound_3p) = match chassis.as_bytes()[0] {
+        b'o' => ("Ogre_1p_Sync_Melee", "Ogre_3p_Sync_Melee"),
+        b's' => ("Stryder_1p_Sync_Melee", "Stryder_3p_Sync_Melee"),
+        _ => ("Atlas_1p_Sync_Melee", "Atlas_3p_Sync_Melee"),
+    };
     TitanExecutionDef {
-        attacker: "mt_execution_attacker_tone",
-        attacker_vs_auto: "mt_execution_attacker_tone_auto",
-        victim: [
+        kit,
+        attacker,
+        attacker_vs_auto,
+        victim,
+        victim_pilot,
+        sound_1p,
+        sound_3p,
+    }
+}
+
+const fn bt_execution(attacker: &'static str, victim: &'static str) -> TitanExecutionDef {
+    TitanExecutionDef {
+        kit: "",
+        attacker,
+        attacker_vs_auto: attacker,
+        victim: [victim; 3],
+        victim_pilot: [""; 3],
+        sound_1p: "Atlas_1p_Sync_Melee",
+        sound_3p: "Atlas_3p_Sync_Melee",
+    }
+}
+
+/// The multiplayer Titans' executions (titan_executions.rpak by setfile: titan_atlas_tracker,
+/// titan_atlas_stickybomb, titan_ogre_meteor, titan_ogre_minigun, titan_stryder_leadwall,
+/// titan_stryder_sniper), then BT's three (titan_buddy; the campaign picks one per level,
+/// `_sp_loadouts.nut` titanExecution). Tone's comes first: the classes without their own
+/// (EXPEDITION) use it.
+pub const TITAN_EXECUTIONS: [TitanExecutionDef; 9] = [
+    mp_execution(
+        "TONE",
+        "mt_execution_attacker_tone",
+        "mt_execution_attacker_tone_auto",
+        [
             "lt_execution_victim_tone",
             "mt_execution_victim_tone",
             "ht_execution_victim_tone",
         ],
-        victim_pilot: "pt_execution_victim_tone",
-        sound_1p: "Atlas_1p_Sync_Melee",
-        sound_3p: "Atlas_3p_Sync_Melee",
-    },
-    TitanExecutionDef {
-        attacker: "bt_synced_titan_execute_flip_takedown_A",
-        attacker_vs_auto: "bt_synced_titan_execute_flip_takedown_A",
-        victim: ["titan_synced_bt_execute_flip_takedown_V"; 3],
-        victim_pilot: "",
-        sound_1p: "Atlas_1p_Sync_Melee",
-        sound_3p: "Atlas_3p_Sync_Melee",
-    },
-    TitanExecutionDef {
-        attacker: "bt_synced_titan_execute_kickshoot_A",
-        attacker_vs_auto: "bt_synced_titan_execute_kickshoot_A",
-        victim: ["titan_synced_bt_execute_kickshoot_V"; 3],
-        victim_pilot: "",
-        sound_1p: "Atlas_1p_Sync_Melee",
-        sound_3p: "Atlas_3p_Sync_Melee",
-    },
-    TitanExecutionDef {
-        attacker: "bt_synced_titan_execute_pilot_rip_A",
-        attacker_vs_auto: "bt_synced_titan_execute_pilot_rip_A",
-        victim: ["titan_synced_bt_execute_pilot_rip_V"; 3],
-        victim_pilot: "",
-        sound_1p: "Atlas_1p_Sync_Melee",
-        sound_3p: "Atlas_3p_Sync_Melee",
-    },
+        ["pt_execution_victim_tone"; 3],
+        "atlas",
+    ),
+    mp_execution(
+        "ION",
+        "mt_execution_attacker_laser",
+        "mt_execution_attacker_laser",
+        [
+            "lt_execution_victim_laser",
+            "mt_execution_victim_laser",
+            "ht_execution_victim_laser",
+        ],
+        ["pt_execution_victim_laser"; 3],
+        "atlas",
+    ),
+    mp_execution(
+        "SCORCH",
+        "htThermite_MP_Sync_Execution_Attacker",
+        "htThermite_MP_Sync_Execution_Attacker",
+        ["t_MeleeExecuted_By_htThermite"; 3],
+        [""; 3],
+        "ogre",
+    ),
+    mp_execution(
+        "LEGION",
+        "htPRED_MP_Sync_Execution_Attacker",
+        "htPRED_MP_Sync_Execution_Attacker",
+        ["t_MeleeExecuted_By_htPred"; 3],
+        [""; 3],
+        "ogre",
+    ),
+    mp_execution(
+        "RONIN",
+        "lt_execution_attacker_sword_01",
+        "lt_execution_attacker_sword_01",
+        [
+            "lt_execution_victim_sword_01",
+            "mt_execution_victim_sword_01",
+            "ht_execution_victim_sword_01",
+        ],
+        [
+            "pt_lt_execution_victim_sword_01",
+            "pt_mt_execution_victim_sword_01",
+            "pt_ht_execution_victim_sword_01",
+        ],
+        "stryder",
+    ),
+    mp_execution(
+        "NORTHSTAR",
+        "lt_execution_attacker_sweep_01",
+        "lt_execution_attacker_sweep_01",
+        [
+            "lt_execution_victim_sweep_01",
+            "mt_execution_victim_sweep_01",
+            "ht_execution_victim_sweep_01",
+        ],
+        [""; 3],
+        "stryder",
+    ),
+    bt_execution(
+        "bt_synced_titan_execute_flip_takedown_A",
+        "titan_synced_bt_execute_flip_takedown_V",
+    ),
+    bt_execution(
+        "bt_synced_titan_execute_kickshoot_A",
+        "titan_synced_bt_execute_kickshoot_V",
+    ),
+    bt_execution(
+        "bt_synced_titan_execute_pilot_rip_A",
+        "titan_synced_bt_execute_pilot_rip_V",
+    ),
 ];
 
+/// Where BT's executions start in TITAN_EXECUTIONS.
+const BT_EXECUTIONS: usize = 6;
+
 /// The victim Pilot sequences, for the Pilot body.
-pub const TITAN_EXEC_PILOT_SEQUENCES: &[&str] = &["pt_execution_victim_tone"];
+pub const TITAN_EXEC_PILOT_SEQUENCES: &[&str] = &[
+    "pt_execution_victim_tone",
+    "pt_execution_victim_laser",
+    "pt_lt_execution_victim_sword_01",
+    "pt_mt_execution_victim_sword_01",
+    "pt_ht_execution_victim_sword_01",
+];
+
+/// Every Titan sequence of the executions (the attackers' and the victims'), for the synced
+/// animation list.
+pub fn titan_execution_sequences() -> Vec<&'static str> {
+    let mut v = Vec::new();
+    for e in &TITAN_EXECUTIONS {
+        v.push(e.attacker);
+        v.push(e.attacker_vs_auto);
+        v.extend(e.victim);
+    }
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|n| seen.insert(n.to_ascii_lowercase()));
+    v
+}
 
 /// Where in `pt_execution_victim_tone` its "pink_mist" event fires (MeleePinkMistFakeBody):
 /// the Pilot's body dissolves in a pink mist.
 const PINK_MIST_CYCLE: f32 = 0.815;
 
-/// The player's execution: Tone's on Tone's chassis, BT's campaign one on the buddy model.
-pub fn player_execution(map: &str) -> usize {
+/// The player's execution: their class's, BT's campaign one on the buddy model.
+pub fn player_execution(map: &str, class: &ClassBody) -> usize {
     if crate::PLAYER_TITAN_MODEL.contains("buddy") {
-        1 + bt_execution_for_map(map)
+        BT_EXECUTIONS + bt_execution_for_map(map)
     } else {
-        0
+        class.exec
+    }
+}
+
+/// The local Titan's chassis (0 light, 1 medium, 2 heavy) as its class has it.
+static LOCAL_CHASSIS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
+/// The player's Titan as its class looks for executions. The player's own Titan is always
+/// Tone's chassis (PLAYER_TITAN_MODEL), which lacks the other chassis' execution sequences, so
+/// a Scorch, Legion, Ronin or Northstar player is drawn with their class's model (the one the
+/// other players see) while they execute or are executed.
+#[derive(Resource, Default)]
+pub struct ClassBody {
+    kit: Option<usize>,
+    /// The stand-in's anchor and actor (none when the class is on Tone's chassis).
+    pub anchor: Option<Entity>,
+    pub actor: Option<Entity>,
+    /// The class's row in TITAN_EXECUTIONS.
+    pub exec: usize,
+}
+
+/// Keep `ClassBody` on the chosen class: a hidden stand-in of its model, built ahead so an
+/// execution doesn't wait for it.
+#[allow(clippy::too_many_arguments)]
+pub fn class_body(
+    mut commands: Commands,
+    kit: Res<crate::weapons::TitanKit>,
+    kits: Res<crate::targets::EnemyKits>,
+    root: Option<Res<crate::pilotweapon::WorldRoot>>,
+    gd: Res<crate::gamedata::GameData>,
+    mut cache: ResMut<crate::convert::Cache>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bindposes: ResMut<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    mut body: ResMut<ClassBody>,
+) {
+    let Some(root) = root else { return };
+    if body.kit == Some(kit.0) || kits.0.is_empty() {
+        return;
+    }
+    body.kit = Some(kit.0);
+    if let Some(a) = body.anchor.take() {
+        commands.entity(a).despawn();
+    }
+    body.actor = None;
+    let class = crate::weapons::TITAN_ARSENAL
+        .get(kit.0)
+        .map(|g| g.kit)
+        .unwrap_or("");
+    body.exec = TITAN_EXECUTIONS
+        .iter()
+        .position(|e| e.kit == class)
+        .unwrap_or(0);
+    let Some(k) = kits
+        .0
+        .iter()
+        .find(|k| k.remote && !k.infantry && k.arsenal == kit.0)
+    else {
+        return;
+    };
+    LOCAL_CHASSIS.store(
+        chassis_index(&k.model),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    if k.model == crate::PLAYER_TITAN_MODEL {
+        return;
+    }
+    let seqs: Vec<String> = titan_execution_sequences()
+        .iter()
+        .map(|n| format!("?{n}"))
+        .collect();
+    let seqs: Vec<&str> = seqs.iter().map(|s| s.as_str()).collect();
+    let anchor = commands
+        .spawn((Transform::IDENTITY, Visibility::Hidden))
+        .id();
+    commands.entity(root.0).add_child(anchor);
+    let spec = crate::actor::ActorSpec {
+        path: &k.model,
+        sequences: &seqs,
+        grids: &[],
+        body: &[],
+    };
+    match crate::actor::spawn_actor(
+        &mut commands,
+        anchor,
+        &gd,
+        &spec,
+        &mut cache,
+        &mut meshes,
+        &mut images,
+        &mut materials,
+        &mut bindposes,
+    ) {
+        Ok(a) => {
+            if let Some(hand) = a.joint("ja_c_propGun") {
+                let gun = crate::actor::ActorSpec {
+                    path: &k.weapon.playermodel,
+                    sequences: &[],
+                    grids: &[],
+                    body: &[],
+                };
+                if let Err(e) = crate::actor::spawn_actor(
+                    &mut commands,
+                    hand,
+                    &gd,
+                    &gun,
+                    &mut cache,
+                    &mut meshes,
+                    &mut images,
+                    &mut materials,
+                    &mut bindposes,
+                ) {
+                    log::warn!("class body gun: {e:#}");
+                }
+            }
+            log::info!("class body for executions: {}", k.model);
+            body.anchor = Some(anchor);
+            body.actor = Some(a.entity);
+        }
+        Err(e) => {
+            log::warn!("class body: {e:#}");
+            commands.entity(anchor).despawn();
+        }
+    }
+}
+
+/// Show the class stand-in in place of the player's Titan (or put it away again).
+fn show_class_body(
+    class: &ClassBody,
+    titan_actor: Entity,
+    at: Option<&Transform>,
+    anchors: &mut Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
+) {
+    let Some(anchor) = class.anchor else { return };
+    let on = at.is_some();
+    if let Ok((mut tf, mut v)) = anchors.get_mut(anchor) {
+        if let Some(at) = at {
+            *tf = *at;
+        }
+        v.set_if_neq(if on {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+    if let Ok((_, mut v)) = anchors.get_mut(titan_actor) {
+        v.set_if_neq(if on {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
     }
 }
 
@@ -275,15 +534,18 @@ pub static BODY_IN_EXECUTION: std::sync::atomic::AtomicBool =
 
 impl BeingExecuted {
     /// `idx` is the attacker's TITAN_EXECUTIONS entry; our half is its victim sequence for our
-    /// chassis, and our Pilot is pulled out.
+    /// class's chassis, and our Pilot is pulled out.
     pub fn start(&mut self, origin: Vec3, yaw: f32, idx: usize) {
         let def = &TITAN_EXECUTIONS[idx.min(TITAN_EXECUTIONS.len() - 1)];
+        let c = LOCAL_CHASSIS
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .min(2);
         self.0 = Some(Executed {
             t: 0.0,
             origin,
             yaw,
-            seq: def.victim[chassis_index(crate::PLAYER_TITAN_MODEL)],
-            pilot_seq: (!def.victim_pilot.is_empty()).then_some(def.victim_pilot),
+            seq: def.victim[c],
+            pilot_seq: (!def.victim_pilot[c].is_empty()).then_some(def.victim_pilot[c]),
             mist: false,
             sound: def.sound_3p,
             prev: CameraMode::Cockpit,
@@ -414,6 +676,7 @@ pub fn executed_victim(
     mut titans: Query<(&mut PlayerTitan, &mut Transform, &TitanHealth), Without<Enemy>>,
     mut anchors: Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
     mut actors: Query<&mut Actor>,
+    class: Res<ClassBody>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
     let Some(r) = run.0.as_mut() else {
@@ -439,7 +702,7 @@ pub fn executed_victim(
     let start = Transform::from_translation(r.origin).with_rotation(Quat::from_rotation_z(r.yaw));
     let mut duration = 5.0;
     let mut reference = None;
-    if let Ok(mut a) = actors.get_mut(titan.actor) {
+    if let Ok(mut a) = actors.get_mut(class.actor.unwrap_or(titan.actor)) {
         if let Some(c) = a.clip(r.seq) {
             duration = a.clips[c].duration;
             let root = moved(&a, c, t, start);
@@ -455,6 +718,7 @@ pub fn executed_victim(
             tf.rotation = Quat::from_rotation_z(yaw);
         }
     }
+    show_class_body(&class, titan.actor, Some(&*tf), &mut anchors);
     if let Some(reference) = reference {
         drive_victim_pilot(
             &mut commands,
@@ -471,6 +735,7 @@ pub fn executed_victim(
     // Over once the Titan is gone (the attacker's blow), or a little after the sequence if
     // that never comes.
     if health.dead_for.is_some() || t > duration + 3.0 {
+        show_class_body(&class, titan.actor, None, &mut anchors);
         titan.override_anim = None;
         *mode = r.prev;
         run.0 = None;
@@ -551,6 +816,7 @@ pub fn titan_execution(
     mut enemies: Query<(Entity, &mut Enemy, &mut Transform), Without<PlayerTitan>>,
     mut anchors: Query<(&mut Transform, &mut Visibility), (Without<PlayerTitan>, Without<Enemy>)>,
     mut actors: Query<&mut Actor>,
+    class: Res<ClassBody>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
     let dt = time.delta_secs().min(0.1);
@@ -622,13 +888,15 @@ pub fn titan_execution(
         // The melee press starts the execution instead of a punch.
         input.melee = false;
         let (_, mut e, _) = enemies.get_mut(victim).unwrap();
-        let idx = player_execution(&args.map);
+        let idx = player_execution(&args.map, &class);
         let def = &TITAN_EXECUTIONS[idx];
         let model = kits.0.get(e.kit).map(|k| k.model.as_str()).unwrap_or("");
-        let v = def.victim[chassis_index(model)];
+        let c = chassis_index(model);
+        let v = def.victim[c];
         // A player's Titan with its Pilot inside: they are pulled out (targetViewBody), and the
         // attacker plays the version with them; an empty Titan gets attackerAnimVsAutoTitan.
-        let pilot_seq = (e.piloted && !def.victim_pilot.is_empty()).then_some(def.victim_pilot);
+        let pilot_seq =
+            (e.piloted && !def.victim_pilot[c].is_empty()).then_some(def.victim_pilot[c]);
         let a = if pilot_seq.is_some() {
             def.attacker
         } else {
@@ -639,7 +907,7 @@ pub fn titan_execution(
         let yaw = to.y.atan2(to.x);
         e.held = true;
         let duration = actors
-            .get(titan.actor)
+            .get(class.actor.unwrap_or(titan.actor))
             .ok()
             .and_then(|ac| ac.clip(a).map(|c| ac.clips[c].duration))
             .unwrap_or(5.0);
@@ -711,7 +979,7 @@ pub fn titan_execution(
         Transform::from_translation(run.origin).with_rotation(Quat::from_rotation_z(run.yaw))
     });
     // BT stands where his own jx_c_start meets that reference, blending in from where he was.
-    if let Ok(mut a) = actors.get_mut(titan.actor) {
+    if let Ok(mut a) = actors.get_mut(class.actor.unwrap_or(titan.actor)) {
         if let Some(c) = a.clip(run.attacker) {
             let (pos, yaw) = root_on_ref(&a, c, t, reference);
             play(&mut a, c, t);
@@ -727,6 +995,7 @@ pub fn titan_execution(
             tf.rotation = Quat::from_rotation_z(yaw);
         }
     }
+    show_class_body(&class, titan.actor, (!done).then_some(&*tf), &mut anchors);
     drive_victim_pilot(
         &mut commands,
         &mut actors,
@@ -1006,6 +1275,7 @@ pub fn execution_camera(
     mut vis: Query<&mut Visibility>,
     mut cams: Query<&mut Transform, With<MainCamera>>,
     mut hud_hidden: ResMut<crate::hud::HudHidden>,
+    class: Res<ClassBody>,
 ) {
     let executing = titan_exec.0.is_some() || pilot_exec.0.is_some() || executed.active();
     if hud_hidden.0 != executing {
@@ -1014,10 +1284,14 @@ pub fn execution_camera(
     let (actor_entity, target, t) = if let Some(r) = titan_exec.0.as_ref() {
         let Ok(t) = titans.single() else { return };
         let Ok(e) = enemies.get(r.victim) else { return };
-        (t.actor, e.pos + Vec3::Z * 150.0, r.t)
+        (class.actor.unwrap_or(t.actor), e.pos + Vec3::Z * 150.0, r.t)
     } else if let Some(r) = executed.0.as_ref() {
         let Ok(t) = titans.single() else { return };
-        (t.actor, r.origin + Vec3::Z * 150.0, r.t)
+        (
+            class.actor.unwrap_or(t.actor),
+            r.origin + Vec3::Z * 150.0,
+            r.t,
+        )
     } else if let (Some(r), Some(b)) = (pilot_exec.0.as_ref(), body.as_ref()) {
         // Hide the first-person guns while the body plays the execution.
         for lo in &loadouts {

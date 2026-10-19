@@ -463,6 +463,7 @@ fn main() {
     .init_resource::<hitbox::RecentHits>()
     .init_resource::<pilotability::PilotStatus>()
     .init_resource::<executions::TitanExecution>()
+    .init_resource::<executions::ClassBody>()
     .init_resource::<executions::BeingExecuted>()
     .init_resource::<executions::PilotExecution>()
     .init_resource::<executions::PilotMelee>()
@@ -633,6 +634,7 @@ fn main() {
                 )
                     .chain(),
                 (
+                    executions::class_body,
                     executions::titan_execution,
                     executions::pilot_execution,
                     executions::executed_victim,
@@ -1526,8 +1528,15 @@ fn setup(
             "bt_synced_titan_execute_pilot_rip_A",
             "mt_execution_attacker_tone",
             "mt_execution_attacker_tone_auto",
-            // Executed by another player (executions::executed_victim).
+            "?mt_execution_attacker_laser",
+            // Executed by another player (executions::executed_victim): the medium victim
+            // sequences.
             "mt_execution_victim_tone",
+            "?mt_execution_victim_laser",
+            "?mt_execution_victim_sword_01",
+            "?mt_execution_victim_sweep_01",
+            "?t_MeleeExecuted_By_htThermite",
+            "?t_MeleeExecuted_By_htPred",
             "titan_synced_bt_execute_flip_takedown_V",
             "titan_synced_bt_execute_kickshoot_V",
             "titan_synced_bt_execute_pilot_rip_V",

@@ -201,10 +201,29 @@ pub const TITAN_ANIMS: &[&str] = &[
     "at_mount_kneel_right_fast",
     "at_mount_kneel_above_fast",
     "at_mount_kneel_airgrab_fast",
-    // Tone's execution (titan_atlas_tracker in titan_executions.rpak).
+    // The executions (titan_executions.rpak): each class's attacker sequence and the victims'
+    // by chassis (executions::TITAN_EXECUTIONS).
     "mt_execution_attacker_tone",
     "mt_execution_attacker_tone_auto",
     "mt_execution_victim_tone",
+    "lt_execution_victim_tone",
+    "ht_execution_victim_tone",
+    "mt_execution_attacker_laser",
+    "lt_execution_victim_laser",
+    "mt_execution_victim_laser",
+    "ht_execution_victim_laser",
+    "htThermite_MP_Sync_Execution_Attacker",
+    "t_MeleeExecuted_By_htThermite",
+    "htPRED_MP_Sync_Execution_Attacker",
+    "t_MeleeExecuted_By_htPred",
+    "lt_execution_attacker_sword_01",
+    "lt_execution_victim_sword_01",
+    "mt_execution_victim_sword_01",
+    "ht_execution_victim_sword_01",
+    "lt_execution_attacker_sweep_01",
+    "lt_execution_victim_sweep_01",
+    "mt_execution_victim_sweep_01",
+    "ht_execution_victim_sweep_01",
     // TitanEjectPlayer's other eject sequences: crouched, and with a nuclear payload; the
     // Titan's pose once the Pilot is out.
     "at_MP_eject_crouch_idle",
@@ -2432,7 +2451,9 @@ pub fn spawn_remotes(
             .get(&id)
             .map_or((false, false), |r| (r.titan.is_none(), r.pilot.is_none()));
         let need_decoy = net.remotes.get(&id).is_some_and(|r| r.decoy.is_none());
-        let mut titan_seqs: Vec<&str> = TITAN_ANIMS.to_vec();
+        // Each chassis has only its own executions: the rest are optional.
+        let optional: Vec<String> = TITAN_ANIMS.iter().map(|n| format!("?{n}")).collect();
+        let mut titan_seqs: Vec<&str> = optional.iter().map(|s| s.as_str()).collect();
         titan_seqs.extend_from_slice(REMOTE_TITAN_SEQUENCES);
         let titan = need_titan
             .then(|| spawn(titan_kit, &titan_seqs, false))
@@ -2480,9 +2501,9 @@ pub fn chassis_name(model: &str) -> &'static str {
     }
 }
 
-/// The kits remote players' bodies use: the players' chassis (Tone's model) with each
-/// loadout's main gun (one kit per weapons::TITAN_ARSENAL entry, `arsenal` its index), and
-/// the Pilot body model.
+/// The kits remote players' bodies use: each loadout's class model (Tone's for the loadouts
+/// without a multiplayer class) with its main gun (one kit per weapons::TITAN_ARSENAL entry,
+/// `arsenal` its index), and the Pilot body model.
 pub fn remote_kits(read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<crate::targets::EnemyKit> {
     let tone = crate::targets::ENEMY_CLASSES
         .iter()
@@ -2490,8 +2511,11 @@ pub fn remote_kits(read: &mut dyn FnMut(&str) -> Option<String>) -> Vec<crate::t
         .unwrap_or(0);
     let mut kits = Vec::new();
     for (i, gun) in crate::weapons::TITAN_ARSENAL.iter().enumerate() {
-        let mut titan = crate::targets::EnemyKit::class(tone, read);
-        titan.model = crate::PLAYER_TITAN_MODEL.into();
+        let class = crate::targets::ENEMY_CLASSES
+            .iter()
+            .position(|c| c.3 == gun.kit)
+            .unwrap_or(tone);
+        let mut titan = crate::targets::EnemyKit::class(class, read);
         titan.ability = None;
         titan.defense = None;
         titan.remote = true;
