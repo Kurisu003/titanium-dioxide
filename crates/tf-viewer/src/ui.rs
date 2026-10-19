@@ -2133,7 +2133,8 @@ pub fn menu_visuals(
                 table
                     .get(&id)
                     .and_then(|k| strings.0.get(&k.desc))
-                    .cloned()
+                    // Localize's printf escape: "%%" shows as "%".
+                    .map(|d| d.replace("%%", "%"))
                     .unwrap_or_default()
             }
             _ => String::new(),
