@@ -36,13 +36,14 @@ pub enum Command {
     Throw,
     Core,
     Titanfall,
+    Eject,
     Slot1,
     Slot2,
     Slot3,
 }
 
 impl Command {
-    pub const ALL: [Command; 20] = [
+    pub const ALL: [Command; 21] = [
         Command::Forward,
         Command::Back,
         Command::Left,
@@ -60,6 +61,7 @@ impl Command {
         Command::Throw,
         Command::Core,
         Command::Titanfall,
+        Command::Eject,
         Command::Slot1,
         Command::Slot2,
         Command::Slot3,
@@ -84,7 +86,9 @@ impl Command {
             Command::Utility => "+offhand2",
             Command::Throw => "+offhand0",
             Command::Core => "+ability 1",
-            Command::Titanfall => "+scriptcommand1",
+            // The game calls the Titan with `+ability 1` (V, shared with the core); T is ours.
+            Command::Titanfall => "+calltitan",
+            Command::Eject => "+scriptcommand1",
             Command::Slot1 => "weaponselect_primary0",
             Command::Slot2 => "weaponselect_primary1",
             Command::Slot3 => "weaponselect_primary2",
@@ -110,6 +114,7 @@ impl Command {
             Command::Throw => "ORDNANCE / TITAN ORDNANCE",
             Command::Core => "TITAN CORE",
             Command::Titanfall => "CALL TITAN",
+            Command::Eject => "TITAN EJECT",
             Command::Slot1 => "PRIMARY WEAPON",
             Command::Slot2 => "SIDEARM",
             Command::Slot3 => "ANTI-TITAN WEAPON",
@@ -137,12 +142,13 @@ impl Command {
             Command::Ads => Bind::Mouse(MouseButton::Right),
             Command::Reload => Bind::Key(K::KeyR),
             Command::Melee => Bind::Key(K::KeyF),
-            Command::Use => Bind::Key(K::KeyX),
+            Command::Use => Bind::Key(K::KeyE),
             Command::Ability => Bind::Key(K::KeyQ),
-            Command::Utility => Bind::Key(K::KeyE),
+            Command::Utility => Bind::Mouse(MouseButton::Middle),
             Command::Throw => Bind::Key(K::KeyG),
             Command::Core => Bind::Key(K::KeyV),
             Command::Titanfall => Bind::Key(K::KeyT),
+            Command::Eject => Bind::Key(K::KeyX),
             Command::Slot1 => Bind::Key(K::Digit1),
             Command::Slot2 => Bind::Key(K::Digit2),
             Command::Slot3 => Bind::Key(K::Digit3),
@@ -314,6 +320,9 @@ pub const BASE_FOV_DEG: f32 = 70.0;
 /// Source's `m_yaw` / `m_pitch`: degrees per mouse count per unit of sensitivity.
 pub const M_YAW: f32 = 0.022;
 
+/// `binds_version` in settings.cfg: 2 moved Use to E and added the eject command on X.
+const BINDS_VERSION: u32 = 2;
+
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct Settings {
     pub mouse_sensitivity: f32,
@@ -455,6 +464,7 @@ impl Settings {
         s += &format!("joy_inverty \"{}\"\n", self.gamepad_invert_y as u8);
         s += &format!("gamepad_aim_assist \"{}\"\n", self.aim_assist as u8);
         s += &format!("gamepad_button_layout \"{}\"\n", self.gamepad_layout);
+        s += &format!("binds_version \"{BINDS_VERSION}\"\n");
         for (c, b) in &self.binds {
             s += &format!("bind \"{}\" \"{}\"\n", b.name(), c.cfg());
         }
@@ -479,6 +489,7 @@ impl Settings {
     /// Read a cfg written by `to_cfg`; anything missing or unreadable keeps its default.
     pub fn from_cfg(text: &str) -> Self {
         let mut s = Settings::default();
+        let mut version = 1;
         for line in text.lines() {
             let line = line.split("//").next().unwrap_or("").trim();
             let toks: Vec<String> = tokens(line);
@@ -519,16 +530,34 @@ impl Settings {
                         s.set_titan_own_kit(t, k);
                     }
                 }
+                "binds_version" => version = f(1).unwrap_or(1.0) as u32,
                 "bind" => {
                     if let (Some(b), Some(c)) = (
                         toks.get(1).and_then(|k| Bind::parse(k)),
                         toks.get(2).and_then(|c| Command::from_cfg(c)),
                     ) {
+                        // Version 1 called the Titan with +scriptcommand1 (the game's eject).
+                        let c = if version < 2 && c == Command::Eject {
+                            Command::Titanfall
+                        } else {
+                            c
+                        };
                         s.rebind(c, b);
                     }
                 }
                 _ => {}
             }
+        }
+        // Version 1's defaults had Use on X and the Titan utility on E: the game's are Use on
+        // E (in and out of the Titan, the eject presses) and X to start an eject.
+        if version < 2 {
+            if s.bind(Command::Use) == Bind::Key(KeyCode::KeyX) {
+                s.rebind(Command::Use, Bind::Key(KeyCode::KeyE));
+            }
+            if s.bind(Command::Utility) == Bind::Key(KeyCode::KeyX) {
+                s.rebind(Command::Utility, Bind::Mouse(MouseButton::Middle));
+            }
+            s.rebind(Command::Eject, Bind::Key(KeyCode::KeyX));
         }
         s
     }
@@ -644,9 +673,47 @@ mod tests {
     }
 
     #[test]
+    fn version_1_binds_migrate() {
+        // The old layout: Use on X, the Titan utility on E, the Titan call on scriptcommand1.
+        let s = Settings::from_cfg(
+            "bind \"X\" \"+use\"\nbind \"E\" \"+offhand2\"\nbind \"T\" \"+scriptcommand1\"\n",
+        );
+        assert_eq!(s.bind(Command::Use), Bind::Key(KeyCode::KeyE));
+        assert_eq!(s.bind(Command::Eject), Bind::Key(KeyCode::KeyX));
+        assert_eq!(s.bind(Command::Utility), Bind::Mouse(MouseButton::Middle));
+        assert_eq!(s.bind(Command::Titanfall), Bind::Key(KeyCode::KeyT));
+        // And it stays that way once saved as version 2.
+        assert_eq!(Settings::from_cfg(&s.to_cfg()), s);
+    }
+
+    #[test]
     fn default_fov_is_the_games() {
         // 70 degrees horizontal at 4:3 is about 55.4 degrees vertical.
         let v = Settings::default().vertical_fov().to_degrees();
         assert!((v - 55.41).abs() < 0.05, "{v}");
+    }
+}
+
+/// The bound key names, for HUD prompts ("[E]  EMBARK"); kept current by `publish_binds`.
+static BOUND_NAMES: std::sync::RwLock<Vec<(Command, String)>> = std::sync::RwLock::new(Vec::new());
+
+/// The key bound to `c` as the HUD names it.
+pub fn key_name(c: Command) -> String {
+    BOUND_NAMES
+        .read()
+        .ok()
+        .and_then(|k| k.iter().find(|(cc, _)| *cc == c).map(|(_, n)| n.clone()))
+        .unwrap_or_else(|| c.default_bind().name())
+}
+
+pub fn publish_binds(settings: Res<Settings>) {
+    if !settings.is_changed() {
+        return;
+    }
+    if let Ok(mut k) = BOUND_NAMES.write() {
+        *k = Command::ALL
+            .iter()
+            .map(|c| (*c, settings.bind(*c).name()))
+            .collect();
     }
 }

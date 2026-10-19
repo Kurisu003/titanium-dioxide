@@ -1212,6 +1212,9 @@ enum Init {
         smin: f32,
         smax: f32,
         xy: bool,
+        /// "even distribution": particle n sits at n / count of the orbit instead of at random
+        /// (the Slow Trap's 6 gas puffs around the canister).
+        even: Option<f32>,
     },
     Offset {
         cp: usize,
@@ -1830,6 +1833,9 @@ fn compile(def: &SystemDef, by_name: &HashMap<String, usize>) -> Compiled {
                 smin: o.f("min initial speed", 0.0),
                 smax: o.f("max initial speed", 0.0),
                 xy: o.b("XY velocity only", true),
+                even: o
+                    .b("even distribution", false)
+                    .then(|| o.f("even distribution count", -1.0)),
             },
             "Position Modify Offset Random" => Init::Offset {
                 cp: cpn(o, "control_point_number"),
@@ -3262,9 +3268,16 @@ fn apply_inits(
                 smin,
                 smax,
                 xy,
+                even,
             } => {
                 let c = &cps[cp];
-                let a = rand(rng) * std::f32::consts::TAU;
+                let a = match even {
+                    Some(n) => {
+                        let n = if n > 0.0 { n } else { sys.max.max(1) as f32 };
+                        index as f32 * std::f32::consts::TAU / n
+                    }
+                    None => rand(rng) * std::f32::consts::TAU,
+                };
                 let r = radius + (rand(rng) - 0.5) * thickness;
                 let out = c.fwd * a.cos() + c.left * a.sin();
                 p.pos = c.pos + out * r;

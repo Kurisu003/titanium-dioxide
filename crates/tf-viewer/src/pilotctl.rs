@@ -344,8 +344,6 @@ pub struct Titanfall {
     /// Seconds left of the eject prompt opened by the eject-enable button (EJECT_FADE_TIME);
     /// doomed, the prompt is always up.
     pub eject_window: f32,
-    /// The eject press button (Utility) last frame, for its press edge.
-    prev_eject_key: bool,
     pub cooldown: f32,
     /// BT was destroyed and a replacement is being prepared.
     pub rebuilding: bool,
@@ -703,24 +701,25 @@ pub fn control_transitions(
     if tf.self_destruct && bt_health.dead_for.is_none() && tf.nuke.is_none() {
         bt_health.damage(1.0e9, false);
     }
-    let interact = std::mem::take(&mut input.interact);
+    let mut interact = std::mem::take(&mut input.interact);
+    let eject_arm = std::mem::take(&mut input.eject_arm);
     let call = std::mem::take(&mut input.titanfall);
     tf.cooldown = (tf.cooldown - dt).max(0.0);
     tf.since_eject_press += dt;
     tf.eject_window = (tf.eject_window - dt).max(0.0);
     let doomed = bt_health.v.doomed.is_some();
     // The eject prompt (IsDisplayingEjectInterface): always when doomed, else for
-    // EJECT_FADE_TIME after the eject-enable button (here the embark key, X). While it is up,
-    // the eject button (here E) counts presses (PlayerPressed_Eject) and does nothing else.
+    // EJECT_FADE_TIME after the eject-initiate button (`+scriptCommand1`, X). While it is up,
+    // Use (E) counts presses (PlayerPressed_Eject on `+use`) and does not disembark.
     let in_titan = matches!(*control, Control::Titan | Control::Disembark(_));
+    if eject_arm && *control == Control::Titan && tf.eject.is_none() && !doomed {
+        tf.eject_window = EJECT_FADE_TIME;
+        log::info!("eject prompt");
+    }
     let prompt = in_titan && tf.eject.is_none() && (doomed || tf.eject_window > 0.0);
-    let eject_key = input.utility;
-    let eject_hit = eject_key && !tf.prev_eject_key;
-    tf.prev_eject_key = eject_key;
-    // The eject button does nothing else while the prompt is up or the eject runs (the last
-    // press held on would otherwise reach the Titan's utility, e.g. Ronin's Phase Dash).
+    let eject_hit = prompt && interact;
     if prompt || (in_titan && tf.eject.is_some()) {
-        input.utility = false;
+        interact = false;
     }
     if tf.since_eject_press > EJECT_MAX_PRESS_DELAY || !prompt {
         tf.eject_presses = 0;
@@ -807,8 +806,6 @@ pub fn control_transitions(
             }
             // Doomed, the embark key does nothing (the Titan can only be ejected from).
             if interact && tf.eject.is_none() && !doomed {
-                // The embark key is also the eject-enable button: the prompt opens.
-                tf.eject_window = EJECT_FADE_TIME;
                 *control = Control::Disembark(0.0);
                 // GetDisembarkSequenceForPlayer/Titan: crouch held = the crouch dismount
                 // (the _fast set with Phase Embark).

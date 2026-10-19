@@ -2043,25 +2043,32 @@ pub fn update_hud(
                         (titan.state.pos - p.state.pos).truncate().length() < 260.0
                     });
                     if near && health.dead_for.is_none() {
-                        "[X]  EMBARK".into()
+                        format!(
+                            "[{}]  EMBARK",
+                            crate::settings::key_name(crate::settings::Command::Use)
+                        )
                     } else if titanfall.rebuilding && titanfall.cooldown > 0.0 {
                         format!("TITAN READY IN {:.0}", titanfall.cooldown.ceil())
                     } else if titanfall.cooldown <= 0.0
                         && !titanfall.busy()
                         && (titanfall.rebuilding || health.dead_for.is_some())
                     {
-                        "[T]  TITANFALL".into()
+                        format!(
+                            "[{}]  TITANFALL",
+                            crate::settings::key_name(crate::settings::Command::Titanfall)
+                        )
                     } else {
                         String::new()
                     }
                 }
-                // The eject interface: doomed, or after the eject-enable button (the embark
-                // key), three presses of the eject button (Utility, E).
+                // The eject interface: doomed, or after the eject-initiate button (X), three
+                // presses of Use (E).
                 Control::Titan | Control::Disembark(_)
                     if (doomed || titanfall.eject_window > 0.0) && titanfall.eject.is_none() =>
                 {
                     format!(
-                        "[E] x3  EJECT   {}/{}",
+                        "[{}] x3  EJECT   {}/{}",
+                        crate::settings::key_name(crate::settings::Command::Use),
                         titanfall.eject_presses,
                         crate::pilotctl::EJECT_PRESSES
                     )

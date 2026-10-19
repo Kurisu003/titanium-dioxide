@@ -3194,12 +3194,13 @@ pub fn death_explosions(mut commands: Commands, enemies: Query<&Enemy, Changed<E
 
 #[allow(clippy::type_complexity)]
 pub fn update_health_bars(
+    mut commands: Commands,
     kits: Res<EnemyKits>,
     hidden: Res<crate::hud::HudHidden>,
     cameras: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     ordnance: Query<&crate::abilities::Ordnance>,
     enemies: Query<&Enemy>,
-    mut bars: Query<(&HealthBar, &mut Node, &mut Visibility)>,
+    mut bars: Query<(Entity, &HealthBar, &mut Node, &mut Visibility)>,
     mut fills: Query<(&mut Node, &mut BackgroundColor), Without<HealthBar>>,
     mut labels: Query<(&mut Text, &mut TextColor)>,
     net: Res<crate::net::Net>,
@@ -3227,8 +3228,10 @@ pub fn update_health_bars(
                     .is_none()
         })
     };
-    for (bar, mut node, mut vis) in &mut bars {
+    for (bar_id, bar, mut node, mut vis) in &mut bars {
+        // Its body is gone (a player who left): the name and bars go with it.
         let Ok(e) = enemies.get(bar.enemy) else {
+            commands.entity(bar_id).despawn();
             continue;
         };
         let locks = ordnance

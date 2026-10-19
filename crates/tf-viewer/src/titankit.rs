@@ -307,6 +307,8 @@ pub struct SlowTrap {
 /// (the base) 49 units along -X; DeploySlowTrap stands it on the ground at the throw's
 /// heading, pitched 90 ("rotate 90 to face up").
 const SLOW_TRAP_MODEL: &str = "models/weapons/titan_incendiary_trap/w_titan_incendiary_trap.mdl";
+/// Its fx_top bone (the "smoke" attachment): 48.6 units from the base.
+const SLOW_TRAP_TOP: f32 = 48.6;
 /// ThrowDeployable's default angular velocity: 600 degrees/s of pitch (and a random yaw spin).
 const DEPLOYABLE_SPIN: f32 = 600.0;
 
@@ -363,8 +365,9 @@ pub fn spawn_slow_trap(commands: &mut Commands, pos: Vec3, vel: Vec3, ghost: boo
 /// (90, yaw, 0) put the model's X down and its Z along the heading; the holder carries model X
 /// on its +Y, model Z on its -X and model Y on its -Z (pilotweapon::projectile_local).
 fn standing_canister(yaw: f32) -> Quat {
-    let fwd = to_bevy(Vec3::new(yaw.cos(), yaw.sin(), 0.0));
-    let left = to_bevy(Vec3::new(-yaw.sin(), yaw.cos(), 0.0));
+    // to_bevy scales by UNIT; a rotation needs unit columns.
+    let fwd = to_bevy(Vec3::new(yaw.cos(), yaw.sin(), 0.0)).normalize();
+    let left = to_bevy(Vec3::new(-yaw.sin(), yaw.cos(), 0.0)).normalize();
     Quat::from_mat3(&Mat3::from_cols(-fwd, Vec3::NEG_Y, -left))
 }
 
@@ -5435,6 +5438,7 @@ pub fn utility_world(
                 )));
             if t.landed {
                 crate::audio::event_at(&mut commands, "incendiary_trap_land", t.pos);
+                log::info!("slow trap landed at {:.0}", t.pos);
                 // DeploySlowTrap: the canister stands at the throw's heading.
                 commands
                     .entity(t.body)
@@ -5448,17 +5452,13 @@ pub fn utility_world(
             if t.build <= 0.0 {
                 crate::audio::event_at(&mut commands, "incendiary_trap_gas", t.pos);
                 // The script's looping P_meteor_Trap_start and its gas, P_meteor_trap_gas, on
-                // the canister (its "smoke" attachment, taken as the canister's origin).
+                // the canister's "smoke" attachment: bone fx_top at the standing canister's
+                // top, its Z up.
                 if std::env::var_os("TF_OLD_FX").is_none() {
+                    let top = Transform::from_translation(to_bevy(Vec3::Z * SLOW_TRAP_TOP));
                     commands.entity(id).with_children(|c| {
-                        c.spawn((
-                            Transform::default(),
-                            crate::pfx::PfxTrail::oriented("P_meteor_Trap_start"),
-                        ));
-                        c.spawn((
-                            Transform::default(),
-                            crate::pfx::PfxTrail::oriented("P_meteor_trap_gas"),
-                        ));
+                        c.spawn((top, crate::pfx::PfxTrail::oriented("P_meteor_Trap_start")));
+                        c.spawn((top, crate::pfx::PfxTrail::oriented("P_meteor_trap_gas")));
                     });
                 }
             }

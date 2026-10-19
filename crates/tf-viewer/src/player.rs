@@ -300,6 +300,9 @@ pub struct PlayerInput {
     pub crouch: bool,
     /// Embark/disembark (latched).
     pub interact: bool,
+    /// The eject-initiate button (X, the game's `+scriptCommand1`): opens the eject prompt
+    /// (latched).
+    pub eject_arm: bool,
     /// Script `pfxtest`: play TF_PFX_TEST now (pfx::pfx_test).
     pub pfx_test: bool,
     /// Test scripts: kill the nearest living enemy (`kill`).
@@ -470,6 +473,7 @@ pub fn gather_input(
                 "aim" if active => script.aim_dummy = true,
                 "ordnance" if active => input.ordnance = true,
                 "core" if once => input.core = true,
+                "eject" if once => input.eject_arm = true,
                 "vortex" if active => input.vortex = true,
                 "utility" if active => input.utility = true,
                 "melee" if once => input.melee = true,
@@ -652,6 +656,9 @@ pub fn gather_input(
     }
     if hit(C::Titanfall) {
         input.titanfall = true;
+    }
+    if hit(C::Eject) {
+        input.eject_arm = true;
     }
     // The first click only grabs the mouse; after that the buttons fire and aim.
     let mouse_ok = |c: C| !matches!(bind(c), crate::settings::Bind::Mouse(_)) || grabbed;
@@ -1750,6 +1757,10 @@ pub fn route_input(control: Res<crate::pilotctl::Control>, mut input: ResMut<Pla
         input.pilot_reload = false;
     }
     if *control != crate::pilotctl::Control::Titan {
+        // `+ability 1` on foot: the Titan call-in, or the follow/guard switch once it is down.
+        if input.core && *control == crate::pilotctl::Control::Pilot {
+            input.titanfall = true;
+        }
         input.fire = false;
         input.ads = false;
         input.reload = false;
